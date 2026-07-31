@@ -8,7 +8,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
+import {TaskStore} from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import * as schema from "../postgres/schema/index.js";
@@ -30,55 +30,20 @@ import {toJson} from "../db.js";
 import {GoalStore} from "../goal-store.js";
 import {AsyncGoalStore} from "../async-goal-store.js";
 import {normalizeTaskCommitAssociation} from "../task-lineage.js";
-import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
+import {preserveResolvedTaskWedgeEpisode} from "../task-store/persistence.js";
 import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkflowSerialization} from "../task-store/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async-audit.js";
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async-comments-attachments.js";
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async-events.js";
-import type {TaskDocumentRow, GoalCitationRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
+import type {WorkflowWorkItemRow} from "../task-store/row-types.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return recordGoalCitationsAsync(layer.db, inputs);
-    }
-    if (inputs.length === 0) {
-      return [];
-    }
-
-    const now = new Date().toISOString();
-    const stmt = store.db.prepare(`
-      INSERT OR IGNORE INTO goal_citations (goalId, agentId, taskId, surface, sourceRef, snippet, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      RETURNING *
-    `);
-
-    const inserted: GoalCitation[] = [];
-    store.db.transaction(() => {
-      for (const input of inputs) {
-        const row = stmt.get(
-          input.goalId,
-          input.agentId,
-          input.taskId ?? null,
-          input.surface,
-          input.sourceRef,
-          input.snippet,
-          input.timestamp ?? now,
-        ) as GoalCitationRow | undefined;
-        if (row) {
-          inserted.push(store.rowToGoalCitation(row));
-        }
-      }
-      if (inserted.length > 0) {
-        store.db.bumpLastModified();
-      }
-    });
-
-    return inserted;
-  }
+        const layer = store.asyncLayer!;
+    return recordGoalCitationsAsync(layer.db, inputs);
+}
 
 export function insertTaskWithFtsRecoveryImpl2(store: TaskStore, task: Task, operation: string): void {
     const normalizeConflict = (error: unknown): never => {
@@ -110,84 +75,77 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
     // The upsert (INSERT ... ON CONFLICT DO UPDATE) updates the existing row in
     // place. This is an update-only path (never create); create paths use
     // insertTaskRowInTransaction (non-destructive plain insert).
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
+        const layer = store.asyncLayer!;
+    /*
+    FNXC:PostgresCutover 2026-07-10:
+    Parity with the SQLite branch below: write ONLY the columns this update
+    actually changed (getChangedTaskColumns against the row read inside the
+    transaction), never a full-row upsert from the caller's snapshot. The
+    previous full-row upsert silently clobbered any column another writer
+    committed between this caller's read and its write — the lost-update
+    class behind triage's `status: "planning"` clear never taking effect
+    (a card then reads as "unplanned" forever and the scheduler refuses to
+    dispatch it). SQLite never had this bug because patchTaskRowInTransaction
+    always wrote the changed-column subset.
+    */
+    await layer.transactionImmediate(async (tx) => {
+      const persist = async () => {
+      const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
+      if (!pgRow || pgRow.deletedAt != null) {
+        // Update-only path: never resurrect a soft-deleted row; a missing row
+        // falls through to the legacy full upsert (matches sqlite's
+        // upsertTaskWithFtsRecovery fallback for vanished rows).
+        // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
+        if (!pgRow) {
+          const context = store.createTaskPersistSerializationContext(task);
+          await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
+        }
+        return;
+      }
+      const existingRow = store.pgRowToTaskRow(pgRow);
+      preserveResolvedTaskWedgeEpisode(existingRow, task);
+      const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
+      if (deletedAt) {
+        store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
+      }
+      const changedColumns = store.getChangedTaskColumns(existingRow, task);
+      if (changedColumns.size === 0) {
+        return;
+      }
+      const context = store.createTaskPersistSerializationContext(task, existingRow);
+      const allValues = buildTaskInsertValues(task as unknown as Record<string, unknown>, context);
+      const setValues: Record<string, unknown> = { updatedAt: task.updatedAt };
+      for (const column of changedColumns) {
+        if (column === "id") continue;
+        setValues[column as string] = allValues[column as string];
+      }
       /*
-      FNXC:PostgresCutover 2026-07-10:
-      Parity with the SQLite branch below: write ONLY the columns this update
-      actually changed (getChangedTaskColumns against the row read inside the
-      transaction), never a full-row upsert from the caller's snapshot. The
-      previous full-row upsert silently clobbered any column another writer
-      committed between this caller's read and its write — the lost-update
-      class behind triage's `status: "planning"` clear never taking effect
-      (a card then reads as "unplanned" forever and the scheduler refuses to
-      dispatch it). SQLite never had this bug because patchTaskRowInTransaction
-      always wrote the changed-column subset.
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      Project-scope the changed-column update so a matching task id in another project cannot be rewritten.
       */
-      await layer.transactionImmediate(async (tx) => {
-        const persist = async () => {
-        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, layer.projectId);
-        if (!pgRow || pgRow.deletedAt != null) {
-          // Update-only path: never resurrect a soft-deleted row; a missing row
-          // falls through to the legacy full upsert (matches sqlite's
-          // upsertTaskWithFtsRecovery fallback for vanished rows).
-          // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
-          if (!pgRow) {
-            const context = store.createTaskPersistSerializationContext(task);
-            await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
-          }
-          return;
-        }
-        const existingRow = store.pgRowToTaskRow(pgRow);
-        const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
-        if (deletedAt) {
-          store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
-        }
-        const changedColumns = store.getChangedTaskColumns(existingRow, task);
-        if (changedColumns.size === 0) {
-          return;
-        }
-        const context = store.createTaskPersistSerializationContext(task, existingRow);
-        const allValues = buildTaskInsertValues(task as unknown as Record<string, unknown>, context);
-        const setValues: Record<string, unknown> = { updatedAt: task.updatedAt };
-        for (const column of changedColumns) {
-          if (column === "id") continue;
-          setValues[column as string] = allValues[column as string];
-        }
-        await tx
-          .update(schema.project.tasks)
-          .set(setValues as never)
-          .where(eq(schema.project.tasks.id, id));
-        };
-        /*
-        FNXC:WorkflowSerialization 2026-07-26-15:30:
-        FN-8592's conditional continuation seed checks for a passed plan-review
-        under its task advisory lock. The generic task persistence path is the
-        sole terminal result writer, so a plan-review pass must take that same
-        lock as the first transaction lock before its row write can commit.
-        */
-        if (task.workflowStepResults?.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) {
-          await withTaskWorkflowSerialization(tx, layer.projectId, id, persist);
-        } else {
-          await persist();
-        }
-      });
-      await store.writeTaskJsonFile(dir, task);
-      return;
-    }
-    let result: { deletedAt?: string; current?: Task } | undefined;
-    store.db.transactionImmediate(() => {
-      const existingRow = store.readTaskRowFromDb(id, { includeDeleted: true });
-      const changedColumns = existingRow && existingRow.deletedAt == null
-        ? store.getChangedTaskColumns(existingRow, task)
-        : new Set<keyof TaskRow>();
-      result = store.patchTaskRowInTransaction(id, task, changedColumns, existingRow);
+      const updateConds = [eq(schema.project.tasks.id, id)];
+      if (layer.projectId) updateConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+      await tx
+        .update(schema.project.tasks)
+        .set(setValues as never)
+        .where(and(...updateConds));
+      };
+      /*
+      FNXC:WorkflowSerialization 2026-07-26-15:30:
+      FN-8592's conditional continuation seed checks for a passed plan-review
+      under its task advisory lock. The generic task persistence path is the
+      sole terminal result writer, so a plan-review pass must take that same
+      lock as the first transaction lock before its row write can commit.
+      */
+      if (task.workflowStepResults?.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) {
+        await withTaskWorkflowSerialization(tx, layer.projectId, id, persist);
+      } else {
+        await persist();
+      }
     });
-    if (result?.deletedAt) {
-      store.throwSoftDeletedWriteBlocked(id, result.deletedAt, "atomicWriteTaskJson");
-    }
-    await store.writeTaskJsonFile(dir, result?.current ?? task);
-  }
+    await store.writeTaskJsonFile(dir, task);
+    return;
+}
 
 export async function createTaskWithDistributedReservationImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; createTaskWithId?: (taskId: string) => Promise<Task>; },): Promise<Task> {
     const settings = await store.getSettingsFast();
@@ -357,68 +315,48 @@ export async function getTaskColumnsImpl(store: TaskStore, ids: string[]): Promi
     every agent-linked task read as non-terminal on PostgreSQL). Async reads:
     live columns from project.tasks, then archive membership for the misses.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db
-        .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
-        .from(schema.project.tasks)
-        .where(and(inArray(schema.project.tasks.id, uniqueIds), isNull(schema.project.tasks.deletedAt)));
-      const activeByIdPg = new Map<string, Column>();
-      for (const row of rows) {
-        activeByIdPg.set(row.id, row.column as Column);
-      }
-      const missingPg = uniqueIds.filter((id) => !activeByIdPg.has(id));
-      const archivedPg = missingPg.length > 0
-        ? await filterArchivedAsync(layer.db, missingPg, layer.projectId)
-        : new Set<string>();
-      const resultPg = new Map<string, Column>();
-      for (const id of uniqueIds) {
-        const activeColumn = activeByIdPg.get(id);
-        if (activeColumn !== undefined) {
-          resultPg.set(id, activeColumn);
-        } else if (archivedPg.has(id)) {
-          resultPg.set(id, "archived");
-        }
-      }
-      return resultPg;
-    }
-    const placeholders = uniqueIds.map(() => "?").join(",");
-    const rows = store.db
-      .prepare(`SELECT id, "column" FROM tasks WHERE id IN (${placeholders}) AND ${TaskStore.ACTIVE_TASKS_WHERE}`)
-      .all(...uniqueIds) as Array<{ id: string; column: Column }>;
-
-    const activeById = new Map<string, Column>();
+        const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Project-scope getTaskColumns so a shared task id from another project cannot populate the map.
+    */
+    const colConds = [inArray(schema.project.tasks.id, uniqueIds), isNull(schema.project.tasks.deletedAt)];
+    if (layer.projectId) colConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+    const rows = await layer.db
+      .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
+      .from(schema.project.tasks)
+      .where(and(...colConds));
+    const activeByIdPg = new Map<string, Column>();
     for (const row of rows) {
-      activeById.set(row.id, row.column);
+      activeByIdPg.set(row.id, row.column as Column);
     }
-
-    const missingIds: string[] = [];
+    const missingPg = uniqueIds.filter((id) => !activeByIdPg.has(id));
+    const archivedPg = missingPg.length > 0
+      ? await filterArchivedAsync(layer.db, missingPg, layer.projectId)
+      : new Set<string>();
+    const resultPg = new Map<string, Column>();
     for (const id of uniqueIds) {
-      if (!activeById.has(id)) {
-        missingIds.push(id);
-      }
-    }
-
-    const archivedSet = missingIds.length > 0 ? store.archiveDb.filterArchived(missingIds) : new Set<string>();
-
-    const result = new Map<string, Column>();
-    for (const id of uniqueIds) {
-      const activeColumn = activeById.get(id);
+      const activeColumn = activeByIdPg.get(id);
       if (activeColumn !== undefined) {
-        result.set(id, activeColumn);
-      } else if (archivedSet.has(id)) {
-        result.set(id, "archived");
+        resultPg.set(id, activeColumn);
+      } else if (archivedPg.has(id)) {
+        resultPg.set(id, "archived");
       }
     }
-
-    return result;
-  }
+    return resultPg;
+}
 
 export async function prepareWorkflowMovePolicyPreflightImpl(store: TaskStore, id: string, toColumn: ColumnId, options: MoveTaskOptions | undefined, internal: MoveTaskInternalOptions,): Promise<MoveTaskInternalOptions["movePolicyPreflight"]> {
     const task = await store.readTaskForMove(id);
     const moveSource = options?.moveSource ?? "engine";
-    const mergedSettingsForMove = await store.getSettingsFast();
-    if (!isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove)) return undefined;
+    /*
+    FNXC:WorkflowColumns 2026-07-30-04:00 (U12 — flipped ATOMICALLY with moves.ts):
+    The compatibility-flag gate is DELETED. This preflight computes the `movePolicyPreflight` that
+    `moves.ts` consumes and validates, so the two could never be flipped independently: un-gating
+    this alone would evaluate workflow move policies — with their plugin-gate side effects — while
+    the branch consuming the result stayed off, and un-gating `moves.ts` alone would validate against
+    a preflight that was never computed. Both readers go in the same commit for that reason.
+    */
     if (task.column === toColumn) return undefined;
 
     /* FNXC:WorkflowModelLanes 2026-07-14-16:31: PostgreSQL move preflight must validate against the task's migrated workflow selection, not the synchronous builtin:coding fallback. */
@@ -471,104 +409,45 @@ export async function listWorkflowPromptOverridesForProjectImpl(store: TaskStore
     const projectId = store.getWorkflowSettingsProjectId();
     // FNXC:PostgresOnlyDataAccess 2026-07-16-12:25: backend branch added so
     // this public method cannot throw the sync-SQLite error on PostgreSQL.
-    if (store.backendMode) {
-      const table = schema.project.workflowPromptOverrides;
-      const pgRows = await store.asyncLayer!.db
-        .select({ workflowId: table.workflowId, overrides: table.overrides })
-        .from(table)
-        .where(eq(table.projectId, projectId));
-      const outPg: Record<string, Record<string, string>> = {};
-      for (const row of pgRows) {
-        // jsonb column: drizzle returns the parsed object (getWorkflowPromptOverridesAsyncImpl parity).
-        const overrides = row.overrides;
-        if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) continue;
-        const entry: Record<string, string> = {};
-        for (const [nodeId, value] of Object.entries(overrides as Record<string, unknown>)) {
-          if (typeof value === "string" && value.trim()) entry[nodeId] = value;
-        }
-        outPg[row.workflowId] = entry;
+        const table = schema.project.workflowPromptOverrides;
+    const pgRows = await store.asyncLayer!.db
+      .select({ workflowId: table.workflowId, overrides: table.overrides })
+      .from(table)
+      .where(eq(table.projectId, projectId));
+    const outPg: Record<string, Record<string, string>> = {};
+    for (const row of pgRows) {
+      // jsonb column: drizzle returns the parsed object (getWorkflowPromptOverridesAsyncImpl parity).
+      const overrides = row.overrides;
+      if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) continue;
+      const entry: Record<string, string> = {};
+      for (const [nodeId, value] of Object.entries(overrides as Record<string, unknown>)) {
+        if (typeof value === "string" && value.trim()) entry[nodeId] = value;
       }
-      return outPg;
+      outPg[row.workflowId] = entry;
     }
-    const rows = store.db
-      .prepare("SELECT workflowId, overrides FROM workflow_prompt_overrides WHERE projectId = ?")
-      .all(projectId) as Array<{ workflowId: string; overrides: string }>;
-    const out: Record<string, Record<string, string>> = {};
-    for (const row of rows) {
-      out[row.workflowId] = store.parseWorkflowPromptOverrideJson(row.overrides);
-    }
-    return out;
-  }
+    return outPg;
+}
 
 export async function listWorkflowWorkItemsForTaskImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[] } = {}): Promise<WorkflowWorkItem[]> {
     // No dedicated async helper; use a raw Drizzle query in backend mode.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const q = layer.db
-        .select()
-        .from(schema.project.workflowWorkItems)
-        .where(eq(schema.project.workflowWorkItems.taskId, taskId));
-      const rows = opts.kinds?.length
-        ? await layer.db
-            .select()
-            .from(schema.project.workflowWorkItems)
-            .where(and(eq(schema.project.workflowWorkItems.taskId, taskId), inArray(schema.project.workflowWorkItems.kind, opts.kinds)))
-        : await q;
-      return (rows as WorkflowWorkItemRow[]).map((row) => store.rowToWorkflowWorkItem(row));
-    }
-    const conditions = ["taskId = ?"];
-    const params: unknown[] = [taskId];
-    if (opts.kinds?.length) {
-      conditions.push(`kind IN (${opts.kinds.map(() => "?").join(", ")})`);
-      params.push(...opts.kinds);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT *
-           FROM workflow_work_items
-          WHERE ${conditions.join(" AND ")}
-          ORDER BY createdAt ASC, id ASC`,
-      )
-      .all(...params) as WorkflowWorkItemRow[];
-    return rows.map((row) => store.rowToWorkflowWorkItem(row));
-  }
+        const layer = store.asyncLayer!;
+    const q = layer.db
+      .select()
+      .from(schema.project.workflowWorkItems)
+      .where(eq(schema.project.workflowWorkItems.taskId, taskId));
+    const rows = opts.kinds?.length
+      ? await layer.db
+          .select()
+          .from(schema.project.workflowWorkItems)
+          .where(and(eq(schema.project.workflowWorkItems.taskId, taskId), inArray(schema.project.workflowWorkItems.kind, opts.kinds)))
+      : await q;
+    return (rows as WorkflowWorkItemRow[]).map((row) => store.rowToWorkflowWorkItem(row));
+}
 
 export async function listDueWorkflowWorkItemsImpl(store: TaskStore, filter: WorkflowWorkItemDueFilter = {}): Promise<WorkflowWorkItem[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return listDueWorkflowWorkItemsAsync(layer.db, filter);
-    }
-    const now = filter.now ?? new Date().toISOString();
-    const includeExpiredRunning = !filter.states || filter.states.includes("running");
-    const states = filter.states?.length ? filter.states : ["runnable", "retrying"];
-    const stateConditions = [`(state IN (${states.map(() => "?").join(", ")}) AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?))`];
-    const params: unknown[] = [...states, now];
-    if (includeExpiredRunning) {
-      stateConditions.push("(state = 'running' AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt <= ?)");
-      params.push(now);
-    }
-    const conditions = [
-      `(${stateConditions.join(" OR ")})`,
-      "(retryAfter IS NULL OR retryAfter <= ?)",
-    ];
-    params.push(now);
-    if (filter.kinds?.length) {
-      conditions.push(`kind IN (${filter.kinds.map(() => "?").join(", ")})`);
-      params.push(...filter.kinds);
-    }
-    params.push(filter.limit ?? 100);
-
-    const rows = store.db
-      .prepare(
-        `SELECT *
-           FROM workflow_work_items
-          WHERE ${conditions.join(" AND ")}
-          ORDER BY retryAfter IS NOT NULL, retryAfter ASC, createdAt ASC
-          LIMIT ?`,
-      )
-      .all(...params) as WorkflowWorkItemRow[];
-    return rows.map((row) => store.rowToWorkflowWorkItem(row));
-  }
+        const layer = store.asyncLayer!;
+    return listDueWorkflowWorkItemsAsync(layer.db, filter);
+}
 
 export function rewriteBlockedByResidueDependentsForRemovalImpl(store: TaskStore, taskId: string, excludedDependentIds: Set<string>): Task[] {
     const rewrittenDependents: Task[] = [];
@@ -615,40 +494,8 @@ export async function getAllDocumentsImpl(store: TaskStore, options?: { searchQu
     // PG backend mode: delegate to the AsyncDataLayer helper. The sync JOIN
     // below dereferences store.db (no SQLite handle in backend mode) and 500'd
     // the dashboard /api/documents list.
-    if (store.backendMode) {
-      return getAllDocumentsAsync(store.asyncLayer!.db, options);
-    }
-    const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
-    const offset = Math.max(0, options?.offset ?? 0);
-
-    let sql = `
-      SELECT td.*, t.title as taskTitle, t.description as taskDescription, t.column as taskColumn
-      FROM task_documents td
-      JOIN tasks t ON td.taskId = t.id
-      WHERE t.${TaskStore.ACTIVE_TASKS_WHERE}
-    `;
-    const params: (string | number)[] = [];
-
-    if (options?.searchQuery && options.searchQuery.trim() !== "") {
-      const query = `%${options.searchQuery.trim()}%`;
-      sql += ` AND (td.key LIKE ? OR td.content LIKE ? OR t.title LIKE ?)`;
-      params.push(query, query, query);
-    }
-
-    sql += ` ORDER BY td.updatedAt DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    const rows = store.db.prepare(sql).all(...params) as unknown as (TaskDocumentRow & { taskTitle: string; taskDescription: string; taskColumn: string })[];
-    return rows.map((row) => {
-      const doc = store.rowToTaskDocument(row);
-      return {
-        ...doc,
-        taskTitle: row.taskTitle,
-        taskDescription: row.taskDescription,
-        taskColumn: row.taskColumn,
-      };
-    });
-  }
+        return getAllDocumentsAsync(store.asyncLayer!.db, options);
+}
 
 export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Promise<void> {
     /*
@@ -659,28 +506,15 @@ export async function deleteWorkflowStepImpl(store: TaskStore, id: string): Prom
     SQLite-only mtime touch with no PostgreSQL analogue. The task-reference cleanup
     below is already async and backend-safe, so it runs in both modes.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const deletedRows = await layer.db
-        .delete(schema.project.workflowSteps)
-        .where(eq(schema.project.workflowSteps.id, id))
-        .returning({ id: schema.project.workflowSteps.id });
-      if (deletedRows.length === 0) {
-        throw new Error(`Workflow step '${id}' not found`);
-      }
-      store.workflowStepsCache = null;
-    } else {
-      const deleted = store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(id) as {
-        changes?: number;
-      };
-
-      if ((deleted.changes || 0) === 0) {
-        throw new Error(`Workflow step '${id}' not found`);
-      }
-
-      store.db.bumpLastModified();
-      store.workflowStepsCache = null;
+        const layer = store.asyncLayer!;
+    const deletedRows = await layer.db
+      .delete(schema.project.workflowSteps)
+      .where(eq(schema.project.workflowSteps.id, id))
+      .returning({ id: schema.project.workflowSteps.id });
+    if (deletedRows.length === 0) {
+      throw new Error(`Workflow step '${id}' not found`);
     }
+    store.workflowStepsCache = null;
 
     // Clean up references from existing tasks (best-effort, outside config lock)
     try {
@@ -761,33 +595,9 @@ export async function reconcileTaskCustomFieldsForSchemaImpl(store: TaskStore, t
 export async function getTaskMovedCountsByDayImpl(store: TaskStore, options: { since: string; until: string; fromColumn?: string; toColumn?: string; }): Promise<Record<string, number>> {
     // FNXC:RuntimeWorkflowAsync 2026-06-24-16:05:
     // Backend-mode: delegate to the async audit helper.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getTaskMovedCountsByDayAsync(layer.db, layer.projectId ?? "", options);
-    }
-    let sql =
-      "SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS count FROM activityLog WHERE type = 'task:moved' AND timestamp > ? AND timestamp <= ?";
-    const params: (string | number)[] = [options.since, options.until];
-
-    if (options.fromColumn) {
-      sql += " AND json_extract(metadata, '$.from') = ?";
-      params.push(options.fromColumn);
-    }
-
-    if (options.toColumn) {
-      sql += " AND json_extract(metadata, '$.to') = ?";
-      params.push(options.toColumn);
-    }
-
-    sql += " GROUP BY substr(timestamp, 1, 10)";
-
-    const rows = store.db.prepare(sql).all(...params) as Array<{ day: string; count: number }>;
-    const countsByDay: Record<string, number> = {};
-    for (const row of rows) {
-      countsByDay[row.day] = row.count;
-    }
-    return countsByDay;
-  }
+        const layer = store.asyncLayer!;
+    return getTaskMovedCountsByDayAsync(layer.db, layer.projectId ?? "", options);
+}
 
 export function getGoalStoreImpl(store: TaskStore): GoalStore | AsyncGoalStore {
     if (!store.goalStore) {
@@ -797,15 +607,12 @@ export function getGoalStoreImpl(store: TaskStore): GoalStore | AsyncGoalStore {
       // GoalStore (store.db) is used only in legacy SQLite mode. Both expose the
       // same method names; the dashboard goals routes, mission goal-resolution
       // helpers, and CLI/agent goal tools await the result so either backend works.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("GoalStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.goalStore = new AsyncGoalStore(layer);
-      } else {
-        store.goalStore = new GoalStore(store.fusionDir, store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("GoalStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.goalStore = new AsyncGoalStore(layer);
+
     }
     return store.goalStore;
   }
@@ -826,72 +633,41 @@ export async function upsertTaskCommitAssociationImpl(store: TaskStore, input: O
     is the conflict target. id is excluded from the update set (SQLite path
     keeps the existing id on conflict too). Reached from the merger.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
-        .insert(schema.project.taskCommitAssociations)
-        .values({
-          id: association.id,
-          taskLineageId: association.taskLineageId,
+        const layer = store.asyncLayer!;
+    await layer.db
+      .insert(schema.project.taskCommitAssociations)
+      .values({
+        id: association.id,
+        taskLineageId: association.taskLineageId,
+        taskIdSnapshot: association.taskIdSnapshot,
+        commitSha: association.commitSha,
+        commitSubject: association.commitSubject,
+        authoredAt: association.authoredAt,
+        matchedBy: association.matchedBy,
+        confidence: association.confidence,
+        note: association.note ?? null,
+        additions: association.additions ?? null,
+        deletions: association.deletions ?? null,
+        createdAt: association.createdAt,
+        updatedAt: association.updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.project.taskCommitAssociations.projectId,
+          schema.project.taskCommitAssociations.taskLineageId,
+          schema.project.taskCommitAssociations.commitSha,
+          schema.project.taskCommitAssociations.matchedBy,
+        ],
+        set: {
           taskIdSnapshot: association.taskIdSnapshot,
-          commitSha: association.commitSha,
           commitSubject: association.commitSubject,
           authoredAt: association.authoredAt,
-          matchedBy: association.matchedBy,
           confidence: association.confidence,
           note: association.note ?? null,
           additions: association.additions ?? null,
           deletions: association.deletions ?? null,
-          createdAt: association.createdAt,
           updatedAt: association.updatedAt,
-        })
-        .onConflictDoUpdate({
-          target: [
-            schema.project.taskCommitAssociations.projectId,
-            schema.project.taskCommitAssociations.taskLineageId,
-            schema.project.taskCommitAssociations.commitSha,
-            schema.project.taskCommitAssociations.matchedBy,
-          ],
-          set: {
-            taskIdSnapshot: association.taskIdSnapshot,
-            commitSubject: association.commitSubject,
-            authoredAt: association.authoredAt,
-            confidence: association.confidence,
-            note: association.note ?? null,
-            additions: association.additions ?? null,
-            deletions: association.deletions ?? null,
-            updatedAt: association.updatedAt,
-          },
-        });
-      return association;
-    }
-    store.db.prepare(
-      `INSERT INTO task_commit_associations
-       (id, taskLineageId, taskIdSnapshot, commitSha, commitSubject, authoredAt, matchedBy, confidence, note, additions, deletions, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(taskLineageId, commitSha, matchedBy) DO UPDATE SET
-         taskIdSnapshot = excluded.taskIdSnapshot,
-         commitSubject = excluded.commitSubject,
-         authoredAt = excluded.authoredAt,
-         confidence = excluded.confidence,
-         note = excluded.note,
-         additions = excluded.additions,
-         deletions = excluded.deletions,
-         updatedAt = excluded.updatedAt`,
-    ).run(
-      association.id,
-      association.taskLineageId,
-      association.taskIdSnapshot,
-      association.commitSha,
-      association.commitSubject,
-      association.authoredAt,
-      association.matchedBy,
-      association.confidence,
-      association.note ?? null,
-      association.additions ?? null,
-      association.deletions ?? null,
-      association.createdAt,
-      association.updatedAt,
-    );
+        },
+      });
     return association;
-  }
+}

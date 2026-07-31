@@ -155,6 +155,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
 }));
 vi.mock("lucide-react", async (importOriginal) => {
@@ -215,7 +216,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).toBeChecked();
     });
@@ -230,7 +231,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i)).not.toBeChecked();
     });
@@ -239,7 +240,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
       await settingsModalUser.type(screen.getByPlaceholderText("docs/"), "generated/*");
@@ -264,7 +265,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       await settingsModalUser.click(screen.getByLabelText(/ignore hidden dot paths in overlap checks/i));
 
@@ -284,7 +285,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
       expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
@@ -294,7 +295,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
 
@@ -308,7 +309,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       await settingsModalUser.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
       await settingsModalUser.click(await screen.findByRole("button", { name: "Select README.md" }));
@@ -336,7 +337,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const select = screen.getByLabelText("Heartbeat Scope Discipline") as HTMLSelectElement;
       expect(select.value).toBe("lite");
@@ -365,7 +366,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       expect((screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement).checked).toBe(expectedChecked);
     });
@@ -379,7 +380,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
@@ -403,7 +404,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const toggle = screen.getByLabelText("Let engineer agents auto-claim backlog tasks") as HTMLInputElement;
       expect(toggle.checked).toBe(true);
@@ -425,7 +426,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Max Concurrent Tasks") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -437,30 +438,20 @@ describe("SettingsModal", () => {
     });
 
     /*
-    FNXC:SettingsScope 2026-07-15-18:52:
-    The machine-wide cap moved to its own `Scheduling · Global` section when Scheduling was split by scope, so this navigates there. The requirement is unchanged: clearing the field must leave it empty rather than snapping to a stuck "0".
+    FNXC:CapacityModel 2026-07-29-00:40 (drop the cross-project cap — settings half):
+    The "clearing Global Max Concurrent leaves it empty" case is DELETED with the
+    control it covered. It guarded a real bug — the field snapping to a stuck "0" —
+    but the machine-wide cap and its Scheduling · Global section are gone (capacity is
+    two numbers PER PROJECT). The same empty-not-zero invariant remains covered for
+    maxWorktrees and maxConcurrent, the fields that survive.
     */
-    it("allows clearing globalMaxConcurrent without leaving a stuck zero", async () => {
-      renderModal();
-      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Global" }));
-
-      const input = screen.getByLabelText("Global Max Concurrent") as HTMLInputElement;
-      expect(input).toBeDefined();
-      await waitFor(() => expect(input).not.toBeDisabled());
-
-      // Clear the input - the input should be empty, not show "0"
-      await settingsModalUser.clear(input);
-      expect(input.value).toBe("");
-    });
 
     it("allows clearing pollIntervalMs without leaving a stuck zero", async () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
       // Open Scheduling section
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Poll Interval (ms)") as HTMLInputElement;
       expect(input).toBeDefined();
@@ -474,7 +465,7 @@ describe("SettingsModal", () => {
       renderModal();
       await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByRole("button", { name: "Scheduling · Project" }));
+      fireEvent.click(screen.getByRole("button", { name: "Scheduling" }));
 
       const input = screen.getByLabelText("Stale High Fan-out Escalation (hours)") as HTMLInputElement;
       expect(input).toBeDefined();

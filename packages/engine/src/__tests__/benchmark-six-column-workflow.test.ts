@@ -557,7 +557,14 @@ so a divergence here fails as a byte-compat regression rather than as a benchmar
 */
 describe("builtin:coding parity alongside the benchmark (R8)", () => {
   it("keeps the default pipeline trace byte-identical and lands its merge in in-review", async () => {
-    const task = benchmarkTask({ column: "in-progress" } as Partial<TaskDetail>);
+    /*
+    FNXC:PlanReviewStep 2026-07-26-14:05:
+    The run starts at `start`, so the card starts where a real card starts: the planning column.
+    Seeding it in `in-progress` used to be harmless only because `plan`/`plan-review` also lived
+    there; now that the whole specification phase runs in `triage`, an in-progress seed would
+    fabricate a backward in-progress -> triage hop no real card ever takes.
+    */
+    const task = benchmarkTask({ column: "triage" } as Partial<TaskDetail>);
     /*
     ABSENT, not empty. `[]` is present-but-empty and DISABLES every optional group, which would
     silently skip both review gates and quietly change the trace being compared. Deleting the
@@ -567,18 +574,50 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
     const transitions: Array<[string, string]> = [];
     const calls: string[] = [];
 
-    const boundary = createWorkflowColumnBoundary({
+    /*
+    FNXC:PlanReviewStep 2026-07-26-17:10:
+    The default pipeline is now plan-in-place, so it has TWO actors: the graph, and the scheduler that
+    owns the `todo -> in-progress` release. The real controller still makes every decision — including
+    REFUSING the hold->wip move — and this wrapper only performs the move it refused, exactly like the
+    six-column harness above. Without a stand-in scheduler the run legitimately suspends at the
+    release seam and the trace stops at `parse`.
+    */
+    const parks: Array<{ fromColumn: string; toColumn: string; nodeId: string }> = [];
+    const makeParityBoundary = (initialColumn: string) => createWorkflowColumnBoundary({
       taskId: task.id,
       workflowId: "builtin:coding",
       ir: BUILTIN_CODING_WORKFLOW_IR,
-      initialColumn: "in-progress",
+      initialColumn,
       moveTask: async (toColumn) => {
         task.column = toColumn;
       },
       emitAudit: (event) => {
         if (event.type === "task:column-transition") transitions.push([event.fromColumn, event.toColumn]);
       },
+      onWarn: (message, detail) => {
+        if (!message.includes("hold→wip")) return;
+        parks.push({
+          fromColumn: String(detail.fromColumn),
+          toColumn: String(detail.toColumn),
+          nodeId: String(detail.nodeId),
+        });
+      },
     });
+    let innerBoundary = makeParityBoundary("triage");
+    const boundary: WorkflowColumnBoundary = {
+      currentColumn: () => innerBoundary.currentColumn(),
+      detectDrift: () => innerBoundary.detectDrift(),
+      onNodeEntry: async (node) => {
+        const before = parks.length;
+        await innerBoundary.onNodeEntry(node);
+        if (parks.length === before) return;
+        const park = parks[parks.length - 1]!;
+        transitions.push([park.fromColumn, park.toColumn]);
+        task.column = park.toColumn;
+        innerBoundary = makeParityBoundary(park.toColumn);
+        await innerBoundary.onNodeEntry(node);
+      },
+    };
 
     const primitives: WorkflowRuntimePrimitives = {
       prepareWorktree: async () => ({ outcome: "success", data: { worktreePath: "/memory/worktree" } }),
@@ -674,6 +713,10 @@ describe("builtin:coding parity alongside the benchmark (R8)", () => {
     for the merge, and the only later move is the post-merge hop into `done`.
     */
     expect(transitions).toEqual([
+      // Specification (plan + plan review) happens in the planning lane; the card crosses into
+      // implementation exactly once, at `parse`, and the scheduler owns that crossing.
+      ["triage", "todo"],
+      ["todo", "in-progress"],
       ["in-progress", "in-review"],
       ["in-review", "done"],
     ]);

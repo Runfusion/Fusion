@@ -1,3 +1,5 @@
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+
 /*
 FNXC:WakeDeltaMultiAssign 2026-07-13-12:15:
 Permanent agents can own many tasks via assignedAgentId while agent.taskId is singular.
@@ -53,8 +55,23 @@ function titleSnippet(task: AssignedTaskLike, max = 72): string {
   return `${raw.slice(0, max - 1)}…`;
 }
 
-function isTerminalColumn(column: string): boolean {
-  return column === "done" || column === "archived";
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+"Finished either way" comes from core's role helper, not from a local copy of the two ids.
+
+`isTerminalColumnRole` already encodes exactly this union AND its legacy-id degraded mode, so passing
+`undefined` flags reproduces this function's previous behaviour byte for byte — there is no bespoke
+fallback to get wrong here, which is the point of routing through the helper rather than adding
+another optional set to this module.
+
+Keyed on the literals, the Wake Delta inventory counted a FINISHED card on a renamed board as open
+assigned work, so a coordinator was asked to unblock or reassign tasks that had already shipped.
+*/
+function isTerminalColumn(
+  column: string,
+  flagsByColumnId?: ReadonlyMap<string, ColumnRoleTraitFlags>,
+): boolean {
+  return isTerminalColumnRole(flagsByColumnId?.get(column), column);
 }
 
 /*
@@ -65,10 +82,32 @@ Map known default columns for rank quality; treat all other non-terminal open
 columns (including custom workflow columns) as titled `other` so inventory stays
 visible. Paused stays count-only to avoid re-chase noise.
 */
-function tierForTask(task: AssignedTaskLike): AssignedTaskRankTier | "not_actionable" {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-13:35 (U11):
+The two ACTIONABLE lifecycle roles. `todo`/`in-progress` are only what the builtin
+coding workflow calls them. The comment above already records that unrecognised
+columns fall to `other` so assigned work stays visible — but that is a floor, not
+a fix: a renamed HOLD column loses `ready_todo` and `partial_blocked` entirely, so
+work that is genuinely ready to start ranks below everything already in progress.
+Nothing errors and nothing disappears; the ordering is just wrong, which is how it
+survived.
+
+Defaults to the legacy ids so every unconverted caller is byte-identical.
+*/
+export interface AssignedTaskRankRoles {
+  hold: string;
+  wip: string;
+}
+
+const LEGACY_RANK_ROLES: AssignedTaskRankRoles = { hold: "todo", wip: "in-progress" };
+
+function tierForTask(
+  task: AssignedTaskLike,
+  roles: AssignedTaskRankRoles = LEGACY_RANK_ROLES,
+): AssignedTaskRankTier | "not_actionable" {
   if (task.paused) return "not_actionable";
-  if (task.column === "in-progress") return "in_progress";
-  if (task.column === "todo") {
+  if (task.column === roles.wip) return "in_progress";
+  if (task.column === roles.hold) {
     const deps = task.dependencies ?? [];
     if (deps.length === 0) return "ready_todo";
     // Coarse v1: non-empty deps ⇒ partial_blocked visibility (full dep hydrate deferred).
@@ -96,16 +135,20 @@ export function rankAssignedTasksForWakeDelta(
     agentId: string;
     boundTaskId?: string | null;
     cap?: number;
+    /** Resolved lifecycle roles; omitted keeps the legacy builtin ids. */
+    roles?: AssignedTaskRankRoles;
+    /** Resolved trait flags per column id; omitted keeps the legacy builtin ids. */
+    flagsByColumnId?: ReadonlyMap<string, ColumnRoleTraitFlags>;
   },
 ): RankAssignedTasksForWakeDeltaResult {
   const cap = options.cap ?? WAKE_DELTA_ASSIGNED_TASKS_CAP;
-  const open = tasks.filter((t) => !t.deletedAt && !isTerminalColumn(t.column));
+  const open = tasks.filter((t) => !t.deletedAt && !isTerminalColumn(t.column, options.flagsByColumnId));
 
   const titled: RankedAssignedTaskLine[] = [];
   let notActionableCount = 0;
 
   for (const task of open) {
-    const tierOrNa = tierForTask(task);
+    const tierOrNa = tierForTask(task, options.roles);
     if (tierOrNa === "not_actionable") {
       notActionableCount += 1;
       continue;

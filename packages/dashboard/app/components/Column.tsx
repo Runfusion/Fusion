@@ -12,6 +12,14 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import { isTaskAgentActive } from "../utils/taskActivity";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isHoldColumnRole,
+  isPreImplementationColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+} from "../utils/columnRoles";
 import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
@@ -196,6 +204,14 @@ interface ColumnProps {
   /** True when the board is in multi-lane workflow mode (flag ON). Switches
    *  column behavior (label, bulk actions, archived detection) from legacy
    *  literals to trait-flag predicates. Flag OFF leaves all behavior legacy. */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The ids of tasks whose own column is a hold lane in THEIR OWN workflow, for the worktree
+  grouping's upcoming-work list. Task ids rather than column ids because column ids are
+  namespaced per workflow and two workflows can disagree about the same name (PR #2625
+  review). Board resolves it; Lane does not pass it and keeps the legacy-id fallback.
+  */
+  holdTaskIds?: ReadonlySet<string>;
   workflowMode?: boolean;
   /** Workflow id for column-aware task creation in workflow mode. */
   workflowId?: string;
@@ -229,7 +245,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, holdTaskIds, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnDescription, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -266,7 +282,11 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     if (typeof nearDuplicateOf !== "string" || !allTasks) {
       return undefined;
     }
-    return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
+    const canonical = allTasks.find((candidate) => candidate.id === nearDuplicateOf);
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-01:10: the canonical's own flags. Declared above
+       `getTaskColumnFlags` in source order, but this body only runs during render, so the const is
+       initialised by then — tsc and the suite both confirm it. */
+    return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
   }, [allTasks]);
 
   // Clear the inline capacity-exhausted banner once the column's task list
@@ -298,13 +318,25 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     };
   }, [isMenuOpen]);
 
-  // Archived column is collapsed by default - don't show drag state when collapsed.
-  // Workflow mode keys off the resolved `archived` trait flag instead of the
-  // literal column id (R9). A hold-flagged column shows the promote affordance.
-  const isArchived = workflowMode ? Boolean(columnFlags?.archived) : column === "archived";
-  const isHoldColumn = workflowMode && Boolean(columnFlags?.hold);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:10 (fleet — one role question, one answer):
+  The shared role helpers replace the `workflowMode ? trait : literal` ternaries.
+
+  They are NOT identical, and the difference is the point. `workflowMode` is a BOARD-level boolean
+  (`Boolean(boardWorkflows?.workflows.length)`) standing in for a PER-COLUMN question, so when the
+  board is in workflow mode but THIS column has no resolved traits — a column the workflow no longer
+  declares, which is exactly what a mid-flight workflow edit leaves behind — the old form answered
+  `false` for every role. Not "fall back to the id": no role at all, so the archive affordance, the
+  promote affordance and the bulk actions all silently vanished from that column.
+
+  The helpers ask per column and fall back to the legacy id only when the flags are genuinely absent,
+  which also covers the pre-load window the old form handled via `workflowMode === false`. Deliberate
+  behaviour change, documented rather than silent; covered by column-role-degraded-flags.test.ts.
+  */
+  const isArchived = isArchivedColumnRole(columnFlags, column);
+  const isHoldColumn = isHoldColumnRole(columnFlags, column);
   const isCollapsed = isArchived && collapsed;
-  const isWipProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
+  const isWipProcessingColumn = isWipColumnRole(columnFlags, column);
   const getTaskContextMenuColumns = useCallback((task: Task) => (
     taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
   ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
@@ -333,12 +365,25 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const activeTaskCount = useMemo(
     () => tasks.filter((task) =>
       isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))
-      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs) }),
+      // FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile): these
+      // tasks are IN this column, so the column's own flags are their column traits. Without
+      // them the header undercounts executing work on a merged planning lane.
+      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, columnFlags), columnFlags }),
     ).length,
     [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
   );
-  // When search is active, skip pagination so all matching tasks are visible
-  const shouldPaginate = !isArchived && !isSearchActive && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
+  /*
+  FNXC:BoardColumnWindowing 2026-07-26-11:48:
+  Search used to disable pagination entirely (`!isSearchActive`) so every match rendered at once. That
+  escape hatch is unbounded — a broad query over a large project mounts an unlimited number of
+  ~4000-line TaskCards, and a resident set that large is a primary reason mobile browsers reclaim the
+  backgrounded tab (the operator sees a white-splash reload on return). It is also unnecessary: the
+  `tasks` handed to this column are ALREADY search-filtered upstream, so paginating them still shows
+  matches — just an increment at a time behind the same "Load more" button. The remaining bypasses are
+  bounded: the archived column is server-paginated (100 per page) and worktree grouping renders only
+  the WIP/processing lane.
+  */
+  const shouldPaginate = !isArchived && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
 
   useEffect(() => {
     setVisibleTaskCount((current) => {
@@ -349,6 +394,33 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
       return Math.min(Math.max(current, VISIBLE_TASKS_INITIAL), tasks.length);
     });
   }, [showWorktreeGroups, isArchived, tasks.length]);
+
+  /*
+  FNXC:BoardColumnWindowing 2026-07-26-14:20:
+  Correction of a false claim: the block above previously stated "the window resets whenever the search
+  term toggles", but the reset effect keyed on `isSearchActive`, a BOOLEAN. Editing a query from one
+  broad term to another keeps that boolean true, so a window expanded to hundreds of cards by repeated
+  "Load more" survived into an entirely new result set — reinstating the unbounded DOM this change
+  removed, via an ordinary search refinement.
+
+  Column is not given the query text (Board/Lane pass only `isSearchActive`), and the query string is
+  not the real invariant anyway: what must stay bounded is the RESULT SET. So the reset keys on a cheap
+  identity signature of the incoming filtered `tasks` while search is active — length plus the first
+  and last id. Refining a query changes at least one of those, collapsing the window back to one
+  screenful; a re-render or poll that yields the same result set produces the same string and does NOT
+  disturb the operator's expanded window (an effect keyed on the array itself would fire every poll).
+  A query edit that yields a byte-identical result set intentionally keeps its window: the DOM size is
+  unchanged, so there is nothing to bound.
+  */
+  const searchResultSignature = useMemo(() => {
+    if (!isSearchActive || tasks.length === 0) return "";
+    return `${tasks.length}:${tasks[0]?.id ?? ""}:${tasks[tasks.length - 1]?.id ?? ""}`;
+  }, [isSearchActive, tasks]);
+
+  // Entering/leaving search, or landing on a different search result set, collapses back to one window.
+  useEffect(() => {
+    setVisibleTaskCount(VISIBLE_TASKS_INITIAL);
+  }, [isSearchActive, searchResultSignature]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     // Don't allow dropping into archived column via drag-drop
@@ -394,7 +466,26 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     try {
       const sourceTask = allTasks?.find((t) => t.id === taskId) ?? task;
       const hasStepProgress = sourceTask?.steps.some((step) => step.status !== "pending") ?? false;
-      const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+      This component's `column` IS the drop target, so its own `columnFlags` are the
+      target's traits — no lookup needed, unlike the same prompt in TaskCard/ListView
+      where the card and the destination differ. Ids remain the fallback for the
+      no-metadata window.
+      */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-19:20 (Phase B — consolidated, semantics verified):
+      Routed through `isPreImplementationColumnRole`. This is the SAME preserve-progress prompt that
+      helper was written for — ListView asks it about a move target, this component asks it about
+      itself — and the degraded id sets are identical (`{todo, triage}`), so the consolidation is
+      exact rather than approximately right.
+
+      Verified before consolidating, because the sibling case in TaskContextMenu is NOT
+      interchangeable: `isPreExecutionHoldColumn` drives the Plan affordance and its degraded set is
+      `{triage}` alone, so routing THAT through this helper added `plan` to flagless `todo` cards.
+      Same shape, different degraded answer — matched here, kept separate there.
+      */
+      const shouldPrompt = hasStepProgress && isPreImplementationColumnRole(columnFlags, column);
       let moveOptions: { preserveProgress?: boolean } | undefined;
 
       if (shouldPrompt) {
@@ -493,10 +584,39 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     }
   }, [confirm, onPromote, t]);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — my own inert conversion):
+  The dependency flags `groupByWorktree` needs, derived from the per-task column metadata this
+  component already receives.
+
+  I gave `groupByWorktree` a `dependencyColumnFlags` parameter and then left this — its only board
+  caller — passing four arguments. So `depFlags` was always undefined, every dependency fell to the
+  legacy-id branch, and the conversion changed nothing while the census counted it. Exactly the
+  half-conversion I have been flagging in other people's work; caught here by review, not by me.
+
+  Keyed by the DEPENDENCY's task id, holding the flags of the column that task is currently in —
+  the same derivation ListView's `getTaskColumnFlags` uses, and per-task rather than per-column-id so
+  two workflows reusing an id cannot answer for each other.
+  */
+  const dependencyColumnFlags = useMemo(() => {
+    const index = new Map<string, TaskContextMenuColumnMetadata["flags"]>();
+    if (!taskContextMenuColumnsByTaskId) return index;
+    for (const candidate of allTasks ?? tasks) {
+      const own = taskContextMenuColumnsByTaskId.get(candidate.id);
+      if (!own) continue;
+      index.set(candidate.id, own.find((entry) => entry.id === candidate.column)?.flags);
+    }
+    return index;
+  }, [allTasks, tasks, taskContextMenuColumnsByTaskId]);
+
   const worktreeGroups = useMemo(() => {
     if (!showWorktreeGroups) return [];
-    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent);
-  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent]);
+    return groupByWorktree(tasks, allTasks ?? tasks, maxConcurrent, holdTaskIds, dependencyColumnFlags);
+    // `holdTaskIds` IS a dependency: the board resolves it after the workflows fetch, so
+    // omitting it would pin the first-paint value and the upcoming-work list would keep
+    // using the legacy-id fallback for the rest of the session. This repo has no
+    // react-hooks/exhaustive-deps rule, so nothing catches that but reading it.
+  }, [showWorktreeGroups, tasks, allTasks, maxConcurrent, holdTaskIds, dependencyColumnFlags]);
 
   const visibleTasks = useMemo(() => {
     if (!shouldPaginate) return tasks;
@@ -504,11 +624,25 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   }, [shouldPaginate, tasks, visibleTaskCount]);
 
   const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
-  const canCreateInColumn = Boolean(
-    onQuickCreate &&
-    !isArchived &&
-    (workflowMode || column === "triage"),
-  );
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (Phase B — third attempt, this time with the
+  fixtures migrated instead of the arm defended):
+  The `|| column === "triage"` arm was the LEGACY-board path: before workflow lanes, only the
+  hardcoded intake column offered inline create. U12 deleted the legacy board, Board is Column's
+  only consumer, and it passes `workflowMode` at all three render sites — so the arm is unreachable
+  in production.
+
+  I deleted it twice before and reverted both times, because four Column tests render without
+  `workflowMode` and went red. That was the delete-only rule working: a behaviour change means the
+  branch was not dead FOR THOSE CALLERS. The callers in question are fixtures, not production, so
+  the honest fix is to migrate them to the shape Board actually uses rather than keep an arm alive
+  to satisfy them. Done in Column.test.tsx alongside this.
+
+  Deliberately NOT solved by defaulting `workflowMode` to true: `isArchived`, `isHoldColumn` and
+  `isWipProcessingColumn` all switch on that same flag, so a global default would silently
+  reinterpret every other fixture in the file.
+  */
+  const canCreateInColumn = Boolean(onQuickCreate && !isArchived && workflowMode);
 
   const handleQuickCreate = useCallback(
     (input: TaskCreateInput) => {
@@ -589,9 +723,9 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   // Bulk-action eligibility (R9): workflow mode keys off trait flags instead of
   // the literal column ids. Todo-equivalent = hold/intake (replan affordance);
   // processing = wip/countsTowardWip; review = mergeBlocker/humanReview.
-  const isTodoLikeColumn = workflowMode ? Boolean(columnFlags?.hold || columnFlags?.intake) : column === "todo";
-  const isProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
-  const isReviewColumn = workflowMode ? Boolean(columnFlags?.mergeBlocker || columnFlags?.humanReview) : column === "in-review";
+  const isTodoLikeColumn = isPreImplementationColumnRole(columnFlags, column);
+  const isProcessingColumn = isWipColumnRole(columnFlags, column);
+  const isReviewColumn = isReviewColumnRole(columnFlags, column);
   const hasColumnBulkActions = isTodoLikeColumn || isProcessingColumn || isReviewColumn;
   const isMenuBusy = isReplanning || isPausingAll || isMovingAllToTodo;
   const columnLabelText = workflowMode ? (columnDisplayName ?? COLUMN_LABELS[column] ?? column) : COLUMN_LABELS[column];
@@ -683,7 +817,9 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   FNXC:DoneColumnSorting 2026-06-29-20:23:
   In workflow mode, the Done-sort control belongs to non-archived complete lanes even when the workflow uses a custom column id such as `shipped`; legacy mode remains limited to the literal Done column.
   */
-  const isDoneSortColumn = workflowMode ? columnFlags?.complete === true && columnFlags?.archived !== true : column === "done";
+  /* Complete AND not archived: the archived lane is also "complete-ish" but must not carry the
+     Done-sort control, and that exclusion survives the move to the shared helper. */
+  const isDoneSortColumn = isCompleteColumnRole(columnFlags, column) && !isArchivedColumnRole(columnFlags, column);
   const showDoneSortControl = isDoneSortColumn && doneSortMode !== undefined && !!onDoneSortModeChange;
   const showDoneArchiveAction = isDoneSortColumn && !!onArchiveAllDone;
   /*
@@ -749,7 +885,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         >
           <span>{activeTaskCount}</span>/<span>{tasks.length}</span>
         </span>
-        {(workflowMode ? isReviewColumn : column === "in-review") && onToggleAutoMerge && (
+        {isReviewColumn && onToggleAutoMerge && (
           <label className="auto-merge-toggle" title={autoMerge ? t("column.autoMergeEnabled", "Auto-merge enabled") : t("column.autoMergeDisabled", "Auto-merge disabled")}>
             {/*
             FNXC:AutoMergeA11y 2026-07-14-19:20:

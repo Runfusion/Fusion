@@ -22,7 +22,15 @@ vi.mock("../branch-conflicts.js", async (importOriginal) => {
 });
 
 const { logger } = vi.hoisted(() => ({
-  logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  /*
+  FNXC:TestInfrastructure 2026-07-29-13:10 (U9):
+  `debug` is part of createLogger's real shape and SelfHealingManager.start /
+  startMaintenance both call it. Omitting it here threw "log.debug is not a
+  function" out of start(), so "wires and unwires task:moved listener" was
+  permanently red AND leaked an unhandled rejection from startMaintenance that
+  vitest warns can cause false positives in the rest of the file.
+  */
+  logger: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../logger.js", () => ({ createLogger: vi.fn(() => logger) }));
 

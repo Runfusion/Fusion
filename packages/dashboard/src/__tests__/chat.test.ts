@@ -25,6 +25,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 // Mock @fusion/core to prevent cascade loading of real fs modules
 vi.mock("@fusion/core", () => ({
+  /*
+  FNXC:DashboardTestMocks 2026-08-03-04:10 (whole-file red on main — a mock factory missing one export):
+  `createLogger` is stubbed because a `vi.mock("@fusion/core", …)` factory REPLACES the module: any export the
+  module under test (or anything it transitively imports) reaches for and the factory omits throws
+  `No "createLogger" export is defined`, which fails the ENTIRE file rather than one case.
+
+  That makes this class systemic rather than local: every PR that adds a `createLogger` call to a module inside
+  this import graph reddens every suite whose factory predates it, and the failure names the mock rather than the
+  change that caused it. Four whole-file reds on main came from two missing exports (this and `execFile`).
+  */
+  createLogger: () => ({ log: () => undefined, debug: () => undefined, warn: () => undefined, error: () => undefined }),
   summarizeTitle: vi.fn(),
   // FNXC:DashboardChatTests 2026-07-08-12:00: FN-7675 added FUSION_RUNTIME_SELF_AWARENESS to chat.ts's direct @fusion/core imports (CHAT_SYSTEM_PROMPT embeds it).
   FUSION_RUNTIME_SELF_AWARENESS: "",

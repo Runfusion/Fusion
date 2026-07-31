@@ -52,22 +52,32 @@ export function isColumn(value: unknown): value is Column {
   return typeof value === "string" && (COLUMNS as readonly string[]).includes(value);
 }
 
-/**
- * @deprecated (workflowColumns, U12) Coerces an arbitrary value to a legacy
- * column, DISCARDING workflow-defined custom column ids — lossy under the
- * flag. Resolve and validate against the task's workflow instead. Retained
- * for the legacy flag-OFF path while the flag exists.
- */
-export function normalizeColumn(value: unknown, fallback: Column = DEFAULT_COLUMN): Column {
-  return isColumn(value) ? value : fallback;
-}
+/*
+FNXC:WorkflowColumns 2026-07-29-00:00 (U12 — R8):
+`normalizeColumn` is DELETED. It carried one of the two `@deprecated (workflowColumns,
+U12)` markers this unit was named for.
+
+It coerced an arbitrary value to a LEGACY column, rewriting every workflow-defined
+custom id to `triage` — silent data loss for any project whose workflow declares a
+column outside the six built-ins. `normalizeColumnId` (retained, just below) is the
+non-lossy replacement: it sanitises structurally (non-string/empty -> fallback) and
+passes real ids through untouched.
+
+Deleted rather than left deprecated because it had ZERO callers — the dashboard's
+ingest path and move handler both migrated to `normalizeColumnId` when the lossy
+behaviour was diagnosed (see `useTasks.ts` and `routes-trait-rekey.test.ts`, which pin
+that migration). Leaving an exported lossy coercion next to its safe twin is an
+invitation to pick the wrong one; `__tests__/no-lossy-column-coercion-export.test.ts`
+now ratchets that shut, by behaviour rather than by name.
+*/
+
 
 /*
 FNXC:WorkflowColumns 2026-07-19-2b:00 (U12 / R2 / R11):
-The workflow-aware counterpart to `normalizeColumn`, and the one client code should use when
+The workflow-aware column sanitiser — the one client code should use when
 sanitizing a column id off the wire.
 
-`normalizeColumn` answers "is this one of the SIX legacy ids", so it silently rewrites every
+The deleted `normalizeColumn` answered "is this one of the SIX legacy ids", so it silently rewrote every
 workflow-defined id to `triage`. That is correct only for the closed default-workflow set; applied
 to a real board it teleports cards. A custom `merging` column's cards rendered in Triage because
 the dashboard ran every task through the legacy coercion on ingest.

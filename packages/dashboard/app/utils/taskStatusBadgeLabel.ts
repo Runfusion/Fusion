@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
 
 /*
-FNXC:TaskStatusBadge 2026-08-19-00:00:
+FNXC:TaskStatusBadge 2026-07-22-00:00:
 FN-8475 restores truthful status visibility: Coding (Ideas) deliberately plans in Todo,
 so a real non-queued task status must not be hidden based only on its board column.
 Queued remains an intake-only presentation exclusion at TaskCard and ListView call sites.
@@ -49,6 +49,17 @@ export function getTaskStatusBadgeLabel(
   */
   if (status === "needs-replan") {
     return t("tasks.statusReplan", "Revising");
+  }
+  /*
+  FNXC:TaskStatusBadge 2026-07-26-14:05:
+  "planning" is an engine token, not operator copy, and it was only ever hidden because U12's
+  workflow-step override happened to cover the same cards. Now that the Plan Review gate has its own
+  badge, callers suppress the step-name override while that badge renders — which uncovered the raw
+  lowercase token underneath. Map it to the same "Planning" copy the transient-planner badge already
+  uses so the two paths cannot read differently.
+  */
+  if (status === "planning") {
+    return t("tasks.statusPlanning", "Planning");
   }
   return status;
 }

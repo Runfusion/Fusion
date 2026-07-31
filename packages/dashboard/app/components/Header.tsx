@@ -214,7 +214,7 @@ export function Header({
   const showNodeSelector = remoteNodes.length > 0;
   const { bookmarkedIds, toggleBookmark, isBookmarked } = useProjectBookmarks();
   /*
-  FNXC:ProjectSelector 2026-08-26-00:00:
+  FNXC:ProjectSelector 2026-07-26-00:00:
   Mobile project switching must separate favorites at the top while sharing the desktop localStorage bookmark store. Preserve the incoming order within each section so grouping never changes the project's canonical ordering.
   */
   const mobileProjectGroups = useMemo(() => {
@@ -224,7 +224,7 @@ export function Header({
   }, [bookmarkedIds, projects]);
 
   /*
-  FNXC:ProjectSelector 2026-08-26-00:00:
+  FNXC:ProjectSelector 2026-07-26-00:00:
   Mobile rows use the same localStorage bookmark toggle as desktop. Stop propagation so bookmarking never selects a project or closes the switcher.
   */
   const renderMobileProjectItem = (project: ProjectInfo) => {

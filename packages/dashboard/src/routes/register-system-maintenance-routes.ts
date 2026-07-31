@@ -1,5 +1,6 @@
 import type { Request } from "express";
-import { findVitestProcessIds, getAvailableMemoryBytes } from "@fusion/core";
+import { findVitestProcessIds, getAvailableMemoryBytes, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+import type { WorkflowIr } from "@fusion/core";
 import { ApiError, notFound, rethrowAsApiError } from "../api-error.js";
 import { fetchFromRemoteNode } from "./register-settings-sync-helpers.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -90,9 +91,41 @@ const collectSystemStatsResponse = async (req: Request) => {
     const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
     totalTasks = tasks.length;
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-00:35 (batch-core):
+    "Is this card ACTIVE?" for the maintenance health count — WIP or review, resolved from each task's
+    own workflow. Keyed on the literal pair, a board that renamed either lane reported ZERO active
+    tasks, and the health panel showed an idle system while work was running.
+
+    Resolved through a SHARED cache across the loop, so this costs one IR resolution per distinct
+    WORKFLOW rather than one per task. That matters here specifically because this iterates the whole
+    board; a per-task resolve would turn a cheap count into an N-round-trip scan.
+
+    Membership over both roles, with the legacy pair as the fallback when the IR cannot be read or
+    resolves empty (a v1-upgraded workflow carries `traits: []` on every synthesized column, so empty
+    means UNEXPRESSED, not absent).
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const activeColumnsCache = new Map<string, Set<string>>();
     for (const task of tasks) {
       byColumn[task.column] = (byColumn[task.column] ?? 0) + 1;
-      if (task.column === "in-progress" || task.column === "in-review") {
+      let active = activeColumnsCache.get(task.id);
+      if (!active) {
+        try {
+          const ir = await resolveWorkflowIrForTask(scopedStore, task.id, irCache);
+          const lanes = [
+            ...columnsWithFlag(ir, "countsTowardWip"),
+            ...columnsWithFlag(ir, "mergeOrchestration"),
+            ...columnsWithFlag(ir, "mergeBlocker"),
+            ...columnsWithFlag(ir, "humanReview"),
+          ];
+          active = new Set(lanes.length > 0 ? lanes : ["in-progress", "in-review"]);
+        } catch {
+          active = new Set(["in-progress", "in-review"]);
+        }
+        activeColumnsCache.set(task.id, active);
+      }
+      if (active.has(task.column)) {
         activeTasks += 1;
       }
     }

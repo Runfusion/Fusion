@@ -199,7 +199,15 @@ export function useAgents(projectId?: string, options?: UseAgentsOptions) {
       schedule();
     };
 
+    /*
+    FNXC:AgentsView 2026-07-26-15:02:
+    Missed-event recovery. The agent list and stats were refreshed only from live agent/approval
+    events, so state changes during an SSE gap (error reconnect, or the mobile hidden-tab suspend)
+    left the roster showing stale states and pending-approval counts indefinitely. `refresh` is the
+    same debounced authoritative refetch the event handlers use.
+    */
     const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: refresh,
       events: {
         "agent:created": refresh,
         "agent:updated": refresh,

@@ -139,9 +139,17 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     type: "number",
     /*
      * FNXC:WorkflowOptionalStepCycle 2026-06-29-17:55:
-     * This global budget remains the fallback for custom optional gates and explicitly capped built-in gates. Built-in Code Review now sets `maxRevisions: "unbounded"` so ordinary reviewer feedback keeps recovering instead of terminal-failing after three passes.
+     * This global budget remains the fallback for custom optional gates that define neither a workflow setting nor node `maxRevisions`. Most built-in Code Review groups set `maxRevisions: "unbounded"`; Compound Engineering authors a two-pass cap so persistent CE reviewer findings park instead of rebounding forever.
+     *
+     * FNXC:WorkflowOptionalStepCycle 2026-07-26-19:35:
+     * Raised 3 -> 10 (operator request). Three passes is below the observed convergence length for
+     * Browser Verification and custom gates — the gates this fallback actually governs, since
+     * Plan Review and most Code Review groups resolve to "unbounded" when unset. Compound
+     * Engineering instead resolves its authored two-pass Code Review cap. Exhausting a budget parks
+     * the card for a human, so a too-low cap converts "needs another pass" into operator toil.
+     * This is a fallback, not a ceiling: an explicit workflow value or node `maxRevisions` still wins.
      */
-    default: 3,
+    default: 10,
     description: "Maximum automatic fix passes after review/optional-step feedback; the step re-runs each pass until it passes or this budget is exhausted.",
   },
 
@@ -492,10 +500,10 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
     integer: true,
     /*
      * FNXC:WorkflowRevisionBudget 2026-06-30-19:45:
-     * Built-in Code Review remediation is unbounded when this workflow value is unset. Operators can store a non-negative integer per workflow to cap automatic code-fix passes, and `0` disables automatic Code Review remediation for that workflow.
+     * An unset workflow value defers to the authored Code Review node: Compound Engineering defaults to two remediation passes while other built-ins may remain unbounded. Operators can store a non-negative integer per workflow to override the authored cap, and `0` disables automatic Code Review remediation for that workflow.
      */
     description:
-      "Maximum automatic Code Review remediation attempts for this workflow. Leave unset for unbounded; set 0 to disable automatic revision.",
+      "Maximum automatic Code Review remediation attempts for this workflow. Leave unset to use the workflow's authored default; set 0 to disable automatic revision.",
   },
   {
     id: "planReviewReplanCap",
@@ -535,10 +543,17 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
  * into bounded `inject_guidance` recovery. Default 2 hours (7,200,000ms): long
  * enough that a healthy, actively-working step (the vast majority of which finish
  * well under 2h) is never nagged, short enough to actually recover a task that has
- * gone dark for "hours" (the FN-7732 symptom) — mirrors the existing 2-hour
- * convention `metaTaskStallAutoCloseMs` already uses for a comparable stall
- * judgment call elsewhere in this codebase.
+ * gone dark for "hours" (the FN-7732 symptom).
  */
+/*
+FNXC:WorkflowOptionalStepCycle 2026-07-26-19:38:
+Single source for the post-review fix fallback. The `maxPostReviewFixes` declaration default above and
+the engine's inline `settings.maxPostReviewFixes ?? N` call sites had drifted apart as two separate
+literal 3s, so raising the declaration alone would have left every unset-settings path on the old
+value. Import this rather than re-inlining a number.
+*/
+export const DEFAULT_MAX_POST_REVIEW_FIXES = 10;
+
 export const DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS = 2 * 60 * 60 * 1000;
 
 export const PLANNER_HEARTBEAT_PATROL_ENABLED_SETTING_ID = "plannerHeartbeatPatrolEnabled";

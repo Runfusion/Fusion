@@ -18,7 +18,6 @@
  */
 
 import {
-  isWorkflowColumnsEnabled,
   resolveWorkflowIrForTask,
   type DirectMergeCommitStrategy,
   type Settings,
@@ -101,11 +100,16 @@ function settingsPolicy(settings: Pick<Settings, "directMergeCommitStrategy" | "
 }
 
 /**
- * Resolve the effective merge policy for a task (R10). Flag ON: read the merge
- * trait's config from the task's resolved workflow column; fall back to
- * settings for any field the trait leaves unset (the built-in default
- * workflow's merge trait carries no config, so it resolves entirely from
- * settings — verbatim back-compat). Flag OFF: settings only.
+ * Resolve the effective merge policy for a task (R10). Read the merge trait's
+ * config from the task's resolved workflow column; fall back to settings for
+ * any field the trait leaves unset (the built-in default workflow's merge trait
+ * carries no config, so it resolves entirely from settings — verbatim
+ * back-compat).
+ *
+ * FNXC:WorkflowColumns 2026-07-27-09:44 (U2 / R9):
+ * The settings-only "flag OFF" arm is deleted. Its gate was
+ * `isWorkflowColumnsEnabled`, a literal `true`, so the arm was unreachable;
+ * the settings fallback below is the surviving path and always was.
  *
  * The lost-work guard trio is intentionally NOT represented here: no field this
  * resolver returns can disable the sibling-branch rejection, line-anchored
@@ -118,10 +122,6 @@ export async function resolveMergePolicy(
 ): Promise<ResolvedMergePolicy> {
   const resolvedSettings = settings ?? (await store.getSettings());
   const fallback = settingsPolicy(resolvedSettings);
-
-  if (!isWorkflowColumnsEnabled(resolvedSettings)) {
-    return fallback;
-  }
 
   let config: Record<string, unknown> | undefined;
   try {

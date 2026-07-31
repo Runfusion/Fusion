@@ -232,6 +232,16 @@ describe("task_document_read tool", () => {
     expect(getText(result)).toContain("Detailed execution checklist");
   });
 
+  it("caps a long document while retaining its identity and a narrowing hint", async () => {
+    const { store, getTaskDocument } = createMockStore();
+    getTaskDocument.mockResolvedValue(createMockDocument({ key: "plan", content: "x".repeat(20_000) }));
+
+    const result = await runTool(createTaskDocumentReadTool(store, TASK_ID), "call-long", { key: "plan" });
+    expect(getText(result).length).toBeLessThanOrEqual(12_000);
+    expect(getText(result)).toContain("Document: plan");
+    expect(getText(result)).toContain("read a narrower document");
+  });
+
   it("returns not found message when the requested key does not exist", async () => {
     const { store, getTaskDocument } = createMockStore();
     getTaskDocument.mockResolvedValue(null);

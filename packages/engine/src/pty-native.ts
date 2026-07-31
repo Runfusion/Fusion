@@ -11,6 +11,9 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import { join, dirname } from "node:path";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("terminal");
 
 // Detect if we're running as a Bun-compiled binary
 // @ts-expect-error - Bun global is only available in Bun runtime
@@ -137,7 +140,7 @@ export function ensureNodePtyNativePermissions(): void {
     } catch (err) {
       // Keep diagnostics for the native module path since missing/invalid perms
       // here are more likely to prevent PTY startup.
-      console.warn("[terminal] Failed to repair node-pty native permissions:", {
+      log.warn("Failed to repair node-pty native permissions:", {
         nativeDir,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -180,10 +183,10 @@ export async function loadPtyModule(): Promise<typeof import("node-pty")> {
           const nativeModule: { exports?: unknown } = { exports: {} };
           // process.dlopen is a Node internal API
           process.dlopen(nativeModule, nativePath);
-          console.log("[terminal] Pre-loaded native module via dlopen");
+          log.debug("Pre-loaded native module via dlopen");
         } catch (dlopenErr) {
           // dlopen failed - log but continue, normal import might still work
-          console.log("[terminal] dlopen pre-load failed (continuing):", dlopenErr);
+          log.debug("dlopen pre-load failed (continuing):", dlopenErr);
         }
       }
     }

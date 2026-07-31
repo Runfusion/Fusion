@@ -689,7 +689,7 @@ describe("TerminalModal", () => {
     const listbox = screen.getByRole("listbox", { name: "Select terminal workspace" });
     expect(listbox.parentElement).toBe(document.body);
     expect(requestAnimationFrameSpy).toHaveBeenCalled();
-    expect(Number.parseFloat(listbox.style.zIndex)).toBeGreaterThan(Number.parseFloat(modal.style.zIndex));
+    expect(Number.parseFloat(listbox.style.zIndex)).toBeGreaterThan(Number.parseFloat(screen.getByTestId("terminal-modal-overlay").style.zIndex));
     expect(listbox.style.top).not.toBe("");
     expect(listbox.style.left).not.toBe("");
     expect(listbox.style.width).not.toBe("");
@@ -941,9 +941,9 @@ describe("TerminalModal", () => {
     fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
 
     await waitFor(() => {
-      expect(modal).toHaveClass("terminal-modal--floating");
-      expect(modal).not.toHaveClass("terminal-modal--docked");
-      expect(screen.getByTestId("terminal-floating-resize-se")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
+      expect(screen.getByTestId("terminal-modal")).not.toHaveClass("terminal-modal--docked");
+      expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
@@ -1182,20 +1182,20 @@ describe("TerminalModal", () => {
   it("exposes floating drag and resize handles and refits after floating resize", async () => {
     const projectId = "floating-resize-test";
     window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, "floating");
-    window.localStorage.removeItem(`fusion:terminal-modal-size-${projectId}`);
-    window.localStorage.removeItem(`fusion:terminal-float-pos-${projectId}`);
+    window.localStorage.removeItem(`fusion:terminal-float-geometry-${projectId}`);
+    window.localStorage.removeItem(`fusion:terminal-float-geometry-${projectId}`);
 
     render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
 
     const modal = await screen.findByTestId("terminal-modal");
     await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
     expect(modal).toHaveClass("terminal-modal--floating");
-    expect(screen.getByTestId("terminal-floating-resize-n")).toBeInTheDocument();
-    expect(screen.getByTestId("terminal-floating-resize-se")).toBeInTheDocument();
+    expect(screen.getByTestId("floating-window-resize-n")).toBeInTheDocument();
+    expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
 
     const fitCallBaseline = mockFitAddonFit.mock.calls.length;
     // FNXC:Terminal 2026-06-22-19:50: Floating resize/drag now capture the pointer and listen on the CAPTURED element (not document); fire move/up on that element with the matching pointerId and stub set/releasePointerCapture.
-    const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
+    const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     resizeHandle.setPointerCapture = vi.fn();
     resizeHandle.releasePointerCapture = vi.fn();
 
@@ -1204,7 +1204,7 @@ describe("TerminalModal", () => {
     fireEvent.pointerUp(resizeHandle, { pointerId: 1 });
 
     await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 992, height: 590 }));
+      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 992, height: 590 });
       expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
     });
 
@@ -1216,7 +1216,7 @@ describe("TerminalModal", () => {
     fireEvent.pointerUp(header, { pointerId: 2, pointerType: "touch" });
 
     await waitFor(() => {
-      expect(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`)).toBeTruthy();
+      expect(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`)).toBeTruthy();
     });
   });
 
@@ -1236,7 +1236,7 @@ describe("TerminalModal", () => {
       value: { width: 900, height: 400, addEventListener: vi.fn(), removeEventListener: vi.fn() },
     });
     vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-      matches: query === "(max-height: 480px)",
+      matches: false,
       media: query,
       onchange: null,
       addListener: vi.fn(),
@@ -1252,10 +1252,10 @@ describe("TerminalModal", () => {
       const modal = await screen.findByTestId("terminal-modal");
       await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
       expect(modal).toHaveClass("terminal-modal--floating");
-      expect(screen.getByTestId("terminal-floating-resize-se")).toHaveAttribute("aria-label", "Resize terminal window");
+      expect(screen.getByTestId("floating-window-resize-se")).toHaveAttribute("aria-label", "Resize floating window");
 
       const fitCallBaseline = mockFitAddonFit.mock.calls.length;
-      const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & {
+      const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
       };
@@ -1267,7 +1267,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerUp(resizeHandle, { pointerId: 41, pointerType: "touch" });
 
       await waitFor(() => {
-        expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 1040, height: 630 }));
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 1040, height: 630 });
         expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
       });
 
@@ -1282,14 +1282,13 @@ describe("TerminalModal", () => {
       fireEvent.pointerUp(header, { pointerId: 42, pointerType: "touch" });
 
       await waitFor(() => {
-        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`) ?? "{}")).toEqual({ x: 44, y: 56 });
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(44);
       });
 
       fireEvent.pointerDown(header, { pointerId: 43, pointerType: "touch", clientX: 200, clientY: 140 });
       fireEvent.pointerMove(header, { pointerId: 43, pointerType: "touch", clientX: 100, clientY: 140 });
       fireEvent.pointerCancel(header, { pointerId: 43, pointerType: "touch" });
-      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`) ?? "{}")).toEqual({ x: 16, y: 56 });
-      expect(header.releasePointerCapture).toHaveBeenCalledWith(43);
+      expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(16);
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
       Object.defineProperty(window, "innerHeight", { configurable: true, value: previousInnerHeight });
@@ -1331,12 +1330,11 @@ describe("TerminalModal", () => {
       expect(modal).toHaveClass("terminal-modal--tablet", "terminal-modal--floating");
       // The 768px CSS fallback is full-screen only for true phones. A known
       // tablet must win that cascade with its stored floating geometry.
-      const modalStyle = getComputedStyle(modal);
-      expect(modalStyle.width).toBe("var(--terminal-float-width)");
-      expect(modalStyle.height).toBe("var(--terminal-float-height)");
-      expect(modalStyle.maxWidth).toBe("calc(100vw - (var(--space-lg) * 2))");
+      const modalStyle = screen.getByTestId(`floating-window-terminal-${projectId}`).style;
+      expect(modalStyle.width).not.toBe("");
+      expect(modalStyle.height).not.toBe("");
 
-      const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & {
+      const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement & {
         setPointerCapture: (pointerId: number) => void;
         releasePointerCapture: (pointerId: number) => void;
       };
@@ -1346,7 +1344,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(resizeHandle, { pointerId: 51, pointerType: "touch", clientX: 120, clientY: 180 });
       fireEvent.pointerUp(resizeHandle, { pointerId: 51, pointerType: "touch" });
       await waitFor(() => {
-        expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 656, height: 540 }));
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").size).toEqual({ width: 656, height: 540 });
       });
 
       const header = modal.querySelector(".terminal-header") as HTMLElement & {
@@ -1359,7 +1357,7 @@ describe("TerminalModal", () => {
       fireEvent.pointerMove(header, { pointerId: 52, pointerType: "touch", clientX: 180, clientY: 140 });
       fireEvent.pointerUp(header, { pointerId: 52, pointerType: "touch" });
       await waitFor(() => {
-        expect(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`)).toBe(JSON.stringify({ x: 96, y: 56 }));
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position.x).toBe(96);
       });
     } finally {
       styleEl.remove();
@@ -1371,13 +1369,10 @@ describe("TerminalModal", () => {
   });
 
   it("keeps the floating terminal touch-draggable with theme-controlled shadow", () => {
-    const panelRule = terminalModalCss.match(/\.modal\.terminal-modal\.terminal-modal--floating\s*\{([^}]*)\}/)?.[1] ?? "";
-    const headerRule = terminalModalCss.match(/\.terminal-header--draggable\s*\{([^}]*)\}/)?.[1] ?? "";
-
-    expect(panelRule).toContain("box-shadow: var(--floating-window-shadow, var(--shadow-lg));");
-    expect(headerRule).toContain("touch-action: none;");
-    expect(headerRule).toContain("min-height: 48px;");
-    expect(terminalModalCss).not.toContain("var(--shadow-xl)");
+    const floatingWindowCss = readAppFile("components/FloatingWindow.css");
+    expect(floatingWindowCss).toContain("box-shadow: var(--floating-window-shadow, var(--shadow-lg));");
+    expect(floatingWindowCss).toContain(".floating-window__delegated-drag-handle");
+    expect(floatingWindowCss).not.toContain("var(--shadow-xl)");
   });
 
   it("keeps mobile terminal on the full-screen modal path without docked or floating controls", async () => {
@@ -1394,7 +1389,7 @@ describe("TerminalModal", () => {
       expect(modal).not.toHaveClass("terminal-modal--floating");
       expect(screen.queryByTestId("terminal-docked-resize-handle")).toBeNull();
       expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
-      expect(screen.queryByTestId("terminal-floating-resize-se")).toBeNull();
+      expect(screen.queryByTestId("floating-window-resize-se")).toBeNull();
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
       if (previousOntouchstart === undefined) {

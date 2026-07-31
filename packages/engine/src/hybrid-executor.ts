@@ -393,18 +393,12 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
    * @param projectId - Project requesting the slot
    * @returns true if slot acquired, false if at limit
    */
-  async acquireGlobalSlot(projectId: string): Promise<boolean> {
-    return this.projectManager.acquireGlobalSlot(projectId);
-  }
 
   /**
    * Release a global concurrency slot.
    *
    * @param projectId - Project releasing the slot
    */
-  async releaseGlobalSlot(projectId: string): Promise<void> {
-    return this.projectManager.releaseGlobalSlot(projectId);
-  }
 
   /**
    * Graceful shutdown of all runtimes.

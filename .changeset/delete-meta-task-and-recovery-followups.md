@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": minor
+---
+
+summary: Stop auto-archiving tasks and auto-filing recovery cards; failures now stay on the task that failed.
+category: internal
+dev: Deletes the meta-task auto-archive sweeps (`autoArchiveResolvedMetaTasks`/`autoArchiveStalledMetaTasks` and helpers `classifyMetaTask`/`resolveMetaTargetTaskId`/`computeMetaChainDepth`/`archiveMetaTask`/`evaluateMetaAutoArchiveGuards`) plus settings `metaTaskStallAutoCloseMs` and `metaTaskActiveExecutionGraceMs`; the regex classifier matched ordinary feature work and its positional fallback bound cards to unrelated tasks, so live work could be archived. Also deletes `verification-followup-dedup.ts` (`createAutomatedFollowup`/`decideAutomatedFollowup`), the dead `findActiveRecoveryFollowUp`, and the verification-failure and merge-conflict follow-up call sites — those parents already park `failed` with a descriptive `error` or log an auto-merge-gave-up entry. The autostash-orphan path is preserved as a `logEntry` + `addTaskComment` on the parent carrying sha, stash label, `detectedByTaskId`, and `sourcePhase`, with new run-audit event `task:autostash-orphan-live-detected`. Eval and PR-comment follow-ups are unchanged in behavior with dedup inlined on `suggestionId`/`prNumber`. Run-audit types `task:auto-archived-meta-resolved`, `task:auto-archived-meta-stalled`, `task:auto-archive-meta-resolved-skipped`, `task:auto-archive-meta-stalled-skipped`, `verification:followup-created`, and `verification:followup-deduped` are removed.

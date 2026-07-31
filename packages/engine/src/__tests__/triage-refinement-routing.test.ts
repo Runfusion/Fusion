@@ -78,7 +78,6 @@ describe("refinement routing from triage", () => {
     const store: any = withStoreEvents({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
-        maxTriageConcurrent: 2,
         pollIntervalMs: 10_000,
         groupOverlappingFiles: false,
         autoMerge: true,
@@ -224,7 +223,6 @@ describe("refinement routing from triage", () => {
     const store: any = withStoreEvents({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
-        maxTriageConcurrent: 2,
         pollIntervalMs: 10_000,
         groupOverlappingFiles: false,
         autoMerge: true,
@@ -275,7 +273,6 @@ describe("refinement routing from triage", () => {
     const store: any = withStoreEvents({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 10,
-        maxTriageConcurrent: 10,
         pollIntervalMs: 10_000,
         groupOverlappingFiles: false,
         autoMerge: true,

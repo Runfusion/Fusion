@@ -48,6 +48,16 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>] [--
 - `agent.taskId` is an active-execution linkage, not durable ownership. It may legitimately point at a `todo`/`triage` task only while the agent has live run or executor-active proof; task-move sync and self-healing clear stale parked, terminal, or unresolved links otherwise. `fn_list_agents` and `fn_agent_show` therefore include column context in the human-readable `Current Task` line, such as `(triage)`, `(in-progress)`, `(not active — done)`, or `(unresolved)`, so coordinators can distinguish transient planning ownership from drift.
 - `fn_agent_show` prints `Last Error`, `Pause Reason`, and compact `Error Recovery` counter details when present. `fn_list_agents` prints the same diagnostics only for agents currently in `error` or `paused`, keeping healthy rows compact while making durable-agent recovery state inspectable without direct DB/log access.
 
+### Tool output budget
+
+Every engine-injected tool result has a **16,000-character** budget across the concatenated `text` values of all of its text content blocks. This is a per-result total, not a per-block limit; non-text blocks, `details`, and error status remain intact.
+
+When a result overflows, Fusion reserves the canonical marker (`[Tool output truncated to fit the context budget; narrow your query or use limit/offset for more.]`) inside that budget. Text is allocated deterministically in document order: complete earlier text blocks are retained while room remains, the first block that no longer fits receives the retained prefix and marker, and later text blocks become empty strings. Results already ending in that exact marker are not marked again, making the clamp idempotent; pre-existing markers from other tool-specific clamps remain ordinary counted text.
+
+Operators configure this shared budget with the global or project `agentToolOutputMaxChars` setting. An unset, `null`, or invalid value uses the 16,000-character default; a positive integer sets a custom cap; and the explicit `0` sentinel means **no limit**, so Fusion skips this shared clamp entirely. No limit can let one tool result consume the agent context window; it does not disable existing tool-local clamps such as task-list text, web-fetch bytes, or workflow-script output.
+
+`TOOL_OUTPUT_BUDGET_OVERRIDES` may set a named tool to a different **finite positive integer** budget, either larger or smaller, and still wins over a custom shared cap. The unlimited option exists only at the operator-setting level: overrides cannot use a sentinel, `Infinity`, zero, or negative budget. A missing override uses the resolved shared budget, and invalid overrides throw in development/test or fall back to that budget in production. Pi applies the clamp as its outermost tool wrapper, while non-pi plugin runtimes apply it once in their custom-tool wrapper.
+
 ### Artifact registry tools
 
 Artifact tools operate on the shared artifact registry, so artifacts are visible across agents and tasks when the caller has the artifact ID or can discover it through filters.

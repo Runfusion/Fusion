@@ -8,7 +8,7 @@
  */
 import {TaskStore} from "../store.js";
 import type {Settings} from "../types.js";
-import {parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
+import {parseWorkflowIr, downgradeIrToV1IfPure} from "../workflow-ir.js";
 import {OccupiedColumnsError, assertRehomeTargetValid, computeRemovedOccupiedColumns, computeIncompatibleFieldChanges, IncompatibleFieldChangeError, resolveEntryColumnId} from "../workflow-reconciliation.js";
 import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
 import type {WorkflowFieldDefinition} from "../workflow-ir-types.js";
@@ -20,7 +20,7 @@ import {fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import * as schema from "../postgres/schema/index.js";
 import {readProjectConfig, writeProjectConfig} from "../task-store/async-settings.js";
-import {eq, inArray} from "drizzle-orm";
+import {and, eq, inArray} from "drizzle-orm";
 import type {AsyncDataLayer} from "../postgres/data-layer.js";
 
 export async function createWorkflowStepImpl(store: TaskStore, input: import("../types.js").WorkflowStepInput): Promise<import("../types.js").WorkflowStep> {
@@ -32,17 +32,14 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
        * backend mode, read the counter via readProjectConfig, insert the row
        * via Drizzle, and bump the counter via writeProjectConfig.
        */
-      let nextWsId: number;
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        const configRow = await readProjectConfig(layer);
-        nextWsId = configRow.nextWorkflowStepId ?? 1;
-      } else {
-        const counterRow = store.db
-          .prepare("SELECT nextWorkflowStepId FROM config WHERE id = 1")
-          .get() as { nextWorkflowStepId?: number } | undefined;
-        nextWsId = counterRow?.nextWorkflowStepId || 1;
-      }
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-13:35:
+      Workflow step creation is PostgreSQL-only after dual-path collapse; reuse one AsyncDataLayer binding for counter read + insert.
+      */
+      const layer = store.asyncLayer!;
+      const configRow = await readProjectConfig(layer);
+      const nextWsId = configRow.nextWorkflowStepId ?? 1;
+
       const id = `WS-${String(nextWsId).padStart(3, "0")}`;
 
       const mode = input.mode || "prompt";
@@ -74,133 +71,8 @@ export async function createWorkflowStepImpl(store: TaskStore, input: import("..
         updatedAt: now,
       };
 
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        await layer.db.insert(schema.project.workflowSteps).values({
-          id: step.id,
-          templateId: step.templateId ?? null,
-          name: step.name,
-          description: step.description,
-          mode: step.mode,
-          phase: step.phase || "pre-merge",
-          gateMode: step.gateMode,
-          prompt: step.prompt,
-          toolMode: step.toolMode ?? null,
-          scriptName: step.scriptName ?? null,
-          enabled: step.enabled ? 1 : 0,
-          defaultOn: step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-          modelProvider: step.modelProvider ?? null,
-          modelId: step.modelId ?? null,
-          migratedFragmentId: step.migratedFragmentId ?? null,
-          createdAt: step.createdAt,
-          updatedAt: step.updatedAt,
-        });
-        await writeProjectConfig(layer, {}, { nextWorkflowStepId: nextWsId + 1 });
-        store.workflowStepsCache = null;
-        return step;
-      }
-
-      store.db.prepare(
-        `INSERT INTO workflow_steps (
-          id,
-          templateId,
-          name,
-          description,
-          mode,
-          phase,
-          gateMode,
-          prompt,
-          toolMode,
-          scriptName,
-          enabled,
-          defaultOn,
-          modelProvider,
-          modelId,
-          migrated_fragment_id,
-          createdAt,
-          updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        step.id,
-        step.templateId ?? null,
-        step.name,
-        step.description,
-        step.mode,
-        step.phase || "pre-merge",
-        step.gateMode,
-        step.prompt,
-        step.toolMode ?? null,
-        step.scriptName ?? null,
-        step.enabled ? 1 : 0,
-        step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-        step.modelProvider ?? null,
-        step.modelId ?? null,
-        step.migratedFragmentId ?? null,
-        step.createdAt,
-        step.updatedAt,
-      );
-
-      const config = await store.readConfig();
-      await store.writeConfig(config, { nextWorkflowStepId: nextWsId + 1 });
-      store.workflowStepsCache = null;
-
-      return step;
-    });
-  }
-
-export async function updateWorkflowStepImpl(store: TaskStore, id: string, updates: Partial<import("../types.js").WorkflowStepInput>): Promise<import("../types.js").WorkflowStep> {
-    // FNXC:PostgresCutover 2026-06-28-10:00:
-    // Backend-mode branch: read the step row via Drizzle, apply updates, write back.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db.select().from(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, id)).limit(1);
-      const pgRow = rows[0];
-      if (!pgRow) throw new Error(`Workflow step '${id}' not found`);
-
-      const step = store.toStoredWorkflowStep({
-        id: pgRow.id,
-        templateId: pgRow.templateId,
-        name: pgRow.name,
-        description: pgRow.description,
-        mode: pgRow.mode,
-        phase: pgRow.phase,
-        gateMode: pgRow.gateMode,
-        prompt: pgRow.prompt,
-        toolMode: pgRow.toolMode,
-        scriptName: pgRow.scriptName,
-        enabled: pgRow.enabled,
-        defaultOn: pgRow.defaultOn,
-        modelProvider: pgRow.modelProvider,
-        modelId: pgRow.modelId,
-        migrated_fragment_id: pgRow.migratedFragmentId,
-        createdAt: pgRow.createdAt,
-        updatedAt: pgRow.updatedAt,
-      });
-
-      if (updates.mode !== undefined) {
-        const newMode = updates.mode;
-        if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
-          throw new Error("Script mode requires a scriptName");
-        }
-        step.mode = newMode;
-        if (newMode === "script") { step.prompt = ""; step.gateMode = step.gateMode || "gate"; step.toolMode = undefined; step.modelProvider = undefined; step.modelId = undefined; }
-        if (newMode === "prompt") { step.scriptName = undefined; step.gateMode = step.gateMode || "advisory"; step.toolMode = step.toolMode || "readonly"; }
-      }
-      if (updates.name !== undefined) step.name = updates.name;
-      if (updates.description !== undefined) step.description = updates.description;
-      if (updates.phase !== undefined) step.phase = updates.phase;
-      if (updates.gateMode !== undefined) step.gateMode = updates.gateMode;
-      if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
-      if (updates.toolMode !== undefined && step.mode === "prompt") step.toolMode = updates.toolMode;
-      if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
-      if (updates.enabled !== undefined) step.enabled = updates.enabled;
-      if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
-      if (step.mode === "script" && !step.scriptName?.trim()) throw new Error("Script mode requires a scriptName");
-      if (step.mode === "prompt") { if ("modelProvider" in updates) step.modelProvider = updates.modelProvider; if ("modelId" in updates) step.modelId = updates.modelId; }
-      if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
-      step.updatedAt = new Date().toISOString();
-
-      await layer.db.update(schema.project.workflowSteps).set({
+      await layer.db.insert(schema.project.workflowSteps).values({
+        id: step.id,
         templateId: step.templateId ?? null,
         name: step.name,
         description: step.description,
@@ -215,64 +87,56 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
         modelProvider: step.modelProvider ?? null,
         modelId: step.modelId ?? null,
         migratedFragmentId: step.migratedFragmentId ?? null,
+        createdAt: step.createdAt,
         updatedAt: step.updatedAt,
-      }).where(eq(schema.project.workflowSteps.id, id));
-
+      });
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+      writeProjectConfig replaces the settings jsonb wholesale — pass the existing settings so bumping nextWorkflowStepId cannot wipe project config to {}.
+      */
+      await writeProjectConfig(layer, (configRow.settings ?? {}) as Record<string, unknown>, { nextWorkflowStepId: nextWsId + 1 });
       store.workflowStepsCache = null;
       return step;
-    }
+});
+  }
 
-    const row = store.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
-      | {
-          id: string;
-          templateId: string | null;
-          name: string;
-          description: string;
-          mode: string;
-          phase: string | null;
-          gateMode: string | null;
-          prompt: string;
-          toolMode: string | null;
-          scriptName: string | null;
-          enabled: number;
-          defaultOn: number | null;
-          modelProvider: string | null;
-          modelId: string | null;
-          createdAt: string;
-          updatedAt: string;
-        }
-      | undefined;
+export async function updateWorkflowStepImpl(store: TaskStore, id: string, updates: Partial<import("../types.js").WorkflowStepInput>): Promise<import("../types.js").WorkflowStep> {
+    // FNXC:PostgresCutover 2026-06-28-10:00:
+    // Backend-mode branch: read the step row via Drizzle, apply updates, write back.
+        const layer = store.asyncLayer!;
+    const rows = await layer.db.select().from(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, id)).limit(1);
+    const pgRow = rows[0];
+    if (!pgRow) throw new Error(`Workflow step '${id}' not found`);
 
-    if (!row) {
-      throw new Error(`Workflow step '${id}' not found`);
-    }
+    const step = store.toStoredWorkflowStep({
+      id: pgRow.id,
+      templateId: pgRow.templateId,
+      name: pgRow.name,
+      description: pgRow.description,
+      mode: pgRow.mode,
+      phase: pgRow.phase,
+      gateMode: pgRow.gateMode,
+      prompt: pgRow.prompt,
+      toolMode: pgRow.toolMode,
+      scriptName: pgRow.scriptName,
+      enabled: pgRow.enabled,
+      defaultOn: pgRow.defaultOn,
+      modelProvider: pgRow.modelProvider,
+      modelId: pgRow.modelId,
+      migrated_fragment_id: pgRow.migratedFragmentId,
+      createdAt: pgRow.createdAt,
+      updatedAt: pgRow.updatedAt,
+    });
 
-    const step = store.toStoredWorkflowStep(row);
-
-    // Handle mode change
     if (updates.mode !== undefined) {
       const newMode = updates.mode;
-      // Validate: script mode requires scriptName
       if (newMode === "script" && !updates.scriptName?.trim() && !step.scriptName?.trim()) {
         throw new Error("Script mode requires a scriptName");
       }
       step.mode = newMode;
-      // When switching to script mode, clear prompt and model overrides
-      if (newMode === "script") {
-        step.prompt = "";
-        step.gateMode = step.gateMode || "gate";
-        step.toolMode = undefined;
-        step.modelProvider = undefined;
-        step.modelId = undefined;
-      }
-      // When switching to prompt mode, clear scriptName
-      if (newMode === "prompt") {
-        step.scriptName = undefined;
-        step.gateMode = step.gateMode || "advisory";
-        step.toolMode = step.toolMode || "readonly";
-      }
+      if (newMode === "script") { step.prompt = ""; step.gateMode = step.gateMode || "gate"; step.toolMode = undefined; step.modelProvider = undefined; step.modelId = undefined; }
+      if (newMode === "prompt") { step.scriptName = undefined; step.gateMode = step.gateMode || "advisory"; step.toolMode = step.toolMode || "readonly"; }
     }
-
     if (updates.name !== undefined) step.name = updates.name;
     if (updates.description !== undefined) step.description = updates.description;
     if (updates.phase !== undefined) step.phase = updates.phase;
@@ -282,67 +146,58 @@ export async function updateWorkflowStepImpl(store: TaskStore, id: string, updat
     if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
     if (updates.enabled !== undefined) step.enabled = updates.enabled;
     if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
-    if (step.mode === "script" && !step.scriptName?.trim()) {
-      throw new Error("Script mode requires a scriptName");
-    }
-    if (step.mode === "prompt") {
-      if ("modelProvider" in updates) step.modelProvider = updates.modelProvider;
-      if ("modelId" in updates) step.modelId = updates.modelId;
-    }
+    if (step.mode === "script" && !step.scriptName?.trim()) throw new Error("Script mode requires a scriptName");
+    if (step.mode === "prompt") { if ("modelProvider" in updates) step.modelProvider = updates.modelProvider; if ("modelId" in updates) step.modelId = updates.modelId; }
     if ("migratedFragmentId" in updates) step.migratedFragmentId = updates.migratedFragmentId;
     step.updatedAt = new Date().toISOString();
 
-    store.db.prepare(
-      `UPDATE workflow_steps
-       SET templateId = ?,
-           name = ?,
-           description = ?,
-           mode = ?,
-           phase = ?,
-           gateMode = ?,
-           prompt = ?,
-           toolMode = ?,
-           scriptName = ?,
-           enabled = ?,
-           defaultOn = ?,
-           modelProvider = ?,
-           modelId = ?,
-           migrated_fragment_id = ?,
-           updatedAt = ?
-       WHERE id = ?`,
-    ).run(
-      step.templateId ?? null,
-      step.name,
-      step.description,
-      step.mode,
-      step.phase || "pre-merge",
-      step.gateMode,
-      step.prompt,
-      step.toolMode ?? null,
-      step.scriptName ?? null,
-      step.enabled ? 1 : 0,
-      step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
-      step.modelProvider ?? null,
-      step.modelId ?? null,
-      step.migratedFragmentId ?? null,
-      step.updatedAt,
-      step.id,
-    );
-    store.db.bumpLastModified();
-    store.workflowStepsCache = null;
+    await layer.db.update(schema.project.workflowSteps).set({
+      templateId: step.templateId ?? null,
+      name: step.name,
+      description: step.description,
+      mode: step.mode,
+      phase: step.phase || "pre-merge",
+      gateMode: step.gateMode,
+      prompt: step.prompt,
+      toolMode: step.toolMode ?? null,
+      scriptName: step.scriptName ?? null,
+      enabled: step.enabled ? 1 : 0,
+      defaultOn: step.defaultOn === undefined ? null : step.defaultOn ? 1 : 0,
+      modelProvider: step.modelProvider ?? null,
+      modelId: step.modelId ?? null,
+      migratedFragmentId: step.migratedFragmentId ?? null,
+      updatedAt: step.updatedAt,
+    }).where(eq(schema.project.workflowSteps.id, id));
 
+    store.workflowStepsCache = null;
     return step;
-  }
+}
 
 export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string, updates: WorkflowDefinitionUpdate,): Promise<WorkflowDefinition> {
     if (isBuiltinWorkflowId(id)) throw new Error("Built-in workflows cannot be edited");
-    const layer: AsyncDataLayer | null = store.backendMode ? store.asyncLayer : null;
-    // U5 (R20): flag-ON edits that remove an occupied column block with a typed
-    // OccupiedColumnsError unless `rehomeTo` is supplied. Computed before taking
-    // the config lock (pure DB reads) so the lock body stays focused.
-    const flagOn = await store.workflowColumnsFlagOn();
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
+    const layer: AsyncDataLayer = store.asyncLayer!;
+    /*
+    U5 (R20): an edit that removes an OCCUPIED column blocks with a typed
+    OccupiedColumnsError unless `rehomeTo` is supplied. Computed before taking the
+    config lock (pure DB reads) so the lock body stays focused.
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The `flagOn` conjunct is DELETED. It read the RAW
+    `experimentalFeatures.workflowColumns` key, which no production writer sets, so
+    this guard has NEVER fired for a real project: removing a column with cards in it
+    silently succeeded and left those cards in a column their workflow no longer
+    declares. The typed rejection and the `rehomeTo` re-home are the whole point of
+    the guard; gating them on a retired flag made the API contract a fiction.
+
+    Operator-visible consequence, deliberate: saving a workflow edit that drops an
+    occupied column now FAILS with OccupiedColumnsError instead of succeeding. The
+    dashboard editor's re-home flow (which passes `rehomeTo`) becomes reachable for
+    the first time. Cards are moved by the editor's explicit choice rather than
+    stranded silently.
+    */
     let pendingRehome: { rehomeTo: string; occupantTaskIds: string[] } | undefined;
-    if (flagOn && updates.ir !== undefined) {
+    if (updates.ir !== undefined) {
       const existingForCheck = await store.getWorkflowDefinition(id);
       if (!existingForCheck) throw new Error(`Workflow '${id}' not found`);
       const nextIrForCheck = parseWorkflowIr(updates.ir);
@@ -361,23 +216,16 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         // the IR save commits, so the cards land in a column the new IR defines.
         const removedSet = new Set(removed.map((r) => r.columnId));
         const allOccupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
-        let occupantTaskIds: string[];
-        if (layer) {
-          // FNXC:PostgresCutover 2026-06-28: async read for column check
-          const taskRows = await layer.db.select({id: schema.project.tasks.id, column: schema.project.tasks.column}).from(schema.project.tasks).where(inArray(schema.project.tasks.id, allOccupantTaskIds));
-          const colMap = new Map(taskRows.map(r => [r.id, r.column]));
-          occupantTaskIds = allOccupantTaskIds.filter(tid => {
-            const col = colMap.get(tid);
-            return col ? removedSet.has(col) : false;
-          });
-        } else {
-          occupantTaskIds = allOccupantTaskIds.filter((taskId) => {
-            const row = store.db.prepare(`SELECT "column" AS column FROM tasks WHERE id = ?`).get(taskId) as
-              | { column: string }
-              | undefined;
-            return row ? removedSet.has(row.column) : false;
-          });
-        }
+        // FNXC:PostgresCutover 2026-06-28: async read for column check
+        // FNXC:SqliteDualPathCleanup 2026-07-26-15:00: prefer-const after dual-path collapse; project-scope occupant column lookup.
+        const occupantConds = [inArray(schema.project.tasks.id, allOccupantTaskIds)];
+        if (layer.projectId) occupantConds.push(eq(schema.project.tasks.projectId, layer.projectId));
+        const taskRows = await layer.db.select({id: schema.project.tasks.id, column: schema.project.tasks.column}).from(schema.project.tasks).where(and(...occupantConds));
+        const colMap = new Map(taskRows.map(r => [r.id, r.column]));
+        const occupantTaskIds = allOccupantTaskIds.filter(tid => {
+          const col = colMap.get(tid);
+          return col ? removedSet.has(col) : false;
+        });
         pendingRehome = { rehomeTo: updates.rehomeTo, occupantTaskIds };
       }
     }
@@ -405,17 +253,12 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         const occupantsByField = new Map<string, number>();
         for (const taskId of occupantTaskIds) {
           let values: Record<string, unknown> = {};
-          if (layer) {
-            const taskRows = await layer.db.select({customFields: schema.project.tasks.customFields}).from(schema.project.tasks).where(eq(schema.project.tasks.id, taskId)).limit(1);
-            const cf = taskRows[0]?.customFields;
-            if (cf && typeof cf === "object") values = cf as Record<string, unknown>;
-            else if (typeof cf === "string") values = fromJson(cf) ?? {};
-          } else {
-            const row = store.db.prepare("SELECT customFields FROM tasks WHERE id = ?").get(taskId) as
-              | { customFields: string | null }
-              | undefined;
-            if (row?.customFields) values = fromJson<Record<string, unknown>>(row.customFields) ?? {};
-          }
+          
+          const taskRows = await layer.db.select({customFields: schema.project.tasks.customFields}).from(schema.project.tasks).where(eq(schema.project.tasks.id, taskId)).limit(1);
+          const cf = taskRows[0]?.customFields;
+          if (cf && typeof cf === "object") values = cf as Record<string, unknown>;
+          else if (typeof cf === "string") values = fromJson(cf) ?? {};
+        
           // Incompatible-change detection only blocks on occupants that already
           // HOLD a value for a field, so count only those. Reconciliation itself
           // must still touch every occupant so new required+default fields get
@@ -461,33 +304,24 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         updatedAt: new Date().toISOString(),
       };
 
-      if (layer) {
-        // FNXC:PostgresCutover 2026-06-28: async UPDATE for workflows row
-        await layer.db.update(schema.project.workflows).set({
-          name: next.name,
-          description: next.description,
-          icon: next.icon ?? null,
-          ir: flagOn ? next.ir : downgradeIrToV1IfPure(next.ir),
-          layout: next.layout,
-          updatedAt: next.updatedAt,
-        }).where(eq(schema.project.workflows.id, id));
-      } else {
-        store.db
-          .prepare(
-            `UPDATE workflows SET name = ?, description = ?, icon = ?, ir = ?, layout = ?, updatedAt = ? WHERE id = ?`,
-          )
-          .run(
-            next.name,
-            next.description,
-            next.icon ?? null,
-            // Rollback compat (#1405): persist v1 shape when pure and flag OFF.
-            serializeWorkflowIr(flagOn ? next.ir : downgradeIrToV1IfPure(next.ir)),
-            JSON.stringify(next.layout),
-            next.updatedAt,
-            id,
-          );
-        store.db.bumpLastModified();
-      }
+      
+      // FNXC:PostgresCutover 2026-06-28: async UPDATE for workflows row
+      await layer.db.update(schema.project.workflows).set({
+        name: next.name,
+        description: next.description,
+        icon: next.icon ?? null,
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+        v1-IR rollback-compat persistence (#1405), now unconditional — which is what it
+        already was. The flag read it used to branch on is retired and always false, so
+        every real project has always taken the downgrade arm. See the fuller note on
+        the create path in `project-store-ops.ts`; the downgrade is kept on purpose.
+        */
+        ir: downgradeIrToV1IfPure(next.ir),
+        layout: next.layout,
+        updatedAt: next.updatedAt,
+      }).where(eq(schema.project.workflows.id, id));
+    
       store.workflowDefinitionsCache = null;
       return next;
     });
@@ -524,27 +358,35 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
 
 export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string): Promise<void> {
     if (isBuiltinWorkflowId(id)) throw new Error("Built-in workflows cannot be deleted");
-    const layer: AsyncDataLayer | null = store.backendMode ? store.asyncLayer : null;
-    // U5 (R20): flag-ON, capture the occupant task ids BEFORE the cascade clears
-    // their selection rows, so we can re-home them to the DEFAULT workflow's
-    // entry column once their selection resolves back to the default (KTD-1).
-    const flagOn = await store.workflowColumnsFlagOn();
-    const occupantTaskIds = flagOn ? await store.listWorkflowOccupantTaskIds(id, false) : [];
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
+    const layer: AsyncDataLayer = store.asyncLayer!;
+    /*
+    U5 (R20): capture the occupant task ids BEFORE the cascade clears their selection
+    rows, so we can re-home them to the DEFAULT workflow's entry column once their
+    selection resolves back to the default (KTD-1).
 
-    if (layer) {
-      // FNXC:PostgresCutover 2026-06-28: async deletes for backend mode
-      const deleted = await layer.db.delete(schema.project.workflows).where(eq(schema.project.workflows.id, id)).returning();
-      if (deleted.length === 0) throw new Error(`Workflow '${id}' not found`);
-      store.workflowDefinitionsCache = null;
-      await layer.db.delete(schema.project.workflowSettings).where(eq(schema.project.workflowSettings.workflowId, id));
-      await layer.db.delete(schema.project.workflowPromptOverrides).where(eq(schema.project.workflowPromptOverrides.workflowId, id));
-    } else {
-      const deleted = store.db.prepare("DELETE FROM workflows WHERE id = ?").run(id) as { changes?: number };
-      if ((deleted.changes || 0) === 0) throw new Error(`Workflow '${id}' not found`);
-      store.workflowDefinitionsCache = null;
-      store.db.prepare("DELETE FROM workflow_settings WHERE workflowId = ?").run(id);
-      store.db.prepare("DELETE FROM workflow_prompt_overrides WHERE workflowId = ?").run(id);
-    }
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The `flagOn ? … : []` gate is DELETED. Reading the retired raw flag meant the
+    capture returned an empty list for every real project, so the re-home below was
+    dead: deleting a workflow left its cards sitting in that workflow's columns with
+    their selection cleared, resolving to the default workflow which does not declare
+    those columns. The startup sweep `reconcileUndeclaredTaskColumns` would eventually
+    re-home them, but only on the next engine start — until then the cards sat in
+    lanes the board could not draw.
+
+    Operator-visible consequence, deliberate: deleting a workflow now moves its cards
+    to the default workflow's entry column immediately, instead of at next startup.
+    */
+    const occupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
+
+    
+    // FNXC:PostgresCutover 2026-06-28: async deletes for backend mode
+    const deleted = await layer.db.delete(schema.project.workflows).where(eq(schema.project.workflows.id, id)).returning();
+    if (deleted.length === 0) throw new Error(`Workflow '${id}' not found`);
+    store.workflowDefinitionsCache = null;
+    await layer.db.delete(schema.project.workflowSettings).where(eq(schema.project.workflowSettings.workflowId, id));
+    await layer.db.delete(schema.project.workflowPromptOverrides).where(eq(schema.project.workflowPromptOverrides.workflowId, id));
+  
 
     // Cascade: clear the project default when it pointed at this workflow.
     try {
@@ -557,31 +399,23 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
 
     // Cascade: drop selections referencing this workflow, their materialized
     // step rows, and reset the affected tasks' enabled steps.
-    let selections: Array<{ taskId: string; stepIds: string }>;
-    if (layer) {
-      const selRows = await layer.db.select().from(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.workflowId, id));
-      selections = selRows.map(r => ({ taskId: r.taskId, stepIds: typeof r.stepIds === "string" ? r.stepIds : JSON.stringify(r.stepIds ?? []) }));
-    } else {
-      selections = store.db
-        .prepare("SELECT taskId, stepIds FROM task_workflow_selection WHERE workflowId = ?")
-        .all(id) as Array<{ taskId: string; stepIds: string }>;
-    }
+    const selRows = await layer.db.select().from(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.workflowId, id));
+    const selections = selRows.map(r => ({ taskId: r.taskId, stepIds: typeof r.stepIds === "string" ? r.stepIds : JSON.stringify(r.stepIds ?? []) }));
+
     for (const row of selections) {
       try {
         const stepIds = JSON.parse(row.stepIds) as unknown;
         if (Array.isArray(stepIds)) {
           for (const stepId of stepIds) {
             if (typeof stepId === "string") {
-              if (layer) { await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); }
-              else { store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId); }
+               await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); 
             }
           }
         }
       } catch {
         // Corrupt stepIds list — still remove the selection row below.
       }
-      if (layer) { await layer.db.delete(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.taskId, row.taskId)); }
-      else { store.db.prepare("DELETE FROM task_workflow_selection WHERE taskId = ?").run(row.taskId); }
+       await layer.db.delete(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.taskId, row.taskId)); 
       try {
         await store.updateTask(row.taskId, { enabledWorkflowSteps: [] });
       } catch {
@@ -590,13 +424,12 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
       }
     }
     if (selections.length > 0) store.workflowStepsCache = null;
-    if (!layer) store.db.bumpLastModified();
-
+    
     // U5 (R20) delete reconciliation: re-home each occupant to the default
     // workflow's entry column. Their selection rows are already cleared above,
     // so they now resolve to the built-in default workflow (KTD-1); the re-home
     // move preserves task fields (preserveProgress) and emits one audit per card.
-    if (flagOn && occupantTaskIds.length > 0) {
+    if (occupantTaskIds.length > 0) {
       const defaultEntry = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR);
       if (defaultEntry) {
         for (const taskId of occupantTaskIds) {
@@ -623,7 +456,8 @@ export async function setDefaultWorkflowIdImpl(store: TaskStore, workflowId: str
   }
 
 export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, workflowId: string): Promise<string[]> {
-    const layer: AsyncDataLayer | null = store.backendMode ? store.asyncLayer : null;
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
+    const layer: AsyncDataLayer = store.asyncLayer!;
     // Hold the task lock across the whole sequence (materialize → owner write →
     // prior-step cleanup) so it can't interleave with a concurrent select/clear
     // or executor updateTask on the same task. updateTaskUnlocked is used inside
@@ -663,8 +497,7 @@ export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, w
         // Delete them before propagating; the prior selection is left untouched.
         for (const stepId of ids) {
           try {
-            if (layer) { await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); }
-            else { store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId); }
+             await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); 
           } catch {
             // Best-effort cleanup; surface the original error below.
           }
@@ -675,8 +508,7 @@ export async function selectTaskWorkflowImpl(store: TaskStore, taskId: string, w
 
       if (priorSelection) {
         for (const stepId of priorSelection.stepIds) {
-          if (layer) { await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); }
-          else { store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId); }
+           await layer.db.delete(schema.project.workflowSteps).where(eq(schema.project.workflowSteps.id, stepId)); 
         }
         store.workflowStepsCache = null;
       }

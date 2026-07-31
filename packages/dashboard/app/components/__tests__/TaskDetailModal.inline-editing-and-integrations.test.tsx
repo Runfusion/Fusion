@@ -221,7 +221,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
       await waitFor(() => {
@@ -255,7 +255,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
       await waitFor(() => {
@@ -298,7 +298,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "gitlab" } });
       fireEvent.change(screen.getByTestId("task-source-repository-input"), { target: { value: "runfusion/dashboard" } });
@@ -348,7 +348,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "" } });
       fireEvent.change(screen.getByTestId("task-source-repository-input"), { target: { value: "" } });
@@ -390,7 +390,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-source-provider-input"), { target: { value: "gitlab" } });
       fireEvent.click(screen.getByText("Save"));
@@ -398,7 +398,7 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Failed to update FN-001: source patch failed", "error");
       });
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
     });
   });
 
@@ -444,8 +444,8 @@ describe("TaskDetailModal", () => {
       expect(originalPromptNode.textContent).not.toContain("# Heading");
       expect(originalPromptNode.textContent).not.toContain("`code`");
 
-      const originalSection = container.querySelector(".detail-section--original-prompt");
-      const planSection = container.querySelector(".detail-section--plan-prompt");
+      const originalSection = document.querySelector(".detail-section--original-prompt");
+      const planSection = document.querySelector(".detail-section--plan-prompt");
       expect(originalSection?.contains(screen.getByText("Original prompt"))).toBe(true);
       expect(planSection?.contains(screen.getByRole("button", { name: "Edit" }))).toBe(true);
       expect(originalSection?.contains(screen.getByRole("button", { name: "Edit" }))).toBe(false);
@@ -473,7 +473,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("No original prompt recorded.")).toBeTruthy();
       expect(screen.queryByTestId("task-detail-original-prompt")).toBeNull();
       expect(screen.queryByRole("button", { name: "Expand original prompt" })).toBeNull();
-      expect(container.querySelector(".detail-section--original-prompt .detail-original-prompt-text")).toBeNull();
+      expect(document.querySelector(".detail-section--original-prompt .detail-original-prompt-text")).toBeNull();
       expect(screen.getByText("Generated plan still visible")).toBeTruthy();
     });
 
@@ -496,7 +496,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(container.querySelector(".task-detail-content--embedded")).toBeTruthy();
+      expect(document.querySelector(".task-detail-content--embedded")).toBeTruthy();
       expect(screen.queryByTestId("task-detail-original-prompt")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Expand original prompt" }));
       expect(screen.getByTestId("task-detail-original-prompt").textContent).toBe(originalPrompt);
@@ -549,7 +549,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = container.querySelector(".modal-edit-btn");
+      const editButton = document.querySelector(".modal-edit-btn");
       expect(editButton).toBeTruthy();
     });
 
@@ -567,7 +567,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = container.querySelector(".modal-edit-btn");
+      const editButton = document.querySelector(".modal-edit-btn");
       expect(editButton).toBeTruthy();
     });
 
@@ -585,7 +585,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const editButton = container.querySelector(".modal-edit-btn");
+      const editButton = document.querySelector(".modal-edit-btn");
       expect(editButton).toBeNull();
     });
 
@@ -604,14 +604,14 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      const editButton = container.querySelector(".modal-edit-btn");
+      const editButton = document.querySelector(".modal-edit-btn");
       expect(editButton).toBeTruthy();
       fireEvent.click(editButton!);
 
       // Edit button should be hidden now
-      expect(container.querySelector(".modal-edit-btn")).toBeNull();
+      expect(document.querySelector(".modal-edit-btn")).toBeNull();
       // But TaskForm title input should be visible
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
     });
 
     it("entering edit mode shows title input and description textarea", () => {
@@ -629,16 +629,16 @@ describe("TaskDetailModal", () => {
       );
 
       // Initially shows title as h2
-      expect(container.querySelector("h2.detail-title")).toBeTruthy();
-      expect(container.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("h2.detail-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toBeNull();
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Now shows edit form with TaskForm fields
-      expect(container.querySelector("h2.detail-title")).toBeNull();
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
-      expect(container.querySelector("#task-form-description")).toBeTruthy();
+      expect(document.querySelector("h2.detail-title")).toBeNull();
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
 
     it("clicking Cancel exits edit mode without saving", () => {
@@ -656,18 +656,18 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       fireEvent.change(titleInput, { target: { value: "Modified title" } });
 
       // Click Cancel
       fireEvent.click(screen.getByText("Cancel"));
 
       // Should exit edit mode without saving
-      expect(container.querySelector("#task-form-title")).toBeNull();
-      expect(container.querySelector("h2.detail-title")?.textContent).toBe("Original title");
+      expect(document.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Original title");
     });
 
     it("clicking Save calls updateTask with correct parameters", async () => {
@@ -689,11 +689,11 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Change values
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
-      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
+      const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(titleInput, { target: { value: "New title" } });
       fireEvent.change(descTextarea, { target: { value: "New description" } });
 
@@ -723,7 +723,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       const saveButton = screen.getByText("Save");
       expect(saveButton.hasAttribute("disabled")).toBe(false);
@@ -749,9 +749,9 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       fireEvent.change(titleInput, { target: { value: "Changed title" } });
 
       // Click Save
@@ -782,9 +782,9 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       fireEvent.change(titleInput, { target: { value: "Changed title" } });
 
       // Click Save
@@ -795,7 +795,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should exit edit mode
-      expect(container.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-title")).toBeNull();
     });
 
     it("failed save shows toast with error and stays in edit mode", async () => {
@@ -819,9 +819,9 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
       fireEvent.change(titleInput, { target: { value: "Changed title" } });
 
       // Click Save
@@ -832,7 +832,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should stay in edit mode
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
     });
 
     it("Escape key exits edit mode", async () => {
@@ -850,8 +850,8 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
 
       // Press Escape (handled via document-level keydown listener)
       await act(async () => {
@@ -860,7 +860,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should exit edit mode
-      expect(container.querySelector("#task-form-title")).toBeNull();
+      expect(document.querySelector("#task-form-title")).toBeNull();
     });
 
     it("edit mode shows both title and description fields", () => {
@@ -878,11 +878,11 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Both title and description should be present in TaskForm
-      expect(container.querySelector("#task-form-title")).toBeTruthy();
-      expect(container.querySelector("#task-form-description")).toBeTruthy();
+      expect(document.querySelector("#task-form-title")).toBeTruthy();
+      expect(document.querySelector("#task-form-description")).toBeTruthy();
     });
 
     it("edit mode renders model configuration and workflow steps", () => {
@@ -900,7 +900,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // Model configuration is present via TaskForm in edit mode.
       // U6/R3: the per-step "Workflow Steps" section was removed from TaskForm;
@@ -928,9 +928,9 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(descTextarea, { target: { value: "Updated desc" } });
 
       // Click Save
@@ -961,7 +961,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       fireEvent.click(screen.getByText("Save"));
 
@@ -969,9 +969,9 @@ describe("TaskDetailModal", () => {
         expect(mockUpdate).not.toHaveBeenCalled();
       });
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
-      fireEvent.change(container.querySelector("#task-priority") as HTMLSelectElement, { target: { value: "urgent" } });
+      fireEvent.change(document.querySelector("#task-priority") as HTMLSelectElement, { target: { value: "urgent" } });
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
@@ -1004,14 +1004,14 @@ describe("TaskDetailModal", () => {
       );
 
       // No change → no updateTask call.
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByText("Save"));
       await waitFor(() => {
         expect(mockUpdate).not.toHaveBeenCalled();
       });
 
       // Selecting a level sends that value.
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       const select = await screen.findByTestId("planner-oversight-level-select");
       fireEvent.change(select, { target: { value: "observe" } });
@@ -1044,7 +1044,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       const select = await screen.findByTestId("planner-oversight-level-select");
       expect(select).toHaveValue("observe");
@@ -1073,7 +1073,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1100,7 +1100,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1129,7 +1129,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "standard" } });
       fireEvent.click(screen.getByText("Save"));
 
@@ -1161,7 +1161,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
@@ -1627,10 +1627,10 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const titleInput = container.querySelector("#task-form-title") as HTMLInputElement;
-      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      const titleInput = document.querySelector("#task-form-title") as HTMLInputElement;
+      const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       expect(titleInput.value).toBe("My Task");
       expect(descTextarea.value).toBe("My Description");
     });
@@ -1653,10 +1653,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const workingBranchInput = container.querySelector("#task-working-branch") as HTMLInputElement;
-      const baseBranchInput = container.querySelector("#task-base-branch") as HTMLInputElement;
+      const workingBranchInput = document.querySelector("#task-working-branch") as HTMLInputElement;
+      const baseBranchInput = document.querySelector("#task-base-branch") as HTMLInputElement;
       expect(workingBranchInput.value).toBe("feature/fn-3422");
       expect(baseBranchInput.value).toBe("develop");
 
@@ -1686,8 +1686,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
-      fireEvent.change(container.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "release/2026-05" } });
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(document.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "release/2026-05" } });
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
@@ -1713,9 +1713,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
-      fireEvent.change(container.querySelector("#task-working-branch") as HTMLInputElement, { target: { value: "" } });
-      fireEvent.change(container.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "" } });
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
+      fireEvent.change(document.querySelector("#task-working-branch") as HTMLInputElement, { target: { value: "" } });
+      fireEvent.change(document.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "" } });
       fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() => {
@@ -1759,9 +1759,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
-      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      const descTextarea = document.querySelector("#task-form-description") as HTMLTextAreaElement;
       fireEvent.change(descTextarea, { target: { value: "New Description" } });
 
       await waitFor(() => {
@@ -1870,7 +1870,7 @@ describe("TaskDetailModal", () => {
         expect(addToast).not.toHaveBeenCalledWith(expect.any(String), "error");
       });
 
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Executor Model")).toHaveTextContent("Claude Sonnet 4.5");
@@ -1946,10 +1946,10 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // The edit form body should NOT contain the Save or Cancel action buttons
-      const editForm = container.querySelector(".modal-edit-form");
+      const editForm = document.querySelector(".modal-edit-form");
       expect(editForm).toBeTruthy();
       const formButtons = Array.from(editForm!.querySelectorAll("button"));
       const formButtonTexts = formButtons.map((b) => b.textContent);
@@ -1958,7 +1958,7 @@ describe("TaskDetailModal", () => {
       expect(formButtonTexts).not.toContain("Saving…");
 
       // The modal-actions footer should contain the Save and Cancel buttons
-      const modalActions = container.querySelector(".modal-actions");
+      const modalActions = document.querySelector(".modal-actions");
       expect(modalActions).toBeTruthy();
       const footerButtons = modalActions!.querySelectorAll("button");
       const buttonTexts = Array.from(footerButtons).map((b) => b.textContent);
@@ -1981,13 +1981,13 @@ describe("TaskDetailModal", () => {
       );
 
       // Enter edit mode
-      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(document.querySelector(".modal-edit-btn")!);
 
       // The hint should be in the modal-actions footer, not inside the edit form body
-      const editForm = container.querySelector(".modal-edit-form");
+      const editForm = document.querySelector(".modal-edit-form");
       expect(editForm!.querySelector(".modal-edit-hint")).toBeNull();
 
-      const modalActions = container.querySelector(".modal-actions");
+      const modalActions = document.querySelector(".modal-actions");
       expect(modalActions!.querySelector(".modal-edit-hint")).toBeTruthy();
     });
 
@@ -2006,7 +2006,7 @@ describe("TaskDetailModal", () => {
       );
 
       // Should NOT be in edit mode — no edit hint, no Save/Cancel in footer
-      const modalActions = container.querySelector(".modal-actions");
+      const modalActions = document.querySelector(".modal-actions");
       expect(modalActions!.querySelector(".modal-edit-hint")).toBeNull();
 
       const footerButtons = modalActions!.querySelectorAll("button");
@@ -2261,7 +2261,15 @@ describe("TaskDetailModal", () => {
       );
 
       // Modal renders immediately without crashing
-      expect(container.querySelector(".modal-overlay")).toBeTruthy();
+      /*
+      FNXC:FloatingWindow 2026-07-30-06:40:
+      `.modal-overlay` is no longer the modal shell — TaskDetailModal renders inside `FloatingWindow`,
+      whose overlay class is `floating-window-overlay`. The only `.modal-overlay` left in this
+      component is the unrelated REFINE overlay (TaskDetailModal.tsx:6612), so this assertion was
+      looking for a different element entirely. Asserting the modal's own shell class instead, which
+      is what "renders immediately" is actually about.
+      */
+      expect(document.querySelector(".task-detail-modal")).toBeTruthy();
       expect(screen.getByText("FN-200")).toBeDefined();
     });
 
@@ -2461,7 +2469,7 @@ describe("TaskDetailModal", () => {
 
       // After fetch resolves, spec content appears
       await waitFor(() => {
-        const markdownBody = container.querySelector(".markdown-body");
+        const markdownBody = document.querySelector(".markdown-body");
         expect(markdownBody).toBeTruthy();
       }, { timeout: 3000 });
 
@@ -2483,8 +2491,8 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((210).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((1860).toLocaleString())).toBeInTheDocument();
-      const firstUsed = container.querySelector('time[datetime="2026-04-24T09:00:00.000Z"]');
-      const lastUsed = container.querySelector('time[datetime="2026-04-24T10:15:00.000Z"]');
+      const firstUsed = document.querySelector('time[datetime="2026-04-24T09:00:00.000Z"]');
+      const lastUsed = document.querySelector('time[datetime="2026-04-24T10:15:00.000Z"]');
       expect(firstUsed).toBeTruthy();
       expect(lastUsed).toBeTruthy();
     });
@@ -2533,15 +2541,15 @@ describe("TaskDetailModal", () => {
 
       // Wait for fetchTaskDetail to resolve.
       await waitFor(() => {
-        expect(container.querySelector(".markdown-body")).toBeTruthy();
+        expect(document.querySelector(".markdown-body")).toBeTruthy();
       }, { timeout: 3000 });
 
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "Feed" }));
 
-      const activityList = container.querySelector(".detail-activity-list");
+      const activityList = document.querySelector(".detail-activity-list");
       expect(activityList).toBeTruthy();
-      const logEntries = container.querySelectorAll(".detail-log-entry");
+      const logEntries = document.querySelectorAll(".detail-log-entry");
       expect(logEntries).toHaveLength(2);
       expect(logEntries[0].textContent).toContain("Started executor");
       expect(logEntries[1].textContent).toContain("Created task");
@@ -2656,10 +2664,10 @@ describe("TaskDetailModal", () => {
 
       await userEvent.click(screen.getByText("Plugin B Tab"));
 
-      const slots = container.querySelectorAll('[data-slot-id="task-detail-tab"]');
+      const slots = document.querySelectorAll('[data-slot-id="task-detail-tab"]');
       expect(slots).toHaveLength(1);
       expect(slots[0]).toHaveAttribute("data-plugin-id", "plugin-b");
-      expect(container.querySelector('[data-plugin-id="plugin-a"]')).toBeNull();
+      expect(document.querySelector('[data-plugin-id="plugin-a"]')).toBeNull();
     });
 
     it("renders no extra tabs when no plugins register", () => {
@@ -3213,6 +3221,11 @@ describe("TaskDetailModal", () => {
         },
       } as Task);
 
+      let signalSparseUpdate!: () => void;
+      const sparseUpdateApplied = new Promise<void>((resolve) => {
+        signalSparseUpdate = resolve;
+      });
+
       function Harness(): JSX.Element {
         const [taskState, setTaskState] = useState(baseTask);
 
@@ -3232,6 +3245,7 @@ describe("TaskDetailModal", () => {
                   ...current,
                   githubTracking: undefined,
                 }));
+                signalSparseUpdate();
               }, 0);
             }}
             addToast={noop}
@@ -3250,6 +3264,8 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: false } }, undefined);
       });
+
+      await sparseUpdateApplied;
 
       await waitFor(() => {
         expect((screen.getByRole("checkbox", { name: "Enable GitHub tracking" }) as HTMLInputElement).checked).toBe(false);

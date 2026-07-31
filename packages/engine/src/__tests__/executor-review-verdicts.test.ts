@@ -867,8 +867,24 @@ describe("fn_task_add_dep tool", () => {
     );
     expect(branchDeleteCalls.length).toBeGreaterThan(0);
 
-    // Task should be moved to triage
-    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "triage");
+    /*
+    FNXC:DepAbortRebound 2026-07-30-08:10 (lifecycle-column vocabulary):
+    The dep-abort cleanup no longer hardcodes a column: `handleDepAbortCleanup` moves the
+    card to `resolveReboundColumnFor(store, taskId)` (executor.ts:16576), which resolves
+    the task's OWN workflow rebound target by trait — hold, else intake, else the first
+    column — falling back to `todo`. For this fixture's default workflow that resolves to
+    `todo`, which post-U11 IS the merged Planning column; `triage` is no longer declared
+    on the default lineage at all, so the old literal expectation was asserting a column
+    the workflow does not have.
+
+    Asserted as the concrete resolved value rather than by re-calling the resolver:
+    deriving the expectation from the code under test makes the assertion agree with
+    whatever the resolver happens to return, which is how a broken rebound target would
+    slip through. Per-workflow resolution itself is covered by replan-target's own tests.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-DEP", "todo");
+    // And explicitly NOT the retired legacy planner id.
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-DEP", "triage");
 
     // Worktree and status should be cleared
     expect(store.updateTask).toHaveBeenCalledWith("FN-DEP", { worktree: null, status: null });

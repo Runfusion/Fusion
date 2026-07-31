@@ -5,6 +5,10 @@ import type { TaskView } from "../useViewState";
 vi.mock("../../utils/boardScrollSnapshot", () => ({
   captureBoardScrollSnapshot: vi.fn(),
   restoreBoardScrollSnapshot: vi.fn(() => true),
+  // The hook also mirrors the snapshot into sessionStorage so it survives a mobile tab discard;
+  // this factory replaces the whole module, so those exports must exist here too.
+  persistBoardScrollSnapshot: vi.fn(),
+  readPersistedBoardScrollSnapshot: vi.fn(() => null),
 }));
 
 import { captureBoardScrollSnapshot, restoreBoardScrollSnapshot } from "../../utils/boardScrollSnapshot";

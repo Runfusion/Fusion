@@ -8,158 +8,38 @@
  */
 import {TaskStore} from "../store.js";
 import * as schema from "../postgres/schema/index.js";
-import {randomUUID} from "node:crypto";
-import {and, eq, inArray} from "drizzle-orm";
+import {and, eq, inArray, isNull, lt, or} from "drizzle-orm";
 import type {WorkflowWorkItem, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput} from "../types.js";
 import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {replaceActiveTaskWorkflowContinuation as replaceActiveTaskWorkflowContinuationAsync, seedStrandedPlanReviewContinuation as seedStrandedPlanReviewContinuationAsync, upsertWorkflowWorkItem as upsertWorkflowWorkItemAsync, transitionWorkflowWorkItem as transitionWorkflowWorkItemAsync, getWorkflowWorkItem as getWorkflowWorkItemAsync, withTaskWorkflowSerialization} from "../task-store/async-workflow-workitems.js";
-import type {WorkflowWorkItemRow} from "../task-store/row-types.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 
-function upsertWorkflowWorkItemSyncInTransaction(store: TaskStore, input: WorkflowWorkItemUpsertInput): WorkflowWorkItem {
-      const existing = store.db
-        .prepare("SELECT * FROM workflow_work_items WHERE runId = ? AND taskId = ? AND nodeId = ? AND kind = ?")
-        .get(input.runId, input.taskId, input.nodeId, input.kind) as WorkflowWorkItemRow | undefined;
-      const now = input.now ?? new Date().toISOString();
-      const existingState = existing ? store.normalizeWorkflowWorkItemState(existing.state) : null;
-      const state = input.state ?? existingState ?? "runnable";
-      if (existingState && store.isTerminalWorkflowWorkItemState(existingState) && existingState !== state) {
-        throw new Error(
-          `Workflow work item ${existing?.id ?? input.id ?? input.nodeId} is terminal (${existingState}) and cannot be requeued as ${state}`,
-        );
-      }
-
-      const id = existing?.id ?? input.id ?? randomUUID();
-      store.db
-        .prepare(
-          `INSERT INTO workflow_work_items (
-             id, runId, taskId, nodeId, kind, state, attempt, retryAfter,
-             leaseOwner, leaseExpiresAt, lastError, blockedReason, stableWorkflowRunId,
-             continuationSequence, waitReason, sourceColumn, targetColumn, irHash, createdAt, updatedAt
-           )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(runId, taskId, nodeId, kind) DO UPDATE SET
-             state = excluded.state,
-             attempt = excluded.attempt,
-             retryAfter = excluded.retryAfter,
-             leaseOwner = excluded.leaseOwner,
-             leaseExpiresAt = excluded.leaseExpiresAt,
-             lastError = excluded.lastError,
-             blockedReason = excluded.blockedReason,
-             stableWorkflowRunId = excluded.stableWorkflowRunId,
-             continuationSequence = excluded.continuationSequence,
-             waitReason = excluded.waitReason,
-             sourceColumn = excluded.sourceColumn,
-             targetColumn = excluded.targetColumn,
-             irHash = excluded.irHash,
-             updatedAt = excluded.updatedAt`,
-        )
-        .run(
-          id,
-          input.runId,
-          input.taskId,
-          input.nodeId,
-          input.kind,
-          state,
-          input.attempt ?? existing?.attempt ?? 0,
-          input.retryAfter === undefined ? existing?.retryAfter ?? null : input.retryAfter,
-          input.leaseOwner === undefined ? existing?.leaseOwner ?? null : input.leaseOwner,
-          input.leaseExpiresAt === undefined ? existing?.leaseExpiresAt ?? null : input.leaseExpiresAt,
-          input.lastError === undefined ? existing?.lastError ?? null : input.lastError,
-          input.blockedReason === undefined ? existing?.blockedReason ?? null : input.blockedReason,
-          input.stableWorkflowRunId === undefined ? existing?.stableWorkflowRunId ?? null : input.stableWorkflowRunId,
-          input.continuationSequence === undefined ? existing?.continuationSequence ?? null : input.continuationSequence,
-          input.waitReason === undefined ? existing?.waitReason ?? null : input.waitReason,
-          input.sourceColumn === undefined ? existing?.sourceColumn ?? null : input.sourceColumn,
-          input.targetColumn === undefined ? existing?.targetColumn ?? null : input.targetColumn,
-          input.irHash === undefined ? existing?.irHash ?? null : input.irHash,
-          existing?.createdAt ?? now,
-          now,
-        );
-
-      const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
-      if (!row) throw new Error(`Failed to upsert workflow work item ${id}`);
-      store.insertRunAuditEventRow({
-        taskId: row.taskId,
-        runId: row.runId,
-        domain: "database",
-        mutationType: "workflowWorkItem:upsert",
-        target: row.id,
-        metadata: { id: row.id, nodeId: row.nodeId, kind: row.kind, state: row.state, attempt: row.attempt },
-      });
-      return store.rowToWorkflowWorkItem(row);
-}
-
 export async function upsertWorkflowWorkItemImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput, tx?: DbTransaction): Promise<WorkflowWorkItem> {
-  if (store.backendMode) {
     return upsertWorkflowWorkItemAsync(store.asyncLayer!, input, tx);
-  }
-  return store.db.transactionImmediate(() => upsertWorkflowWorkItemSyncInTransaction(store, input));
 }
 
 export async function replaceActiveTaskWorkflowContinuationImpl(
   store: TaskStore,
   input: WorkflowWorkItemUpsertInput & { kind: "task" },
 ): Promise<WorkflowWorkItem> {
-  if (store.backendMode) {
     return replaceActiveTaskWorkflowContinuationAsync(store.asyncLayer!, input);
-  }
-
-  // Compatibility path for legacy embedded stores. PostgreSQL is the
-  // authoritative runtime and performs this replacement atomically above.
-  return store.db.transactionImmediate(() => {
-    const active = store.db.prepare(
-      `SELECT id, runId, nodeId, kind FROM workflow_work_items
-       WHERE taskId = ? AND kind = 'task' AND state IN ('runnable', 'running', 'held', 'retrying')`,
-    ).all(input.taskId) as Array<{ id: string; runId: string; nodeId: string; kind: string }>;
-    for (const row of active) {
-      if (row.runId === input.runId && row.nodeId === input.nodeId && row.kind === input.kind) continue;
-      store.transitionWorkflowWorkItemSync(row.id, "succeeded", {
-        leaseOwner: null,
-        leaseExpiresAt: null,
-        lastError: null,
-      });
-    }
-    return upsertWorkflowWorkItemImpl(store, input);
-  });
 }
 
 export async function seedStrandedPlanReviewContinuationImpl(store: TaskStore, input: WorkflowWorkItemUpsertInput & { kind: "task" }): Promise<{ seeded: boolean; reason?: "active-continuation" | "plan-review-passed"; workItemId?: string }> {
-  if (store.backendMode) return seedStrandedPlanReviewContinuationAsync(store.asyncLayer!, input);
-
   /*
-  FNXC:WorkflowSerialization 2026-07-26-23:58:
-  The legacy embedded-store fallback preserves FN-8592's conditional-seed
-  invariant by holding SQLite's immediate write transaction across both
-  predicate reads and the insert. Do not await list/get/upsert helpers here:
-  their separate transactions would reopen the race that PostgreSQL closes
-  with withTaskWorkflowSerialization.
+  FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+  Stranded plan-review continuation seed is PostgreSQL-only (withTaskWorkflowSerialization). The SQLite transactionImmediate fallback is deleted.
   */
-  return store.db.transactionImmediate(() => {
-    const active = store.db.prepare(
-      `SELECT id FROM workflow_work_items
-       WHERE taskId = ? AND state IN ('runnable', 'running', 'held', 'retrying')`,
-    ).get(input.taskId);
-    if (active) return { seeded: false, reason: "active-continuation" as const };
-
-    const task = store.db.prepare("SELECT workflowStepResults FROM tasks WHERE id = ?").get(input.taskId) as { workflowStepResults: string | null } | undefined;
-    const results = task?.workflowStepResults ? JSON.parse(task.workflowStepResults) as Array<{ workflowStepId?: string; status?: string }> : [];
-    if (results.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) {
-      return { seeded: false, reason: "plan-review-passed" as const };
-    }
-
-    const item = upsertWorkflowWorkItemSyncInTransaction(store, input);
-    return { seeded: true, workItemId: item.id };
-  });
+  return seedStrandedPlanReviewContinuationAsync(store.asyncLayer!, input);
 }
 
 export async function transitionWorkflowWorkItemImpl(store: TaskStore, id: string, state: WorkflowWorkItemState, patch: WorkflowWorkItemTransitionPatch = {}, tx?: DbTransaction,): Promise<WorkflowWorkItem> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return transitionWorkflowWorkItemAsync(layer, id, state, patch, tx);
-    }
-    return store.transitionWorkflowWorkItemSync(id, state, patch);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Workflow work-item transitions are PostgreSQL-only.
+    */
+    return transitionWorkflowWorkItemAsync(store.asyncLayer!, id, state, patch, tx);
   }
 
 export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: string, leaseOwner: string, opts: { leaseDurationMs: number; now?: string },): Promise<WorkflowWorkItem | null> {
@@ -168,74 +48,54 @@ export async function acquireWorkflowWorkItemLeaseImpl(store: TaskStore, id: str
     }
 
     // No dedicated async helper; use a raw Drizzle UPDATE in backend mode.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
-      /*
-      FNXC:WorkflowSerialization 2026-07-27-00:15:
-      Claiming a due item changes it into the active `running` state, so it is
-      an FN-8592 protected writer too. Resolve its owner and take the shared
-      task lock before the guarded update; otherwise a lease could land between
-      conditional repair's idle check and insert.
-      */
-      const updated = await layer.transactionImmediate(async (tx) => {
-        const owner = await getWorkflowWorkItemAsync(tx, id);
-        if (!owner) return null;
-        return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
-          await tx
-            .update(schema.project.workflowWorkItems)
-            .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
-            .where(and(
-              eq(schema.project.workflowWorkItems.id, id),
-              inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying", "running"]),
-            ));
-          const claimed = await getWorkflowWorkItemAsync(tx, id);
-          return claimed?.leaseOwner === leaseOwner ? claimed : null;
-        });
+        const layer = store.asyncLayer!;
+    const now = opts.now ?? new Date().toISOString();
+    const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
+    /*
+    FNXC:WorkflowSerialization 2026-07-27-00:15:
+    Claiming a due item changes it into the active `running` state, so it is
+    an FN-8592 protected writer too. Resolve its owner and take the shared
+    task lock before the guarded update; otherwise a lease could land between
+    conditional repair's idle check and insert.
+    */
+    const updated = await layer.transactionImmediate(async (tx) => {
+      const owner = await getWorkflowWorkItemAsync(tx, id);
+      if (!owner) return null;
+      return withTaskWorkflowSerialization(tx, layer.projectId, owner.taskId, async () => {
+        /*
+        FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+        Atomic lease claim: only transition runnable/retrying, or running rows whose lease has already expired — never steal a live lease.
+        */
+        await tx
+          .update(schema.project.workflowWorkItems)
+          .set({ state: "running", leaseOwner, leaseExpiresAt, updatedAt: now })
+          .where(and(
+            eq(schema.project.workflowWorkItems.id, id),
+            or(
+              inArray(schema.project.workflowWorkItems.state, ["runnable", "retrying"]),
+              and(
+                eq(schema.project.workflowWorkItems.state, "running"),
+                or(
+                  isNull(schema.project.workflowWorkItems.leaseExpiresAt),
+                  lt(schema.project.workflowWorkItems.leaseExpiresAt, now),
+                ),
+              ),
+            ),
+          ));
+        const claimed = await getWorkflowWorkItemAsync(tx, id);
+        return claimed?.leaseOwner === leaseOwner ? claimed : null;
       });
-      if (!updated) return null;
-      // Record the audit event (fire-and-forget).
-      void store.recordRunAuditEvent({
-        taskId: updated.taskId,
-        agentId: "system",
-        runId: updated.runId,
-        domain: "database",
-        mutationType: "workflowWorkItem:lease-acquired",
-        target: updated.id,
-        metadata: { id: updated.id, leaseOwner: updated.leaseOwner, leaseExpiresAt },
-      });
-      return updated;
-    }
-
-    return store.db.transactionImmediate(() => {
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(new Date(now).getTime() + opts.leaseDurationMs).toISOString();
-      const result = store.db
-        .prepare(
-          `UPDATE workflow_work_items
-              SET state = 'running',
-                  leaseOwner = ?,
-                  leaseExpiresAt = ?,
-                  updatedAt = ?
-            WHERE id = ?
-              AND state IN ('runnable', 'retrying', 'running')
-              AND (retryAfter IS NULL OR retryAfter <= ?)
-              AND (leaseExpiresAt IS NULL OR leaseExpiresAt <= ?)`,
-        )
-        .run(leaseOwner, leaseExpiresAt, now, id, now, now);
-      if (result.changes === 0) return null;
-
-      const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
-      if (!row) throw new Error(`Workflow work item ${id} disappeared`);
-      store.insertRunAuditEventRow({
-        taskId: row.taskId,
-        runId: row.runId,
-        domain: "database",
-        mutationType: "workflowWorkItem:lease-acquired",
-        target: row.id,
-        metadata: { id: row.id, leaseOwner: row.leaseOwner, leaseExpiresAt: row.leaseExpiresAt },
-      });
-      return store.rowToWorkflowWorkItem(row);
     });
-  }
+    if (!updated) return null;
+    // Record the audit event (fire-and-forget).
+    void store.recordRunAuditEvent({
+      taskId: updated.taskId,
+      agentId: "system",
+      runId: updated.runId,
+      domain: "database",
+      mutationType: "workflowWorkItem:lease-acquired",
+      target: updated.id,
+      metadata: { id: updated.id, leaseOwner: updated.leaseOwner, leaseExpiresAt },
+    });
+    return updated;
+}

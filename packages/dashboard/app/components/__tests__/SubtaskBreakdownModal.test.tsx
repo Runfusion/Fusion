@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SubtaskBreakdownModal } from "../SubtaskBreakdownModal";
+import { expectStableTyping } from "./typingStability.test-helpers";
 
 const mockStartSubtaskBreakdown = vi.fn();
 const mockRetrySubtaskSession = vi.fn();
@@ -50,6 +51,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => mockViewportMode.value,
   isMobileViewport: () => mockViewportMode.value === "mobile",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => mockViewportMode.value,
 }));
 
@@ -129,7 +131,16 @@ describe("SubtaskBreakdownModal", () => {
 
     const { container } = renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
-    const modal = container.querySelector(".planning-modal");
+    /*
+    FNXC:PortalQueryRoot 2026-07-31-20:10:
+    document, not container — the planning modal renders through a PORTAL.
+
+    `container.querySelector(".planning-modal")` returned null, and the `?.` below turned that into
+    `undefined`, so the failure surfaced as "the given combination of arguments (undefined and
+    string) is invalid for this assertion" rather than as a missing element. Optional chaining is
+    what disguised a query-root bug as an assertion-type error.
+    */
+    const modal = document.querySelector(".planning-modal");
 
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
@@ -302,6 +313,22 @@ describe("SubtaskBreakdownModal", () => {
     streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
     expect(await screen.findByDisplayValue("First")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Do second")).toBeInTheDocument();
+  });
+
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard for subtask editing. Each keystroke updates the shared subtask list, so a
+  remount here would drop focus after one character. fireEvent.change (used elsewhere in this file)
+  cannot observe that; assert node identity, accumulated value, and focus instead.
+  */
+  it("keeps a subtask title field mounted and focused while typing", async () => {
+    renderModal();
+    await waitFor(() => expect(streamHandlers).toBeDefined());
+    streamHandlers.onSubtasks(SAMPLE_SUBTASKS);
+
+    const field = await screen.findByDisplayValue("First") as HTMLInputElement;
+    await expectStableTyping(field, " pass", () => screen.getByDisplayValue("First pass"));
   });
 
   it("shows reconnecting only during generation, not on persisted subtask review", async () => {

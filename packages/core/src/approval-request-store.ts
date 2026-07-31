@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { count, eq, desc, and } from "drizzle-orm";
 import type { Database } from "./db.js";
-import { fromJson, toJsonNullable } from "./db.js";
+import { fromJson } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncApprovalRequestStore from "./async-approval-request-store.js";
 import * as schema from "./postgres/schema/index.js";
 import {
-  isValidApprovalRequestTransition,
   normalizeApprovalRequestActionCategory,
   type ApprovalRequest,
   type ApprovalRequestActorSnapshot,
@@ -84,6 +83,25 @@ export class ApprovalRequestStore {
     return this.db;
   }
 
+  /*
+  FNXC:ApprovalRedemption 2026-07-26-16:40:
+  In backend (PostgreSQL) mode `targetContext` is a jsonb column that Drizzle
+  returns ALREADY PARSED, while legacy rows may still store a JSON string.
+  Feeding the parsed object through the string-only `fromJson` made
+  `findLatestByDedupeKey` never match in PG mode, so every gate retry minted a
+  duplicate approval request and approved-grant reuse silently never worked in
+  production. Normalize both shapes here.
+
+  FNXC:SqliteDualPathCleanup 2026-07-26-15:05:
+  Same helper used on the PG-only runtime path after dual-path collapse.
+  */
+  private static normalizeTargetContext(value: unknown): Record<string, unknown> | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === "string") return fromJson<Record<string, unknown>>(value);
+    if (typeof value === "object") return value as Record<string, unknown>;
+    return undefined;
+  }
+
   private rowToRequest(row: ApprovalRequestRow): ApprovalRequest {
     return {
       id: row.id,
@@ -101,7 +119,7 @@ export class ApprovalRequestStore {
         summary: row.targetActionSummary,
         resourceType: row.targetResourceType,
         resourceId: row.targetResourceId,
-        context: fromJson<Record<string, unknown>>(row.targetContext),
+        context: ApprovalRequestStore.normalizeTargetContext(row.targetContext),
       },
       taskId: row.taskId ?? undefined,
       runId: row.runId ?? undefined,
@@ -162,134 +180,42 @@ export class ApprovalRequestStore {
   }
 
   async create(input: ApprovalRequestCreateInput): Promise<ApprovalRequest> {
-    const now = new Date().toISOString();
-    const request: ApprovalRequest = {
-      id: `apr-${randomUUID().slice(0, 8)}`,
-      status: "pending",
-      requester: input.requester,
-      targetAction: {
-        ...input.targetAction,
-        category: normalizeApprovalRequestActionCategory(input.targetAction.category),
-      },
-      taskId: input.taskId,
-      runId: input.runId,
-      requestedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    if (this.backendMode) {
-      const id = `apr-${randomUUID().slice(0, 8)}`;
-      return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
-    }
-
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        INSERT INTO approval_requests (
-          id, status,
-          requesterActorId, requesterActorType, requesterActorName,
-          targetActionCategory, targetActionOperation, targetActionSummary,
-          targetResourceType, targetResourceId, targetContext,
-          taskId, runId,
-          requestedAt, decidedAt, completedAt,
-          createdAt, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        request.id,
-        request.status,
-        request.requester.actorId,
-        request.requester.actorType,
-        request.requester.actorName,
-        request.targetAction.category,
-        request.targetAction.action,
-        request.targetAction.summary,
-        request.targetAction.resourceType,
-        request.targetAction.resourceId,
-        toJsonNullable(request.targetAction.context),
-        request.taskId ?? null,
-        request.runId ?? null,
-        request.requestedAt,
-        null,
-        null,
-        request.createdAt,
-        request.updatedAt,
-      );
-      this.appendAuditEvent(request.id, "created", input.requester, now);
-    });
-
-    this.syncDb().bumpLastModified();
-    return request;
-  }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+    Dual-path collapse left a local ApprovalRequest construction that was discarded
+    while a second random id was generated for the PG insert. Use one id and let
+    createApprovalRequest materialize the full row.
+    */
+    const id = `apr-${randomUUID().slice(0, 8)}`;
+    return asyncApprovalRequestStore.createApprovalRequest(this.asyncLayer!, { ...input, id });
+}
 
   async get(id: string): Promise<ApprovalRequest | null> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.getApprovalRequest(this.asyncLayer!.db, id);
-    }
-    const row = this.syncDb().prepare(`SELECT * FROM approval_requests WHERE id = ?`).get(id) as ApprovalRequestRow | undefined;
-    return row ? this.rowToRequest(row) : null;
-  }
+        return asyncApprovalRequestStore.getApprovalRequest(this.asyncLayer!.db, id);
+}
 
   async list(input: ApprovalRequestListInput = {}): Promise<ApprovalRequest[]> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.listApprovalRequests(this.asyncLayer!.db, input);
-    }
-    const where: string[] = [];
-    const params: Array<string | number> = [];
-
-    if (input.status) {
-      where.push("status = ?");
-      params.push(input.status);
-    }
-    if (input.requesterActorId) {
-      where.push("requesterActorId = ?");
-      params.push(input.requesterActorId);
-    }
-    if (input.taskId) {
-      where.push("taskId = ?");
-      params.push(input.taskId);
-    }
-    if (input.runId) {
-      where.push("runId = ?");
-      params.push(input.runId);
-    }
-
-    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-    const limit = input.limit ?? 100;
-    const offset = input.offset ?? 0;
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM approval_requests
-      ${whereSql}
-      ORDER BY createdAt DESC, id DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, limit, offset) as ApprovalRequestRow[];
-
-    return rows.map((row) => this.rowToRequest(row));
-  }
+        return asyncApprovalRequestStore.listApprovalRequests(this.asyncLayer!.db, input);
+}
 
   async getPendingCountsByActor(): Promise<Map<string, number>> {
-    if (this.backendMode) {
-      const table = schema.project.approvalRequests;
-      const rows = await this.asyncLayer!.db
-        .select({
-          actorId: table.requesterActorId,
-          requestCount: count(),
-        })
-        .from(table)
-        .where(eq(table.status, "pending"))
-        .groupBy(table.requesterActorId);
-      return new Map(rows.map((row) => [row.actorId, Number(row.requestCount)]));
-    }
-    const rows = this.syncDb().prepare(`
-      SELECT requesterActorId AS actorId, COUNT(*) AS requestCount
-      FROM approval_requests
-      WHERE status = 'pending'
-      GROUP BY requesterActorId
-    `).all() as Array<{ actorId: string; requestCount: number }>;
-
+        const table = schema.project.approvalRequests;
+    const rows = await this.asyncLayer!.db
+      .select({
+        actorId: table.requesterActorId,
+        requestCount: count(),
+      })
+      .from(table)
+      .where(eq(table.status, "pending"))
+      .groupBy(table.requesterActorId);
     return new Map(rows.map((row) => [row.actorId, Number(row.requestCount)]));
-  }
+}
 
   async findLatestByDedupeKey(input: { requesterActorId: string; taskId?: string; dedupeKey: string }): Promise<ApprovalRequest | null> {
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:05:
+    Production path is PostgreSQL-only. When asyncLayer is absent (unit tests that inject a fake prepare/all Database), fall through to the sync scan so shape-independence tests still drive the real public method.
+    */
     if (this.backendMode) {
       const table = schema.project.approvalRequests;
       const conditions = [eq(table.requesterActorId, input.requesterActorId)];
@@ -302,7 +228,8 @@ export class ApprovalRequestStore {
         .where(and(...conditions))
         .orderBy(desc(table.createdAt), desc(table.id));
       for (const row of rows as ApprovalRequestRow[]) {
-        const context = fromJson<Record<string, unknown>>(row.targetContext);
+        // FNXC:ApprovalRedemption 2026-07-26-16:40: jsonb rows arrive parsed; see normalizeTargetContext.
+        const context = ApprovalRequestStore.normalizeTargetContext(row.targetContext);
         if (context?.approvalDedupeKey === input.dedupeKey) {
           return this.rowToRequest(row);
         }
@@ -312,7 +239,6 @@ export class ApprovalRequestStore {
 
     const where = ["requesterActorId = ?"];
     const params: Array<string> = [input.requesterActorId];
-
     if (input.taskId !== undefined) {
       where.push("taskId = ?");
       params.push(input.taskId);
@@ -325,85 +251,23 @@ export class ApprovalRequestStore {
     `).all(...params) as ApprovalRequestRow[];
 
     for (const row of rows) {
-      const context = fromJson<Record<string, unknown>>(row.targetContext);
+      const context = ApprovalRequestStore.normalizeTargetContext(row.targetContext);
       if (context?.approvalDedupeKey === input.dedupeKey) {
         return this.rowToRequest(row);
       }
     }
-
     return null;
-  }
+}
 
   async decide(requestId: string, status: "approved" | "denied", input: ApprovalRequestDecisionInput): Promise<ApprovalRequest> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.decideApprovalRequest(this.asyncLayer!, requestId, status, input);
-    }
-    const existing = await this.get(requestId);
-    if (!existing) {
-      throw new Error(`Approval request ${requestId} not found`);
-    }
-    if (!isValidApprovalRequestTransition(existing.status, status)) {
-      throw new Error(`Invalid approval request transition: ${existing.status} -> ${status}`);
-    }
-
-    const now = new Date().toISOString();
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        UPDATE approval_requests
-        SET status = ?, decidedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `).run(status, now, now, requestId);
-      this.appendAuditEvent(requestId, status, input.actor, now, input.note);
-    });
-
-    this.syncDb().bumpLastModified();
-    const updated = await this.get(requestId);
-    if (!updated) {
-      throw new Error(`Approval request ${requestId} not found after update`);
-    }
-    return updated;
-  }
+        return asyncApprovalRequestStore.decideApprovalRequest(this.asyncLayer!, requestId, status, input);
+}
 
   async markCompleted(requestId: string, input: ApprovalRequestCompletionInput): Promise<ApprovalRequest> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.markApprovalRequestCompleted(this.asyncLayer!, requestId, input);
-    }
-    const existing = await this.get(requestId);
-    if (!existing) {
-      throw new Error(`Approval request ${requestId} not found`);
-    }
-    if (!isValidApprovalRequestTransition(existing.status, "completed")) {
-      throw new Error(`Invalid approval request transition: ${existing.status} -> completed`);
-    }
-
-    const now = new Date().toISOString();
-    this.syncDb().transaction(() => {
-      this.syncDb().prepare(`
-        UPDATE approval_requests
-        SET status = 'completed', completedAt = ?, updatedAt = ?
-        WHERE id = ?
-      `).run(now, now, requestId);
-      this.appendAuditEvent(requestId, "completed", input.actor, now, input.note);
-    });
-
-    this.syncDb().bumpLastModified();
-    const updated = await this.get(requestId);
-    if (!updated) {
-      throw new Error(`Approval request ${requestId} not found after completion`);
-    }
-    return updated;
-  }
+        return asyncApprovalRequestStore.markApprovalRequestCompleted(this.asyncLayer!, requestId, input);
+}
 
   async getAuditHistory(requestId: string): Promise<ApprovalRequestAuditEvent[]> {
-    if (this.backendMode) {
-      return asyncApprovalRequestStore.getApprovalAuditHistory(this.asyncLayer!.db, requestId);
-    }
-    const rows = this.syncDb().prepare(`
-      SELECT * FROM approval_request_audit_events
-      WHERE requestId = ?
-      ORDER BY createdAt ASC, rowid ASC
-    `).all(requestId) as ApprovalRequestAuditEventRow[];
-
-    return rows.map((row) => this.rowToAuditEvent(row));
-  }
+        return asyncApprovalRequestStore.getApprovalAuditHistory(this.asyncLayer!.db, requestId);
+}
 }

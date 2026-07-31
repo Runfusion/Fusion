@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-async-secrets-store");
 /**
  * Async Drizzle SecretsStore helpers (U6 satellite-central-archive-db).
  *
@@ -466,7 +469,7 @@ export class AsyncSecretsStore {
     try {
       this.options.auditEmitter(event);
     } catch (error) {
-      console.warn("[async-secrets-store] audit emitter failed", error);
+      severityAuditLog.warn("[async-secrets-store] audit emitter failed", error);
     }
   }
 
@@ -564,7 +567,7 @@ export class AsyncSecretsStore {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[async-secrets-store] failed to reveal env exportable secret ${row.scope}:${row.key}: ${message}`);
+        severityAuditLog.warn(`[async-secrets-store] failed to reveal env exportable secret ${row.scope}:${row.key}: ${message}`);
       }
     };
 

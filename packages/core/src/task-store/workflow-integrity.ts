@@ -1,3 +1,7 @@
+import { createLogger } from "../logger.js";
+import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
+
+const severityAuditLog = createLogger("core-workflow-integrity");
 /**
  * workflow-integrity operations.
  *
@@ -11,10 +15,6 @@ import {readdir, readFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {AgentLogEntry, CommitAssociationDiffBackfillReport} from "../types.js";
-import {workflowHasColumn} from "../workflow-transitions.js";
-import {findWorkflowColumn} from "../plugin-gate-verdict.js";
-import {getTraitRegistry} from "../trait-registry.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import "../builtin-traits.js";
 import {appendAgentLogEntriesSync} from "../agent-log-file-store.js";
 import {truncateAgentLogDetail} from "../agent-log-constants.js";
@@ -32,10 +32,18 @@ export async function markLegacyAutoMergeStampsOnceImpl(store: TaskStore): Promi
     }
 
     const candidates = await store.listLegacyAutoMergeStampCandidates();
+    const stampReviewColumns = await resolveLegacyStampReviewColumns(store);
     const markedTaskIds: string[] = [];
     for (const candidate of candidates) {
       const current = await store.getTask(candidate.id);
-      if (!current || !store.isLegacyAutoMergeStampCandidate(current)) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+      Re-check the freshly read row against the SAME resolved review vocabulary the candidate list
+      used. Left on the literal, this second check discarded every candidate the widened query had
+      just found on a renamed board — a half-converted pair where the read is resolved and the
+      re-check is not, which is the shape that makes a fix look applied and behave as before.
+      */
+      if (!current || !store.isLegacyAutoMergeStampCandidate(current, stampReviewColumns)) {
         continue;
       }
       current.autoMergeProvenance = "legacy-stamp";
@@ -101,7 +109,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
       // where an uncaught throw exits the process. The catch blocks exist
       // precisely to keep a failed flush from crashing the caller/process, so
       // they must not themselves dereference `store.db`.
-      console.warn(
+      severityAuditLog.warn(
         `[fusion] Dropped ${dropCount} buffered agent log entries — backlog cap reached (${store.fusionDir})`,
       );
     }
@@ -122,7 +130,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
         store.flushAgentLogBuffer();
       } catch (err) {
         // Size-triggered flush failed — log but don't crash the caller.
-        console.error(`[fusion] Size-triggered agent log flush failed (${store.fusionDir}):`, err);
+        severityAuditLog.error(`[fusion] Size-triggered agent log flush failed (${store.fusionDir}):`, err);
       }
     } else if (!store.agentLogFlushTimer) {
       store.agentLogFlushTimer = setTimeout(
@@ -131,7 +139,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
             store.flushAgentLogBuffer();
           } catch (err) {
             // Timer-triggered flush failed — log but don't crash the process.
-            console.error(`[fusion] Timer-triggered agent log flush failed (${store.fusionDir}):`, err);
+            severityAuditLog.error(`[fusion] Timer-triggered agent log flush failed (${store.fusionDir}):`, err);
           }
         },
         TaskStore.AGENT_LOG_FLUSH_MS,
@@ -243,67 +251,6 @@ export async function cleanupNoOpTaskMovedActivityRowsOnceImpl(store: TaskStore)
     });
   }
 
-export async function runWorkflowColumnsIntegrityPassImpl(store: TaskStore): Promise<{ scanned: number; rehomed: number; skippedTerminal: number }> {
-    let scanned = 0;
-    let rehomed = 0;
-    let skippedTerminal = 0;
-
-    const rows = store.db
-      .prepare(`SELECT id FROM tasks WHERE "deletedAt" IS NULL`)
-      .all() as Array<{ id: string }>;
-
-    const registry = getTraitRegistry();
-
-    for (const { id } of rows) {
-      scanned += 1;
-      const task = store.readTaskFromDb(id, { includeDeleted: false });
-      if (!task) continue;
-      const ir = store.resolveTaskWorkflowIrSync(id);
-      const currentColumn = task.column;
-
-      // Already valid in its resolved workflow — nothing to do (the common case;
-      // this is why the pass is idempotent and a no-op for healthy DBs).
-      if (workflowHasColumn(ir, currentColumn)) continue;
-
-      // The stored column is not in the resolved workflow. Before re-homing,
-      // never disturb a terminal card: if the column the card sits in carries a
-      // complete/archived flag in its workflow it is terminal — but since the
-      // column is NOT in the IR we cannot read its flags there. Fall back to the
-      // legacy terminal semantics (done/archived) so terminal cards are never
-      // re-homed, matching the plan's "done/archived untouched" rule.
-      const column = findWorkflowColumn(ir, currentColumn);
-      const flags = column ? registry.resolveColumnFlags(column) : undefined;
-      const isTerminal =
-        flags?.complete === true ||
-        flags?.archived === true ||
-        currentColumn === "done" ||
-        currentColumn === "archived";
-      if (isTerminal) {
-        skippedTerminal += 1;
-        continue;
-      }
-
-      const targetColumn = resolveEntryColumnId(ir);
-      if (!targetColumn) continue; // non-reconcilable IR — leave the card put.
-
-      await store.rehomeOccupant(id, targetColumn, "workflow-edit-rehome", {
-        integrityPass: true,
-        invalidColumn: currentColumn,
-      });
-      rehomed += 1;
-    }
-
-    if (rehomed > 0 || skippedTerminal > 0) {
-      storeLog.log("workflowColumns integrity pass completed", {
-        phase: "init:workflow-columns-integrity",
-        scanned,
-        rehomed,
-        skippedTerminal,
-      });
-    }
-    return { scanned, rehomed, skippedTerminal };
-  }
-
 export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, options: { dryRun?: boolean } = {},): Promise<CommitAssociationDiffBackfillReport> {
     const dryRun = options.dryRun === true;
 
@@ -316,57 +263,36 @@ export async function backfillCommitAssociationDiffStatsImpl(store: TaskStore, o
     to count affected rows accurately regardless of driver rowCount exposure
     (the async-lifecycle.ts precedent).
     */
-    let candidates: CommitAssociationDiffBackfillCandidateRow[];
-    let applyUpdate: (commitSha: string, additions: number, deletions: number) => Promise<number>;
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const grouped = await layer.db
-        .select({
-          commitSha: schema.project.taskCommitAssociations.commitSha,
-          rowCount: sql<number>`count(*)`,
-        })
-        .from(schema.project.taskCommitAssociations)
+    const layer = store.asyncLayer!;
+    const grouped = await layer.db
+      .select({
+        commitSha: schema.project.taskCommitAssociations.commitSha,
+        rowCount: sql<number>`count(*)`,
+      })
+      .from(schema.project.taskCommitAssociations)
+      .where(
+        and(
+          isNull(schema.project.taskCommitAssociations.additions),
+          isNull(schema.project.taskCommitAssociations.deletions),
+        ),
+      )
+      .groupBy(schema.project.taskCommitAssociations.commitSha)
+      .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
+    const candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
+    const applyUpdate = async (commitSha: string, additions: number, deletions: number) => {
+      const updated = await layer.db
+        .update(schema.project.taskCommitAssociations)
+        .set({ additions, deletions, updatedAt: new Date().toISOString() })
         .where(
           and(
+            eq(schema.project.taskCommitAssociations.commitSha, commitSha),
             isNull(schema.project.taskCommitAssociations.additions),
             isNull(schema.project.taskCommitAssociations.deletions),
           ),
         )
-        .groupBy(schema.project.taskCommitAssociations.commitSha)
-        .orderBy(asc(schema.project.taskCommitAssociations.commitSha));
-      candidates = grouped as unknown as CommitAssociationDiffBackfillCandidateRow[];
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const updated = await layer.db
-          .update(schema.project.taskCommitAssociations)
-          .set({ additions, deletions, updatedAt: new Date().toISOString() })
-          .where(
-            and(
-              eq(schema.project.taskCommitAssociations.commitSha, commitSha),
-              isNull(schema.project.taskCommitAssociations.additions),
-              isNull(schema.project.taskCommitAssociations.deletions),
-            ),
-          )
-          .returning({ id: schema.project.taskCommitAssociations.id });
-        return updated.length;
-      };
-    } else {
-      candidates = store.db.prepare(
-        `SELECT commitSha, COUNT(*) AS rowCount
-         FROM task_commit_associations
-         WHERE additions IS NULL AND deletions IS NULL
-         GROUP BY commitSha
-         ORDER BY commitSha`,
-      ).all() as CommitAssociationDiffBackfillCandidateRow[];
-      const updateStats = store.db.prepare(
-        `UPDATE task_commit_associations
-         SET additions = ?, deletions = ?, updatedAt = ?
-         WHERE commitSha = ? AND additions IS NULL AND deletions IS NULL`,
-      );
-      applyUpdate = async (commitSha, additions, deletions) => {
-        const result = updateStats.run(additions, deletions, new Date().toISOString(), commitSha);
-        return Number(result.changes);
-      };
-    }
+        .returning({ id: schema.project.taskCommitAssociations.id });
+      return updated.length;
+    };
 
     const report: CommitAssociationDiffBackfillReport = {
       scannedRows: candidates.reduce((sum, row) => sum + row.rowCount, 0),

@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/roadmap",
-  "version": "0.1.51-beta.3",
+  "version": "0.1.51-beta.5",
   "type": "module",
   "description": "Roadmap plugin package for Fusion",
   "private": true,
@@ -48,6 +48,6 @@
     "@types/node": "^25.5.2",
     "@types/react": "^19.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

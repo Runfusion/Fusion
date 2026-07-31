@@ -1,4 +1,5 @@
 import "./executor-test-helpers.js";
+import { DEFAULT_MAX_POST_REVIEW_FIXES } from "@fusion/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,7 +69,16 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     });
 
     expect(scheduled).toBe(true);
-    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:50:
+    The replan rebound target is RESOLVED, not literal: executor.ts:4392 moves to
+    `resolveReboundColumnFor(store, taskId)`, which for the default lineage is now `todo` — U11 merged
+    the two pre-implementation columns, so `builtin:coding` declares no `triage`.
+
+    Kept as the expected column id rather than calling the resolver here: asserting the product's own
+    resolver against itself would pass no matter which column it returned.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
     expect(store.updateTask).toHaveBeenCalledWith(liveTask.id, expect.objectContaining({
       status: "needs-replan",
       recoveryRetryCount: 1,
@@ -315,11 +325,20 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     );
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
-      "Plan Review failed — moved to triage for automatic replan (attempt 1/unbounded)",
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:00:
+      The message INTERPOLATES the resolved column (executor.ts:5366 uses `${replanColumn}`), so a
+      hard-coded id here re-pins a column name inside prose every time the vocabulary moves. Matching
+      the shape plus the attempt counter keeps what this case owns — that a Plan Review failure logs a
+      replan with the right attempt/budget — while the destination column stays pinned by the
+      `moveTask` assertion in this same test.
+      */
+      expect.stringMatching(/^Plan Review failed — moved to \S+ for automatic replan \(attempt 1\/unbounded\)$/),
       expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
       undefined,
     );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    // Resolved rebound column for the default lineage — see the note above.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true });
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", {
       status: "needs-replan",
@@ -361,7 +380,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         nodeId: "plan-review",
       });
 
-      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "triage");
+      expect(store.moveTask).toHaveBeenCalledWith(liveTask.id, "todo", { preserveWorktree: true });
       expect(abortSpy).not.toHaveBeenCalled();
       expect((executor as any).pausedAborted.has(liveTask.id)).toBe(false);
     } finally {
@@ -447,10 +466,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       maxRevisions: "unbounded",
     })).resolves.toBe(true);
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    // Resolved rebound column for the default lineage — see the note above.
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "todo", { preserveWorktree: true });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
-      "Plan Review failed — moved to triage for automatic replan (attempt 15/unbounded)",
+      // Same interpolated-column reason as above; the attempt counter is what matters here.
+      expect.stringMatching(/^Plan Review failed — moved to \S+ for automatic replan \(attempt 15\/unbounded\)$/),
       expect.anything(),
       undefined,
     );
@@ -611,10 +632,18 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     }
   });
 
-  it("uses the default budget of 3 for repeated fix passes and then declines when exhausted", async () => {
+  /*
+  FNXC:WorkflowOptionalStepCycle 2026-07-31-02:10:
+  The generic optional-gate budget is `DEFAULT_MAX_POST_REVIEW_FIXES`, raised 3 -> 10
+  (builtin-workflow-settings.ts:555). Driven off the imported constant rather than a re-inlined
+  number, because that constant exists precisely BECAUSE the declaration default and two inline
+  literal 3s had already drifted apart once — a third copy here would be the same mistake.
+  */
+  it("uses the default post-review-fix budget for repeated fix passes and then declines when exhausted", async () => {
     const sendBackCalls: number[] = [];
+    const BUDGET = DEFAULT_MAX_POST_REVIEW_FIXES;
 
-    for (const count of [0, 1, 2, 3]) {
+    for (const count of [BUDGET - 3, BUDGET - 2, BUDGET - 1, BUDGET]) {
       const store = createMockStore();
       const liveTask = task({
         postReviewFixCount: count,
@@ -629,24 +658,25 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
       const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo);
 
-      if (count < 3) {
+      if (count < BUDGET) {
         expect(scheduled).toBe(true);
         expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: count + 1 }, undefined);
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-7066",
-          expect.stringContaining(`attempt ${count + 1}/3`),
+          expect.stringContaining(`attempt ${count + 1}/${BUDGET}`),
           expect.any(String),
           undefined,
         );
         expect(sendBack).toHaveBeenCalledOnce();
       } else {
         expect(scheduled).toBe(false);
-        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", expect.objectContaining({ postReviewFixCount: 4 }), undefined);
+        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", expect.objectContaining({ postReviewFixCount: BUDGET + 1 }), undefined);
         expect(sendBack).not.toHaveBeenCalled();
       }
     }
 
-    expect(sendBackCalls).toEqual([0, 1, 2]);
+    // The three passes below the cap are scheduled; the pass AT the cap declines.
+    expect(sendBackCalls).toEqual([BUDGET - 3, BUDGET - 2, BUDGET - 1]);
   });
 
   it("keeps graph-owned Code Review remediation unbounded past the legacy three-pass display cap", async () => {

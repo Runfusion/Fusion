@@ -1,12 +1,21 @@
 import { useTranslation } from "react-i18next";
 import type { Task, TaskTokenUsage, WorkflowStepResult } from "@fusion/core";
 import { extractTimingEvents, getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWallClockSinceFirstExecutionMs, getWorkflowRuntimeMs, type TimingEvent } from "../utils/taskTiming";
+import type { ColumnRoleFlags } from "../utils/columnRoles";
 import { getCanonicalStepNumber } from "../lib/step-display";
 import "./TaskTokenStatsPanel.css";
 
 interface TaskTokenStatsPanelProps {
   tokenUsage?: TaskTokenUsage;
   loading: boolean;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (partial-supply seam, caught by the gate):
+  Resolved trait flags for THIS panel's task column. `getTotalAgentActiveMs` gained a flags parameter
+  and `TaskCard` supplied it; this panel was the sibling that did not, so the same runtime number was
+  computed from the real column on a card and from legacy ids in the detail modal. Omitted, the
+  helper keeps the legacy id, so first paint is unchanged.
+  */
+  columnFlags?: ColumnRoleFlags;
   task?: Pick<
     Task,
     | "log"
@@ -121,7 +130,7 @@ function summarizeWorkflowTiming(results: WorkflowStepResult[]): WorkflowTimingS
   };
 }
 
-export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStatsPanelProps) {
+export function TaskTokenStatsPanel({ tokenUsage, loading, task, columnFlags }: TaskTokenStatsPanelProps) {
   const { t } = useTranslation("app");
   const nowMs = Date.now();
   const timingEvents = extractTimingEvents(task?.log ?? []);
@@ -139,7 +148,7 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
   }, undefined);
 
   const workflowTiming = summarizeWorkflowTiming(task?.workflowStepResults ?? []);
-  const activeRuntimeMs = task ? getTotalAgentActiveMs(task, nowMs) : null;
+  const activeRuntimeMs = task ? getTotalAgentActiveMs(task, nowMs, columnFlags) : null;
   const endToEndDurationMs = getEndToEndDurationMs(task?.executionStartedAt, task?.executionCompletedAt, nowMs);
   const wallClockSinceFirstExecutionMs = getWallClockSinceFirstExecutionMs(
     task?.firstExecutionAt,

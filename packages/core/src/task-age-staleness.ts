@@ -32,6 +32,17 @@ interface TaskAgeStalenessContext {
   thresholds?: TaskAgeStalenessThresholds;
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+  The task's resolved lifecycle columns. Age-staleness applies ONLY to the mid-flight and review lanes —
+  a card resting in a hold or terminal lane is not "stale", it is waiting or finished. Both lanes were
+  named by id, so on a renamed board this signal returned undefined for every card and the stale-card
+  warning never appeared anywhere on the board.
+
+  OPTIONAL, so the existing callers and every test keep the legacy-id behaviour. The one production
+  caller (`task-store/reads.ts`) already holds a per-pass IR cache for exactly this kind of resolution.
+  */
+  lifecycle?: { wip?: string; review?: string };
 }
 
 type TaskAgeStalenessTask = Pick<Task, "column" | "paused" | "columnMovedAt" | "updatedAt" | "mergeDetails">;
@@ -47,7 +58,9 @@ export function getTaskAgeStalenessSignal(
   task: TaskAgeStalenessTask,
   context: TaskAgeStalenessContext = {},
 ): TaskAgeStalenessSignal | undefined {
-  if (task.column !== "in-progress" && task.column !== "in-review") {
+  const wipColumn = context.lifecycle?.wip ?? "in-progress";
+  const reviewColumn = context.lifecycle?.review ?? "in-review";
+  if (task.column !== wipColumn && task.column !== reviewColumn) {
     return undefined;
   }
   // The guard above proves `column` is one of these two legacy ids; the
@@ -66,10 +79,10 @@ export function getTaskAgeStalenessSignal(
   };
 
   const warningThresholdMs = getNormalizedThreshold(
-    task.column === "in-progress" ? resolvedThresholds.inProgressWarningMs : resolvedThresholds.inReviewWarningMs,
+    task.column === wipColumn ? resolvedThresholds.inProgressWarningMs : resolvedThresholds.inReviewWarningMs,
   );
   const criticalThresholdMs = getNormalizedThreshold(
-    task.column === "in-progress" ? resolvedThresholds.inProgressCriticalMs : resolvedThresholds.inReviewCriticalMs,
+    task.column === wipColumn ? resolvedThresholds.inProgressCriticalMs : resolvedThresholds.inReviewCriticalMs,
   );
 
   if (warningThresholdMs === undefined && criticalThresholdMs === undefined) {

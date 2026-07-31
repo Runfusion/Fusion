@@ -31,11 +31,11 @@ import { ProjectEngine } from "../project-engine.js";
 
 // Only run if we're in a forked child process
 if (!process.send) {
-  console.error("This module must be run as a forked child process");
+  runtimeLog.error("This module must be run as a forked child process");
   process.exit(1);
 }
 
-runtimeLog.log("Child process worker starting...");
+runtimeLog.debug("Child process worker starting...");
 
 // Create IPC worker
 const ipcWorker = new IpcWorker();
@@ -47,12 +47,7 @@ let engine: ProjectEngine | null = null;
 // The child doesn't need full CentralCore functionality
 const createStubCentralCore = (): CentralCore => {
   return {
-    getGlobalConcurrencyState: async () => ({
-      globalMaxConcurrent: 4,
-      currentlyActive: 0,
-      queuedCount: 0,
-      projectsActive: {},
-    }),
+    getLiveRunningAgentCounts: async () => ({ currentlyActive: 0, projectsActive: {} }),
     recordTaskCompletion: async () => {},
   } as unknown as CentralCore;
 };

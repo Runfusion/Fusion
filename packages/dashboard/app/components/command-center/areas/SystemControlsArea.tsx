@@ -43,6 +43,7 @@ import { ReportActionMenu } from "../../ReportActionMenu";
 import { ReportModal } from "../../ReportModal";
 import { resolveReportContextRefs } from "../../../utils/reportContextRefs";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
+import { capLogEntries } from "../../../hooks/useAgentLogs";
 import "./SystemControlsArea.css";
 
 /*
@@ -70,7 +71,14 @@ FNXC:SystemPanelFnBinary 2026-07-15-09:54:
     the shared job log viewer so operators see live output without hunting.
 */
 
-const LOG_VIEW_CAP = 500;
+/*
+FNXC:MobileTabRetention 2026-07-26-10:48:
+Bounded ring for every streamed tail in this panel (server logs AND rebuild job output). A full
+workspace rebuild emits many thousands of lines; retaining all of them grows the page's resident set
+until a backgrounded mobile tab is discarded by the OS and reloads with a white splash on return.
+The joined-string render below is O(kept lines) per frame, so the cap bounds render cost too.
+*/
+export const LOG_VIEW_CAP = 500;
 const RESTART_POLL_MS = 1500;
 const BACK_ONLINE_RELOAD_DELAY_MS = 3000;
 // Bound the post-restart wait so a server that never comes back (crashed
@@ -78,6 +86,13 @@ const BACK_ONLINE_RELOAD_DELAY_MS = 3000;
 // forever with every control disabled.
 const RESTART_WAIT_TIMEOUT_MS = 90_000;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+/*
+FNXC:SystemPanelJobStreamResync 2026-07-26-16:18:
+Minimum spacing between authoritative job-state refetches triggered by SSE reconnect/error. The bus
+retries a broken job stream with backoff, and a job whose server process is gone errors on every
+attempt, so the resync must be bounded rather than one REST round-trip per error event.
+*/
+const RECONCILE_THROTTLE_MS = 3000;
 
 function isNearBottom(container: HTMLElement): boolean {
   return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
@@ -110,12 +125,34 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
 
   const [job, setJob] = useState<SystemRebuildJobSnapshot | null>(null);
   const [jobLines, setJobLines] = useState<SystemRebuildJobLine[]>([]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:52:
+  Stream dedupe is keyed on the line's monotonic `i` and must stay O(1) per incoming line. The old
+  Array.some() scan was O(n^2) over a rebuild's thousands of lines, burning CPU in the background —
+  itself a discard signal on iOS/Chrome Android — on top of the memory growth. The Set is a ref, not
+  state, so it survives the cap trimming older lines out of the rendered buffer and a trimmed line
+  can never be re-appended by a stream replay.
+  */
+  const seenJobLineIndexesRef = useRef<Set<number>>(new Set());
   const jobOutputRef = useRef<HTMLPreElement | null>(null);
   const jobFollowingRef = useRef(true);
   const jobSectionRef = useRef<HTMLDivElement | null>(null);
 
   const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
   const prevPidRef = useRef<number | null>(null);
+
+  /*
+  FNXC:SystemPanelJobStreamResync 2026-07-26-16:20:
+  Latest-value refs for the job-stream resync path. The SSE callbacks below run outside React's
+  render cycle (a hidden-suspend resume fires them before any re-render), so they must read the
+  current job/info from refs rather than from a stale effect closure.
+  */
+  const jobRef = useRef<SystemRebuildJobSnapshot | null>(null);
+  const infoRef = useRef<SystemInfoResponse | null>(null);
+  /** Job ids whose terminal outcome was already applied — the `end` event and a resync can race. */
+  const terminalAppliedJobIdsRef = useRef<Set<string>>(new Set());
+  const reconcileInFlightRef = useRef(false);
+  const lastReconcileAtRef = useRef(0);
 
   const [logsOpen, setLogsOpen] = useState(false);
   const [logEntries, setLogEntries] = useState<SystemLogEntryDto[]>([]);
@@ -153,6 +190,7 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
           // Adopting a different (resumed) job — clear stale lines so the new
           // job's stream doesn't render mixed with the previous job's output.
           setJobLines([]);
+          seenJobLineIndexesRef.current = new Set();
           jobFollowingRef.current = true;
           return next.activeRebuild;
         });
@@ -177,7 +215,13 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         const { job: current } = await fetchCurrentSystemRebuild();
         if (!cancelled && current) {
           setJob(current);
-          setJobLines(current.lines ?? []);
+          // FNXC:MobileTabRetention 2026-07-26-10:55: The buffered hydration payload is the whole
+          // job so far — keep only the newest LOG_VIEW_CAP lines and seed the dedupe index from them.
+          const hydrated = current.lines ?? [];
+          // Seed from ALL hydrated indexes (not just the kept tail) so a stream replay cannot
+          // re-append a line the cap already trimmed out of the rendered buffer.
+          seenJobLineIndexesRef.current = new Set(hydrated.map((line) => line.i));
+          setJobLines(capLogEntries(hydrated, LOG_VIEW_CAP));
         }
       } catch {
         // Best-effort hydration; the live stream still fills a running job.
@@ -188,6 +232,135 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
     };
   }, [loadInfo]);
 
+  useEffect(() => {
+    jobRef.current = job;
+  }, [job]);
+  useEffect(() => {
+    infoRef.current = info;
+  }, [info]);
+
+  /*
+  FNXC:SystemPanelJobStreamResync 2026-07-26-16:24:
+  Single writer for a job's terminal outcome, shared by the `end` SSE event and the reconnect
+  resync below. Applying it twice would double-toast and re-arm the restart wait, and the two paths
+  legitimately race (the server writes `end` then closes the socket, which surfaces as an
+  EventSource error that also triggers a resync), so it is idempotent per job id.
+  */
+  const applyJobTerminalState = useCallback(
+    (snapshot: SystemRebuildJobSnapshot) => {
+      if (terminalAppliedJobIdsRef.current.has(snapshot.id)) {
+        setJob(snapshot);
+        return;
+      }
+      terminalAppliedJobIdsRef.current.add(snapshot.id);
+      setJob(snapshot);
+      if (snapshot.status === "succeeded" && snapshot.restartScheduled) {
+        prevPidRef.current = infoRef.current?.pid ?? null;
+        setRestartPhase("waiting");
+      } else if (snapshot.status === "succeeded") {
+        const successMsg =
+          snapshot.kind === "fn-binary" && snapshot.scope === "link-local"
+            ? t("systemControls.fnLinkLocalSucceeded", "Local fn binary built and linked")
+            : snapshot.kind === "fn-binary" && snapshot.scope === "use-global"
+              ? t("systemControls.fnUseGlobalSucceeded", "Switched default fn to global npm install")
+              : t("systemControls.rebuildSucceeded", "Rebuild finished successfully");
+        toast(successMsg, "success");
+      } else {
+        toast(t("systemControls.rebuildFailed", "Job failed — see output for details"), "error");
+      }
+    },
+    [t, toast],
+  );
+
+  /*
+  FNXC:SystemPanelJobStreamResync 2026-07-26-16:30:
+  Missed-`end` recovery for the rebuild/fn-binary job stream. Verified server behavior
+  (register-system-routes.ts GET /system/jobs/:id/stream): on connect it replays every buffered
+  line from `Last-Event-ID + 1` (0 for a fresh EventSource) and, when the job is no longer running,
+  writes a terminal `end` snapshot and closes. So the stream IS replay-safe for a job whose SERVER
+  PROCESS SURVIVED the disconnect — that part of the earlier "genuinely replay-safe" review note is
+  correct.
+  It is NOT replay-safe in the case this panel exists for: a "Rebuild & restart" job. `jobsById` is
+  process-local in-memory state, so after the rebuild restarts the server the stream URL answers 404
+  and no `end` is ever delivered. The `end` handler is the only writer of the terminal snapshot and
+  of restartPhase="waiting", and the effect's deps ([job?.id, job?.status]) never change while the
+  panel believes the job is running, so the panel would show "running" forever with no toast and no
+  auto-reload. The 60s hidden-suspend makes this routine: an operator switches away during a
+  rebuild, the socket is torn down, and the job finishes (and restarts the server) while gone.
+  Note: a 404 reconnect never fires `onReconnect` (EventSource has no `open`), only `onError` —
+  which is why both callbacks feed this reconcile.
+  Recovery is authoritative-REST-first and never fabricates a verdict:
+    - server still knows the job → adopt its snapshot (lines + terminal state);
+    - job gone AND the PID changed → the process restarted; drop the unrecoverable job (the new
+      process has no record of it) and, for a restart-after job, enter the "back online" reload path;
+    - job gone with the same PID → report an UNKNOWN outcome, never a fabricated success.
+  */
+  const reconcileJobAfterStreamGap = useCallback(async () => {
+    const active = jobRef.current;
+    if (!active || active.status !== "running") return;
+    if (reconcileInFlightRef.current) return;
+    // EventSource errors can repeat while the bus backs off; bound the REST fan-out.
+    const now = Date.now();
+    if (now - lastReconcileAtRef.current < RECONCILE_THROTTLE_MS) return;
+    lastReconcileAtRef.current = now;
+    reconcileInFlightRef.current = true;
+    const priorPid = infoRef.current?.pid;
+    try {
+      let snapshot: SystemRebuildJobSnapshot | null = null;
+      try {
+        ({ job: snapshot } = await fetchCurrentSystemRebuild());
+      } catch {
+        // Server unreachable — it is probably mid-restart. Allow an immediate retry on the next
+        // reconnect/error rather than burning the throttle window.
+        lastReconcileAtRef.current = 0;
+        return;
+      }
+      if (jobRef.current?.id !== active.id) return;
+
+      if (snapshot && snapshot.id === active.id) {
+        const lines = snapshot.lines;
+        if (lines) {
+          // Authoritative buffer: reseed the dedupe index from ALL indexes so a later stream
+          // replay cannot re-append a line the cap trimmed out of the rendered tail.
+          seenJobLineIndexesRef.current = new Set(lines.map((line) => line.i));
+          setJobLines(capLogEntries(lines, LOG_VIEW_CAP));
+        }
+        if (snapshot.status !== "running") applyJobTerminalState(snapshot);
+        return;
+      }
+
+      const nextInfo = await fetchSystemInfo().catch(() => null);
+      if (!nextInfo || jobRef.current?.id !== active.id) return;
+      setInfo(nextInfo);
+      if (priorPid !== undefined && nextInfo.pid !== priorPid) {
+        setJob(null);
+        setJobLines([]);
+        seenJobLineIndexesRef.current = new Set();
+        if (active.restartAfter) {
+          prevPidRef.current = nextInfo.pid;
+          setRestartPhase("back");
+        } else {
+          toast(
+            t("systemControls.jobLostToRestart", "The server restarted while the job was streaming — its output is gone"),
+            "warning",
+          );
+        }
+        return;
+      }
+
+      // Same process, job unknown: we cannot prove success or failure. Say so.
+      const unknown = t(
+        "systemControls.jobOutcomeUnknown",
+        "Lost the job stream before a result arrived — the outcome is unknown",
+      );
+      terminalAppliedJobIdsRef.current.add(active.id);
+      setJob({ ...active, status: "failed", finishedAt: Date.now(), error: unknown });
+      toast(unknown, "warning");
+    } finally {
+      reconcileInFlightRef.current = false;
+    }
+  }, [applyJobTerminalState, t, toast]);
+
   // ── Rebuild job output streaming ──────────────────────────────────────────
   useEffect(() => {
     if (!job || job.status !== "running") return;
@@ -196,10 +369,10 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         line: (event) => {
           try {
             const line = JSON.parse((event as MessageEvent).data) as SystemRebuildJobLine;
-            setJobLines((current) => {
-              if (current.some((existing) => existing.i === line.i)) return current;
-              return [...current, line];
-            });
+            // O(1) dedupe on the line's monotonic index, then a bounded append.
+            if (seenJobLineIndexesRef.current.has(line.i)) return;
+            seenJobLineIndexesRef.current.add(line.i);
+            setJobLines((current) => capLogEntries([...current, line], LOG_VIEW_CAP));
           } catch {
             // Ignore malformed stream payloads.
           }
@@ -207,29 +380,25 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         end: (event) => {
           try {
             const snapshot = JSON.parse((event as MessageEvent).data) as SystemRebuildJobSnapshot;
-            setJob(snapshot);
-            if (snapshot.status === "succeeded" && snapshot.restartScheduled) {
-              prevPidRef.current = info?.pid ?? null;
-              setRestartPhase("waiting");
-            } else if (snapshot.status === "succeeded") {
-              const successMsg =
-                snapshot.kind === "fn-binary" && snapshot.scope === "link-local"
-                  ? t("systemControls.fnLinkLocalSucceeded", "Local fn binary built and linked")
-                  : snapshot.kind === "fn-binary" && snapshot.scope === "use-global"
-                    ? t("systemControls.fnUseGlobalSucceeded", "Switched default fn to global npm install")
-                    : t("systemControls.rebuildSucceeded", "Rebuild finished successfully");
-              toast(successMsg, "success");
-            } else {
-              toast(t("systemControls.rebuildFailed", "Job failed — see output for details"), "error");
-            }
+            applyJobTerminalState(snapshot);
           } catch {
             // Ignore malformed stream payloads.
           }
         },
       },
+      // See the FNXC:SystemPanelJobStreamResync note above: the stream replays lines and a terminal
+      // `end` only while the ORIGINAL server process is alive, so this subscription is not
+      // replaySafe. onReconnect covers a surviving server; onError covers the 404 that a
+      // restart-after rebuild leaves behind (no `open`, therefore no onReconnect).
+      onReconnect: () => {
+        void reconcileJobAfterStreamGap();
+      },
+      onError: () => {
+        void reconcileJobAfterStreamGap();
+      },
     });
     return unsubscribe;
-  }, [job?.id, job?.status, info?.pid, t, toast]);
+  }, [job?.id, job?.status, applyJobTerminalState, reconcileJobAfterStreamGap]);
 
   useEffect(() => {
     const output = jobOutputRef.current;
@@ -287,10 +456,8 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
         log: (event) => {
           try {
             const entry = JSON.parse((event as MessageEvent).data) as SystemLogEntryDto;
-            setLogEntries((current) => {
-              const next = [...current, entry];
-              return next.length > LOG_VIEW_CAP ? next.slice(-LOG_VIEW_CAP) : next;
-            });
+            // Shared bounded-tail helper (see hooks/useAgentLogs.ts) — one cap implementation.
+            setLogEntries((current) => capLogEntries([...current, entry], LOG_VIEW_CAP));
           } catch {
             // Ignore malformed stream payloads.
           }
@@ -835,6 +1002,22 @@ export function SystemControlsArea({ projectId, addToast }: SystemControlsAreaPr
               {jobStatusLabel}
             </span>
           </div>
+          {/*
+          FNXC:MobileTabRetention 2026-07-26-11:02:
+          The rendered buffer is capped at LOG_VIEW_CAP, so a long rebuild's earliest output is
+          dropped. `i` is the job's monotonic line index: a first kept line with i > 0 proves lines
+          were trimmed, and the operator must be told rather than read a clipped tail as the whole
+          build log.
+          */}
+          {(jobLines[0]?.i ?? 0) > 0 ? (
+            <p className="cc-system-note" data-testid="cc-system-rebuild-output-truncated">
+              {t(
+                "systemControls.jobOutputTruncated",
+                "Showing the most recent {{count}} lines — earlier output trimmed",
+                { count: LOG_VIEW_CAP },
+              )}
+            </p>
+          ) : null}
           <pre ref={jobOutputRef} className="cc-syscontrols-output" aria-live="polite" onScroll={updateJobFollowState}>
             {jobLines.map((line) => `${line.stream === "stderr" ? "! " : ""}${line.text}`).join("\n")}
           </pre>

@@ -38,15 +38,24 @@ describe("connectMcpSessionTools", () => {
   it("registers namespaced tools and routes calls to the owning MCP client", async () => {
     const calls: string[] = [];
     const client = fakeClient(["lookup"], calls);
+    const logger = { log: vi.fn(), debug: vi.fn(), warn: vi.fn() };
     const toolset = await connectMcpSessionTools([stdioServer("context7")], {
       clientFactory: () => client,
       transportFactory,
+      logger,
     });
 
     expect(toolset.connected).toEqual(["context7"]);
     expect(toolset.tools.map((tool) => tool.name)).toEqual(["mcp__context7__lookup"]);
     expect(client.connect).toHaveBeenCalledWith(expect.anything(), { timeout: 15_000 });
     expect(client.listTools).toHaveBeenCalledWith(undefined, { timeout: 15_000 });
+    // FNXC:EngineDiagnostics 2026-07-26-09:50: success connect is debug, not info.
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.stringContaining("MCP server connected for pi session: name=context7"),
+    );
+    expect(logger.log).not.toHaveBeenCalledWith(
+      expect.stringContaining("MCP server connected for pi session"),
+    );
     expect(toolset.tools[0]!.parameters).toMatchObject({
       type: "object",
       properties: { topic: { type: "string", description: "Topic to look up" } },

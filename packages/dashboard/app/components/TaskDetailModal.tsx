@@ -3,10 +3,10 @@ import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2, Send, Square, Info, Paperclip, Eye, EyeOff } from "lucide-react";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { FloatingWindow } from "./FloatingWindow";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference, useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useColumnLabel } from "../i18n/labels";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -24,6 +24,14 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { resolveTaskSessionAdvisorEnabled } from "../../../core/src/session-advisor";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { getRevertOfId, findOpenUndoTaskForSource } from "../utils/taskRevert";
+import {
+  isArchivedColumnRole,
+  isCompleteColumnRole,
+  isHoldColumnRole,
+  isFieldEditableColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+} from "../utils/columnRoles";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchTaskVerificationRequest, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, fetchWorkflowSettingValues, nudgeOverseer, stopOverseer, explainOverseer, fetchModels, fetchNodes, api } from "../api";
 import type { RevertTaskOptions, RevertTaskResult, ModelInfo, NodeInfo } from "../api";
@@ -267,7 +275,13 @@ function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, task
   if (initialTab) {
     return initialTab;
   }
-  if (column === "done") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:45 (fleet: TaskDetailModal.tsx):
+  CENTRALISATION, not trait resolution — module-scope helper taking a bare column id, so no flags are
+  in scope. `undefined` selects the shared fallback and behaviour is identical; the value is that the
+  legacy id lives in one place and this site stays greppable as "still needs its flags threaded".
+  */
+  if (isCompleteColumnRole(undefined, column)) {
     return "summary";
   }
   return taskDetailChatFirst ? "planner-chat" : "chat";
@@ -512,8 +526,15 @@ interface TaskWorkflowMetadata {
   currentColumnFlags?: TaskContextMenuColumnFlags;
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The `payload.flagEnabled !== true` early return is DELETED. The server hardcodes
+that field to `true`, so the guard could only ever suppress this modal's workflow
+section on a malformed payload — a retired kill switch, not a real precondition.
+The `!workflow || !name` guard below is the one that actually handles a payload
+without resolvable workflow metadata.
+*/
 function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<Task, "id" | "column">): TaskWorkflowMetadata | null {
-  if (payload.flagEnabled !== true) return null;
   const workflowId = payload.taskWorkflowIds[task.id] ?? payload.defaultWorkflowId;
   const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
   const name = workflow?.name?.trim();
@@ -521,7 +542,7 @@ function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, task: Pick<
 
   const moveColumns = workflow.columns
     .filter((column) => column.flags.hiddenFromBoard !== true)
-    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags }));
+    .map((column) => ({ id: column.id as ColumnId, label: column.name, flags: column.flags, ...(column.moveTargets ? { moveTargets: column.moveTargets } : {}) }));
   const currentColumnFlags = moveColumns.find((column) => column.id === task.column)?.flags;
   return { id: workflow.id, name, icon: workflow.icon, fields: workflow.fields ?? null, moveColumns, currentColumnFlags };
 }
@@ -530,13 +551,35 @@ function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "sta
   return executionMode === "fast" ? "fast" : "standard";
 }
 
-function requiresExecutionModeReplan(column: Task["column"]): boolean {
+function requiresExecutionModeReplan(column: Task["column"], flags?: TaskContextMenuColumnFlags): boolean {
   /*
    FNXC:ExecutionModeReplan 2026-06-30-00:00:
    Todo and in-progress tasks can already hold a generated plan or active execution context. Changing Standard/Fast mode invalidates that plan, so the dashboard must confirm the change and send the task back through the existing replanning path instead of silently patching executionMode in place.
+
+   FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+   The rule is "this card may already hold a plan or a live execution context", which the
+   traits state directly: a HOLD lane (planned, waiting for capacity) or a WIP lane
+   (executing). Naming `todo` and `in-progress` was the Default workflow's spelling of
+   that, and it silently narrows to nothing useful on a renamed workflow. Legacy ids
+   remain the fallback for callers without resolved column metadata.
    */
-  return column === "todo" || column === "in-progress";
+  if (flags) return flags.hold === true || flags.countsTowardWip === true;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:45 (fleet: TaskDetailModal.tsx):
+  Same centralisation as `resolveDefaultTab` above. The pair is hold-or-wip — a card that has been
+  planned but not finished — so it reads through those two roles rather than naming both ids.
+  */
+  return isHoldColumnRole(undefined, column) || isWipColumnRole(undefined, column);
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+Test seam. The rule is a pure function of (column id, column flags), and asserting it
+through the full modal means booting async detail loading to observe one boolean — an
+earlier DOM-level attempt at this class of assertion in ListView passed with the
+conversion reverted, because the text it matched also appears in a column header.
+*/
+export const requiresExecutionModeReplanForTest = requiresExecutionModeReplan;
 
 interface ProvenanceDisplay {
   label: string;
@@ -638,7 +681,26 @@ function getProvenanceLabel(task: Task | TaskDetail, options: ProvenanceLabelOpt
 
 // #1403: widened to ColumnId so `.has(task.column)` accepts custom column ids
 // (non-members correctly resolve to false → not editable).
-const EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8):
+Title/description editing belongs to PRE-IMPLEMENTATION lanes — the card has no session, no
+worktree, and no plan being executed against the text. That was encoded as the legacy id pair
+{triage, todo}, so a workflow that renames its planning lane (or U11's Todo→Planning merge)
+silently lost the Edit affordance with nothing on screen to explain it. Resolve it from the
+card's own column traits instead, and keep the legacy id set as the fallback for the window
+before the board-workflows payload resolves and for a column the workflow does not declare —
+where the traits are unknown rather than known-false.
+*/
+function isTaskFieldEditableColumn(column: ColumnId, flags?: TaskContextMenuColumnFlags): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12): body moved UNCHANGED to
+  `isFieldEditableColumnRole`, so this and TaskCard cannot drift apart again. TaskCard implemented the
+  same affordance with the raw id set and no trait path, which is how a renamed board lost inline
+  editing on the card while this surface kept it.
+  */
+  return isFieldEditableColumnRole(flags, column);
+}
 const GITHUB_TRACKING_EDITABLE_COLUMNS: Set<ColumnId> = new Set<ColumnId>(["triage", "todo", "in-progress", "in-review", "ideas"]);
 const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 
@@ -814,6 +876,44 @@ export function TaskDetailContent({
    */
   // FNXC:DuplicateIntake 2026-07-16-13:00: Issue #2225 reuses this linked banner for triage-marker Keep/Delete decisions.
   const isTriageMarkerDuplicate = workingTask.sourceMetadata?.duplicateSource === "triage-marker";
+  /*
+  FNXC:DuplicateIntake 2026-07-30-05:00 DELIBERATE-LITERAL: terminal check on THIS modal's own task,
+  and the flags for it are not resolved at this point in the render. `workflowMoveMetadata` (which
+  carries `currentColumnFlags`) is fetched asynchronously and is null on first paint, so reading it
+  here would suppress the near-duplicate warning for one frame on every open — a flicker on a
+  correctness banner. The terminal ids are stable for every board that has not renamed done/archived,
+  and the cost of the legacy answer is bounded: a renamed terminal column shows the banner one state
+  too long, versus hiding it wrongly on every open.
+
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (PR #2772 review — I TRIED THIS AND WAS WRONG):
+  The sizing above stands, and I am recording the failed attempt so it is not retried a third time.
+
+  I converted these two to `isArchivedColumnRole`/`isCompleteColumnRole`, reasoning that the helpers'
+  id-fallback makes a first-paint read byte-identical to the literal, so no parent change is needed.
+  tsc refused it: `detailColumnFlags` is declared ~60 lines BELOW this point (it derives from
+  `workflowMoveMetadata`, a useState at ~959), so the value simply does not exist here. "The flags are
+  already in this component" was true and irrelevant — they are not in scope AT THIS LINE.
+
+  Hoisting the state and its derivation above this block is the actual fix, and it is a hook-ordering
+  change in a 5000-line component, which is what the original note meant by not attempting it under
+  batch pressure. Left counted.
+
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (the hoist would have been WRONG, not just costly):
+  Correcting the paragraph above before someone acts on it. Hoisting applies to the two terminal
+  checks on `task.column`, where `detailColumnFlags` is the right flags. It does NOT extend to the
+  `isNearDuplicateCanonicalInactive` call on the next line, which the seam check reports as an
+  omitted supplier — and that is a case where satisfying the check would introduce a bug.
+
+  `detailColumnFlags` describes THIS modal's task, guarded by `detailFlagsAreForThisTask`. The
+  canonical is a DIFFERENT task, on a column this component never resolves. Passing the modal's flags
+  would answer "is the canonical's column active?" using the open task's column traits — the per-task
+  vs union confusion that `column-role-degraded-flags.test.ts` exists to catch, and it would type-check
+  and read as a conversion.
+
+  Supplying it correctly needs the canonical's own resolved flags, which means fetching them: a data
+  change, out of scope here. So the omission is deliberate and is exempted BY CALL SITE rather than by
+  function name, so core's sibling site stays guarded.
+  */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
@@ -864,17 +964,95 @@ export function TaskDetailContent({
     }
   }, [initialTab]);
 
-  useEffect(() => {
-    if (activeTab === "pr" && task.column !== "in-review") {
-      setActiveTab("definition");
-    }
-  }, [activeTab, task.column]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:30 (PR #2698 review — greptile P1, fourth form):
+  CARRIES THE TASK IT DESCRIBES. The fetch effect resets this to null on a task change, but it is
+  declared BELOW the reconciliation effects, so on the render where the modal switches tasks those
+  run first and still see the PREVIOUS task's flags. Non-null is therefore not the same as
+  "resolved for this task", which is what my earlier guard actually assumed.
+
+  Tagging the payload makes that checkable instead of order-dependent: consumers compare `taskId`
+  and fall back to the legacy id when it does not match, which is the same safe answer they use
+  before any fetch has landed.
+  */
+  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<(Partial<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags">> & { taskId: string }) | null>(null);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (fleet: TaskDetailModal.tsx):
+  The card's ROLES, resolved from the column flags this modal already fetches. Declared immediately
+  after `workflowMoveMetadata` because that state is their source — anything above this line cannot
+  reference them without a temporal-dead-zone error, which is why four sites higher in the component
+  are flagged in the PR rather than converted here.
+
+  `currentColumnFlags` is null until the workflow fetch resolves, so these flip after first paint.
+  Every consumer below therefore lists the role it reads in its dependency array — the same
+  late-arriving-flags hazard that produced four stale memos in TaskCard (PR #2688 review). This repo
+  has no react-hooks/exhaustive-deps rule, so that is checked by hand.
+  */
+  /*
+  Flags only when they describe THIS task. On the render where the modal switches tasks the state
+  still holds the previous card's payload, and using it would resolve roles from another task's
+  workflow — worse than the legacy fallback, because it is confidently wrong rather than merely
+  stale. `undefined` here gives every role the same answer it uses before any fetch lands.
+  */
+  const detailFlagsAreForThisTask = workflowMoveMetadata?.taskId === task.id;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:30 (one root cause, SIX review findings):
+  EVERY consumer in this file reads the task-identity-guarded value. `workflowMoveMetadata` outlives a
+  task switch, so while the modal is open its flags describe the PREVIOUS task for a render — and this
+  component gates editability, the execution-mode replan decision, the intake affordance, the actions
+  menu and the review tab on them.
+
+  The guard existed from the start; five call sites simply read around it, and each was found
+  separately: #2744 (review tab), #2696 (handleDelete deps), and the four here. Converting them
+  together retires the class instead of paying another review round per site.
+  */
+  const detailColumnFlags = detailFlagsAreForThisTask ? workflowMoveMetadata?.currentColumnFlags : undefined;
+  const isDoneColumn = isCompleteColumnRole(detailColumnFlags, task.column);
+  const isArchivedColumn = isArchivedColumnRole(detailColumnFlags, task.column);
+  const isWipColumn = isWipColumnRole(detailColumnFlags, task.column);
+  const isReviewColumn = isReviewColumnRole(detailColumnFlags, task.column);
 
   useEffect(() => {
-    if (activeTab === "summary" && task.column !== "done") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:30 (PR #2698 review — greptile P1):
+    Must use the ROLE, because tab VISIBILITY already does. Leaving this on the literal while the
+    tab's visibility check resolved traits made the two disagree on a custom board: the PR tab
+    appeared (the column carries the review role) and this effect immediately bounced the operator
+    back to Changes, because the column is not named `in-review`. A tab that shows up and instantly
+    redirects is worse than one that never shows.
+
+    That inconsistency was created by converting half the pair. The state this reads is hoisted above
+    these effects for exactly this reason — see the note at its declaration.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:30 (PR #2698 review — greptile P1, third form):
+    DO NOT REDIRECT ON AN UNRESOLVED ROLE. `workflowMoveMetadata` is null until the workflow fetch
+    lands, so on first paint `isReviewColumn` is the legacy-id fallback — false for a custom review
+    column. Without this guard the modal opens, immediately bounces the operator off the PR tab they
+    chose, and never restores it when the real answer arrives: the redirect is destructive and the
+    correction is not.
+
+    Waiting is the safe direction. Showing the PR tab a moment longer on a card that turns out not to
+    be in review is benign and self-corrects the instant metadata resolves; throwing away a
+    deliberate tab selection does not.
+    */
+    if (!detailFlagsAreForThisTask) return;
+    if (activeTab === "pr" && !isReviewColumn) {
       setActiveTab("definition");
     }
-  }, [activeTab, task.column]);
+  }, [activeTab, task.column, isReviewColumn, detailFlagsAreForThisTask]);
+
+  useEffect(() => {
+    // Same pairing as the PR tab above: visibility resolves the complete role, so reconciliation must
+    // too, or the Summary tab appears on a custom terminal column and bounces straight back.
+    // Same unresolved-role guard as the PR tab above: a redirect is destructive, so it waits for the
+    // real answer rather than acting on the legacy fallback.
+    if (!detailFlagsAreForThisTask) return;
+    if (activeTab === "summary" && !isDoneColumn) {
+      setActiveTab("definition");
+    }
+  }, [activeTab, task.column, isDoneColumn, detailFlagsAreForThisTask]);
 
   // Reset description and planner-chat focus state when task changes
   useEffect(() => {
@@ -952,7 +1130,6 @@ export function TaskDetailContent({
   the caller-owned field definitions.
   */
   const [taskWorkflowBadge, setTaskWorkflowBadge] = useState<{ id: string; name: string; icon?: string } | null>(null);
-  const [workflowMoveMetadata, setWorkflowMoveMetadata] = useState<Pick<TaskWorkflowMetadata, "moveColumns" | "currentColumnFlags"> | null>(null);
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
   // in which case the fields section renders nothing (today's UI byte-identical).
@@ -990,10 +1167,23 @@ export function TaskDetailContent({
           setCustomFieldDefs(metadata?.fields ?? null);
         }
         setTaskWorkflowBadge(metadata ? { id: metadata.id, name: metadata.name, icon: metadata.icon } : null);
-        setWorkflowMoveMetadata(metadata ? {
-          moveColumns: metadata.moveColumns,
-          currentColumnFlags: metadata.currentColumnFlags,
-        } : null);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-06:00 (PR #2698 review — greptile P1, fifth form):
+        SETTLED-EMPTY IS STILL SETTLED. Writing `null` when the lookup returns no metadata is
+        indistinguishable from "has not resolved yet", so the reconciliation effects returned
+        forever and an invalid tab stayed active indefinitely — the exact failure the identity guard
+        was added to prevent, arrived at from the other end.
+
+        Resolution has three states, not two: unresolved (null), resolved-with-flags, and
+        resolved-empty. The last one still identifies the task, so consumers know the answer has
+        landed and the roles should fall back to the legacy id — which is a real answer, not a
+        placeholder.
+        */
+        setWorkflowMoveMetadata({
+          taskId: task.id,
+          moveColumns: metadata?.moveColumns,
+          currentColumnFlags: metadata?.currentColumnFlags,
+        });
       })
       .catch(() => {
         if (!cancelled) {
@@ -1291,7 +1481,7 @@ export function TaskDetailContent({
   const [workflowResults, setWorkflowResults] = useState<WorkflowStepResult[]>([]);
   const [workflowResultsLoading, setWorkflowResultsLoading] = useState(false);
   const [workflowEnabledSteps, setWorkflowEnabledSteps] = useState<string[] | undefined>(task.enabledWorkflowSteps);
-  const isNodeOverrideLocked = task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
+  const isNodeOverrideLocked = isWipColumn || ACTIVE_STATUSES.has(task.status as string);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -1305,12 +1495,17 @@ export function TaskDetailContent({
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setSourceIssueExpanded(false);
-    setGithubTrackingExpanded(false);
     setGithubRepoOverrideDraft(workingTask.githubTracking?.repoOverride ?? "");
     setGithubTrackingEnabledDraft(null);
     setGithubRepoOverrideError(null);
     setIsEditing(false);
   }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode, workingTask.githubTracking]);
+
+  // Disclosure state belongs to the selected task, not to same-task detail
+  // refreshes such as GitHub tracking updates or sparse SSE payloads.
+  useEffect(() => {
+    setGithubTrackingExpanded(false);
+  }, [task.id]);
 
   useEffect(() => {
     setWorkflowEnabledSteps(task.enabledWorkflowSteps);
@@ -1390,6 +1585,7 @@ export function TaskDetailContent({
     if (activeTab !== "workflow") return;
 
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    let cancelled = false;
 
     const handleTaskUpdated = (e: MessageEvent) => {
       try {
@@ -1403,22 +1599,58 @@ export function TaskDetailContent({
       }
     };
 
-    return subscribeSse(`/api/events${query}`, {
+    /*
+    FNXC:TaskWorkflowDetails 2026-07-26-16:30:
+    Resync contract (see SseSubscription in sse-bus.ts). After the initial fetch the Workflow tab's step
+    results are replaced ONLY by `task:updated` payloads, and the stream is lossy: an error/heartbeat
+    reconnect or the >=60s hidden-tab suspend drops the socket and /api/events keeps no replay buffer.
+    Missing the gap freezes the rendered step list at its pre-suspend state — a review that failed or a
+    step that finished while the phone was backgrounded still reads as running, which is exactly the
+    surface an operator checks before deciding to intervene. Refetch through the same
+    `fetchWorkflowResults` the load effect uses; deliberately no `setWorkflowResultsLoading(true)` and no
+    list clear, so a reconnect refreshes in place instead of flashing an empty/spinner tab.
+    */
+    const resyncWorkflowResults = () => {
+      void fetchWorkflowResults(task.id, projectId)
+        .then((results) => {
+          if (!cancelled) setWorkflowResults(results);
+        })
+        .catch(() => {
+          // Non-fatal: the tab keeps its last known rows and the next task:updated event corrects them.
+        });
+    };
+
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: resyncWorkflowResults,
       events: { "task:updated": handleTaskUpdated },
     });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [activeTab, task.id, projectId]);
+
+  /*
+  FNXC:TaskCliSession 2026-07-26-16:36:
+  Hoisted out of the load effect so the `cli:session:state` subscription's onReconnect can refetch the
+  SAME authoritative list rather than duplicating the request shape. Returns the most-recent session
+  (the list is store-ordered) or null; the enriched list fields (adapterId / autonomyPosture) exist only
+  here, which is why the SSE handler merges onto this record instead of replacing it.
+  */
+  const fetchLatestCliSession = useCallback(async (): Promise<CliSessionSummaryRecord | null> => {
+    const search = new URLSearchParams({ taskId: task.id });
+    if (projectId) search.set("projectId", projectId);
+    const res = await api<{ sessions: CliSessionSummaryRecord[] }>(`/cli-sessions?${search.toString()}`);
+    const sessions = res.sessions ?? [];
+    return sessions.length > 0 ? sessions[sessions.length - 1] : null;
+  }, [task.id, projectId]);
 
   // Load the CLI agent session for this task (drives the terminal tab + matrix).
   useEffect(() => {
     let cancelled = false;
-    const search = new URLSearchParams({ taskId: task.id });
-    if (projectId) search.set("projectId", projectId);
-    void api<{ sessions: CliSessionSummaryRecord[] }>(`/cli-sessions?${search.toString()}`)
-      .then((res) => {
-        if (cancelled) return;
-        // Most-recent session for the task (the list is store-ordered).
-        const sessions = res.sessions ?? [];
-        setCliSession(sessions.length > 0 ? sessions[sessions.length - 1] : null);
+    void fetchLatestCliSession()
+      .then((session) => {
+        if (!cancelled) setCliSession(session);
       })
       .catch(() => {
         if (!cancelled) setCliSession(null);
@@ -1426,13 +1658,14 @@ export function TaskDetailContent({
     return () => {
       cancelled = true;
     };
-  }, [task.id, projectId]);
+  }, [fetchLatestCliSession]);
 
   // Live CLI session state via SSE — MERGE payload fields onto the record
   // (never wholesale-replace: the list fetch carries enriched fields the SSE
   // payload omits, e.g. adapterId / autonomyPosture).
   useEffect(() => {
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    let cancelled = false;
     const handleCliState = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data) as {
@@ -1473,10 +1706,35 @@ export function TaskDetailContent({
         /* skip malformed events */
       }
     };
-    return subscribeSse(`/api/events${query}`, {
+    /*
+    FNXC:TaskCliSession 2026-07-26-16:40:
+    Resync contract (see SseSubscription in sse-bus.ts). `agentState` is advanced ONLY by
+    `cli:session:state` after the initial list fetch, and the stream is lossy: an error/heartbeat
+    reconnect or the >=60s hidden-tab suspend drops the socket with no replay buffer. A terminal
+    transition landing in that gap is the expensive one — the session shows "busy" forever while the
+    real process is `waitingOnInput` (operator never answers the prompt) or `dead`/`done` (operator
+    waits on a session that already ended). Refetch the list on reconnect and take it as authoritative:
+    unlike the event handler, the list response carries every enriched field, so replacing is safe here.
+    */
+    const resyncCliSession = () => {
+      void fetchLatestCliSession()
+        .then((session) => {
+          if (!cancelled) setCliSession(session);
+        })
+        .catch(() => {
+          // Non-fatal: keep the last known record; the next state event or reopen corrects it.
+        });
+    };
+
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: resyncCliSession,
       events: { "cli:session:state": handleCliState },
     });
-  }, [task.id, projectId]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [task.id, projectId, fetchLatestCliSession]);
 
   // Reset dependency search when dropdown closes
   useEffect(() => {
@@ -1615,7 +1873,9 @@ export function TaskDetailContent({
   // Note: TaskForm handles auto-focus internally via isActive prop
 
   // Check if task can be edited
-  const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const canEdit = isTaskFieldEditableColumn(task.column, detailColumnFlags) && !isSaving;
+  /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
+  const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
   const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
@@ -1933,7 +2193,7 @@ export function TaskDetailContent({
       }
       return false;
     }
-    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column);
+    const replanAfterExecutionModeChange = Object.prototype.hasOwnProperty.call(updates, "executionMode") && requiresExecutionModeReplan(task.column, detailColumnFlags);
     if (replanAfterExecutionModeChange && !includeDescription) {
       delete updates.executionMode;
     }
@@ -1983,7 +2243,7 @@ export function TaskDetailContent({
         setIsSaving(false);
       }
     }
-  }, [addToast, buildEditUpdates, confirm, onTaskUpdated, projectId, requestClose, task.column, task.executionMode, task.id]);
+  }, [addToast, buildEditUpdates, confirm, detailColumnFlags, onTaskUpdated, projectId, requestClose, task.column, task.executionMode, task.id]);
 
   const handleAutoSaveDescription = useCallback(async (_description: string) => {
     await persistEditChanges(true);
@@ -2071,7 +2331,7 @@ export function TaskDetailContent({
     const currentMode = normalizeExecutionModeValue(task.executionMode);
     const nextMode = currentMode === "fast" ? "standard" : "fast";
     const previousMode = inlineExecutionMode;
-    const shouldReplan = requiresExecutionModeReplan(task.column);
+    const shouldReplan = requiresExecutionModeReplan(task.column, detailColumnFlags);
 
     if (shouldReplan) {
       const shouldChangeMode = await confirm({
@@ -2107,7 +2367,15 @@ export function TaskDetailContent({
         setIsSavingInlineExecutionMode(false);
       }
     }
-  }, [task.id, task.column, task.executionMode, projectId, inlineExecutionMode, onTaskUpdated, addToast, confirm, requestClose]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (PR #2761 review — greptile):
+  `detailColumnFlags` is a DEPENDENCY, not a constant. It starts undefined on a task switch and
+  populates when the metadata lands, so a callback that captures it without listing it keeps applying
+  the pre-resolution answer — deciding the execution-mode replan from the legacy id on a custom hold or
+  WIP column. My narrowing introduced a value that changes over time into callbacks written for one
+  that did not.
+  */
+  }, [task.id, task.column, task.executionMode, detailColumnFlags, projectId, inlineExecutionMode, onTaskUpdated, addToast, confirm, requestClose]);
 
   const handleInlineNoCommitsExpectedToggle = useCallback(async () => {
     const nextValue = !inlineNoCommitsExpected;
@@ -2420,7 +2688,23 @@ export function TaskDetailContent({
     async (column: Column) => {
       try {
         const hasStepProgress = task.steps.some((step) => step.status !== "pending");
-        const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+        The TARGET column's role, not this card's — moving BACK into a pre-implementation
+        lane is what risks discarding step progress. (The same site in TaskCard is where I
+        first got this backwards; its regression test caught it.) Falls back to the legacy
+        ids when the destination has no resolved metadata.
+        */
+        const targetFlags = workflowMoveMetadata?.moveColumns?.find((candidate) => candidate.id === column)?.flags;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only. Same reasoning as
+        the TaskCard site: a wrong guess skips the preserve-progress prompt and discards steps with
+        no way back. Reason in full above.
+        */
+        const targetIsPreImplementation = targetFlags
+          ? targetFlags.intake === true || targetFlags.hold === true
+          : column === "todo" || column === "triage";
+        const shouldPrompt = targetIsPreImplementation && hasStepProgress;
 
         let moveOptions: { preserveProgress?: boolean } | undefined;
         if (shouldPrompt) {
@@ -2472,7 +2756,7 @@ export function TaskDetailContent({
       deleteCloseRequested = true;
     };
 
-    if (task.column !== "archived" && onArchiveTask) {
+    if (!isArchivedColumn && onArchiveTask) {
       const deleteChoice = await confirmWithChoice({
         title: t("taskDetail.delete.title", "Delete Task"),
         message: t("taskDetail.delete.message", "Delete {{id}}?", { id: task.id }),
@@ -2656,7 +2940,7 @@ export function TaskDetailContent({
         addToast(getErrorMessage(retryErr), "error");
       }
     }
-  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice, confirmWithCheckbox]);
+  }, [task.column, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, onArchiveTask, requestClose, addToast, confirm, confirmWithChoice, confirmWithCheckbox, isArchivedColumn]);
 
   const handleMerge = useCallback(async () => {
     const shouldMerge = await confirm({
@@ -2855,7 +3139,7 @@ export function TaskDetailContent({
   AI-undo task on conflict/unsupported. The source task's column is never
   mutated as a side effect.
   */
-  const isRevertable = (task.column === "done" || task.column === "archived")
+  const isRevertable = (isDoneColumn || isArchivedColumn)
     && Boolean(task.mergeDetails?.commitSha);
 
   const handleRevertTask = useCallback(async () => {
@@ -2916,7 +3200,20 @@ export function TaskDetailContent({
   plan-review-replan-cap, explain that Plan Review exhausted automatic REVISE replans
   without converging so the operator is not guessing why the task is parked.
   */
-  const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The INTAKE lane's approval hold. `task.column === "triage"` is deleted by U11, which
+  would silently drop the Approve/Reject controls from a parked planning card — the
+  operator sees a task stuck "awaiting approval" with no way to answer it.
+
+  FNXC:WorkflowLifecycleColumns 2026-07-29-23:40 DELIBERATE-LITERAL: the fallback arm only.
+  Reachable only with no resolved flags; guessing "not intake" hides Approve/Reject from a parked
+  planning card, which is an operator dead end. Retires with the pre-load window.
+  */
+  const isIntakeColumn = detailColumnFlags
+    ? detailColumnFlags.intake === true
+    : task.column === "triage";
+  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
 
   const handleTogglePause = useCallback(async () => {
@@ -3381,6 +3678,13 @@ export function TaskDetailContent({
   const overlapBlockerTask = workingTask.overlapBlockedBy
     ? tasks.find((candidate) => candidate.id === workingTask.overlapBlockedBy)
     : undefined;
+  /*
+  FNXC:OverlapBlocker 2026-07-30-05:00 DELIBERATE-LITERAL: asks about ANOTHER task's column.
+  `overlapBlockerTask` is a row found in `tasks` — this modal holds resolved flags for its OWN
+  column only, and nothing in scope maps an arbitrary other task's column to traits. Converting
+  needs a flags-by-column map threaded in (the shape `ListView` already has), which is a prop change
+  across callers, not a substitution. Sized, not guessed.
+  */
   const overlapBlockerActive = Boolean(
     overlapBlockerTask && (overlapBlockerTask.column === "in-progress" || overlapBlockerTask.column === "in-review"),
   );
@@ -3467,8 +3771,8 @@ export function TaskDetailContent({
   */
   const overseerSnapshot = workingTask.plannerOverseerState ?? null;
   const overseerActive = Boolean(overseerSnapshot);
-  const isDoneOrArchivedColumn = task.column === "done" || task.column === "archived";
-  const isOverseerHumanReviewTerminal = task.column === "in-review" && !effectiveAutoMerge;
+  const isDoneOrArchivedColumn = isDoneColumn || isArchivedColumn;
+  const isOverseerHumanReviewTerminal = isReviewColumn && !effectiveAutoMerge;
   const overseerHumanControlSuppressed = Boolean(isTaskPaused) || isDoneOrArchivedColumn || isOverseerHumanReviewTerminal;
   const oversightIsOff = effectiveOversightLevel === "off";
   /*
@@ -3539,8 +3843,15 @@ export function TaskDetailContent({
     task,
     t,
     columnLabel,
-    currentColumnFlags: workflowMoveMetadata?.currentColumnFlags,
-    workflowMoveColumns: workflowMoveMetadata?.moveColumns,
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (PR #2761 review — greptile, and the finding is on my
+    own change): BOTH FIELDS OR NEITHER. Guarding `currentColumnFlags` alone left `moveColumns` coming
+    from the PREVIOUS task, so the action model mixed one task's roles with another's move targets —
+    an inconsistency my narrowing created, and arguably worse than leaving both unguarded, because the
+    menu then offers destinations from a card the operator is no longer looking at.
+    */
+    currentColumnFlags: detailColumnFlags,
+    workflowMoveColumns: detailFlagsAreForThisTask ? workflowMoveMetadata?.moveColumns : undefined,
     canRetryTask,
     hasDuplicateHandler: Boolean(onDuplicateTask),
     hasRetryHandler: Boolean(onRetryTask),
@@ -4011,9 +4322,18 @@ export function TaskDetailContent({
     >
       <div className="modal-header">
           <div className="detail-title-row">
-            <span className="detail-id">{task.id}</span>
+            <span className="detail-id" id="task-detail-modal-title">{task.id}</span>
+            {/*
+            FNXC:WorkflowResolvedColumns 2026-07-27-15:35 (U10 / R8):
+            The badge names the card's column in the card's OWN workflow vocabulary. `columnLabel`
+            is the shared lifecycle translator keyed on legacy ids, so a workflow-declared column
+            it does not know fell through to the raw stored id ("staging") beside properly named
+            lanes elsewhere in the UI. Prefer the workflow's declared column name; keep
+            `columnLabel` for the column a workflow does not declare and for the window before the
+            board-workflows payload resolves.
+            */}
             <span className={`detail-column-badge badge-${task.column}`}>
-              {columnLabel(task.column)}
+              {workflowColumnDisplayName ?? columnLabel(task.column)}
             </span>
           </div>
           <div className="modal-header-actions">
@@ -4224,7 +4544,7 @@ export function TaskDetailContent({
                   customFields={customFieldValues}
                   onSave={handleSaveCustomFields}
                   error={customFieldError}
-                  readOnly={Boolean(task.column === "archived")}
+                  readOnly={Boolean(isArchivedColumn)}
                 />
               ) : null}
               {showNearDuplicateWarning && (
@@ -4936,7 +5256,7 @@ export function TaskDetailContent({
                 </button>
               </>
             )}
-            {task.column === "done" && (
+            {isDoneColumn && (
               <button
                 className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("summary")}
@@ -4950,7 +5270,7 @@ export function TaskDetailContent({
             >
               {t("taskDetail.tabs.definition", "Plan")}
             </button>
-            {(task.column === "in-progress" || task.column === "in-review" || task.column === "done") && (
+            {(isWipColumn || isReviewColumn || isDoneColumn) && (
               <button
                 className={`detail-tab${activeTab === "changes" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("changes")}
@@ -4964,7 +5284,7 @@ export function TaskDetailContent({
             >
               {t("taskDetail.tabs.review", "Review")}
             </button>
-            {task.column === "in-review" && (
+            {isReviewColumn && (
               <button
                 className={`detail-tab${activeTab === "pr" ? " detail-tab-active" : ""}`}
                 onClick={() => setActiveTab("pr")}
@@ -5048,6 +5368,7 @@ export function TaskDetailContent({
           {activeTab === "workflow" ? (
             <div className="detail-section">
               <WorkflowResultsTab
+                columnFlags={detailColumnFlags}
                 taskId={task.id}
                 task={task}
                 results={workflowResults}
@@ -5056,7 +5377,7 @@ export function TaskDetailContent({
                 canEdit={canEdit}
                 projectId={projectId}
                 isTaskInProgress={
-                  task.column === "in-progress"
+                  isWipColumn
                   && !task.paused
                   && !task.userPaused
                   && task.status !== "paused"
@@ -5083,9 +5404,9 @@ export function TaskDetailContent({
                 projectId={projectId}
               />
             </div>
-          ) : activeTab === "summary" && task.column === "done" ? (
+          ) : activeTab === "summary" && isDoneColumn ? (
             <div className="detail-section detail-section--summary">
-              <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
+              <TaskSummaryTab task={workingTask} columnFlags={detailColumnFlags} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
           ) : activeTab === "cost" ? (
             <div className="detail-section detail-section--cost">
@@ -5095,6 +5416,7 @@ export function TaskDetailContent({
             <div className="detail-section detail-section--planner-chat">
               <TaskPlannerChatTab
                 task={workingTask}
+                columnFlags={detailColumnFlags}
                 projectId={projectId}
                 active={activeTab === "planner-chat"}
                 expanded={isPlannerChatExpanded}
@@ -5121,6 +5443,7 @@ export function TaskDetailContent({
               */}
               {activitySegment === "current" ? (
                 <TaskChatTab
+                  columnFlags={detailColumnFlags}
                   task={workingTask}
                   projectId={projectId}
                   active={activeTab === "chat" && activitySegment === "current"}
@@ -5131,17 +5454,17 @@ export function TaskDetailContent({
                   onToggleExpanded={() => setActivityExpanded((value) => !value)}
                   effectiveModels={{
                     triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
-                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
-                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
+                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings, detailColumnFlags)),
                   }}
                 />
               ) : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
                   loading={agentLogLoading}
-                  executorModel={resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings)}
-                  validatorModel={resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings)}
+                  executorModel={resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings, detailColumnFlags)}
+                  validatorModel={resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings, detailColumnFlags)}
                   planningModel={resolveEffectivePlanning(task, agentLogEntries, settings)}
                   hasMore={agentLogHasMore}
                   onLoadMore={loadMoreAgentLogs}
@@ -5222,9 +5545,19 @@ export function TaskDetailContent({
               )}
             </div>
           ) : activeTab === "changes" ? (
-            <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} mergeDetails={task.mergeDetails} modifiedFiles={task.modifiedFiles} isWorkspace={isWorkspaceTask(workingTask)} />
+            <TaskChangesTab taskId={task.id} worktree={task.worktree} projectId={projectId} column={task.column} columnFlags={detailColumnFlags} mergeDetails={task.mergeDetails} modifiedFiles={task.modifiedFiles} isWorkspace={isWorkspaceTask(workingTask)} />
           ) : activeTab === "review" ? (
             <TaskReviewTab
+              /*
+              FNXC:WorkflowResolvedColumns 2026-07-30-11:10 (#2744 review — greptile P1):
+              `detailColumnFlags`, NOT the raw payload. That local applies `detailFlagsAreForThisTask`
+              (`workflowMoveMetadata?.taskId === task.id`), and on the render where the modal switches
+              tasks the state still holds the PREVIOUS card's payload. Passing the raw flags would resolve
+              the review tab's roles from another task's workflow — confidently wrong rather than merely
+              stale, which is the exact reasoning already recorded where that local is defined. I passed
+              the raw value and reviewed past the guard sitting six lines above my own conversion.
+              */
+              columnFlags={detailColumnFlags}
               task={task}
               addToast={addToast}
               projectId={projectId}
@@ -5235,9 +5568,9 @@ export function TaskDetailContent({
             />
           ) : activeTab === "pr" ? (
             <div className="detail-section detail-pr-tab">
-              {task.column === "in-review" && (
+              {isReviewColumn && (
                 <>
-                  {shouldShowInReviewStallBadge(workingTask) && workingTask.inReviewStall && (() => {
+                  {shouldShowInReviewStallBadge(workingTask, detailColumnFlags) && workingTask.inReviewStall && (() => {
                     const copy = getInReviewStallCopy(workingTask.inReviewStall, {
                       mergeRetries: workingTask.mergeRetries,
                       maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
@@ -5283,7 +5616,7 @@ export function TaskDetailContent({
                       </div>
                     );
                   })()}
-                  {shouldShowStalePausedReviewBadge(workingTask) && workingTask.stalePausedReview && (() => {
+                  {shouldShowStalePausedReviewBadge(workingTask, detailColumnFlags) && workingTask.stalePausedReview && (() => {
                     const copy = getStalePausedReviewCopy(workingTask.stalePausedReview);
                     const logMatch = [...(workingTask.log ?? [])].reverse().find((entry) => {
                       const match = getTaskLogEntryAction(entry).match(STALE_PAUSED_REVIEW_LOG_REGEX);
@@ -5334,6 +5667,7 @@ export function TaskDetailContent({
                       prInfos={task.prInfos}
                       automationStatus={task.status ?? null}
                       taskColumn={task.column}
+                      taskColumnFlags={detailColumnFlags}
                       autoMerge={effectiveAutoMerge}
                       isManualPrFlow={isManualPrFlow}
                       directMergeCommitStrategy={settings?.directMergeCommitStrategy}
@@ -5400,12 +5734,14 @@ export function TaskDetailContent({
                 tokenUsage={workingTask.tokenUsage}
                 loading={detailLoading}
                 task={workingTask}
+                columnFlags={detailColumnFlags}
               />
             </div>
           ) : activeTab === "routing" ? (
             <div className="detail-section">
               <RoutingTab
                 task={task}
+                columnFlags={detailColumnFlags}
                 settings={settings}
                 addToast={addToast}
                 onTaskUpdated={onTaskUpdated}
@@ -6228,7 +6564,7 @@ export function TaskDetailContent({
           </>
           )}
         </div>
-        {task.column === "in-review" && (
+        {isReviewColumn && (
           <PrCreateModal
             open={prCreateOpen}
             taskId={task.id}
@@ -6291,10 +6627,11 @@ export function TaskDetailContent({
                 </>
               )}
 
-              {/* Standalone Delete button for triage-column tasks — triage tasks
-                  hide the Actions dropdown (see condition below) so the user has
-                  no quick way to delete a freshly-created task otherwise. */}
-              {task.column === "triage" && !isAwaitingApproval && !canRetryTask && (
+              {/* Standalone Delete button for INTAKE-lane tasks — they hide the Actions
+                  dropdown (see condition below) so the user has no quick way to delete a
+                  freshly-created task otherwise. Keyed on the intake trait rather than the
+                  `triage` id, which U11 deletes. */}
+              {isIntakeColumn && !isAwaitingApproval && !canRetryTask && (
                 <button
                   className="btn btn-sm btn-danger"
                   onClick={handleDelete}
@@ -6313,7 +6650,7 @@ export function TaskDetailContent({
               completed task's outcome. Omitted — not disabled — when the task has
               no landed commit to revert, avoiding an empty button shell.
               */}
-              {(task.column === "done" || task.column === "archived") && onRevertTask && isRevertable && (
+              {(isDoneColumn || isArchivedColumn) && onRevertTask && isRevertable && (
                 <button
                   className="btn btn-sm"
                   onClick={() => void handleRevertTask()}
@@ -6367,7 +6704,7 @@ export function TaskDetailContent({
 
               {/* Move dropdown — column transitions and merge actions */}
               <div className="detail-move-dropdown" ref={moveMenuRef}>
-                {task.column === "in-review" ? (
+                {isReviewColumn ? (
                   <div className="detail-move-actions-in-review">
                     <div>
                       <button
@@ -6514,6 +6851,7 @@ export function TaskDetailContent({
               projectId={projectId}
               onClose={() => setSelectedSourceAgentId(null)}
               addToast={addToast}
+              floatingWindowKey="agent-detail-task"
             />
           </Suspense>
         )}
@@ -6522,43 +6860,41 @@ export function TaskDetailContent({
 }
 
 export function TaskDetailModal({ onClose, ...props }: TaskDetailModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const viewportMode = useViewportMode();
-  useModalResizePersist(modalRef, true, "task-detail-modal-size");
   useMobileScrollLock(true);
-  const overlayDismissProps = useOverlayDismiss(onClose);
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   /*
-  FNXC:TaskDetailSwipeBack 2026-08-07-00:00:
+  FNXC:TaskDetailSwipeBack 2026-07-25-00:00:
   Gate predictive-back animation through useViewportMode, the same physical-screen-aware
   classifier used for resize behavior. This preserves phone animation while keeping known
   768px tablets in their desktop/tablet presentation.
   */
   const isMobileTransition = viewportMode === "mobile";
 
-  /*
-  FNXC:TaskModalResize 2026-08-07-00:00:
-  Known touch tablets at the 768px CSS boundary resolve to `tablet` through
-  useViewportMode. Carry that single classification into the modal class so CSS
-  can override phone-sheet rules without a second breakpoint or gesture system.
-  */
-  const isTabletTaskModal = viewportMode === "tablet";
-
   return (
-    <div
-      className="modal-overlay open"
-      {...overlayDismissProps}
-      role="dialog"
-      aria-modal="true"
+    <FloatingWindow
+      windowKey="task-detail"
+      title="Task detail"
+      ariaLabelledBy="task-detail-modal-title"
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".task-detail-content > .modal-header"
+      className="floating-window--task-detail"
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Task Detail shares its layer with Quick Chat and pop-outs so interaction order remains coordinated by floatingWindowStack. */
+      layer="task-detail"
+      defaultSize={{ width: 800, height: 680 }}
+      minSize={{ width: 480, height: 480 }}
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Replace legacy size-only persistence with complete geometry and suspend it for phone and short sheet layouts. */
+      persistGeometryKey="floating-window:task-detail"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-19:05: Keep outside dismissal preference-gated; unconditional pointer-down would regress the default-off contract. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
-      <div
-        className={`modal modal-lg task-detail-modal${isTabletTaskModal ? " task-modal--tablet" : ""}${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}
-        ref={modalRef}
-      >
-        <TaskDetailContent
-          {...props}
-          onRequestClose={onClose}
-        />
+      <div className={`modal modal-lg task-detail-modal${isMobileTransition ? " task-detail-modal--mobile-transition" : ""}`}>
+        <TaskDetailContent {...props} onRequestClose={onClose} />
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

@@ -93,6 +93,7 @@ Follow this process:
       },
     });
 
-    selfImproveLog.log(`Recorded self-improve checkpoint for ${agentId}`);
+    // FNXC:EngineDiagnostics 2026-07-26-10:15: per-agent self-improve timestamp bookkeeping is not operator-actionable — debug (FUSION_DEBUG=self-improve or matching createLogger prefix).
+    selfImproveLog.debug(`Recorded self-improve checkpoint for ${agentId}`);
   }
 }

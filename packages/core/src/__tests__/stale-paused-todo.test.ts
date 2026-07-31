@@ -66,3 +66,60 @@ describe("getStalePausedTodoSignal", () => {
     expect(signal?.ageMs).toBe(DEFAULT_STALE_PAUSED_TODO_THRESHOLD_MS);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-21:30 (Phase B / U6 — vocabulary conversion):
+RED-GREEN PROOF for the hold-column guard in `getStalePausedTodoSignal`.
+
+Written BEFORE the conversion and asserted to FAIL against the literal `"todo"`
+implementation. That ordering is the whole point of this phase: a guard converted
+first and tested after proves nothing, because a guard that silently stops
+matching disables its recovery path without failing anything — which is how 82
+dead column guards passed a merge gate before this program existed.
+
+The signal detects a card that has sat PAUSED in the capacity-hold column past a
+threshold. "Hold column" is the lifecycle role; `todo` is merely the id the
+built-in coding workflow happens to give it. A workflow that names its hold
+column `drafting` has exactly the same stall condition and must produce exactly
+the same signal.
+*/
+describe("getStalePausedTodoSignal — hold column is resolved, not literal (U6)", () => {
+  const staleAnchor = new Date(Date.now() - 48 * 60 * 60_000).toISOString();
+  const pausedCard = (column: string) => ({
+    column,
+    paused: true as const,
+    columnMovedAt: staleAnchor,
+    updatedAt: staleAnchor,
+    pausedReason: "operator",
+    pausedByAgentId: undefined,
+  });
+
+  it("fires for the DEFAULT workflow's hold column (regression floor)", () => {
+    expect(getStalePausedTodoSignal(pausedCard("todo"))).toMatchObject({
+      code: "stale-paused-todo",
+    });
+  });
+
+  it("fires for a RENAMED hold column when the caller resolves it", () => {
+    // THE conversion assertion. Fails against the literal implementation.
+    expect(
+      getStalePausedTodoSignal(pausedCard("drafting"), { holdColumn: "drafting" }),
+    ).toMatchObject({ code: "stale-paused-todo" });
+  });
+
+  it("does NOT fire for a non-hold column in a renamed workflow", () => {
+    // The other half: conversion must not make the guard match everything.
+    expect(
+      getStalePausedTodoSignal(pausedCard("writing"), { holdColumn: "drafting" }),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire for the legacy id when the workflow's hold column is different", () => {
+    // Proves the guard follows the WORKFLOW, not the legacy vocabulary: a card
+    // parked in `todo` under a workflow whose hold column is `drafting` is not
+    // stalled-in-hold, it is sitting in some other column entirely.
+    expect(
+      getStalePausedTodoSignal(pausedCard("todo"), { holdColumn: "drafting" }),
+    ).toBeUndefined();
+  });
+});

@@ -83,6 +83,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => mockViewportMode(),
   isMobileViewport: () => mockViewportMode() === "mobile",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => mockViewportMode(),
 }));
 
@@ -838,6 +839,13 @@ describe("AgentsView", () => {
         expect(pausedCard?.classList.contains("agent-card--paused")).toBe(true);
         expect(pausedCard?.classList.contains("agent-card--active")).toBe(false);
       });
+    });
+
+    it("keeps heartbeat controls available on board cards", async () => {
+      renderView(<AgentsView addToast={mockAddToast} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Board view" }));
+      expect(await screen.findByRole("button", { name: /Disable heartbeat for Test Agent 1/i })).toBeInTheDocument();
     });
 
     it("displays agent task with column context when enriched", async () => {
@@ -2970,19 +2978,14 @@ describe("AgentsView", () => {
       expect(boardToggle).toHaveAttribute("aria-pressed", "true");
     });
 
-    it("renders recursive org controls and prevents a pending toggle from issuing duplicate PATCH requests", async () => {
-      let resolveUpdate: ((agent: Agent) => void) | undefined;
+    it("keeps heartbeat mutations out of org chart nodes", async () => {
       mockFetchOrgTree.mockResolvedValue([{ agent: { ...mockAgents[1], runtimeConfig: { enabled: false, heartbeatIntervalMs: 900_000 } }, children: [] }]);
-      mockUpdateAgent.mockImplementation(() => new Promise<Agent>((resolve) => { resolveUpdate = resolve; }));
       renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
-      const toggle = await screen.findByRole("button", { name: "Enable heartbeat for Test Agent 2" });
-      fireEvent.click(toggle);
-      fireEvent.click(toggle);
-      expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
-      expect(toggle).toBeDisabled();
-      resolveUpdate?.(mockAgents[1]);
+      await screen.findByText("Test Agent 2");
+      expect(screen.queryByRole("button", { name: /heartbeat for Test Agent 2/i })).toBeNull();
+      expect(mockUpdateAgent).not.toHaveBeenCalled();
     });
 
     it("updates every eligible current-project durable agent through bulk controls despite filtered display", async () => {

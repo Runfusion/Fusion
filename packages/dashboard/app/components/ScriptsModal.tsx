@@ -5,7 +5,8 @@ import { getErrorMessage } from "@fusion/core";
 import { fetchScripts, addScript, removeScript, type ScriptEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
+import { FloatingWindow } from "./FloatingWindow";
 import {
   X,
   Plus,
@@ -47,6 +48,7 @@ function truncateCommand(command: string, maxLength: number = 60): string {
 
 export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript }: ScriptsModalProps) {
   const { t } = useTranslation("app");
+  const dismissOnOutsidePointerDown = useModalDismissPreference();
   useMobileScrollLock(isOpen);
   const [scripts, setScripts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,6 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   const [saving, setSaving] = useState(false);
   const [deleteConfirmName, setDeleteConfirmName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
-  const overlayDismissProps = useOverlayDismiss(onClose);
 
   const loadScripts = useCallback(async () => {
     try {
@@ -176,13 +177,24 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   }));
 
   return (
-    <div className="modal-overlay open" {...overlayDismissProps} data-testid="scripts-modal">
-      <div
-        className="modal scripts-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("scripts.title", "Scripts")}
-      >
+    /* FNXC:ModalTouchGeometry 2026-07-26-13:20: Scripts retains its existing overlay-dismiss policy while FloatingWindow supplies the only drag/resize implementation and suspends desktop geometry in sheet viewports. */
+    <FloatingWindow
+      windowKey="scripts"
+      title={t("scripts.title", "Scripts")}
+      ariaLabel={`${t("scripts.title", "Scripts")} dialog`}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".modal-header"
+      className="floating-window--scripts"
+      defaultSize={{ width: 720, height: 560 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:scripts"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Preserve Scripts' globally default-off backdrop preference while the shared window keeps drag gestures from being mistaken for outside dismissals. */
+      closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
+    >
+      <div className="modal scripts-modal" aria-label={t("scripts.title", "Scripts")}>
         {/* Header */}
         <div className="modal-header">
           <h2>
@@ -490,6 +502,6 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
           )}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

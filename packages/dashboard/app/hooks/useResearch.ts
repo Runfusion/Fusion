@@ -19,6 +19,7 @@ import { subscribeSse } from "../sse-bus";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import type { ResearchAvailability, ResearchRunDetail, ResearchRunListItem } from "../research-types";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, SWR_LONG_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const POLL_INTERVAL_MS = 4000;
@@ -241,14 +242,26 @@ export function useResearch(options?: { projectId?: string }) {
       sseChannel,
     });
 
-    const pollTimer = window.setInterval(refreshIfActive, POLL_INTERVAL_MS);
-
     return () => {
       active = false;
       unsubscribe();
-      window.clearInterval(pollTimer);
     };
   }, [projectId, refreshRuns, selectedRunId, loadRun]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:12:
+  The research SSE-backstop poll moved out of the subscription effect so it can be visibility-gated: while
+  the document is hidden the interval is torn down entirely, because a backgrounded page that keeps fetching
+  is a primary iOS/Chrome Android discard signal and the discard is what produced the white-splash reload on
+  return. SSE still delivers live updates while visible, and the hidden -> visible edge polls once.
+  */
+  const pollResearch = useCallback(() => {
+    void refreshRuns();
+    if (selectedRunId) {
+      void loadRun(selectedRunId);
+    }
+  }, [refreshRuns, selectedRunId, loadRun]);
+  useVisibilityAwarePoll(pollResearch, POLL_INTERVAL_MS);
 
   const setSelectedRunIdAndCache = useCallback((value: string | null) => {
     setSelectedRunId(value);

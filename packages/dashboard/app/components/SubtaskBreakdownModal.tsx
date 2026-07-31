@@ -25,6 +25,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { FloatingWindow } from "./FloatingWindow";
 
 const WARNING_ICON = "⚠️";
 
@@ -604,7 +605,8 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && void handleClose()} role="dialog" aria-modal="true">
+    <FloatingWindow windowKey="subtask-breakdown" modal title={t("subtasks.modalTitle", "Subtask Breakdown")} ariaLabel={t("subtasks.modalTitle", "Subtask Breakdown")} onClose={() => void handleClose()} hideHeader dragHandleSelector=".planning-modal .modal-header" className="floating-window--subtask-breakdown" defaultSize={{ width: 760, height: 640 }} minSize={{ width: 440, height: 320 }} persistGeometryKey="floating-window:subtask-breakdown" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Subtask close stays on handleClose for its confirmation path while FloatingWindow owns all tablet geometry. */}
       <div className="modal modal-lg planning-modal" style={keyboardStyle}>
         <div className="modal-header">
           <div className="detail-title-row">
@@ -923,7 +925,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }
 

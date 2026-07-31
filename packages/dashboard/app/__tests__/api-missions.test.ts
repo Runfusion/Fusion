@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -645,7 +646,7 @@ describe("fetchAgentRunAudit", () => {
     expect(result).toEqual(mockResponse);
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/audit",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -657,7 +658,7 @@ describe("fetchAgentRunAudit", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/audit?projectId=my-project",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -673,7 +674,7 @@ describe("fetchAgentRunAudit", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/audit?taskId=FN-001&domain=git&limit=50",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -724,7 +725,7 @@ describe("fetchAgentRunTimeline", () => {
     expect(result).toEqual(mockResponse);
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/timeline",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -741,7 +742,7 @@ describe("fetchAgentRunTimeline", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/timeline?projectId=my-project",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -763,7 +764,7 @@ describe("fetchAgentRunTimeline", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agents/agent-001/runs/run-001/timeline?taskId=FN-001&domain=filesystem&includeLogs=false&limit=100",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 

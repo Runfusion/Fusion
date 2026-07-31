@@ -405,6 +405,8 @@ export class CliTaskSession {
     const machine = this.hub.getStateMachine(this.sessionId);
     if (machine) {
       try {
+        /* DELIBERATE-LITERAL — `CliMachineState` from the CLI agent state machine, not a lifecycle
+           column. See `state-machine.ts#followUp`. */
         if (machine.getState() === "done") machine.followUp();
         else if (machine.getState() === "ready" || machine.getState() === "resuming") {
           machine.injectPrompt();

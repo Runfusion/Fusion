@@ -1,7 +1,8 @@
 ---
 title: "S06: git and merge capability extraction"
 type: refactor
-status: draft-stack-handoff
+status: not-started
+measured_against: "main @ 46f35323c (2026-07-28)"
 date: 2026-06-09
 slice: S06
 milestone: "Runtime"
@@ -11,11 +12,18 @@ stack_base: feature/workflow-owned-merge-s05-runtime-work-item-driver
 
 # S06: git and merge capability extraction
 
+## Measured State (2026-07-28, U9 pre-flight)
+
+Merge still runs through `packages/engine/src/merger.ts` (11,273 lines). `workflow-merge-nodes.ts` is a 76-line shim over the `requestMerge` primitive, not the capability extraction this slice describes.
+
+Status corrected from `draft-stack-handoff`, which was accurate when drafted on
+2026-06-09 and is not now. See `docs/workflow-policy-ownership-map.md` →
+"Measured Wiring State" for the whole-stack table.
+
 ## Stack Role
 
-This draft PR reserves the S06 review slot in the workflow-owned merge,
-retry, scheduling, and recovery migration stack. It is intentionally a handoff
-artifact, not the completed implementation for this slice.
+Not started. Merge still runs through `merger.ts`; this slot remains the plan of
+record for extracting those procedures into workflow node capabilities.
 
 ## Milestone
 

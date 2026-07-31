@@ -72,12 +72,35 @@ describe("goal anchoring audit helpers", () => {
     expect(recordRunAuditEvent).not.toHaveBeenCalled();
   });
 
-  it("swallows retrieval audit failures and warns once", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  /*
+  FNXC:GoalAuditLogging 2026-07-30-13:10:
+  The swallow path reports at DEBUG now, not `console.warn` — `emitGoalRetrievalAudit`'s
+  catch calls `log.debug` (goal-anchoring-audit.ts:93), a deliberate demotion of
+  high-frequency log noise. Two consequences the old assertion tripped over: the channel
+  moved (createLogger's debug writes to console.ERROR, like the rest of that logger), and
+  `debug` is GATED on FUSION_DEBUG (logger.ts:43), which vitest never sets — so nothing
+  was emitted at all and the case failed on 0 calls.
+
+  Kept BOTH halves of the contract rather than dropping the reporting one: the failure is
+  swallowed (does not throw) AND it is still reported. Enabling the flag for this case is
+  what makes the second half assertable; re-pointing the assertion at another channel
+  would just describe whatever the code happens to do.
+  */
+  it("swallows retrieval audit failures and still reports them at debug level", () => {
+    const previous = process.env.FUSION_DEBUG;
+    process.env.FUSION_DEBUG = "goal-anchoring-audit";
+    const reported = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = { recordRunAuditEvent: vi.fn(() => { throw new Error("boom"); }) } as unknown as TaskStore;
-    expect(() => emitGoalRetrievalAudit(store, { runId: "r1", agentId: "a1" }, { toolName: "fn_goal_show", resultCount: 0, goalId: "G-1", notFound: true })).not.toThrow();
-    expect(warn).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+    try {
+      expect(() => emitGoalRetrievalAudit(store, { runId: "r1", agentId: "a1" }, { toolName: "fn_goal_show", resultCount: 0, goalId: "G-1", notFound: true })).not.toThrow();
+      expect(reported).toHaveBeenCalledTimes(1);
+      expect(reported.mock.calls[0]?.[0]).toContain("goal retrieval audit emission skipped");
+    } finally {
+      reported.mockRestore();
+      // Restore rather than delete: the flag may legitimately be set by the caller.
+      if (previous === undefined) delete process.env.FUSION_DEBUG;
+      else process.env.FUSION_DEBUG = previous;
+    }
   });
 
   it("persists goal IDs across injection/retrieval and aggregates cited IDs", async () => {

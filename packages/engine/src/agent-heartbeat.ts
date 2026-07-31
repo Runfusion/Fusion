@@ -34,6 +34,10 @@ import {
   formatAssignedTasksWakeDeltaSection,
   resolveEffectiveSettingsById,
   resolveEffectivePlannerHeartbeatPatrolEnabled,
+  resolveReboundTarget,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
+  resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
@@ -97,6 +101,28 @@ import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./hea
 import { detectDeicticReference, extractAntecedentCandidates, renderAmbiguityPromptBlock, scoreReferentConfidence } from "./room-ambiguity.js";
 import { countActiveAgentMembers, decideRoomCoordination, detectTaskFilingIntent, renderRoomCoordinationPromptBlock } from "./room-coordination.js";
 import { evaluateParkedAgentTaskLink, isParkedTaskColumn, type AgentTaskLinkExecutionProof } from "./task-agent-sync.js";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-09:25 (U11 conversion):
+Where a worktree-acquisition failure requeues the card. KTD-10 ordering via
+`resolveReboundTarget` (hold -> intake -> first column) — the same helper
+self-healing and mesh-lease-manager use for "requeue a recovered card", so the
+recovery paths cannot drift apart.
+
+This matters beyond renamed workflows: U11 DELETES the `todo` column from the
+builtin workflows, after which the old literal would requeue every
+acquisition-failed card into a column that no longer exists.
+
+Fail-soft to the legacy id: a requeue must not be abandoned because a workflow
+lookup failed, or the card is left holding a worktree it could not acquire.
+*/
+async function resolveHeartbeatReboundColumn(taskStore: TaskStore, taskId: string): Promise<string> {
+  try {
+    return resolveReboundTarget(await resolveWorkflowIrForTask(taskStore, taskId)) ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
 import { classifyReportHealth } from "./reports-health.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline } from "./session-token-usage.js";
 
@@ -652,6 +678,35 @@ async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Setting
  * Detects missed heartbeats, auto-terminates unresponsive agents,
  * and provides the Paperclip-style execution engine via executeHeartbeat().
  */
+/**
+ * FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — heartbeat terminal checks):
+ * Is this task finished — resting in its OWN board's complete or archived lane?
+ *
+ * Both heartbeat call sites asked with `column === "done" || "archived"`. Neither is cosmetic:
+ *
+ *   - the linked-task check clears an agent's assignment once its card is finished. Keyed on the
+ *     literals, an agent on a renamed board stayed bound to a completed card indefinitely, so every
+ *     later heartbeat ran with stale task context instead of picking up new work.
+ *   - the worktree-acquisition retry gate runs its failure bookkeeping only for a NON-terminal task.
+ *     A card resting in a renamed complete lane read as non-terminal, so an acquisition failure
+ *     could stamp `status: "failed"` and an error onto work that was already done.
+ *
+ * Fail-soft to the legacy pair: an unresolvable workflow keeps exactly today's answer rather than
+ * treating every card as unfinished, which is the expensive direction here (the second site WRITES).
+ */
+export async function isTaskInTerminalLane(
+  taskStore: TaskStore,
+  task: { id: string; column: string },
+  cache?: Map<string, import("@fusion/core").WorkflowIr>,
+): Promise<boolean> {
+  const columns = await resolveTaskLifecycleColumns(taskStore, task.id, cache).catch(() => undefined);
+  /* DELIBERATE-LITERAL — the no-metadata fallback. Deleting it makes an unresolvable workflow read
+     as NEVER terminal, which is the direction that writes: the second call site would then run its
+     failure bookkeeping against finished work. Strictly worse than the legacy answer. */
+  if (!columns) return task.column === "done" || task.column === "archived";
+  return task.column === columns.complete || task.column === columns.archived;
+}
+
 export class HeartbeatMonitor {
   private store: AgentStore;
   private configStore: AgentStore;
@@ -1177,7 +1232,33 @@ export class HeartbeatMonitor {
           FNXC:AgentTaskStateDrift 2026-06-23-09:02:
           Reports Health Check must not render a durable direct report as running a parked todo/triage task unless a fresh heartbeat run or tracked executor signal proves live execution. Clearing Agent.taskId here preserves overlapBlockedBy on the task row; the file-scope lease remains the scheduler's source of truth.
           */
-          if (isParkedTaskColumn(linkedTask) && !parkedProof.shouldPreserveParkedLink) {
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (unwired-parameter class, cf. #2803):
+          `isParkedTaskColumn` has taken a resolved `parkedColumns` since its own conversion, but BOTH
+          call sites here passed nothing and silently took the legacy `todo`/`triage` default. On a board
+          whose hold and intake lanes are renamed the check returned false for every card, so this clear
+          never fired: a durable agent kept its task link to a parked card with no live execution proof,
+          and Reports Health Check went on rendering it as RUNNING.
+
+          A resolved seam nobody wired is indistinguishable from no seam at all — which is exactly what
+          the caller audit found five of.
+          */
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1):
+          MEMBERSHIP, not first-per-role. `resolveTaskLifecycleColumns` returns the FIRST column carrying
+          each trait, so a workflow declaring TWO hold lanes (or a hold plus a second intake) had only one
+          of them recognised as parked — a card in the secondary lane still read as live, and the stale
+          link was never cleared for it. Same defect this fix exists to close, one degree narrower.
+
+          `columnsWithFlag` returns EVERY column carrying the trait, so both halves are unions. This is the
+          fifth time this program has hit first-per-role where it wanted membership; the two are not
+          interchangeable and the compiler cannot tell them apart.
+          */
+          const parkedIr = await resolveWorkflowIrForTask(this.taskStore!, linkedTask.id).catch(() => undefined);
+          const parkedColumns = parkedIr
+            ? [...new Set([...columnsWithFlag(parkedIr, "hold"), ...columnsWithFlag(parkedIr, "intake")])]
+            : [];
+          if (isParkedTaskColumn(linkedTask, parkedColumns.length > 0 ? parkedColumns : undefined) && !parkedProof.shouldPreserveParkedLink) {
             reason = `parked ${linkedTask.column} task ${agent.taskId} without live execution proof`;
             clearTaskLink = true;
             taskIdToClear = agent.taskId;
@@ -2047,7 +2128,8 @@ export class HeartbeatMonitor {
         try {
           const budgetStatus = await this.store.getBudgetStatus(agentId);
           if (budgetStatus.isOverBudget) {
-            heartbeatLog.log(`Agent ${agentId} budget exhausted — heartbeat skipped`);
+            // FNXC:EngineDiagnostics 2026-07-26-08:17: timer-path skips complete a run record every interval; debug keeps TUI free of repeated budget/pause no-ops.
+            heartbeatLog.debug(`Agent ${agentId} budget exhausted — heartbeat skipped`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "budget_exhausted", budgetStatus },
@@ -2057,7 +2139,7 @@ export class HeartbeatMonitor {
           }
           // Above threshold: only allow critical triggers (assignment, on_demand)
           if (budgetStatus.isOverThreshold && source === "timer") {
-            heartbeatLog.log(`Agent ${agentId} over budget threshold (${budgetStatus.usagePercent}%) — timer heartbeat skipped`);
+            heartbeatLog.debug(`Agent ${agentId} over budget threshold (${budgetStatus.usagePercent}%) — timer heartbeat skipped`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "budget_threshold_exceeded", budgetStatus },
@@ -2076,7 +2158,7 @@ export class HeartbeatMonitor {
           heartbeatModelSettings = await taskStore.getSettings();
           const settings = heartbeatModelSettings;
           if (settings.globalPause) {
-            heartbeatLog.log(`Agent ${agentId} heartbeat skipped — global pause active (source=${source})`);
+            heartbeatLog.debug(`Agent ${agentId} heartbeat skipped — global pause active (source=${source})`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "global_pause", source },
@@ -2085,7 +2167,7 @@ export class HeartbeatMonitor {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
           if (settings.enginePaused && source === "timer") {
-            heartbeatLog.log(`Agent ${agentId} timer heartbeat skipped — engine paused (soft pause)`);
+            heartbeatLog.debug(`Agent ${agentId} timer heartbeat skipped — engine paused (soft pause)`);
             await this.completeRun(agentId, run.id, {
               status: "completed",
               resultJson: { reason: "engine_paused", source },
@@ -2388,7 +2470,7 @@ export class HeartbeatMonitor {
             return (await this.store.getRunDetail(agentId, run.id))!;
           }
 
-          if (taskDetail.column === "done" || taskDetail.column === "archived") {
+          if (await isTaskInTerminalLane(taskStore, taskDetail)) {
             if (agent.taskId === resolvedTaskId) {
               heartbeatLog.log(
                 `Agent ${agentId} linked task ${resolvedTaskId} is ${taskDetail.column} — clearing assignment and running heartbeat without task context`,
@@ -2827,7 +2909,7 @@ export class HeartbeatMonitor {
             const attemptsSoFar = priorAttempts + 1;
             const retryCapExhausted = attemptsSoFar >= MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES;
 
-            if (taskDetail.column !== "done" && taskDetail.column !== "archived") {
+            if (!(await isTaskInTerminalLane(taskStore, taskDetail))) {
               if (retryCapExhausted) {
                 const exhaustionMessage = `Worktree acquisition failed after ${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} heartbeat attempts for branch "${taskDetail.branch ?? `fusion/${taskDetail.id.toLowerCase()}`}": ${detail}`;
                 await taskStore.updateTask(taskDetail.id, {
@@ -2847,11 +2929,11 @@ export class HeartbeatMonitor {
                  * reassigned and retried from scratch, defeating the terminal-
                  * failure intent of this fix (FN-7721).
                  */
-                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true, preserveStatus: true });
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true, preserveStatus: true });
                 this.onTaskAcquisitionExhausted?.(taskDetail.id, exhaustionMessage);
               } else {
                 await taskStore.updateTask(taskDetail.id, { recoveryRetryCount: attemptsSoFar });
-                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true });
+                await taskStore.moveTask(taskDetail.id, await resolveHeartbeatReboundColumn(taskStore, taskDetail.id), { preserveProgress: true });
               }
             }
             await this.completeRun(agentId, run.id, {
@@ -3043,9 +3125,29 @@ export class HeartbeatMonitor {
           if (!isAgentEphemeral && this.taskStore && typeof this.taskStore.getTasksByAssignedAgent === "function") {
             try {
               const assignedOpen = await this.taskStore.getTasksByAssignedAgent(agentId, { excludeArchived: true });
+              /*
+              FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
+              Pass the resolved lane flags so the ranking's terminal filter is not the literal pair.
+
+              `rankAssignedTasksForWakeDelta` gained `flagsByColumnId` and this, its only production
+              caller, passed nothing — so the conversion was inert here. Auditing it also surfaced the
+              larger defect one level down in `getTasksByAssignedAgent`, whose `excludeArchived`
+              filtered on the literal id and therefore returned archived cards as open assigned work.
+              Both halves are needed: the store read stops handing back archived rows, and this stops
+              the ranking counting a finished card as open.
+              */
+              const wakeLaneFlags = new Map<string, { complete?: boolean; archived?: boolean }>();
+              const wakeIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+              for (const assignedTask of assignedOpen) {
+                const ir = await resolveWorkflowIrForTask(this.taskStore, assignedTask.id, wakeIrCache).catch(() => undefined);
+                if (!ir) continue;
+                for (const id of columnsWithFlag(ir, "complete")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), complete: true });
+                for (const id of columnsWithFlag(ir, "archived")) wakeLaneFlags.set(id, { ...wakeLaneFlags.get(id), archived: true });
+              }
               const ranked = rankAssignedTasksForWakeDelta(assignedOpen, {
                 agentId,
                 boundTaskId: isNoTaskRun ? null : taskId,
+                ...(wakeLaneFlags.size > 0 ? { flagsByColumnId: wakeLaneFlags as never } : {}),
               });
               const section = formatAssignedTasksWakeDeltaSection(ranked, {
                 boundTaskId: isNoTaskRun ? null : taskId,
@@ -3636,7 +3738,15 @@ export class HeartbeatMonitor {
       if (report.state === "running" && !isEphemeralAgent(report) && report.taskId && this.taskStore) {
         try {
           const linkedTask = await this.taskStore.getTask(report.taskId);
-          if (isParkedTaskColumn(linkedTask)) {
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-23:50: same unwired parameter as above — the health
+             report rendered a parked card as running on any board with renamed hold/intake lanes. */
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2820 review — greptile P1): membership, not
+             first-per-role — see the note on the sweep above. */
+          const reportParkedIr = await resolveWorkflowIrForTask(this.taskStore, report.taskId).catch(() => undefined);
+          const reportParkedColumns = reportParkedIr
+            ? [...new Set([...columnsWithFlag(reportParkedIr, "hold"), ...columnsWithFlag(reportParkedIr, "intake")])]
+            : [];
+          if (isParkedTaskColumn(linkedTask, reportParkedColumns.length > 0 ? reportParkedColumns : undefined)) {
             const activeRun = await agentStore.getActiveHeartbeatRun(report.id);
             const proof = evaluateParkedAgentTaskLink({
               agent: report,
@@ -4710,7 +4820,7 @@ export class HeartbeatTriggerScheduler {
           runtimeConfig.allowParallelExecution === false
           && (this.isTaskExecuting?.(taskId) || this.isAgentEffectivelyExecuting?.(agent.id))
         ) {
-          heartbeatLog.log(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} or column-bound session executing)`);
+          heartbeatLog.debug(`Assignment tick skipped for ${agent.id} (parallel execution disabled, task ${taskId} or column-bound session executing)`);
           return;
         }
 
@@ -5228,7 +5338,7 @@ export class HeartbeatTriggerScheduler {
         if (activeRun) {
           if (settings?.globalPause || settings?.enginePaused) {
             this.nonAdvancingRearmState.delete(agent.id);
-            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            heartbeatLog.debug(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
           const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "audit", staleMultiplier);
@@ -5237,7 +5347,7 @@ export class HeartbeatTriggerScheduler {
           activeRunThresholdMs = reapResult.thresholdMs;
           if (!reapedActiveRun) {
             this.nonAdvancingRearmState.delete(agent.id);
-            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            heartbeatLog.debug(`Timer audit skipped re-arm for ${agent.id} (active run)`);
             continue;
           }
         }
@@ -5356,13 +5466,17 @@ export class HeartbeatTriggerScheduler {
 
     try {
       const agent = await this.store.getAgent(agentId);
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-08:17:
+      Timer skip reasons (pause, idle, active run, ineligible state) fire on every interval for every registered agent. That is steady-state gating, not a lifecycle event — demote to debug (FUSION_DEBUG=heartbeat). Keep reap/re-arm and actual executeHeartbeat start/complete on log/warn.
+      */
       if (!agent) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (agent missing)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (agent missing)`);
         this.unregisterAgent(agentId);
         return;
       }
       if (!isHeartbeatManaged(agent) || (agent.state !== "error" && !isTickableState(agent.state))) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (state=${agent.state})`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (state=${agent.state})`);
         this.unregisterAgent(agentId);
         return;
       }
@@ -5370,7 +5484,7 @@ export class HeartbeatTriggerScheduler {
       const settings = this.taskStore ? await this.taskStore.getSettings() : null;
       const errorRecoveryLimit = this.updateErrorRecoveryLimit(settings);
       if (agent.state === "error" && !isErrorRecoveryEligible(agent, errorRecoveryLimit)) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (state=${agent.state}, error recovery ineligible)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (state=${agent.state}, error recovery ineligible)`);
         this.unregisterAgent(agentId);
         return;
       }
@@ -5381,7 +5495,7 @@ export class HeartbeatTriggerScheduler {
         skipHeartbeatWhenIdle?: boolean;
       };
       if (timerRc.skipHeartbeatWhenIdle === true && (!agent.taskId || agent.taskId.length === 0)) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (skipHeartbeatWhenIdle, no task assigned)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (skipHeartbeatWhenIdle, no task assigned)`);
         return;
       }
 
@@ -5397,18 +5511,18 @@ export class HeartbeatTriggerScheduler {
           || this.isAgentEffectivelyExecuting?.(agentId)
         )
       ) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (parallel execution disabled, bound task ${agent.taskId ?? "—"} or column-bound session executing)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (parallel execution disabled, bound task ${agent.taskId ?? "—"} or column-bound session executing)`);
         return;
       }
 
       // Global/engine pause guard: scheduler should not dispatch timer callbacks
       // while globally paused (hard stop) or engine paused (soft stop for timers).
       if (settings?.globalPause) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (global pause active)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (global pause active)`);
         return;
       }
       if (settings?.enginePaused) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (engine paused)`);
+        heartbeatLog.debug(`Timer tick skipped for ${agentId} (engine paused)`);
         return;
       }
 
@@ -5418,7 +5532,7 @@ export class HeartbeatTriggerScheduler {
         const staleMultiplier = this.resolveRepairStaleMultiplier(settings);
         const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "timer", staleMultiplier);
         if (!reapResult.reaped) {
-          heartbeatLog.log(`Timer tick skipped for ${agentId} (active run)`);
+          heartbeatLog.debug(`Timer tick skipped for ${agentId} (active run)`);
           return;
         }
         heartbeatLog.log(

@@ -10,7 +10,8 @@ import type {
   Settings,
   Task,
 } from "@fusion/core";
-import { DASHBOARD_USER_ID, NotificationDispatcher } from "@fusion/core";
+import type { LifecycleColumns, WorkflowIrResolverStore } from "@fusion/core";
+import { DASHBOARD_USER_ID, NotificationDispatcher, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
@@ -46,6 +47,19 @@ interface NotificationServiceStore {
   getTask?(id: string): Promise<Task | undefined> | Task | undefined;
   /** Durable compare-and-set for restart-safe wedge delivery episodes. */
   claimTaskWedgeNotificationEpisode?(taskId: string, reasonKey: string | null): Promise<{ episodeId?: string; claimed: boolean }>;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase — notification lifecycle guards):
+  The workflow-IR resolver surface, OPTIONAL. The real `TaskStore` implements all three; declaring them
+  optional is what keeps this a structural interface, so the light test fakes that supply only
+  `getSettings`/`on`/`off` still satisfy it.
+
+  When they are absent, `resolveTaskLifecycleColumns` catches and returns undefined and every guard
+  below falls back to its legacy id — the same fail-soft the resolver documents. Requiring them here
+  would instead have forced a workflow surface into every notification fake.
+  */
+  getTaskWorkflowSelection?: WorkflowIrResolverStore["getTaskWorkflowSelection"];
+  getTaskWorkflowSelectionAsync?: WorkflowIrResolverStore["getTaskWorkflowSelectionAsync"];
+  getWorkflowDefinition?: WorkflowIrResolverStore["getWorkflowDefinition"];
   on<K extends keyof NotificationServiceStoreEvents>(
     event: K,
     listener: (...args: NotificationServiceStoreEvents[K]) => void,
@@ -150,7 +164,7 @@ export class NotificationService {
     this.options.messageStore?.on("message:sent", this.handleMessageSent);
     this.started = true;
     this.chatStore?.on("chat:room:message:added", this.handleRoomMessageAdded);
-    schedulerLog.log("NotificationService started");
+    schedulerLog.debug("NotificationService started");
   }
 
   async stop(): Promise<void> {
@@ -179,7 +193,7 @@ export class NotificationService {
     await this.dispatcher.shutdownAll();
     this.started = false;
 
-    schedulerLog.log("NotificationService stopped");
+    schedulerLog.debug("NotificationService stopped");
   }
 
   private handleTaskCreated = (task: Task): void => {
@@ -214,6 +228,59 @@ export class NotificationService {
     });
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase):
+  ONE place this service asks "which column plays which lifecycle role for this task".
+
+  NO SERVICE-LIFETIME CACHE, deliberately. `resolveTaskLifecycleColumns` takes a caller-owned IR cache
+  and a long-lived one here would be tempting — this runs per task move. But the service has no
+  workflow-definition-changed event to invalidate on, so a cached IR would outlive an operator's
+  workflow edit and keep notifying against the old column vocabulary. A stale answer is worse than the
+  read: the caller-owned cache is documented for a bounded SWEEP, which this is not.
+
+  Each call site below is therefore placed AFTER whatever cheap gate it already had, so a task move that
+  cannot produce a notification does not pay for a resolution.
+  */
+  private async resolveLifecycleColumnsForTask(taskId: string): Promise<LifecycleColumns | undefined> {
+    return resolveTaskLifecycleColumns(this.store as WorkflowIrResolverStore, taskId);
+  }
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+  REVIEW IS A SET, AND `humanReview` COUNTS. `resolveLifecycleColumns().review` reads the
+  `mergeOrchestration` flag only, so a lane carrying the `human-review` trait and NOT the merge trait
+  resolves to nothing — the guard fell back to the literal `in-review`, and on a renamed board the
+  operator's "ready for review" notification simply never fired. Silent: no error, no log, the card
+  just arrives unannounced.
+
+  Same union the dashboard routes already use (`resolveReviewColumnsForTask`), so this is that
+  established idiom applied here rather than a new notion of "review". Membership, not equality: a
+  workflow may declare more than one review lane, and asking "is this card ALREADY there" is a set
+  question — the arity rule #2713 wrote down after fixing it twice.
+  */
+  private async resolveReviewColumnsForTask(taskId: string): Promise<Set<string>> {
+    try {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (PR #2722 review — greptile, the MIRROR of the bug
+      this method was added to fix):
+      I built this union from `mergeBlocker` + `humanReview` and left `mergeOrchestration` OUT — so a
+      renamed review lane carrying only the merge trait was excluded, and moving a task there skipped
+      the operator's review notification. That is the same silent miss I added this method to fix,
+      pointed the other way.
+
+      `resolveReviewColumns` (core, #2730) is the shared answer to exactly this question and covers all
+      three flags. The BROAD set is right here — a notification is emitted, nothing is moved, so
+      over-admission costs an extra notification and under-admission costs the operator their signal.
+      #2750 documents the split for callers that move.
+      */
+      const ir = await resolveWorkflowIrForTask(this.store as WorkflowIrResolverStore, taskId);
+      const lanes = resolveReviewColumns(ir);
+      return lanes.length > 0 ? new Set(lanes) : new Set(["in-review"]);
+    } catch {
+      return new Set(["in-review"]);
+    }
+  }
+
   private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {
     void this.handleTaskMovedAsync(data);
   };
@@ -221,7 +288,9 @@ export class NotificationService {
   private async handleTaskMovedAsync(data: { task: Task; from: Column; to: Column }): Promise<void> {
     await this.maybeSuppressTransientFailedNotification(data.task, `moved to ${data.to}`);
 
-    if (data.to === "in-review") {
+    const movedLifecycle = await this.resolveLifecycleColumnsForTask(data.task.id);
+
+    if ((await this.resolveReviewColumnsForTask(data.task.id)).has(data.to)) {
       if (!this.notificationsEnabled) {
         await this.refreshNotificationState("task:moved");
         if (!this.notificationsEnabled) {
@@ -234,7 +303,7 @@ export class NotificationService {
       return;
     }
 
-    if (data.to === "done" && this.isMergeBackedTerminalTask(data.task)) {
+    if (data.to === (movedLifecycle?.complete ?? "done") && this.isMergeBackedTerminalTask(data.task)) {
       // `task:merged` remains the canonical terminal merge event. This fallback
       // preserves notification parity for PR/webhook/recovery paths that reach
       // done through moveTask before (or without) a matching task:merged emit;
@@ -306,7 +375,7 @@ export class NotificationService {
       const transientClass = classifyTransientMergeError(task.error);
       if (transientClass) {
         this.failureNotificationSuppressedCount += 1;
-        schedulerLog.log(
+        schedulerLog.debug(
           `[notify] ${task.id} transient merge failure (${transientClass}) — suppressed notification (self-heal in flight)`,
         );
         return;
@@ -439,6 +508,43 @@ export class NotificationService {
       // FNXC:TaskWedgeNotifications 2026-07-22-15:00: A no-action task normally
       // stays in review, so arbitrary in-review/status writes are not resolution
       // evidence. Only an active owner state or real lifecycle advance can close it.
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:35 (fleet phase — REVERTED AFTER MEASUREMENT, flagged and left counted):
+      These four ids are an enumeration of "every lane except review". I converted them to the four ROLES
+      they name and it PASSED typecheck and the notification suites, then failed
+      `task-wedge-notification.test.ts > sends one actionable push and mailbox message per active terminal
+      episode` — green on main, red with the conversion, `expected 2 calls, got 1`.
+
+      The cause is not the test. `handleTaskUpdated` is a synchronous `(task) => void` listener that starts
+      this work fire-and-forget, and THIS is the branch that RESOLVES a wedge episode. Adding an await
+      before the resolve means a re-wedge arriving close behind still sees the previous episode `active`,
+      its claim returns `claimed: false`, and the second operator notification is DROPPED. The awaits added
+      elsewhere in this file are downstream of an existing await or inside a timer callback; this one sits
+      on the only path that closes an episode, so it changes delivery rather than just timing.
+
+      Fixing it properly means serialising wedge handling per task (a queue or a per-task lock) so
+      resolution cannot interleave with the next claim. That is a delivery-semantics change to operator
+      notifications, not a column conversion, so it is out of fleet scope and left for whoever owns the
+      wedge episode contract.
+
+      Left COUNTED with no exemption marker — four of this file's five remaining entries are here, and the
+      census should keep saying so.
+
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (ATTEMPTED, MEASURED, REVERTED — do not retry as written):
+      I converted these four ids to a resolved `progressedLanes` set and it broke an existing gate test
+      (`task-wedge-notification.test.ts` -> "sends one actionable push and mailbox message per active
+      terminal episode": 1 message delivered, 2 expected).
+
+      The cause is the paragraph directly above, and it is stronger than it reads: the hazard is not
+      specific to the resolve/claim ordering, it is ANY await added before the resolve. Column resolution
+      needs one, so a resolved answer here costs a dropped operator notification whenever a re-wedge
+      arrives close behind a recovery. The `task:updated` listeners fire synchronously, so the second
+      emit reaches `claim` while the first episode is still open.
+
+      This is therefore blocked on serialising wedge handling per task, NOT on the conversion being hard.
+      Convert these four only in a change that already owns the wedge-episode contract, and re-run that
+      test as the acceptance check — it fails loudly, which is why this is recorded rather than exempted.
+      */
       const hasProgressed = task.column === "todo" || task.column === "in-progress" || task.column === "done" || task.column === "archived"
         || (!isActiveSelfHealingNoAction && typeof task.status === "string" && task.status !== "failed")
         || (isActiveSelfHealingNoAction && ["queued", "planning", "in-progress", "merging", "merging-pr", "merged", "done"].includes(task.status ?? ""));
@@ -569,19 +675,19 @@ export class NotificationService {
       await this.syncNtfyProvider(settings);
 
       if (isEnabled && !wasEnabled) {
-        schedulerLog.log("NotificationService ntfy enabled");
+        schedulerLog.debug("NotificationService ntfy enabled");
       } else if (!isEnabled && wasEnabled) {
-        schedulerLog.log("NotificationService ntfy disabled");
+        schedulerLog.debug("NotificationService ntfy disabled");
       } else if (settings.ntfyTopic !== previous.ntfyTopic) {
-        schedulerLog.log("NotificationService ntfy topic updated");
+        schedulerLog.debug("NotificationService ntfy topic updated");
       } else if (settings.ntfyBaseUrl !== previous.ntfyBaseUrl) {
-        schedulerLog.log("NotificationService ntfy base URL updated");
+        schedulerLog.debug("NotificationService ntfy base URL updated");
       } else if (settings.ntfyAccessToken !== previous.ntfyAccessToken) {
-        schedulerLog.log("NotificationService ntfy access token updated");
+        schedulerLog.debug("NotificationService ntfy access token updated");
       } else if (settings.ntfyDashboardHost !== previous.ntfyDashboardHost) {
-        schedulerLog.log("NotificationService ntfy dashboard host updated");
+        schedulerLog.debug("NotificationService ntfy dashboard host updated");
       } else if (JSON.stringify(settings.ntfyEvents) !== JSON.stringify(previous.ntfyEvents)) {
-        schedulerLog.log("NotificationService ntfy events updated");
+        schedulerLog.debug("NotificationService ntfy events updated");
       }
     }
 
@@ -592,7 +698,7 @@ export class NotificationService {
       JSON.stringify(settings.webhookEvents) !== JSON.stringify(previous.webhookEvents)
     ) {
       await this.syncWebhookProvider(settings);
-      schedulerLog.log("WebhookNotificationProvider config updated");
+      schedulerLog.debug("WebhookNotificationProvider config updated");
     }
   };
 
@@ -843,7 +949,7 @@ export class NotificationService {
       this.refreshFailureNotificationSettings(settings);
       await this.syncNtfyProvider(settings);
       await this.syncWebhookProvider(settings);
-      schedulerLog.log(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
+      schedulerLog.debug(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
     })();
 
     try {
@@ -882,7 +988,13 @@ export class NotificationService {
 
     const currentTask = (await this.store.getTask?.(task.id)) ?? task;
     const hasAutoRecoveredLog = currentTask.log.some((entry) => /^Auto-recovered:/.test(entry.action));
-    const movedToDone = currentTask.column === "done";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase):
+    Placed after the `pendingFailureNotifications.has` early return above, so only a task with a
+    failure notification actually in flight resolves a workflow here.
+    */
+    const suppressLifecycle = await this.resolveLifecycleColumnsForTask(task.id);
+    const movedToDone = currentTask.column === (suppressLifecycle?.complete ?? "done");
     const mergeConfirmed = currentTask.mergeDetails?.mergeConfirmed === true;
     const recoveredStatus = currentTask.status !== "failed" && hasAutoRecoveredLog;
 
@@ -905,7 +1017,7 @@ export class NotificationService {
     this.pendingFailureStartTimes.delete(taskId);
     const elapsedMs = typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : 0;
     this.failureNotificationSuppressedCount += 1;
-    schedulerLog.log(`NotificationService.maybeNotify suppressed transient failed key=${taskId}:failed (${reason}, ${elapsedMs}ms)`);
+    schedulerLog.debug(`NotificationService.maybeNotify suppressed transient failed key=${taskId}:failed (${reason}, ${elapsedMs}ms)`);
   }
 
   private async fireDeferredFailureNotification(taskId: string): Promise<void> {
@@ -924,7 +1036,7 @@ export class NotificationService {
 
     if (task.status !== "failed") {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
+      schedulerLog.debug(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
       return;
     }
 
@@ -936,7 +1048,7 @@ export class NotificationService {
     const transientClassAtDispatch = classifyTransientMergeError(task.error);
     if (transientClassAtDispatch) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(
+      schedulerLog.debug(
         `[notify] ${taskId} transient merge failure (${transientClassAtDispatch}) at dispatch time — suppressed notification (self-heal in flight)`,
       );
       return;
@@ -947,14 +1059,33 @@ export class NotificationService {
     // idempotency; never let this delayed generic event become a second alert.
     if (describeTaskWedge(task)) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} classified terminal wedge at dispatch time — suppressed generic failed notification`);
+      schedulerLog.debug(`[notify] ${taskId} classified terminal wedge at dispatch time — suppressed generic failed notification`);
       return;
     }
 
-    const isTerminal = task.paused === true || task.column === "in-review";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase):
+    Reached only after the transient-merge and wedge classifications above have both declined to
+    suppress, so this is already the narrow tail of the deferred-failure path.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site, which my own
+    first pass missed):
+    Same defect as the moved-to-review guard above: `.review` reads `mergeOrchestration` only, so a
+    lane carrying `human-review` alone resolved to nothing and this fell back to the literal. Under
+    `failureNotificationMode: "terminal-only"` that means a task failing in a renamed review lane is
+    not treated as terminal, and its failure notification is deferred forever.
+
+    Recording that I fixed one site and shipped the other: I converted the moved-to-review guard and
+    did not grep this file for the remaining `.review` reads — the exact Surface Enumeration failure I
+    had been flagging in other people's PRs the same day. Both reads in this file now go through the
+    same set.
+    */
+    const isTerminal = task.paused === true
+      || (await this.resolveReviewColumnsForTask(task.id)).has(task.column);
     if (this.failureNotificationMode === "terminal-only" && !isTerminal) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.log(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);
+      schedulerLog.debug(`[notify] ${taskId} non-terminal failure — suppressed (mode=terminal-only)`);
       return;
     }
 
@@ -1061,6 +1192,23 @@ export class NotificationService {
       || (latest.startsWith("Workflow step ") && latest.includes(" is waiting for your input:"));
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase — FLAGGED AND LEFT COUNTED):
+  The last review-lane id in this file, and the one conversion that is not mechanical. This predicate is
+  SYNC and its only caller, `classifyWorkflowTransitionNotification`, is sync too — reached from the
+  `handleTaskUpdated` listener, which the store invokes as `(task: Task): void`.
+
+  Converting it therefore means making the whole chain async, which turns a synchronous listener body
+  into fire-and-forget and reorders notification classification against every other `task:updated`
+  handler. That is a behaviour change to notification ordering, not a column conversion, so it is out of
+  fleet scope.
+
+  Threading a pre-resolved `LifecycleColumns` in as a parameter is the likely fix — the resolution has to
+  happen in `handleTaskUpdated`, which would then pay it on every task update, so it wants the same
+  gate-placement judgement applied to the sites above rather than a mechanical pass.
+
+  Left counted, with no exemption marker, so the census keeps pointing here.
+  */
   private isManualMergeHold(task: Task): boolean {
     if (task.column !== "in-review") {
       return false;
@@ -1100,12 +1248,12 @@ export class NotificationService {
      */
     const key = metadataDedupeKey.length > 0 ? metadataDedupeKey : `${taskId}:${eventType}`;
     if (this.notifiedEvents.has(key)) {
-      schedulerLog.log(`NotificationService.maybeNotify suppressed duplicate key=${key}`);
+      schedulerLog.debug(`NotificationService.maybeNotify suppressed duplicate key=${key}`);
       return;
     }
 
     this.notifiedEvents.add(key);
-    schedulerLog.log(`NotificationService.maybeNotify dispatching key=${key}`);
+    schedulerLog.debug(`NotificationService.maybeNotify dispatching key=${key}`);
     this.dispatcher.dispatch(eventType, payload).then((results) => {
       if (results.some((result) => result.success)) {
         return;

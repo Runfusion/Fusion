@@ -8,7 +8,7 @@ import { registerConfigMcpPiSettingsRoutes } from "../register-config-mcp-pi-set
 import type { ApiRoutesContext } from "../types.js";
 
 function createApp(
-  settings = { maxConcurrent: 6, maxTriageConcurrent: 3, maxWorktrees: 2 },
+  settings = { maxConcurrent: 6, maxWorktrees: 2 },
   pluginServers: Array<{ pluginId: string; server: unknown }> = [],
 ) {
   const app = express();
@@ -39,14 +39,14 @@ describe("registerConfigMcpPiSettingsRoutes", () => {
     const response = await request(createApp(), "GET", "/config");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ maxConcurrent: 6, maxTriageConcurrent: 3, maxWorktrees: 2, rootDir: "/workspace" });
+    expect(response.body).toEqual({ maxConcurrent: 6, maxWorktrees: 2, rootDir: "/workspace" });
   });
 
   it("uses option and fixed defaults for missing scheduler settings", async () => {
     const response = await request(createApp({}), "GET", "/config");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ maxConcurrent: 9, maxTriageConcurrent: 2, maxWorktrees: 4, rootDir: "/workspace" });
+    expect(response.body).toEqual({ maxConcurrent: 9, maxWorktrees: 4, rootDir: "/workspace" });
   });
 
   it("lists only provider-filtered valid project plugin MCP contributions", async () => {

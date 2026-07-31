@@ -76,6 +76,13 @@ export interface WorkflowGraphRunnerStore {
 }
 
 export interface WorkflowGraphTaskRunnerDeps {
+  /*
+   * FNXC:PlanReviewLease 2026-07-26-21:05:
+   * Cluster node id forwarded to the graph executor so review-gate leases are stamped with WHERE
+   * they run. Without it a lease is unattributed and self-healing can only use the 15-minute
+   * staleness floor, which is what made a restart-orphaned gate wait the floor out (FN-8603).
+   */
+  localNodeId?: string;
   store: WorkflowGraphRunnerStore;
   seams: WorkflowLegacySeams;
   primitives?: WorkflowRuntimePrimitives;
@@ -363,6 +370,7 @@ export class WorkflowGraphTaskRunner {
           : undefined;
 
       const executor = new WorkflowGraphExecutor({
+        localNodeId: this.deps.localNodeId,
         seams: wrappedSeams,
         primitives: wrappedPrimitives,
         runCustomNode: wrappedRunCustomNode,

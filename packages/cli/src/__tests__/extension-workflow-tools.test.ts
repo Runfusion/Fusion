@@ -304,7 +304,18 @@ pgTest("pi extension workflow authoring tools", () => {
     expect(result.content[0].text).not.toContain("Column: triage");
   });
 
-  it("still reports Column: triage for the default builtin:coding workflow (byte-identical regression guard)", async () => {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:25:
+  RE-PINNED, not deleted. This guard existed to catch an unintended change to the column a task
+  created on `builtin:coding` lands in, and it fired — but the change was INTENDED: U11 merged the
+  two pre-implementation columns, so the default lineage's intake column is now `todo` (the merged
+  Planning column, carrying intake+hold+resetOnEntry) and declares no `triage` column at all.
+
+  Re-pinning to the new value keeps the guard doing its job. Deleting it would remove the only check
+  that this landing column stays stable, and leaving it on `triage` pinned a column the product no
+  longer has.
+  */
+  it("reports the merged Planning column (`todo`) for the default builtin:coding workflow (byte-identical regression guard)", async () => {
     const api = createMockApi();
     registerExtension(api);
     const createTask = api.tools.get("fn_task_create")!;
@@ -317,7 +328,7 @@ pgTest("pi extension workflow authoring tools", () => {
     );
 
     expect(result.isError).not.toBe(true);
-    expect(result.details.column).toBe("triage");
-    expect(result.content[0].text).toContain("Column: triage");
+    expect(result.details.column).toBe("todo");
+    expect(result.content[0].text).toContain("Column: todo");
   });
 });

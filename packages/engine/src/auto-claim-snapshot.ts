@@ -1,4 +1,5 @@
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkflowIr, WorkflowIrResolverStore } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
 import { createLogger, type Logger } from "./logger.js";
 
 /**
@@ -22,7 +23,7 @@ export interface AutoClaimSnapshot {
 }
 
 interface AutoClaimSnapshotManagerOptions {
-  taskStore: Pick<TaskStore, "listTasks">;
+  taskStore: Pick<TaskStore, "listTasks"> & WorkflowIrResolverStore;
   ttlMs?: number;
   logger?: Logger;
   now?: () => number;
@@ -37,16 +38,86 @@ Auto-claim runnability must have one source of truth so the snapshot rebuild and
 FNXC:AutoClaim 2026-06-21-16:09:
 FN-6873 pins `column === "todo"` as the candidate gate after FN-6872 appeared in a heartbeat prompt while archived from a stale cache. Archived, done, triage, in-progress, in-review, soft-deleted, paused, assigned, checked-out, and dependency-blocked rows can satisfy dependencies where allowed, but must never be surfaced or claimed as auto-claim candidates.
 */
-export function isRunnableAutoClaimCandidate(task: Task, tasksById: ReadonlyMap<string, Task>): boolean {
-  return task.column === "todo"
+/**
+ * FNXC:AutoClaimResolvedColumns 2026-07-29-14:40 (U7 / R3):
+ * Lifecycle roles per task id, so this predicate can stay SYNCHRONOUS while still
+ * answering per-workflow. Absent entries fall back to the legacy ids, so a
+ * partially-resolvable board degrades to today's behavior rather than silently
+ * emptying the candidate set.
+ */
+export interface AutoClaimLifecycleRoles {
+  hold?: string;
+  complete?: string;
+  archived?: string;
+}
+
+const LEGACY_AUTO_CLAIM_ROLES: Required<AutoClaimLifecycleRoles> = {
+  hold: "todo",
+  complete: "done",
+  archived: "archived",
+};
+
+const rolesFor = (
+  taskId: string,
+  rolesByTask?: ReadonlyMap<string, AutoClaimLifecycleRoles>,
+): Required<AutoClaimLifecycleRoles> => {
+  const resolved = rolesByTask?.get(taskId);
+  return {
+    hold: resolved?.hold ?? LEGACY_AUTO_CLAIM_ROLES.hold,
+    complete: resolved?.complete ?? LEGACY_AUTO_CLAIM_ROLES.complete,
+    archived: resolved?.archived ?? LEGACY_AUTO_CLAIM_ROLES.archived,
+  };
+};
+
+/**
+ * FNXC:AutoClaimResolvedColumns 2026-07-29-14:40 (U7 / R3):
+ * THREE lifecycle literals lived here, and they fail in opposite directions:
+ *
+ *   `column === "todo"` gated candidacy on the HOLD role. Keyed on the literal, a
+ *   renamed workflow's candidate set was permanently EMPTY — agents were never
+ *   offered its work, with no error anywhere to say so.
+ *
+ *   `dependency?.column === "done" || "archived"` is dependency SATISFACTION, and it
+ *   is the more dangerous half: a dependency that finished in a renamed complete
+ *   column was not recognised as done, so the dependent stayed blocked forever.
+ *
+ * Roles are resolved PER TASK, not once per pass, because a dependency may sit on a
+ * DIFFERENT workflow from the claimant — a mixed board makes a single per-pass
+ * answer wrong for one of them.
+ */
+export function isRunnableAutoClaimCandidate(
+  task: Task,
+  tasksById: ReadonlyMap<string, Task>,
+  rolesByTask?: ReadonlyMap<string, AutoClaimLifecycleRoles>,
+): boolean {
+  return task.column === rolesFor(task.id, rolesByTask).hold
     && task.paused !== true
     && !task.assignedAgentId
     && !task.checkedOutBy
     && !task.deletedAt
     && task.dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
-      return dependency?.column === "done" || dependency?.column === "archived";
+      if (!dependency) return false;
+      // The DEPENDENCY's own roles, which need not be the claimant's.
+      const depRoles = rolesFor(dependencyId, rolesByTask);
+      return dependency.column === depRoles.complete || dependency.column === depRoles.archived;
     });
+}
+
+/** Resolve lifecycle roles for every task in one pass, sharing a single IR cache. */
+export async function resolveAutoClaimLifecycleRoles(
+  taskStore: WorkflowIrResolverStore,
+  tasks: readonly Task[],
+): Promise<Map<string, AutoClaimLifecycleRoles>> {
+  const irCache = new Map<string, WorkflowIr>();
+  const roles = new Map<string, AutoClaimLifecycleRoles>();
+  for (const task of tasks) {
+    const resolved = await resolveTaskLifecycleColumns(taskStore, task.id, irCache);
+    if (resolved) {
+      roles.set(task.id, { hold: resolved.hold, complete: resolved.complete, archived: resolved.archived });
+    }
+  }
+  return roles;
 }
 
 export function toAutoClaimCandidate(task: Task, now: number): AutoClaimCandidate {
@@ -76,7 +147,7 @@ FNXC:AutoClaim 2026-06-21-16:09:
 The fresh slim list intentionally includes archived rows by default so the shared predicate, not storage filtering, proves archived-while-cached rows are dropped before heartbeat prompt rendering or winner selection.
 */
 export async function resolveFreshAutoClaimCandidates(
-  taskStore: Pick<TaskStore, "listTasks">,
+  taskStore: Pick<TaskStore, "listTasks"> & WorkflowIrResolverStore,
   candidates: ReadonlyArray<AutoClaimCandidate>,
   now: () => number = Date.now,
 ): Promise<AutoClaimCandidate[]> {
@@ -86,10 +157,11 @@ export async function resolveFreshAutoClaimCandidates(
 
   const allTasks = await taskStore.listTasks({ slim: true });
   const tasksById = new Map(allTasks.map((task) => [task.id, task]));
+  const rolesByTask = await resolveAutoClaimLifecycleRoles(taskStore, allTasks);
   const resolvedAt = now();
   return candidates.flatMap((candidate) => {
     const canonicalTask = tasksById.get(candidate.id);
-    if (!canonicalTask || !isRunnableAutoClaimCandidate(canonicalTask, tasksById)) {
+    if (!canonicalTask || !isRunnableAutoClaimCandidate(canonicalTask, tasksById, rolesByTask)) {
       return [];
     }
     return [toAutoClaimCandidate(canonicalTask, resolvedAt)];
@@ -97,7 +169,7 @@ export async function resolveFreshAutoClaimCandidates(
 }
 
 export class AutoClaimSnapshotManager {
-  private readonly taskStore: Pick<TaskStore, "listTasks">;
+  private readonly taskStore: Pick<TaskStore, "listTasks"> & WorkflowIrResolverStore;
   private readonly ttlMs: number;
   private readonly logger: Logger;
   private readonly now: () => number;
@@ -144,10 +216,11 @@ export class AutoClaimSnapshotManager {
   private async rebuild(): Promise<AutoClaimSnapshot> {
     const allTasks = await this.taskStore.listTasks({ slim: true });
     const tasksById = new Map(allTasks.map((candidate) => [candidate.id, candidate]));
+    const rolesByTask = await resolveAutoClaimLifecycleRoles(this.taskStore, allTasks);
     const now = this.now();
 
     const tasks = allTasks
-      .filter((candidate) => isRunnableAutoClaimCandidate(candidate, tasksById))
+      .filter((candidate) => isRunnableAutoClaimCandidate(candidate, tasksById, rolesByTask))
       .sort((a, b) => {
         const aSortAt = a.columnMovedAt ?? a.createdAt;
         const bSortAt = b.columnMovedAt ?? b.createdAt;

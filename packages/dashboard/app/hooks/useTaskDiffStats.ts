@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchTaskDiff } from "../api";
+import type { ColumnRoleFlags } from "../utils/columnRoles";
+import { isCompleteColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 
 interface DiffStats {
   filesChanged: number;
@@ -13,6 +15,17 @@ interface UseTaskDiffStatsResult {
 }
 
 interface UseTaskDiffStatsOptions {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-03:30 (fleet phase):
+  Resolved trait flags for the task's column, so "is this done / still working" is a ROLE question. The
+  hook took a bare `column: string` and compared it to `done` / `in-progress` / `in-review`, which on a
+  renamed board fetched NOTHING — the diff stats silently never loaded and the row showed no changes.
+
+  OPTIONAL, and the helpers fall back to the legacy ids without it, so the ten existing test call sites
+  and any caller that has no flags keep their current behaviour. The one production caller (TaskCard)
+  already had `taskColumnFlags` in scope.
+  */
+  columnFlags?: ColumnRoleFlags;
   /** Enable fetching when true (default). Suppresses fetches for offscreen cards. */
   enabled?: boolean;
   /** Worktree path for active task columns. */
@@ -103,6 +116,22 @@ export function useTaskDiffStats(
   const stepVersion = options.stepVersion;
   const pollIntervalMs = options.pollIntervalMs;
   const mergeSignature = options.mergeSignature;
+  const columnFlags = options.columnFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:15 (PR #2731 review — coderabbit, and I dismissed this
+  twice before checking):
+  DERIVED OUTSIDE THE EFFECT SO THEY CAN BE DEPENDENCIES. `columnFlags` arrives from a board-workflows
+  fetch, so it is `undefined` on first paint and populated later. The effect read it but the dependency
+  array did not list it, so the poll kept the PRE-RESOLUTION answer: on a renamed board a card in a
+  custom complete/wip/review lane never started fetching diff stats at all.
+
+  The booleans rather than the object: `columnFlags` is a prop object whose identity a parent may change
+  every render, which would restart the poll continuously. These are primitives, so they change exactly
+  when the answer changes — which is the dependency the effect actually has.
+  */
+  const shouldFetchDoneTask = isCompleteColumnRole(columnFlags, column);
+  const shouldFetchActiveTask = isWipColumnRole(columnFlags, column)
+    || isReviewColumnRole(columnFlags, column);
   const [stats, setStats] = useState<DiffStats | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -113,9 +142,6 @@ export function useTaskDiffStats(
       setLoading(false);
       return;
     }
-
-    const shouldFetchDoneTask = column === "done";
-    const shouldFetchActiveTask = column === "in-progress" || column === "in-review";
 
     if (!taskId || (!shouldFetchDoneTask && !shouldFetchActiveTask)) {
       setStats(null);
@@ -132,6 +158,13 @@ export function useTaskDiffStats(
     async function load(forceRefresh = false) {
       // Check cache first - return immediately without loading flicker (unless force refresh)
       if (!forceRefresh) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-03:30 DELIBERATE-LITERAL:
+        `mode` is this function's OWN `"done" | "active"` discriminant, assigned three lines up from
+        `shouldFetchDoneTask`. It is not a column id and there is no trait to resolve — the census
+        classifies it as a column guard because the receiver is compared to the string `done`, which is
+        a classifier limitation, not a site to convert.
+        */
         const cacheVersion = mode === "done" ? mergeSignatureStr : stepVersionStr;
         const cached = getCachedStats(taskId, projectId, activeWorktree, cacheVersion, mode);
         if (cached) {
@@ -149,7 +182,14 @@ export function useTaskDiffStats(
         if (!cancelled) {
           setStats(data.stats);
           // Store in cache
-          const cacheVersion = mode === "done" ? mergeSignatureStr : stepVersionStr;
+          /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-03:30 DELIBERATE-LITERAL:
+        `mode` is this function's OWN `"done" | "active"` discriminant, assigned three lines up from
+        `shouldFetchDoneTask`. It is not a column id and there is no trait to resolve — the census
+        classifies it as a column guard because the receiver is compared to the string `done`, which is
+        a classifier limitation, not a site to convert.
+        */
+        const cacheVersion = mode === "done" ? mergeSignatureStr : stepVersionStr;
           setCachedStats(taskId, projectId, activeWorktree, cacheVersion, mode, data.stats);
         }
       } catch {
@@ -181,7 +221,7 @@ export function useTaskDiffStats(
         clearInterval(timer);
       }
     };
-  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, mergeSignature, pollIntervalMs]);
+  }, [taskId, column, commitSha, projectId, enabled, worktree, stepVersion, mergeSignature, pollIntervalMs, shouldFetchDoneTask, shouldFetchActiveTask]);
 
   return { stats, loading };
 }

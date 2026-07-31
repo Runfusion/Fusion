@@ -13,13 +13,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -215,7 +215,7 @@ jobs:
       # Automated publish is intentionally deferred to FN-5593.
       # Keep a single artifact; filenames include -x64 / -arm64 so both arches are captured.
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-desktop-windows
           path: |

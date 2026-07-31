@@ -183,6 +183,24 @@ export async function resolveWorkflowIrById(
 
   if (isBuiltinWorkflowId(workflowId)) {
     const builtin = getBuiltinWorkflow(workflowId);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-01:15 (PR #2815 review — greptile P1, and it corrects me):
+    THE FOURTH DEGRADATION PATH, and the only one that was never branded. An id that LOOKS builtin but
+    is not registered — a workflow removed between releases, a typo'd selection — lands here, finds no
+    `builtin.ir`, and silently substitutes the default coding IR.
+
+    That matters to this PR specifically. Deleting the id cross-check was justified on the grounds
+    that every fallback is branded and the brand is checked first; this path is the counterexample, so
+    the deletion would have turned an unmarked fallback into a reported `source: "selection"` — the
+    lying signal this API exists to prevent, arriving through the one door I had not checked. My claim
+    that the id comparison "caught nothing the marker misses" was wrong: it caught exactly this,
+    because the default IR's id differs from the requested one.
+
+    Branding it is the right repair rather than restoring the id check, because it fixes the cause —
+    the resolver knew it was substituting and did not say so — instead of re-adding an inference that
+    misfires on every authored workflow (see the note below).
+    */
+    const fellBackToDefault = !builtin?.ir;
     const ir = builtin?.ir ?? defaultCodingWorkflowIr();
     const resolved = typeof ir === "string" ? parseWorkflowIr(ir) : ir;
     const overrides = projectId
@@ -191,44 +209,225 @@ export async function resolveWorkflowIrById(
       : undefined;
     // FNXC:CustomWorkflows 2026-06-21-19:12:
     // Public IR resolution must see the same project-scoped built-in prompt overrides as task execution, while callers without the new store methods keep the canonical built-in IR.
+    /*
+    Marked AFTER the overrides are applied, because `applyPromptOverridesToIr` may return a new object
+    and a non-enumerable brand does not survive a copy. Marking earlier would leave the returned and
+    cached IR unbranded, which is the bug this fixes wearing a different shape.
+    */
     const effective = applyPromptOverridesToIr(resolved, overrides);
-    irCache?.set(cacheKey, effective);
-    return effective;
+    /* Branded BEFORE caching, so a later cache hit on this key reports the fallback too. */
+    const answer = fellBackToDefault ? markFellBack(effective) : effective;
+    irCache?.set(cacheKey, answer);
+    return answer;
   }
 
   try {
     const def = await store.getWorkflowDefinition(workflowId);
-    if (!def) return defaultCodingWorkflowIr();
+    if (!def) return markFellBack(defaultCodingWorkflowIr());
     const ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
     irCache?.set(cacheKey, ir);
     return ir;
   } catch {
-    return defaultCodingWorkflowIr();
+    return markFellBack(defaultCodingWorkflowIr());
   }
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:45 (PR #2618 review — greptile P1, both rounds):
+FALLBACK IS REPORTED, NOT INFERRED. Two review findings pulled in opposite directions and
+together proved the id cannot answer this: requiring `ir.id === workflowId` denied trust to a
+valid selection whose IR carries no id, while accepting an absent id let the default fallback —
+which also has none — pass as a selection. There is no rule over the returned value that
+separates them, because the two shapes are genuinely identical.
+
+So the function that KNOWS marks it. A non-enumerable brand keeps the IR structurally unchanged
+for every existing consumer, deep-equal comparisons included, while letting the provenance form
+read the one fact only the resolver has.
+*/
+const FELL_BACK_TO_DEFAULT = Symbol.for("fusion.workflowIr.fellBackToDefault");
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:45 (#2815 review — found while covering the fourth path):
+BRAND A COPY. `resolveDefaultWorkflowIr()` returns a SHARED object — `a.ir === b.ir` across two
+independent resolutions — so branding it in place marked the singleton itself. After any task
+anywhere hit a fallback, every later resolution of `builtin:coding` reported `source: "default"`,
+including a task that genuinely selected the default workflow. Process-wide, permanent, and
+invisible: the brand is non-enumerable, so nothing in a dump or a deep-equal shows it.
+
+It also made the fourth-path test unfalsifiable — the object under assertion was already branded by
+an earlier case in the same file, so removing the new mark changed nothing.
+
+A shallow copy keeps the IR structurally identical (the property is non-enumerable and the clone is
+deep-equal to the original) while giving the fallback its own object to carry the fact.
+*/
+function markFellBack(ir: WorkflowIr): WorkflowIr {
+  const copy = { ...ir } as WorkflowIr;
+  Object.defineProperty(copy, FELL_BACK_TO_DEFAULT, { value: true, enumerable: false, configurable: true });
+  return copy;
+}
+
+function didFallBackToDefault(ir: WorkflowIr): boolean {
+  return (ir as unknown as Record<symbol, unknown>)[FELL_BACK_TO_DEFAULT] === true;
 }
 
 /**
  * Resolve a task's workflow IR via its selection. A null/absent selection or any
  * lookup failure degrades to the built-in default workflow.
  */
-export async function resolveWorkflowIrForTask(
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-12:10 (lifecycle-column census enabler):
+WHY PROVENANCE IS A SEPARATE ANSWER FROM THE IR.
+
+`resolveWorkflowIrForTask` answers "which workflow governs this task" by returning the default
+coding IR in two cases that are NOT the same as knowing: the selection read threw, and the store
+reported no selection at all (the synchronous PostgreSQL path does exactly that). Callers cannot
+tell those apart from a genuine selection, and for lifecycle-column work the difference decides
+correctness rather than tidiness.
+
+Concretely, and this is what motivated it: post-merge the default coding lineage declares `todo`
+as its single Planning column and NO `triage`. So a call site converting a `column === "triage"`
+guard to trait resolution silently stops firing for `builtin:legacy-coding` cards whenever the
+store cannot name the workflow — the resolver hands back the default's vocabulary and the caller
+has no way to know it was a guess. Every such site has so far had to keep the legacy ids unioned
+in "just in case", which is exactly why the census stalls instead of converging.
+
+With provenance a caller can say what it actually means: trust the resolved columns when the
+workflow was SELECTED, and fall back to legacy compat only when it was GUESSED.
+
+Additive by construction — `resolveWorkflowIrForTask` delegates here and drops the provenance, so
+no existing caller changes behavior.
+*/
+export type WorkflowIrResolutionSource = "selection" | "default";
+
+export interface ResolvedWorkflowIr {
+  ir: WorkflowIr;
+  /** `"selection"` only when the store named a workflow; `"default"` when we guessed. */
+  source: WorkflowIrResolutionSource;
+  /** The selected id, absent when guessed. */
+  workflowId?: string;
+}
+
+export async function resolveWorkflowIrForTaskWithProvenance(
   store: WorkflowIrResolverStore,
   taskId: string,
   irCache?: Map<string, WorkflowIr>,
-): Promise<WorkflowIr> {
+): Promise<ResolvedWorkflowIr> {
   let workflowId: string | undefined;
   try {
-    /*
-     * FNXC:WorkflowModelLanes 2026-07-14-16:26:
-     * Backend-mode task workflow selection is asynchronous. Execution must resolve the migrated task selection before loading its workflow graph; the synchronous PostgreSQL fallback intentionally reports no selection and previously forced every task onto builtin:coding.
-     */
     const selection = store.getTaskWorkflowSelectionAsync
       ? await store.getTaskWorkflowSelectionAsync(taskId)
       : store.getTaskWorkflowSelection(taskId);
     workflowId = selection?.workflowId;
   } catch {
-    return defaultCodingWorkflowIr();
+    return { ir: defaultCodingWorkflowIr(), source: "default" };
   }
-  if (!workflowId) return resolveWorkflowIrById(store, "builtin:coding", irCache);
-  return resolveWorkflowIrById(store, workflowId, irCache);
+  if (!workflowId) {
+    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default" };
+  }
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (PR #2618 review — greptile P1):
+  A NAMED SELECTION IS NOT A RESOLVED ONE. `resolveWorkflowIrById` degrades to the default coding
+  IR in three further cases — a missing definition, a malformed one, and a throwing lookup — so
+  reporting `source: "selection"` merely because the store named an id would hand a caller the
+  default's columns wearing the selected workflow's label. That is worse than having no provenance
+  at all: the entire value of this API is that a caller can TRUST "selection", and a signal that
+  lies is one nobody can build the census conversions on.
+
+  Verified by identity, not by hope: a v2 IR carries its own id, so a returned IR whose id is not
+  the selected one is a fallback however it arose. A v1/column-less IR carries no id to check, and
+  it has no column vocabulary either, so it is reported as a default rather than guessed at.
+  */
+  const ir = await resolveWorkflowIrById(store, workflowId, irCache);
+  /*
+FNXC:WorkflowLifecycleColumns 2026-08-01-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
+  THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
+  that a returned IR whose `id` differs from the requested one proves a fallback. Both halves of that
+  are wrong.
+
+  UNRELIABLE. Neither `WorkflowIrV1` nor `WorkflowIrV2` declares an `id` field, so the check is
+  answering a question about a property the IR type does not have. When one IS present — a fixture, a
+  hand-authored graph, an import — it is the AUTHOR's id and has no relation to the `WF-NNN` the store
+  mints, because `createWorkflowDefinition` persists the IR verbatim and allocates the row id
+  separately. Measured:
+
+      store workflow id = WF-001   stored ir.id = custom:prov
+      -> source reported "default", for a workflow that resolved CORRECTLY
+
+  REDUNDANT. All four ways `resolveWorkflowIrById` substitutes the default — missing definition,
+  malformed definition, throwing lookup, and an unregistered builtin id (branded above, in this same
+  change) — return a MARKED IR, and the line below returns `"default"` for every one of them.
+
+  The note on `markFellBack` states the principle: "there is no rule over the returned value that
+  separates them, because the two shapes are genuinely identical. So the function that KNOWS marks
+  it." The id check was an inference over the returned value, which is exactly what that note rules
+  out.
+
+  SCOPE, corrected after the first version of this change overstated it: an editor-authored workflow
+  carries no `ir.id`, so the check reported `"selection"` for it and the misfire never reached the one
+  production consumer (`triage.ts`'s post-U11 intake recovery). The reachable defect this change fixes
+  is the unregistered-builtin branding hole above; removing the id check is correctness and clarity,
+  not a live bug fix.
+
+  Found while fixing PR #2812, where gating on this signal turned a fixture-built case red.
+  */
+  if (didFallBackToDefault(ir)) return { ir, source: "default" };
+  return { ir, source: "selection", workflowId };
+}
+
+export async function resolveWorkflowIrForTask(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  irCache?: Map<string, WorkflowIr>,
+): Promise<WorkflowIr> {
+  /*
+   * FNXC:WorkflowModelLanes 2026-07-14-16:26:
+   * Backend-mode task workflow selection is asynchronous. Execution must resolve the migrated task selection before loading its workflow graph; the synchronous PostgreSQL fallback intentionally reports no selection and previously forced every task onto builtin:coding.
+   *
+   * FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: delegates to the provenance form and drops
+   * the provenance, so the two answers cannot drift apart.
+   */
+  return (await resolveWorkflowIrForTaskWithProvenance(store, taskId, irCache)).ir;
+}
+
+/*
+FNXC:StateMachine 2026-07-31-20:10 (PR #2793's finding, fixed):
+IS `nodeId` THE TASK'S OWN TERMINAL NODE? Resolved from the task's REAL workflow.
+
+The previous answer came from `store.resolveTaskWorkflowIrSync`, which returns the DEFAULT workflow
+IR for every task under PostgreSQL, so it answered about a board the card is not on. On a workflow
+whose terminal node is not called `end` that inverted the FN-7641 guard in both directions: a
+legitimate override to a non-terminal node named `end` was rejected as a terminal finalize, and an
+override to the board's REAL terminal node was written verbatim — the silent no-op FN-7641 exists to
+prevent. Proven end to end in `workflow-terminal-node-sync-resolution-live-e2e.pg.test.ts`.
+
+FAIL-SOFT TO THE LITERAL, deliberately: an unresolvable workflow keeps exactly the pre-conversion
+answer rather than losing the guard. `end` is also every builtin's terminal node id, so the fallback
+is correct wherever it can still be reached.
+
+RESIDUAL, stated because a review raised it and the obvious remedy does not work yet (PR #2812):
+`resolveWorkflowIrForTask` DEGRADES to the default workflow instead of throwing, so the `catch` above
+does not cover a failed lookup — a task on a custom board whose definition cannot be loaded is judged
+against the default graph. The natural fix is to gate on
+`resolveWorkflowIrForTaskWithProvenance(...).source === "selection"`, and that signal is currently
+unusable: `createWorkflowDefinition` stores an authored IR VERBATIM, so its `ir.id` keeps whatever the
+author wrote while the store allocates its own `WF-NNN`. The provenance identity check then compares
+those two and reports `source: "default"` for a workflow it resolved CORRECTLY. Measured, not
+assumed — gating on it here turned the "non-terminal override is written" case red.
+
+So the residual is knowingly left: it is the pre-existing fail-soft, not a regression this change
+introduces, and narrowing it depends on fixing the provenance signal first.
+*/
+export async function isTaskTerminalNodeIdAsync(
+  store: WorkflowIrResolverStore,
+  taskId: string,
+  nodeId: string,
+): Promise<boolean> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const node = ir.nodes.find((candidate) => candidate.id === nodeId);
+    if (node) return node.kind === "end";
+  } catch {
+    // Fall through to the literal-id fallback below.
+  }
+  return nodeId === "end";
 }

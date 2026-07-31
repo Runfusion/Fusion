@@ -4,7 +4,7 @@ import { join } from "node:path";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import * as worktreePool from "../worktree-pool.js";
-import { type TaskStore } from "@fusion/core";
+import { getBuiltinWorkflow, instanceNodeId, type TaskStore } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import { captureNamedTool, createMockStore, mockedCreateFnAgent, mockedExec, mockedExecSync, resetExecutorMocks } from "./executor-test-helpers.js";
 
@@ -814,6 +814,15 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
     harness = await createTaskStoreForTest({ prefix: "fusion_executor_handoff_audit" });
     rootDir = harness.rootDir;
     store = harness.store;
+    /*
+    FNXC:EngineTests 2026-07-26-08:18:
+    The PG harness deliberately has no global directory. FN-8597's graph test has no MCP
+    configuration, so use its no-MCP secret-reader seam instead of resolving a real global store.
+    This isolates the executor handoff invariant from environment-specific secrets initialization.
+    */
+    vi.spyOn(store, "getSecretsStore").mockResolvedValue({
+      revealSecret: vi.fn(),
+    } as any);
     vi.spyOn(worktreePool, "isUsableTaskWorktree").mockResolvedValue(true);
   });
 
@@ -821,7 +830,7 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
     await harness?.teardown();
   });
 
-  async function createExecutorTask(taskDoneRetryCount = 0) {
+  async function createExecutorTask(taskDoneRetryCount = 0, stepNames = ["Implement"]) {
     const created = await store.createTask({ description: "Invariant test", priority: "high" });
     await store.moveTask(created.id, "todo");
     await store.moveTask(created.id, "in-progress");
@@ -829,11 +838,12 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
     mkdirSync(worktreePath, { recursive: true });
     const branch = `fusion/${created.id.toLowerCase()}`;
     /*
-    FNXC:EngineTests 2026-07-20-23:55:
-    Graph-native completion falls back to task.prompt when no PROMPT.md task-document exists.
-    Seed an executable step-heading prompt so parse/execute can finish and reach merge.
+    FNXC:EngineTests 2026-07-26-08:18:
+    FN-8597 exercises the real graph expansion from task-document step headings.
+    Derive the heading from the requested projection so graph-owned execution, rather than
+    manually seeded workflow-step results, determines the active foreach node ids.
     */
-    const prompt = "# Test\n## Steps\n### Step 0: Implement\n- [ ] check\n";
+    const prompt = `# Test\n## Steps\n${stepNames.map((name, index) => `### Step ${index}: ${name}\n- [ ] check`).join("\n")}\n`;
     const taskDir = join(rootDir, ".fusion", "tasks", created.id);
     mkdirSync(taskDir, { recursive: true });
     writeFileSync(join(taskDir, "PROMPT.md"), prompt, "utf8");
@@ -842,8 +852,8 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
       branch,
       baseCommitSha: "abc123",
       taskDoneRetryCount,
-      // Mark implementation complete so graph foreach step-execute can advance to merge after fn_task_done.
-      steps: [{ name: "Implement", status: "done" }],
+      // Start pending so graph-owned fn_task_done completes the real foreach projection.
+      steps: stepNames.map((name) => ({ name, status: "pending" })),
       currentStep: 0,
       prompt,
     } as any);
@@ -855,6 +865,86 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
       },
       worktreePath,
     };
+  }
+
+  /*
+  FNXC:EngineTests 2026-07-27-08:50:
+  FN-8597's merge-proof regression coverage must inspect the persisted foreach
+  instances, not `workflowStepResults`: that field belongs to optional-group
+  review gates, while `steps#N:step-execute` state is stored under the live
+  graph run id. Reading the rows derived by the runner proves the partial and
+  complete projections use the actual expanded node identities rather than
+  guessed synthetic result ids.
+  */
+  async function loadForeachInstances(taskId: string) {
+    return store.loadWorkflowRunStepInstancesAsync(taskId, `${taskId}:builtin:coding`);
+  }
+
+  async function advanceMergeBoundary(executor: TaskExecutor, task: unknown, mergeBoundaryNodeId: string) {
+    return (executor as unknown as {
+      ensureWorkflowMergeBoundaryTask: (candidate: unknown, metadata: unknown) => Promise<unknown>;
+    }).ensureWorkflowMergeBoundaryTask(task, {
+      reason: "fn-8597-workflow-step-result-proof",
+      nodeId: mergeBoundaryNodeId,
+      workflowId: "builtin:coding",
+      runId: `${(task as { id: string }).id}:builtin:coding`,
+    });
+  }
+
+  type GraphCompletionProjection = {
+    parentIds: string[];
+    groupIds: string[];
+    leafIds: string[];
+    mergeBoundaryNodeId: string;
+  };
+
+  /*
+  FNXC:EngineTests 2026-07-27-11:05:
+  FN-8597 must seed the merge proof from the live foreach expansion, not guessed
+  `steps#N` strings. Derive the foreach parents, expanded groups, leaves, and
+  merge boundary from builtin:coding so a graph topology change cannot leave this
+  PG fixture proving an obsolete projection.
+  */
+  async function deriveGraphCompletionProjection(taskId: string): Promise<GraphCompletionProjection> {
+    const instances = await loadForeachInstances(taskId);
+    const graph = getBuiltinWorkflow("builtin:coding")?.ir;
+    expect(graph).toBeDefined();
+    const groupIds = [...new Set(instances.map((instance) => instance.foreachNodeId))].sort();
+    const parentIds = [...new Set(
+      graph!.edges
+        .filter((edge) => groupIds.includes(edge.to))
+        .map((edge) => edge.from),
+    )].sort();
+    const leafIds = instances
+      .filter((instance) => instance.status === "completed")
+      .map((instance) => {
+        const foreach = graph!.nodes.find((node) => node.id === instance.foreachNodeId && node.kind === "foreach");
+        const template = foreach?.config?.template;
+        const stepExecute = template?.nodes.find((node) => node.config?.seam === "step-execute");
+        expect(stepExecute?.id).toBeTypeOf("string");
+        return instanceNodeId(instance.foreachNodeId, instance.stepIndex, stepExecute!.id);
+      })
+      .sort();
+    const mergeBoundary = graph!.nodes.find((node) => node.kind === "merge-gate");
+    expect(parentIds).not.toHaveLength(0);
+    expect(groupIds).not.toHaveLength(0);
+    expect(mergeBoundary?.id).toBeTypeOf("string");
+    expect(leafIds).toHaveLength(instances.length);
+    return { parentIds, groupIds, leafIds, mergeBoundaryNodeId: mergeBoundary!.id };
+  }
+
+  function completedProjectionResults(projection: GraphCompletionProjection) {
+    return [
+      ...projection.parentIds,
+      ...projection.groupIds,
+      ...projection.leafIds,
+    ].map((workflowStepId) => ({
+      workflowStepId,
+      workflowStepName: workflowStepId,
+      source: "node" as const,
+      phase: "pre-merge" as const,
+      status: "passed" as const,
+    }));
   }
 
   /*
@@ -873,21 +963,16 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
   */
 
   /*
-  FNXC:EngineTests 2026-07-20-23:55:
-  Graph-native step-execute still terminates before the merge boundary under this PG + mock-agent fixture after U10b (steps#0:step-execute failure). Skip until a dedicated graph completion harness is written; do not appease with timeouts. Same failure class observed on origin/main full-suite.
+  FNXC:EngineTests 2026-07-26-08:18:
+  FN-8597 found the old `steps#0:step-execute` failure was an unconfigured PG-harness
+  secrets-store access, not a graph-completion defect. Do not seed guessed result ids:
+  completion must traverse the live single-instance foreach expansion and merge boundary.
   */
-  it.skip("moves a cleanly completed task to in-review via the merge-node boundary", async () => {
+  it("moves a cleanly completed task to in-review via the merge-node boundary", async () => {
     const { task, worktreePath } = await createExecutorTask();
     // Graph-native implementation proof: the mock agent signals completion via fn_task_done without running
     // the foreach step-execute nodes, so the merge-boundary FN-7260/FN-7271 proof gate needs an explicit
     // node-source pre-merge pass to model a genuinely-implemented task reaching the merge boundary.
-    await store.updateTask(task.id, {
-      workflowStepResults: [
-        { workflowStepId: "execute", workflowStepName: "Execute", phase: "pre-merge", source: "node", status: "passed" },
-        { workflowStepId: "steps#0:step-execute", workflowStepName: "Implement", phase: "pre-merge", source: "node", status: "passed" },
-        { workflowStepId: "steps", workflowStepName: "Steps", phase: "pre-merge", source: "node", status: "passed" },
-      ],
-    } as any);
     mockedExec.mockImplementation(((cmd: string, _opts: unknown, cb?: (err: Error | null, stdout: string, stderr: string) => void) => {
       if (!cb) return undefined as any;
       if (cmd.includes("rev-parse --show-toplevel")) return cb(null, `${worktreePath}\n`, "");
@@ -905,7 +990,7 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
             await taskDoneTool.execute("tool-1", {});
             return;
           }
-          // FNXC:EngineTests 2026-07-20-23:55: step-execute / review sessions need a clean prompt completion when fn_task_done is absent.
+          // FNXC:EngineTests 2026-07-26-08:18: graph step sessions without task_done use the native step-completion tool.
           const stepDone = tools.find((tool: any) => tool.name === "fn_task_step_done" || tool.name === "fn_step_done");
           if (stepDone) {
             await stepDone.execute("tool-step", {});
@@ -927,7 +1012,15 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
     await executor.execute(task as any);
 
     // CURRENT completion mechanism: task ends in-review via the merge-node boundary moveTask.
-    expect((await store.getTask(task.id))?.column).toBe("in-review");
+    const latest = await store.getTask(task.id);
+    expect(latest?.column).toBe("in-review");
+    // No synthetic optional-group result can bypass the proof: the live foreach traversal
+    // completes the actual task-step projection before the merge boundary advances.
+    expect(latest?.steps.map((step) => step.status)).toEqual(["done"]);
+    const instances = await loadForeachInstances(task.id);
+    expect(instances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ foreachNodeId: "steps", stepIndex: 0, status: "completed" }),
+    ]));
     // Forensic intent preserved via the mechanism that actually fires now: the merge boundary records a
     // task:move into in-review (the review-seam task:handoff("workflow-graph-review") event and the
     // review-seam merge-queue enqueue no longer occur on this path).
@@ -938,7 +1031,139 @@ pgDescribe("FN-5241 executor handoff auditing", () => {
     expect(await store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:handoff", limit: 10 })).toHaveLength(0);
   });
 
-  it.skip("fails a no-fn_task_done retry-budget-exhausted run in place without moving to in-review", async () => {
+  /*
+  FNXC:EngineTests 2026-07-27-08:35:
+  FN-8597's rescue must protect the foreach projection rather than only its former
+  single-step reproduction. A partial multi-step run has no implementation proof for
+  the unvisited instance, so it must fail before the graph merge boundary can move the
+  task to in-review.
+  */
+  it("does not move a partial foreach expansion to in-review", async () => {
+    const { task, worktreePath } = await createExecutorTask(0, ["Implement", "Verify"]);
+    mockedExec.mockImplementation(((cmd: string, _opts: unknown, cb?: (err: Error | null, stdout: string, stderr: string) => void) => {
+      if (!cb) return undefined as any;
+      if (cmd.includes("rev-parse --show-toplevel")) return cb(null, `${worktreePath}\n`, "");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return cb(null, `${task.branch}\n`, "");
+      if (cmd.includes("rev-list --count")) return cb(null, "1\n", "");
+      if (cmd.includes("rev-parse HEAD")) return cb(null, "def456\n", "");
+      return cb(null, "", "");
+    }) as any);
+    const executor = new TaskExecutor(store as any, rootDir);
+    // The graph's per-instance seam is the narrow deterministic boundary: complete
+    // only expanded instance 0 in the real PG projection, then reject instance 1.
+    // This makes the persisted result set partial without depending on agent timing.
+    vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async (_task: unknown, stepIndex: number) => {
+      if (stepIndex !== 0) return { success: false, error: "intentionally partial projection" };
+      await store.updateStep(task.id, stepIndex, "done", { source: "graph" });
+      return { success: true };
+    });
+    await executor.execute(task as any);
+
+    const latest = await store.getTask(task.id);
+    expect(latest?.column).not.toBe("in-review");
+    // The failed second instance is left in-progress for graph-owned recovery; its
+    // non-terminal projection is the condition that must keep merge unavailable.
+    expect(latest?.steps.map((step) => step.status)).toEqual(["done", "in-progress"]);
+    // The graph persisted the actual first expanded node as complete but its sibling
+    // `steps#1:step-execute` as failed; this partial result set must not cross merge.
+    const instances = await loadForeachInstances(task.id);
+    expect(instances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ foreachNodeId: "steps", stepIndex: 0, status: "completed" }),
+      expect.objectContaining({ foreachNodeId: "steps", stepIndex: 1, status: "failed" }),
+    ]));
+    expect((await store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:move", limit: 20 }))
+      .some((event) => (event.metadata as { to?: string })?.to === "in-review")).toBe(false);
+    expect(await store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:handoff", limit: 10 })).toHaveLength(0);
+    expect(await store.peekMergeQueue()).toEqual([]);
+  });
+
+  it("requires every expanded foreach step before the merge boundary advances", async () => {
+    const { task, worktreePath } = await createExecutorTask(0, ["Implement", "Verify"]);
+    mockedExec.mockImplementation(((cmd: string, _opts: unknown, cb?: (err: Error | null, stdout: string, stderr: string) => void) => {
+      if (!cb) return undefined as any;
+      if (cmd.includes("rev-parse --show-toplevel")) return cb(null, `${worktreePath}\n`, "");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return cb(null, `${task.branch}\n`, "");
+      if (cmd.includes("rev-list --count")) return cb(null, "1\n", "");
+      if (cmd.includes("rev-parse HEAD")) return cb(null, "def456\n", "");
+      return cb(null, "", "");
+    }) as any);
+    const executor = new TaskExecutor(store as any, rootDir);
+    // Complete each runtime-expanded instance through the same projection seam.
+    // The runner, not this test, creates and persists `steps#0` and `steps#1`.
+    vi.spyOn(executor as any, "runGraphTaskStep").mockImplementation(async (_task: unknown, stepIndex: number) => {
+      await store.updateStep(task.id, stepIndex, "done", { source: "graph" });
+      return { success: true };
+    });
+    executor.setMergeRequester(async () => ({ merged: false, noOp: false, reason: "queued" }) as any);
+    await executor.execute(task as any);
+
+    const latest = await store.getTask(task.id);
+    // A graph run uses one shared implementation pass for sequential foreach instances.
+    // The proof is the complete live projection, paired with the partial case above:
+    // merge can advance only after both expanded task steps are terminal.
+    expect(latest?.steps.map((step) => step.status)).toEqual(["done", "done"]);
+    // Complete the same real expansion: both persisted `steps#N:step-execute`
+    // identities must be complete before this run can enter the merge boundary.
+    const instances = await loadForeachInstances(task.id);
+    expect(instances).toEqual(expect.arrayContaining([
+      expect.objectContaining({ foreachNodeId: "steps", stepIndex: 0, status: "completed" }),
+      expect.objectContaining({ foreachNodeId: "steps", stepIndex: 1, status: "completed" }),
+    ]));
+    expect(instances).toHaveLength(2);
+    expect(latest?.column).toBe("in-review");
+    expect((await store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:move", limit: 20 }))
+      .some((event) => (event.metadata as { to?: string })?.to === "in-review")).toBe(true);
+    expect(await store.getRunAuditEventsAsync({ taskId: task.id, mutationType: "task:handoff", limit: 10 })).toHaveLength(0);
+  });
+
+  /*
+  FNXC:EngineTests 2026-07-27-10:30:
+  FN-8597's rescue proves the merge boundary sees the complete live expansion:
+  its execution parent, foreach group, and every `steps#N:step-execute` leaf.
+  A partial leaf projection must not enter review even when parent/group results
+  and persisted PG instances are present.
+  */
+  it("blocks partial workflowStepResults and advances a complete multi-instance merge proof", async () => {
+    const { task } = await createExecutorTask(0, ["Implement", "Verify"]);
+    const runId = `${task.id}:builtin:coding`;
+    for (const stepIndex of [0, 1]) {
+      await store.saveWorkflowRunStepInstanceAsync({
+        taskId: task.id,
+        runId,
+        foreachNodeId: "steps",
+        stepIndex,
+        pinnedStepCount: 2,
+        currentNodeId: "step-execute",
+        status: "completed",
+        reworkCount: 0,
+      });
+    }
+    const projection = await deriveGraphCompletionProjection(task.id);
+    const completeResults = completedProjectionResults(projection);
+    const partialResults = completeResults.filter((result) => result.workflowStepId !== projection.leafIds[1]);
+    await store.updateTask(task.id, { workflowStepResults: partialResults } as any);
+
+    const executor = new TaskExecutor(store as any, rootDir);
+    await advanceMergeBoundary(executor, task, projection.mergeBoundaryNodeId);
+    let latest = (await store.getTask(task.id))!;
+    expect(latest.column).not.toBe("in-review");
+    expect(latest.workflowStepResults.map((result) => result.workflowStepId).sort()).toEqual(
+      partialResults.map((result) => result.workflowStepId).sort(),
+    );
+    expect(latest.steps.map((step) => step.status)).toEqual(["pending", "pending"]);
+
+    await store.updateTask(task.id, { workflowStepResults: completeResults } as any);
+    latest = (await store.getTask(task.id))!;
+    await advanceMergeBoundary(executor, latest, projection.mergeBoundaryNodeId);
+    latest = (await store.getTask(task.id))!;
+    expect(latest.column).toBe("in-review");
+    expect(latest.workflowStepResults.map((result) => result.workflowStepId).sort()).toEqual(
+      completeResults.map((result) => result.workflowStepId).sort(),
+    );
+    expect(latest.steps.every((step) => step.status === "done")).toBe(true);
+  });
+
+  it("fails a no-fn_task_done retry-budget-exhausted run in place without moving to in-review", async () => {
     const { task, worktreePath } = await createExecutorTask(3);
     mockedExec.mockImplementation(((cmd: string, _opts: unknown, cb?: (err: Error | null, stdout: string, stderr: string) => void) => {
       if (!cb) return undefined as any;

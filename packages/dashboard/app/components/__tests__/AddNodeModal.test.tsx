@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AddNodeModal } from "../AddNodeModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
+import { expectStableTyping } from "./typingStability.test-helpers";
 
 describe("AddNodeModal", () => {
   const defaultProps = {
@@ -31,6 +33,19 @@ describe("AddNodeModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard. The FN-8606 floating-window migration made Planning Mode and Settings
+  untypable and no test noticed, because field coverage here uses fireEvent.change, which never needs
+  the input to stay mounted. This asserts the field keeps its DOM node, value, and focus while typed.
+  */
+  it("keeps the node name field mounted and focused while typing", async () => {
+    render(<AddNodeModal {...defaultProps} />);
+    const field = screen.getByPlaceholderText("Build Machine") as HTMLInputElement;
+    await expectStableTyping(field, "build-01", () => screen.getByPlaceholderText("Build Machine"));
   });
 
   it("renders when isOpen is true", () => {
@@ -217,8 +232,7 @@ describe("AddNodeModal", () => {
     render(<AddNodeModal {...defaultProps} />);
 
     // Click on the overlay (not the modal itself)
-    const overlay = screen.getByRole("dialog").parentElement!;
-    fireEvent.click(overlay);
+    fireEvent.pointerDown(document.body);
 
     expect(defaultProps.onClose).toHaveBeenCalled();
   });
@@ -456,5 +470,13 @@ describe("AddNodeModal", () => {
 
     fireEvent.click(checkbox);
     expect(screen.queryByDisplayValue("/workspace/project-one")).not.toBeInTheDocument();
+  });
+});
+
+describe("AddNodeModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<AddNodeModal isOpen onClose={vi.fn()} onSubmit={vi.fn()} onDiscoverRemoteProjects={vi.fn()} addToast={vi.fn()} projects={[]} />);
+    assertRenderedModalTouchGeometry("add-node", screen.getByTestId("floating-window-add-node").querySelector(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("add-node", () => render(<AddNodeModal isOpen onClose={vi.fn()} onSubmit={vi.fn()} onDiscoverRemoteProjects={vi.fn()} addToast={vi.fn()} projects={[]} />));
   });
 });

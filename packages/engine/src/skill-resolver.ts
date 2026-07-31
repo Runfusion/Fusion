@@ -25,6 +25,23 @@ import { piLog } from "./logger.js";
  * Falls back to `cwd` if no `.fusion/` directory is found (mirrors
  * `resolvePiExtensionProjectRoot` from `@fusion/core`).
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (U11 census hygiene):
+`"triage"` HERE IS A SESSION PURPOSE — which agent role is running — NOT a board
+column. It matched the `=== "triage"` census only because it is the same word, and
+resolving it from a workflow's IR would be wrong: an agent role does not move when
+a board renames its planning column.
+
+Hoisted to a named set so the four role purposes read as one concept and the
+literal stops looking like a lifecycle guard.
+*/
+const ROLE_FALLBACK_SESSION_PURPOSES: ReadonlySet<string> = new Set([
+  "triage",
+  "executor",
+  "reviewer",
+  "merger",
+]);
+
 export function resolveProjectRoot(cwd: string): string {
   const worktreeProjectRoot = getProjectRootFromWorktree(cwd);
   if (worktreeProjectRoot && existsSync(join(worktreeProjectRoot, ".fusion"))) {
@@ -386,6 +403,17 @@ function isMissingConfiguredPatternDiagnostic(diag: ResourceDiagnostic): boolean
     && diag.message.includes("' not found in discovered skills");
 }
 
+/*
+FNXC:EngineDiagnostics 2026-07-26-08:01:
+"Requested skill: <name>" is a per-session listing diagnostic (not a miss). Emitting it at info filled the TUI with one line per skill on every session start. Keep the ResourceDiagnostic for programmatic consumers; mirror only to piLog.debug (FUSION_DEBUG=pi).
+
+FNXC:EngineDiagnostics 2026-07-26-09:40:
+Also demote `Requested skill '…' not found…` and every other type=info skill diagnostic to debug. Operators still see warnings/errors; the TUI no longer fills with `[skills] info: Requested skill…` on every session start.
+*/
+function isSkillInfoDiagnostic(diag: ResourceDiagnostic): boolean {
+  return (diag.type as string) === "info";
+}
+
 /**
  * Options for skills override filtering.
  * We track requested names here so we can validate against base.skills.
@@ -418,10 +446,7 @@ export function createSkillsOverrideFromSelection(
   const { requestedSkillNames, sessionPurpose } = options;
 
   const isBuiltInFallbackRequest = (name: string): boolean => {
-    const purposeUsesRoleFallback = sessionPurpose === "triage"
-      || sessionPurpose === "executor"
-      || sessionPurpose === "reviewer"
-      || sessionPurpose === "merger";
+    const purposeUsesRoleFallback = ROLE_FALLBACK_SESSION_PURPOSES.has(sessionPurpose ?? "");
     return purposeUsesRoleFallback
       && requestedSkillNames?.length === 1
       && name.toLowerCase() === "fusion";
@@ -538,6 +563,7 @@ export function createSkillsOverrideFromSelection(
         const msg = `[skills] ${diag.type}: ${diag.message}`;
         if (diag.type === "error") piLog.error(msg);
         else if (diag.type === "warning") piLog.warn(msg);
+        else if (isSkillInfoDiagnostic(diag)) piLog.debug(msg);
         else piLog.log(msg);
       }
     }

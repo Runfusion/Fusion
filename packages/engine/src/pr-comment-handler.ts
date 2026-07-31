@@ -1,7 +1,22 @@
 import type { TaskStore } from "@fusion/core";
 import type { PrInfo } from "@fusion/core";
 import { prMonitorLog } from "./logger.js";
-import { createAutomatedFollowup } from "./verification-followup-dedup.js";
+import { resolveTerminalColumnsFor } from "./executor.js";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
+
+/*
+FNXC:PullRequestReview 2026-07-26-00:00:
+The PR-feedback follow-up card is a real product feature, but it used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature needs is inlined below: never file a second card for the same PR number under the same parent while one is still open. Closed columns (done/archived) are excluded so a later close/reopen of the same PR can legitimately file a fresh card.
+*/
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:15 (the SECOND copy of the same dedup, converted with the first):
+Byte-identical to `eval-followups.ts`'s constant and used for the same question — "is an earlier follow-up
+for this parent still open?" — so it had the same defect: on a renamed board a FINISHED follow-up read as
+open, the dedup matched it forever, and no fresh PR-feedback card was ever filed.
+
+Converting one and leaving the other is the FN-6115 -> FN-6118 -> FN-6123 shape, so both move together and
+both now call the shared `resolveTerminalColumnsFor` instead of carrying a private copy of the pair.
+*/
 
 interface PrComment {
   id: number;
@@ -166,8 +181,52 @@ export class PrCommentHandler {
   ): Promise<void> {
     try {
       const task = await this.store.getTask(taskId);
-      if (task.column !== "in-review") {
-        prMonitorLog.log(`Task ${taskId} not in-review (${task.column}), skipping changes-requested handling`);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (engine):
+      TWO lifecycle literals on this path, and only ONE of them is countable.
+
+      The GATE (`!== "in-review"`) silently dropped a GitHub "changes requested" review on any board
+      whose review lane is renamed: no steering comment was recorded and the card never went back to
+      work, so a human reviewer's feedback vanished with a log line nobody reads. That is the counted one.
+
+      The DESTINATION below (`moveTask(taskId, "in-progress")`) is a call argument, so the census cannot
+      see it — the same pairing as the branch-worktree auto-requeue (#2797). Converting the gate alone
+      would let the handler admit the review and then attempt a move into a lane the board may not
+      declare, which `moveTask` rejects. They convert together or not at all.
+
+      Both fall back to the legacy ids: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather
+      than throwing, so a board whose workflow cannot be read behaves exactly as before.
+      */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-18:55 (#2807 review — greptile P1 "broad review-lane
+      admission"):
+      MERGE-ORCHESTRATION ONLY, not the three-flag review union. The first version admitted any column
+      carrying `mergeOrchestration` OR `mergeBlocker` OR `humanReview`; on a workflow that puts those on
+      SEPARATE columns that is a widening, not a conversion — a card parked in a plan-review or
+      human-approval lane would be bounced into wip by a PR review that has nothing to do with it.
+
+      The literal this replaced admitted exactly ONE lane, and the faithful resolution is the one role
+      that means "this is the PR/merge stage": `mergeOrchestration`. That is also what
+      `resolveLifecycleColumns` keys its `review` role on, so this handler and the core resolver agree.
+
+      Known consequence, and it is the pre-existing behaviour rather than a regression: a custom workflow
+      whose review lane carries ONLY `human-review` resolves nothing here and falls back to the legacy
+      `in-review`. Widening to cover it is the gap recorded in
+      `notification-renamed-lifecycle-columns.test.ts`, and it belongs in the shared resolver rather than
+      being invented per-handler.
+      */
+      const reviewLanes = new Set<string>(["in-review"]);
+      let wipTarget = "in-progress";
+      try {
+        const ir = await resolveWorkflowIrForTask(this.store, taskId);
+        if (ir) {
+          for (const id of columnsWithFlag(ir, "mergeOrchestration")) reviewLanes.add(id);
+          const wipLanes = columnsWithFlag(ir, "countsTowardWip");
+          if (wipLanes.length > 0) wipTarget = wipLanes[0];
+        }
+      } catch { /* degraded: legacy ids */ }
+      if (!reviewLanes.has(task.column)) {
+        prMonitorLog.log(`Task ${taskId} not in a review lane (${task.column}), skipping changes-requested handling`);
         return;
       }
 
@@ -194,7 +253,7 @@ export class PrCommentHandler {
         },
         "queued",
       );
-      await this.store.moveTask(taskId, "in-progress");
+      await this.store.moveTask(taskId, wipTarget);
       await this.store.logEntry(
         taskId,
         `PR #${prInfo.number}: changes requested by @${reviewerLogin} — moved back to in-progress`,
@@ -229,28 +288,40 @@ ${summary}
 Please review the PR comments and address any remaining issues.`;
 
     try {
-      const result = await createAutomatedFollowup(this.store, {
-        kind: "pr-comment",
-        parentTaskId: originalTaskId,
-        extraMatchKeys: { prNumber: prInfo.number },
-        createInput: {
-          title: `Follow-up: Address PR #${prInfo.number} feedback`,
-          description,
-          column: "triage",
-          dependencies: [originalTaskId],
-          source: {
-            sourceType: "api",
-            sourceParentTaskId: originalTaskId,
-            sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
-          },
+      const openTasks = await this.store.listTasks({ slim: true }).catch(() => []);
+      /* Cheap identity filters first; only real candidates pay a workflow resolution. */
+      const candidates = openTasks.filter(
+        (task) =>
+          task.id !== originalTaskId &&
+          task.sourceParentTaskId === originalTaskId &&
+          task.sourceMetadata?.prNumber === prInfo.number,
+      );
+      let existing: (typeof candidates)[number] | undefined;
+      for (const task of candidates) {
+        const terminal = await resolveTerminalColumnsFor(this.store, task.id);
+        if (!terminal.includes(task.column)) { existing = task; break; }
+      }
+
+      if (existing) {
+        prMonitorLog.log(`Reused follow-up task ${existing.id} for PR #${prInfo.number}`);
+        return;
+      }
+
+      const task = await this.store.createTask({
+        title: `Follow-up: Address PR #${prInfo.number} feedback`,
+        description,
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
+        dependencies: [originalTaskId],
+        source: {
+          sourceType: "api",
+          sourceParentTaskId: originalTaskId,
+          sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
         },
       });
-
-      if (result.outcome === "created") {
-        prMonitorLog.log(`Created follow-up task ${result.task.id} for PR #${prInfo.number}`);
-      } else {
-        prMonitorLog.log(`Reused follow-up task ${result.existingTaskId} for PR #${prInfo.number}`);
-      }
+      prMonitorLog.log(`Created follow-up task ${task.id} for PR #${prInfo.number}`);
     } catch (err) {
       prMonitorLog.error(`Failed to create follow-up task:`, err);
     }

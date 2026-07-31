@@ -290,6 +290,13 @@ export class CliSessionStateMachine {
     this.transition("busy");
   }
 
+  /*
+  FNXC:CliAgentStateMachine 2026-07-30-12:20 DELIBERATE-LITERAL:
+  `done` here is a `CliMachineState`, NOT a lifecycle column — this machine tracks one CLI agent
+  process (`ready`/`busy`/`waitingOnInput`/`done`/`resuming`/`idle`) and never reads a board column.
+  The lifecycle-column census matches the bare string and counted it; converting it to a workflow role
+  would be nonsense, so it is marked rather than left to be "fixed" by a later sweep.
+  */
   /** done → busy (follow-up). Alias for injectPrompt from the done state. */
   followUp(): void {
     if (this.state !== "done") {
@@ -365,6 +372,7 @@ export class CliSessionStateMachine {
    * Idle / output progress never reach here.
    */
   signalDone(): void {
+    /* DELIBERATE-LITERAL — `CliMachineState`, not a board column. See followUp() above. */
     if (this.state === "done") return; // idempotent
     if (this.state !== "busy" && this.state !== "waitingOnInput") {
       throw new InvalidCliTransitionError(this.state, "signalDone");

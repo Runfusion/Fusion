@@ -7,16 +7,16 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {InvalidMergeQueueLeaseDurationError} from "./errors.js";
 import {existsSync} from "node:fs";
 import type {Task, MergeResult, MergeQueueEntry, MergeQueueAcquireOptions} from "../types.js";
 import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
 import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../task-merge.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import {resolveReviewColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 
@@ -330,110 +330,9 @@ export async function startStepImpl(store: TaskStore, id: string, stepIndex: num
 }
 
 export async function acquireMergeQueueLeaseImpl(store: TaskStore, workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return acquireMergeQueueLeaseAsync(layer, workerId, opts);
-    }
-    if (opts.leaseDurationMs <= 0) {
-      throw new InvalidMergeQueueLeaseDurationError(opts.leaseDurationMs);
-    }
-
-    return store.db.transactionImmediate(() => {
-      const now = opts.now ?? new Date().toISOString();
-      const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
-      store.cleanupStaleMergeQueueRows(now);
-
-      let leased: MergeQueueRow | undefined;
-      if (opts.targetTaskId) {
-        leased = store.db.prepare(`
-          UPDATE mergeQueue
-             SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ?
-           WHERE taskId = ?
-             AND EXISTS (
-               SELECT 1
-                 FROM tasks t
-                WHERE t.id = mergeQueue.taskId
-                  AND t.column = 'in-review'
-             )
-             AND (leasedBy IS NULL OR leaseExpiresAt <= ?)
-           RETURNING *
-        `).get(workerId, now, leaseExpiresAt, opts.targetTaskId, now) as MergeQueueRow | undefined;
-
-        if (!leased) {
-          const queueHead = store.db.prepare(`
-            SELECT mq.taskId, mq.leasedBy, t.column
-              FROM mergeQueue mq
-              LEFT JOIN tasks t ON t.id = mq.taskId
-             ORDER BY CASE mq.priority
-                        WHEN 'urgent' THEN 0
-                        WHEN 'high'   THEN 1
-                        WHEN 'normal' THEN 2
-                        WHEN 'low'    THEN 3
-                        ELSE 4
-                      END ASC,
-                      mq.enqueuedAt ASC
-             LIMIT 1
-          `).get() as { taskId: string; leasedBy: string | null; column: string | null } | undefined;
-
-          store.insertRunAuditEventRow({
-            taskId: opts.targetTaskId,
-            domain: "database",
-            mutationType: "mergeQueue:lease-target-unavailable",
-            target: opts.targetTaskId,
-            metadata: {
-              targetTaskId: opts.targetTaskId,
-              workerId,
-              queueHeadTaskId: queueHead?.taskId ?? null,
-              queueHeadLeasedBy: queueHead?.leasedBy ?? null,
-              queueHeadColumn: queueHead?.column ?? null,
-            },
-          });
-          return null;
-        }
-      } else {
-        leased = store.db.prepare(`
-          UPDATE mergeQueue
-             SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ?
-           WHERE taskId = (
-             SELECT mq.taskId
-               FROM mergeQueue mq
-               JOIN tasks t ON t.id = mq.taskId
-              WHERE t.column = 'in-review'
-                AND (mq.leasedBy IS NULL OR mq.leaseExpiresAt <= ?)
-              ORDER BY CASE mq.priority
-                         WHEN 'urgent' THEN 0
-                         WHEN 'high'   THEN 1
-                         WHEN 'normal' THEN 2
-                         WHEN 'low'    THEN 3
-                         ELSE 4
-                       END ASC,
-                       mq.enqueuedAt ASC
-              LIMIT 1
-           )
-           RETURNING *
-        `).get(workerId, now, leaseExpiresAt, now) as MergeQueueRow | undefined;
-
-        if (!leased) {
-          return null;
-        }
-      }
-
-      const entry = store.rowToMergeQueueEntry(leased);
-      store.insertRunAuditEventRow({
-        taskId: entry.taskId,
-        domain: "database",
-        mutationType: "mergeQueue:lease-acquired",
-        target: entry.taskId,
-        metadata: {
-          taskId: entry.taskId,
-          workerId,
-          leaseExpiresAt: entry.leaseExpiresAt,
-          priority: entry.priority,
-        },
-      });
-      return entry;
-    });
-  }
+        const layer = store.asyncLayer!;
+    return acquireMergeQueueLeaseAsync(layer, workerId, opts);
+}
 
 export async function mergeTaskImpl(store: TaskStore, id: string): Promise<MergeResult> {
     return store.withTaskLock(id, async () => {
@@ -491,7 +390,36 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
         return result;
       }
 
-      const mergeBlocker = getTaskMergeBlocker(task);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-00:45 (unwired-parameter class, cf. #2803):
+      `getTaskMergeBlocker` has taken an optional RESOLVED `reviewColumns` since its own conversion, and
+      this caller omitted it — so the identity check fell back to the literal `in-review` and threw
+      `Cannot merge <id>: task is not in 'in-review'` for a card sitting correctly in ITS OWN board's
+      review lane. A hard, operator-visible merge failure on every renamed board.
+
+      A resolved seam nobody wired is indistinguishable from no seam at all.
+
+      MEMBERSHIP, not first-per-role: `resolveReviewColumns` unions mergeOrchestration, mergeBlocker and
+      humanReview, so a workflow splitting those across columns has all of them accepted. Unioned with
+      the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+      */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
+      THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
+      unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
+      a card mid-implementation would pass the merge-identity check and merge prematurely.
+
+      The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
+      resolution that threw. A non-empty resolved answer replaces it outright; that is the same
+      "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
+      */
+      let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
+      try {
+        const ir = await resolveWorkflowIrForTask(store, id);
+        const resolved = ir ? resolveReviewColumns(ir) : [];
+        if (resolved.length > 0) reviewColumns = new Set(resolved);
+      } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
+      const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
       if (mergeBlocker) {
         throw new Error(`Cannot merge ${id}: ${mergeBlocker}`);
       }

@@ -42,9 +42,21 @@ const mockTaskStoreInit = vi.fn();
 const mockTaskStoreListTasks = vi.fn();
 const mockTaskStoreClose = vi.fn();
 const mockEnsureMemoryFileWithBackend = vi.fn();
+const mockGetTaskWorkflowSelectionAsync = vi.fn(async () => null);
+const mockGetWorkflowDefinition = vi.fn(async () => undefined);
 
-// Mock @fusion/core
-vi.mock("@fusion/core", () => ({
+/*
+FNXC:CliTests 2026-07-30-23:10 (greptile P2 — mocks bypassed the enrichment):
+Spread the REAL module and override only the parts that must be faked (the central/global stores and
+the store factory). Previously this factory hand-rolled `countRunningAgentTasks`, `COLUMN_LABELS`,
+`resolveWorkflowIrForTask` and `enrichRunningAgentTaskShape`, so the suite exercised a reimplemented
+legacy-literal count instead of the workflow-aware enrichment whose absence caused the failures — a
+regression in the resolver-to-enrichment integration could leave it green while renamed workflow
+columns produced wrong in-flight counts. With the real implementations in place the enrichment path
+is genuinely under test, and the label table can no longer disagree with the product.
+*/
+vi.mock("@fusion/core", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   CentralCore: makeConstructibleMock(() => ({
     init: mockInit.mockResolvedValue(undefined),
     close: mockClose.mockResolvedValue(undefined),
@@ -73,6 +85,10 @@ vi.mock("@fusion/core", () => ({
     taskStore: {
       init: mockTaskStoreInit,
       listTasks: mockTaskStoreListTasks,
+      /* Workflow readers so the REAL `resolveWorkflowIrForTask` can resolve a custom IR; the
+         renamed-column case below drives these. Default: no selection -> the default IR. */
+      getTaskWorkflowSelectionAsync: mockGetTaskWorkflowSelectionAsync,
+      getWorkflowDefinition: mockGetWorkflowDefinition,
     },
     shutdown: vi.fn(async () => {}),
   })),
@@ -85,23 +101,9 @@ vi.mock("@fusion/core", () => ({
   // identity surface so runProjectAdd reaches its forced registration behavior.
   hasProjectIdentity: vi.fn(() => false),
   isValidSqliteDatabaseFile: vi.fn(() => false),
-  countRunningAgentTasks: (tasks: Array<{ column: string; status?: string; paused?: boolean }>) => tasks.filter((task) => (
-    task.column === "in-progress" ||
-    (task.column === "triage" && task.status === "planning" && !task.paused) ||
-    (task.column === "in-review" && ["merging", "merging-pr", "merging-fix", "reviewing", "fixing"].includes(String(task.status ?? "")) && !task.paused)
-  )).length,
   ensureMemoryFileWithBackend: mockEnsureMemoryFileWithBackend,
   readProjectIdentity: vi.fn().mockReturnValue(undefined),
   writeProjectIdentity: vi.fn(),
-  COLUMNS: ["triage", "todo", "in-progress", "in-review", "done", "archived"],
-  COLUMN_LABELS: {
-    triage: "Triage",
-    todo: "To Do",
-    "in-progress": "In Progress",
-    "in-review": "In Review",
-    done: "Done",
-    archived: "Archived",
-  },
 }));
 
 vi.mock("node:readline/promises", () => ({
@@ -127,6 +129,10 @@ describe("project commands", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    /* `clearAllMocks` clears calls but NOT queued resolved values, so the renamed-workflow case
+       would otherwise leak its custom IR into every later test and mis-count their columns. */
+    mockGetTaskWorkflowSelectionAsync.mockReset().mockResolvedValue(null as never);
+    mockGetWorkflowDefinition.mockReset().mockResolvedValue(undefined as never);
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -350,7 +356,9 @@ describe("project commands", () => {
     expect(mockTaskStoreListTasks).toHaveBeenCalled();
     const output = consoleSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("Total: 3");
-    expect(output).toContain("To Do: 2");
+    // FNXC:CliTests 2026-07-30-20:10: the real COLUMN_LABELS entry for `todo` is "Todo"; this
+    // asserted "To Do", a string the product never prints (the old mock invented it).
+    expect(output).toContain("Todo: 2");
     expect(output).toContain("In Progress: 1");
   });
 
@@ -384,6 +392,55 @@ describe("project commands", () => {
     expect(output).toContain("Active Tasks: 2");
     expect(output).toContain("In-Flight Agents: 1");
     expect(output).toContain("Completed: 10");
+  });
+
+  /*
+  FNXC:CliTests 2026-07-30-23:30 (greptile P2 — the enrichment had no coverage):
+  The case the previous stubs made impossible. A card sits in a RENAMED wip column (`building`), so
+  the legacy `column === "in-progress"` fallback answers NO and the count is only correct if the real
+  `resolveWorkflowIrForTask` -> `enrichRunningAgentTaskShape` -> `countRunningAgentTasks` chain runs
+  and reads `countsTowardWip` off the resolved IR.
+
+  This is the regression the finding described: with the resolver stubbed to `undefined` and
+  enrichment stubbed to identity, a break anywhere in that chain left the suite green while
+  `fn project` reported zero in-flight agents on a renamed board — the number an operator reads to
+  decide whether the board is busy.
+  */
+  it("runProjectShow counts a RENAMED wip column as In-Flight via real trait enrichment", async () => {
+    mockGetProject.mockResolvedValue({
+      id: "proj-1",
+      name: "demo",
+      path: "/tmp/demo",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    mockGetSettings.mockResolvedValue({});
+    mockGetProjectHealth.mockResolvedValue(undefined);
+
+    mockGetTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom:renamed", stepIds: [] } as never);
+    mockGetWorkflowDefinition.mockResolvedValue({
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "drafting", label: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", label: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "shipped", label: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+      },
+    } as never);
+    // `building` is NOT a legacy wip id, so only trait enrichment can classify it as running.
+    mockTaskStoreListTasks.mockResolvedValue([{ id: "FN-900", column: "building", status: null }]);
+
+    const { runProjectShow } = await import("../project.js");
+    await runProjectShow("proj-1");
+
+    const output = consoleSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("In-Flight Agents: 1");
   });
 
   it("runProjectShow derives In-Flight Agents from live executors, triage planners, and in-review agents when central health is stale", async () => {

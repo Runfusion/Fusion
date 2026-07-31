@@ -79,6 +79,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   dismissModalsOnOutsideClick: "globalGeneral.dismissModalsByClickingOutsideHint",
   skipConfirmationDialogs: "globalGeneral.skipConfirmationDialogsHint",
   persistAgentToolOutput: "globalGeneral.whenDisabledToolRowsAreStillLoggedBut",
+  agentToolOutputMaxChars: "globalGeneral.agentToolOutputLimitHint",
   proactiveTaskChatEnabled: "globalGeneral.enableProactiveTaskChatHint",
   persistAgentThinkingLogPermanent: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
   persistAgentThinkingLogEphemeral: "globalGeneral.rowsAndDoesNotAffectAssistantTextOr",
@@ -210,10 +211,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   pushRemote: "merge.gitRemoteToPushToEGOrigin",
   // NodeRouting / node sync covered above
   // SchedulingSection
-  globalMaxConcurrent: "scheduling.maximumConcurrentAgentsAcrossAllProjects",
   maxConcurrent: "scheduling.maxConcurrentTasksHint",
   maxConcurrentVerifications: "scheduling.maxConcurrentVerificationsHint",
-  maxTriageConcurrent: "scheduling.maximumConcurrentPlanningAgents",
   pollIntervalMs: "scheduling.pollIntervalMsHint",
   heartbeatScopeDiscipline: "scheduling.strictDefault",
   engineerBacklogAutoClaim: "scheduling.backlogNoTaskAutoClaimIsExecutorOnly",
@@ -240,6 +239,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   overlapIgnorePaths: "scheduling.optionalFileOrDirectoryPathsToIgnoreWhen",
   // WorktreesSection
   maxWorktrees: "worktrees.limitsTotalGitWorktreesIncludingInReviewTasks",
+  worktreeLimitEnabled: "worktrees.worktreeLimitEnabledHelp",
   worktreeInitCommand: "worktrees.shellCommandToRunInEachNewWorktree",
   recycleWorktrees: "worktrees.offByDefaultOptInWhenEnabledCompleted",
   showWorktreeGrouping: "worktrees.showWorktreeGroupingHelp",
@@ -295,6 +295,9 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   defaultWorkflowId: "general.newTasksInheritThisCustomWorkflowsStepsOverridable",
   enabledBuiltinWorkflowIds: "general.disabledFusionWorkflowsAreHiddenFromWorkflow",
   aiUndoTaskWorkflowId: "general.aiUndoTaskWorkflowHelp",
+  // FNXC:OriginWorkflowSelection 2026-07-26-19:40: both default to unset = "Selected workflow".
+  taskCreateWorkflowId: "general.taskCreateWorkflowHelp",
+  refinementTaskWorkflowId: "general.refinementTaskWorkflowHelp",
   // ProjectModelsSection
   autoSelectModelPreset: "projectModels.autoSelectModelPresetHint",
   autoSummarizeTitles: "projectModels.whenEnabledTasksCreatedWithoutATitleBut",
@@ -315,6 +318,14 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
 
 /** Setting keys intentionally not surfaced as a plain Settings UI description field, with reasons. */
 const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
+  /*
+  FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+  Server-side mirror of the operator's Board workflow lane, written by the dashboard
+  whenever the lane changes so non-browser callers can resolve the "Selected workflow"
+  option. It is UI state echoed into settings, not a user-editable Settings field —
+  there is deliberately no picker for it, so it has no description to document.
+  */
+  boardSelectedWorkflowId: "Board lane mirror written by the dashboard; not a user-editable Settings field",
   // Legacy compatibility input; GeneralSection exposes its policy replacement instead.
   ephemeralAgentsCanCreateTasks: "legacy compatibility input replaced by ephemeralAgentTaskCreationPolicy",
   // Global-only serve/dashboard LAN discovery switch; no Settings UI description field exists.
@@ -475,19 +486,12 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   inReviewStalledThresholdMs: "internal reliability tuning constant, no UI field",
   stalePausedTodoThresholdMs: "internal reliability tuning constant, no UI field",
   pausedScopeDecayMs: "internal reliability tuning constant, no UI field",
-  metaTaskStallAutoCloseMs: "internal reliability tuning constant, no UI field",
-  metaTaskActiveExecutionGraceMs: "internal reliability tuning constant, no UI field",
   boardStallSweepWindowMs: "internal reliability tuning constant, no UI field",
   boardStallBlockedGrowthThreshold: "internal reliability tuning constant, no UI field",
   backlogPressureAlertEnabled: "internal reliability tuning constant, no UI field",
   backlogPressureRatioThreshold: "internal reliability tuning constant, no UI field",
   backlogPressureMinTodoCount: "internal reliability tuning constant, no UI field",
   backlogPressureAlertCooldownMs: "internal reliability tuning constant, no UI field",
-  dependencyBlockedTodoReportEnabled: "internal reliability tuning constant, no UI field",
-  dependencyBlockedTodoFreshAgeMs: "internal reliability tuning constant, no UI field",
-  dependencyBlockedTodoStaleAgeMs: "internal reliability tuning constant, no UI field",
-  dependencyBlockedTodoMinCount: "internal reliability tuning constant, no UI field",
-  dependencyBlockedTodoReportCooldownMs: "internal reliability tuning constant, no UI field",
   staleInProgressWarningMs: "internal reliability tuning constant, no UI field",
   staleInProgressCriticalMs: "internal reliability tuning constant, no UI field",
   staleInReviewWarningMs: "internal reliability tuning constant, no UI field",
@@ -577,8 +581,6 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   prerebaseAutoEnabled: "internal pre-rebase tuning constant, no UI field",
   prerebaseHotFiles: "internal pre-rebase tuning constant, no UI field",
   prerebaseDivergenceThreshold: "internal pre-rebase tuning constant, no UI field",
-  maxSpawnedAgentsPerParent: "internal spawn-limit constant, no UI field",
-  maxSpawnedAgentsGlobal: "internal spawn-limit constant, no UI field",
   // FNXC:Round10 2026-07-13: FN-7907/FN-7908 added chat default model/agent/session settings.
   // These are configured via the chat New Session defaults picker, not plain description fields.
   chatNewSessionMode: "chat new-session default mode, configured via the chat defaults picker, not a plain description field",

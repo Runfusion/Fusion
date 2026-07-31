@@ -35,7 +35,8 @@ import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { getViewportMode, isMobileViewport } from "../hooks/useViewportMode";
-import { nextFloatingZ, currentFloatingZ } from "./floatingWindowStack";
+import { FloatingWindow, FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT } from "./FloatingWindow";
+import { currentFloatingZ } from "./floatingWindowStack";
 import { getPathBasename } from "../utils/pathDisplay";
 import {
   DEFAULT_TERMINAL_PREFERENCES,
@@ -70,6 +71,19 @@ const XTERM_INIT_TIMEOUT_MS = 10000;
 
 const XTERM_IMPORT_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
 
+/*
+FNXC:Terminal 2026-07-26-11:05:
+Mobile browsers (iOS Safari tab, iOS installed PWA, Chrome Android) DISCARD a backgrounded tab when its resident set is large, and the user then pays a full white-splash reload on return. xterm's scrollback ring is retained verbatim in JS memory (line buffers, not just rendered rows), so this ring x a wide viewport is one of the larger single allocations the dashboard holds. That made 2000 lines look like a free win.
+
+FNXC:Terminal 2026-07-26-14:05 (CORRECTION — do not restore the 2000-line value on the old reasoning):
+The 2000-line cut above was justified with "the PTY's own server-side scrollback is replayed on reconnect anyway, so the reachable history is unchanged". THAT WAS FALSE. The server ring is `MAX_SCROLLBACK_SIZE = 50000` in `packages/dashboard/src/terminal-service.ts`, and the unit is CHARACTERS, not lines: the buffer is a plain string that is `slice(-50000)`d on every append, and `server.ts` replays exactly that truncated string on reconnect. 50000 characters is only ~600-800 typical terminal lines — the server holds STRICTLY LESS history than even the 2000-line client ring, so it can never back-stop it.
+Consequence of the false claim: a build emitting ~4000 lines used to let the user scroll back to the first compile error; at 2000 lines that error was evicted from the client ring and unreachable from the server too. Restored to the pre-cut 5000.
+This ring is therefore the AUTHORITATIVE user-reachable history for this surface, not a local cache of something the server also has. Any future reduction has to be argued against 50000 characters of server replay, not against an imagined larger server buffer.
+Keep this value in step with SessionTerminal's TERMINAL_SCROLLBACK_LINES (duplicated rather than shared so neither terminal surface pulls the other's heavy module into its lazy chunk). Note the two surfaces have DIFFERENT server rings — the CLI-agent one is 512 KiB — so they are kept in step for maintenance, not because the backing store is the same.
+The WebGL-context disposal in disposeXtermInstance is the part of the memory work that was sound; it stays.
+*/
+const TERMINAL_SCROLLBACK_LINES = 5000;
+
 export type TerminalDisplayMode = "docked" | "floating" | "below";
 
 export const TERMINAL_DISPLAY_MODE_STORAGE_PREFIX = "fusion:terminal-display-mode-";
@@ -84,20 +98,6 @@ const TERMINAL_FLOAT_DEFAULT_WIDTH = 960;
 const TERMINAL_FLOAT_DEFAULT_HEIGHT = 560;
 const TERMINAL_FLOAT_MIN_WIDTH = 480;
 const TERMINAL_FLOAT_MIN_HEIGHT = 320;
-const TERMINAL_FLOAT_VIEWPORT_PADDING = 16;
-
-type TerminalResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
-const TERMINAL_RESIZE_DIRECTIONS: TerminalResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
-
-interface TerminalFloatSize {
-  width: number;
-  height: number;
-}
-
-interface TerminalFloatPosition {
-  x: number;
-  y: number;
-}
 
 interface TerminalWorkspaceMenuPosition {
   top: number;
@@ -151,66 +151,6 @@ function writeTerminalDockedHeight(height: number, projectId?: string, mode: "do
   const clamped = mode === "below" ? clampTerminalBelowHeight(height) : clampTerminalDockedHeight(height);
   if (typeof window !== "undefined") {
     window.localStorage.setItem(`fusion:terminal-docked-height-${projectId ?? "default"}`, String(Math.round(clamped)));
-  }
-  return clamped;
-}
-
-function clampTerminalFloatSize(size: TerminalFloatSize): TerminalFloatSize {
-  if (typeof window === "undefined") return size;
-  return {
-    width: Math.min(Math.max(size.width, TERMINAL_FLOAT_MIN_WIDTH), Math.max(TERMINAL_FLOAT_MIN_WIDTH, window.innerWidth - TERMINAL_FLOAT_VIEWPORT_PADDING * 2)),
-    height: Math.min(Math.max(size.height, TERMINAL_FLOAT_MIN_HEIGHT), Math.max(TERMINAL_FLOAT_MIN_HEIGHT, window.innerHeight - TERMINAL_FLOAT_VIEWPORT_PADDING * 2)),
-  };
-}
-
-function clampTerminalFloatPosition(position: TerminalFloatPosition, size: TerminalFloatSize): TerminalFloatPosition {
-  if (typeof window === "undefined") return position;
-  return {
-    x: Math.min(Math.max(position.x, TERMINAL_FLOAT_VIEWPORT_PADDING), Math.max(TERMINAL_FLOAT_VIEWPORT_PADDING, window.innerWidth - size.width - TERMINAL_FLOAT_VIEWPORT_PADDING)),
-    y: Math.min(Math.max(position.y, TERMINAL_FLOAT_VIEWPORT_PADDING), Math.max(TERMINAL_FLOAT_VIEWPORT_PADDING, window.innerHeight - size.height - TERMINAL_FLOAT_VIEWPORT_PADDING)),
-  };
-}
-
-function readTerminalFloatSize(projectId?: string): TerminalFloatSize {
-  if (typeof window === "undefined") return { width: TERMINAL_FLOAT_DEFAULT_WIDTH, height: TERMINAL_FLOAT_DEFAULT_HEIGHT };
-  try {
-    const raw = window.localStorage.getItem(`fusion:terminal-modal-size-${projectId ?? "default"}`) ?? window.localStorage.getItem("fusion:terminal-modal-size");
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<TerminalFloatSize>;
-      if (typeof parsed.width === "number" && typeof parsed.height === "number") return clampTerminalFloatSize({ width: parsed.width, height: parsed.height });
-    }
-  } catch {
-    // ignore corrupted size
-  }
-  return clampTerminalFloatSize({ width: TERMINAL_FLOAT_DEFAULT_WIDTH, height: TERMINAL_FLOAT_DEFAULT_HEIGHT });
-}
-
-function writeTerminalFloatSize(size: TerminalFloatSize, projectId?: string): TerminalFloatSize {
-  const clamped = clampTerminalFloatSize(size);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(`fusion:terminal-modal-size-${projectId ?? "default"}`, JSON.stringify(clamped));
-  }
-  return clamped;
-}
-
-function readTerminalFloatPosition(size: TerminalFloatSize, projectId?: string): TerminalFloatPosition {
-  if (typeof window === "undefined") return { x: TERMINAL_FLOAT_VIEWPORT_PADDING, y: TERMINAL_FLOAT_VIEWPORT_PADDING };
-  try {
-    const raw = window.localStorage.getItem(`fusion:terminal-float-pos-${projectId ?? "default"}`);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<TerminalFloatPosition>;
-      if (typeof parsed.x === "number" && typeof parsed.y === "number") return clampTerminalFloatPosition({ x: parsed.x, y: parsed.y }, size);
-    }
-  } catch {
-    // ignore corrupted position
-  }
-  return clampTerminalFloatPosition({ x: window.innerWidth - size.width - TERMINAL_FLOAT_VIEWPORT_PADDING, y: TERMINAL_FLOAT_VIEWPORT_PADDING }, size);
-}
-
-function writeTerminalFloatPosition(position: TerminalFloatPosition, size: TerminalFloatSize, projectId?: string): TerminalFloatPosition {
-  const clamped = clampTerminalFloatPosition(position, size);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(`fusion:terminal-float-pos-${projectId ?? "default"}`, JSON.stringify(clamped));
   }
   return clamped;
 }
@@ -576,8 +516,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [pendingInitialCommandGeneration, setPendingInitialCommandGeneration] = useState(0);
   const [displayMode, setDisplayModeState] = useState<TerminalDisplayMode>(() => readTerminalDisplayMode(projectId));
   const [dockedHeight, setDockedHeight] = useState(() => readTerminalDockedHeight(projectId));
-  const [floatingSize, setFloatingSize] = useState<TerminalFloatSize>(() => readTerminalFloatSize(projectId));
-  const [floatingPosition, setFloatingPosition] = useState<TerminalFloatPosition>(() => readTerminalFloatPosition(readTerminalFloatSize(projectId), projectId));
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
   const [isTabletTerminal, setIsTabletTerminal] = useState(() => getViewportMode() === "tablet");
   const [tabsOverflow, setTabsOverflow] = useState(false);
@@ -588,12 +526,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const isDockedMode = !embedded && !isMobileTerminal && displayMode === "docked";
   const isFloatingMode = !embedded && !isMobileTerminal && displayMode === "floating";
   const isBelowMode = !embedded && !isMobileTerminal && displayMode === "below";
-  // FNXC:FloatingWindow 2026-06-22-21:30: The FLOATING terminal shares the SINGLE cross-type floating z-index stack (floatingWindowStack) so tapping it raises it above every other floating modal regardless of type. A fresh z is claimed each time the modal opens (see effect below); tapping the panel (pointerdown/focus capture) re-raises it. Docked/mobile modes ignore this z-index (full-width bottom panel / full-screen sheet).
-  const [floatingZ, setFloatingZ] = useState<number>(() => nextFloatingZ());
-  const bringFloatingToFront = useCallback(() => {
-    if (!isFloatingMode) return;
-    setFloatingZ((current) => (current >= currentFloatingZ() ? current : nextFloatingZ()));
-  }, [isFloatingMode]);
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -605,6 +537,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const overlayMouseDownRef = useRef(false);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
+  /*
+  FNXC:Terminal 2026-07-26-11:10:
+  The WebGL renderer holds a real GL context plus its glyph atlas textures. A GL context that is dropped without an explicit dispose() is a well-known source of memory pressure on iOS (contexts are a scarce, process-wide resource and are not released promptly by GC), and memory pressure is what makes the OS discard the backgrounded tab. Hold the addon so every teardown path disposes it EXPLICITLY before terminal.dispose(), instead of relying on xterm's AddonManager or the onContextLoss handler to get there.
+  */
+  const webglAddonRef = useRef<ITerminalAddon | null>(null);
   const hasInitialCommandRun = useRef<string | false>(false);
   const pendingInitialCommandRef = useRef<{ command: string; commandKey: string; sessionId: string } | null>(null);
   const creatingInitialCommandTabRef = useRef(false);
@@ -645,12 +582,43 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   terminalPreferencesRef.current = terminalPreferences;
   resolvedFontFamilyRef.current = resolvedFontFamily;
 
+  /**
+   * Release the live xterm instance and everything whose lifetime is tied to it.
+   *
+   * FNXC:Terminal 2026-07-26-11:15:
+   * Four call sites (session/project switch, modal close, session-invalid swap, manual reinit) plus the new unmount teardown all have to release the SAME set of resources: the WebGL addon's GL context, the terminal (scrollback ring + DOM/canvas layers), the fit addon, and the window resize listener bound to that instance. They had drifted into four hand-copied blocks, none of which disposed the WebGL addon. Any one of them missing a resource leaves a GL context or a multi-megabyte scrollback buffer resident, which is exactly the memory pressure that makes mobile browsers discard the backgrounded tab. Single helper so a new teardown path cannot forget one.
+   * Refs only — callers still own their own React state resets, which differ per path.
+   */
+  const disposeXtermInstance = useCallback(() => {
+    // WebGL first: dispose the renderer while its terminal is still alive so the
+    // addon can detach cleanly, then drop the GL context reference.
+    if (webglAddonRef.current) {
+      try {
+        webglAddonRef.current.dispose();
+      } catch {
+        /* already disposed (e.g. by onContextLoss) */
+      }
+      webglAddonRef.current = null;
+    }
+    if (xtermRef.current) {
+      try {
+        xtermRef.current.dispose();
+      } catch {
+        /* already disposed */
+      }
+      xtermRef.current = null;
+    }
+    fitAddonRef.current = null;
+    xtermInitializedRef.current = false;
+    if (windowResizeListenerRef.current) {
+      window.removeEventListener("resize", windowResizeListenerRef.current);
+      windowResizeListenerRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     setDisplayModeState(readTerminalDisplayMode(projectId));
     setDockedHeight(readTerminalDockedHeight(projectId));
-    const nextSize = readTerminalFloatSize(projectId);
-    setFloatingSize(nextSize);
-    setFloatingPosition(readTerminalFloatPosition(nextSize, projectId));
   }, [projectId]);
 
   useEffect(() => {
@@ -684,25 +652,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     window.dispatchEvent(new CustomEvent("fusion:terminal-display-mode-change", { detail: { projectId, mode } }));
   }, [projectId]);
 
-  const persistFloatingSize = useCallback((size: TerminalFloatSize) => {
-    setFloatingSize(writeTerminalFloatSize(size, projectId));
-  }, [projectId]);
-
-  const persistFloatingPosition = useCallback((position: TerminalFloatPosition, size = floatingSize) => {
-    setFloatingPosition(writeTerminalFloatPosition(position, size, projectId));
-  }, [floatingSize, projectId]);
-
-  /*
-  FNXC:Terminal 2026-06-21-22:26:
-  FN-6887 requires desktop/tablet terminal opens to default to a project-scoped docked bottom panel. Persist `fusion:terminal-display-mode-${projectId}` and `fusion:terminal-docked-height-${projectId}` so each project restores its preferred panel mode and height without affecting mobile fullscreen behavior.
-
-  FNXC:Terminal 2026-06-21-22:45:
-  The pop-out terminal mode uses project-scoped `fusion:terminal-modal-size-${projectId}` and `fusion:terminal-float-pos-${projectId}` keys so floating windows restore independently per project while avoiding the old bottom-right native resize grip conflict.
-  */
-  /*
-  FNXC:Terminal 2026-06-22-19:50:
-  Docked top-edge resize, smooth on touch + desktop (same technique as the right-dock pop-out RightDockExpandModal). On pointerdown we setPointerCapture on the handle and attach pointermove/up/cancel to the CAPTURED element (`captureTarget` = event.currentTarget), NOT `document` — capture redirects the full pointer stream for this pointerId to that element so element-scoped listeners receive every move even when the finger drifts off the handle, and they pair cleanly with the handle's `touch-action: none` (CSS) without a non-passive document listener. Moves are filtered by pointerId and coalesced into one rAF, so we set height at most once per frame and never thrash layout on a flood of touch-move events. localStorage is written only on pointerup (existing behavior). Teardown (pointerup/cancel + unmount via dragTeardownRef) cancels the pending rAF, releases pointer capture, and detaches listeners.
-  */
   const handleDockedResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (!isDockedMode && !isBelowMode) return;
     event.preventDefault();
@@ -753,133 +702,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     captureTarget.addEventListener("pointerup", handlePointerUp);
     captureTarget.addEventListener("pointercancel", handlePointerUp);
   }, [dockedHeight, isBelowMode, isDockedMode, projectId]);
-
-  /*
-  FNXC:Terminal 2026-06-22-19:50:
-  Floating-window move (drag the header grip), smooth on touch + desktop. Pointer capture + captured-element (`captureTarget`) listeners filtered by pointerId, identical to the right-dock pop-out drag. Raw pointer coords are stored in `latest` and applied via one rAF per frame, so a flood of touch-move events coalesces into a single state set and never thrashes layout. State-only updates during the drag; localStorage is persisted once on pointerup (the old per-move persistFloatingPosition wrote localStorage on every move, which janked touch drags). Teardown cancels the rAF, releases capture, and detaches listeners on pointerup/cancel and on unmount.
-  */
-  const handleFloatingDragPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isFloatingMode || (event.target as HTMLElement).closest("button")) return;
-    event.preventDefault();
-    const captureTarget = event.currentTarget;
-    const pointerId = event.pointerId;
-    captureTarget.setPointerCapture?.(pointerId);
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startPosition = floatingPosition;
-    const currentSize = floatingSize;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-
-    let latest = startPosition;
-    let frame = 0;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      latest = { x: startPosition.x + moveEvent.clientX - startX, y: startPosition.y + moveEvent.clientY - startY };
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setFloatingPosition(clampTerminalFloatPosition(latest, currentSize));
-      });
-    };
-    const detachListeners = () => {
-      captureTarget.releasePointerCapture?.(pointerId);
-      captureTarget.removeEventListener("pointermove", handlePointerMove);
-      captureTarget.removeEventListener("pointerup", handlePointerUp);
-      captureTarget.removeEventListener("pointercancel", handlePointerUp);
-    };
-    function handlePointerUp() {
-      if (frame) cancelAnimationFrame(frame);
-      persistFloatingPosition(latest, currentSize);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    }
-
-    // FNXC:Terminal 2026-06-22-19:50: Unmount/close-mid-drag teardown cancels the rAF, releases capture, and detaches the captured-element listeners without persisting a partial move.
-    dragTeardownRef.current = () => {
-      if (frame) cancelAnimationFrame(frame);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    };
-
-    captureTarget.addEventListener("pointermove", handlePointerMove);
-    captureTarget.addEventListener("pointerup", handlePointerUp);
-    captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [floatingPosition, floatingSize, isFloatingMode, persistFloatingPosition]);
-
-  /*
-  FNXC:Terminal 2026-06-22-19:50:
-  Floating-window edge/corner resize, smooth on touch + desktop. Pointer capture + captured-element listeners filtered by pointerId, rAF-batched size/position updates (west/north handles also shift the origin so the opposite edge stays pinned), persisted once on pointerup — same discipline as the right-dock pop-out resize. The old per-move persistFloatingSize/persistFloatingPosition wrote localStorage on every move; now we set state per frame and persist only on release. Teardown cancels the rAF, releases capture, and detaches listeners on pointerup/cancel and on unmount.
-  */
-  const handleFloatingResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>, direction: TerminalResizeDirection) => {
-    if (!isFloatingMode) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const captureTarget = event.currentTarget;
-    const pointerId = event.pointerId;
-    captureTarget.setPointerCapture?.(pointerId);
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startSize = floatingSize;
-    const startPosition = floatingPosition;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-
-    let latestSize = startSize;
-    let latestPosition = startPosition;
-    let frame = 0;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      const nextSize = clampTerminalFloatSize({
-        width: startSize.width + (direction.includes("e") ? dx : direction.includes("w") ? -dx : 0),
-        height: startSize.height + (direction.includes("s") ? dy : direction.includes("n") ? -dy : 0),
-      });
-      const nextPosition = {
-        x: startPosition.x + (direction.includes("w") ? startSize.width - nextSize.width : 0),
-        y: startPosition.y + (direction.includes("n") ? startSize.height - nextSize.height : 0),
-      };
-      latestSize = nextSize;
-      latestPosition = nextPosition;
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setFloatingSize(latestSize);
-        setFloatingPosition(clampTerminalFloatPosition(latestPosition, latestSize));
-      });
-    };
-    const detachListeners = () => {
-      captureTarget.releasePointerCapture?.(pointerId);
-      captureTarget.removeEventListener("pointermove", handlePointerMove);
-      captureTarget.removeEventListener("pointerup", handlePointerUp);
-      captureTarget.removeEventListener("pointercancel", handlePointerUp);
-    };
-    function handlePointerUp() {
-      if (frame) cancelAnimationFrame(frame);
-      persistFloatingSize(latestSize);
-      persistFloatingPosition(latestPosition, latestSize);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    }
-
-    // FNXC:Terminal 2026-06-22-19:50: Unmount/close-mid-drag teardown cancels the rAF, releases capture, and detaches the captured-element listeners without persisting a partial resize.
-    dragTeardownRef.current = () => {
-      if (frame) cancelAnimationFrame(frame);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    };
-
-    captureTarget.addEventListener("pointermove", handlePointerMove);
-    captureTarget.addEventListener("pointerup", handlePointerUp);
-    captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [floatingPosition, floatingSize, isFloatingMode, persistFloatingPosition, persistFloatingSize]);
 
   /**
    * Fit xterm and publish cols/rows for a specific terminal session.
@@ -957,14 +779,25 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     }
   }, []);
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-27-18:20:
+  FloatingWindow now owns terminal pop-out geometry. Refit xterm after its shared geometry signal
+  so columns and rows follow drag/resize without reintroducing terminal-local pointer handlers.
+  */
+  useEffect(() => {
+    if (!isFloatingMode) return;
+    const refitFloatingTerminal = (event: Event) => {
+      const detail = (event as CustomEvent<{ windowKey?: string }>).detail;
+      if (detail?.windowKey === `terminal-${projectId ?? "default"}`) fitAndResizeForSession();
+    };
+    window.addEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, refitFloatingTerminal);
+    return () => window.removeEventListener(FLOATING_WINDOW_GEOMETRY_CHANGE_EVENT, refitFloatingTerminal);
+  }, [fitAndResizeForSession, isFloatingMode, projectId]);
+
   // Bump open generation whenever the modal opens so the initialCommand
   // effect re-evaluates after a close/reopen cycle (deps may be identical).
-  // FNXC:FloatingWindow 2026-06-22-21:30: Each open also claims the front of the shared floating-window stack so a freshly-opened floating terminal sits above other floating modals.
   useEffect(() => {
-    if (isOpen) {
-      setOpenGeneration((g) => g + 1);
-      setFloatingZ(nextFloatingZ());
-    }
+    if (isOpen) setOpenGeneration((g) => g + 1);
   }, [isOpen]);
 
   // Track virtual keyboard overlap on mobile so the terminal entry area
@@ -1049,14 +882,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   /*
   FNXC:Terminal 2026-06-21-22:07:
-  Docked and floating terminal resize interactions change the terminal viewport without a window resize event, so refit xterm after display mode, docked height, or floating size changes to keep rows/cols synchronized.
+  Docked resize interactions change the terminal viewport without a window resize event, so refit xterm after display mode or docked height changes. FloatingWindow geometry is handled by its dedicated event listener.
   */
   useEffect(() => {
     if (!isOpen) return;
     const sessionId = typeof xtermInitializedRef.current === "string" ? xtermInitializedRef.current : undefined;
     const frame = requestAnimationFrame(() => fitAndResizeForSession(sessionId));
     return () => cancelAnimationFrame(frame);
-  }, [displayMode, dockedHeight, fitAndResizeForSession, floatingSize, isOpen]);
+  }, [displayMode, dockedHeight, fitAndResizeForSession, isOpen]);
 
   // Refit xterm whenever the user drags the modal's CSS resize grip.
   // The window/visualViewport listeners only fire on viewport changes; native
@@ -1551,14 +1384,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     // Clean up existing xterm if switching sessions/projects or if DOM was cleared
     if (xtermRef.current && (xtermInitializedRef.current !== currentSessionId || projectChanged)) {
-      xtermRef.current.dispose();
-      xtermRef.current = null;
-      fitAddonRef.current = null;
-      xtermInitializedRef.current = false;
-      if (windowResizeListenerRef.current) {
-        window.removeEventListener("resize", windowResizeListenerRef.current);
-        windowResizeListenerRef.current = null;
-      }
+      disposeXtermInstance();
       setXtermReady(false);
       setXtermInitError(null);
     }
@@ -1616,7 +1442,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             white: "#d4d4d4",
           },
           allowProposedApi: true,
-          scrollback: 5000,
+          scrollback: TERMINAL_SCROLLBACK_LINES,
         });
 
         // Load addons
@@ -1637,8 +1463,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             const webglAddon = new WebglAddon();
             webglAddon.onContextLoss(() => {
               webglAddon.dispose();
+              if (webglAddonRef.current === webglAddon) webglAddonRef.current = null;
             });
             terminal.loadAddon(webglAddon);
+            webglAddonRef.current = webglAddon;
           } catch {
             // WebGL not available, fallback to canvas
           }
@@ -1857,16 +1685,24 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         clearTimeout(watchdogTimer);
       }
 
-      // Don't dispose xterm here - it should persist across tab switches
-      // Only dispose when the modal is fully closed
+      /*
+      FNXC:Terminal 2026-07-26-11:20:
+      Deliberately NOT disposing here. This effect re-runs on every terminal-tab / session change, and the instance must survive a tab switch (the body above disposes+recreates only when the session actually changed). Release is owned by the close effect, the session-invalid swap, manual reinit, and the unmount teardown below — never by this cleanup.
+      */
     };
-  }, [fitAndResizeForSession, isOpen, isReady, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad]);
+  }, [disposeXtermInstance, fitAndResizeForSession, isOpen, isReady, activeTab?.sessionId, projectId, remeasureAfterTerminalFontLoad]);
 
   // (Input forwarding + window resize listener are wired inside initTerminal
   // so they share the xterm instance's lifetime — see comment there.)
 
   // FNXC:Terminal 2026-06-22-09:00: Run any active drag teardown when the component unmounts mid-drag so document pointer listeners + the pending docked-resize rAF never outlive the modal.
   useEffect(() => () => dragTeardownRef.current?.(), []);
+
+  /*
+  FNXC:Terminal 2026-07-26-11:25:
+  Unmount teardown. The close-cleanup effect below is keyed on `isOpen` and has no cleanup function, so an unmount (project switch, or App unmounting the modal now that it is mounted only while open) left the xterm, its scrollback ring, and the WebGL context reachable-but-orphaned until GC happened to run. Mobile browsers discard a backgrounded tab on memory pressure, and a GL context is not released promptly by GC — so "the collector will get to it" is not good enough here. Release synchronously on unmount.
+  */
+  useEffect(() => () => disposeXtermInstance(), [disposeXtermInstance]);
 
   // Cleanup xterm when modal closes
   useEffect(() => {
@@ -1876,16 +1712,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     dragTeardownRef.current?.();
 
     // Modal is closed - cleanup xterm
-    if (xtermRef.current) {
-      xtermRef.current.dispose();
-      xtermRef.current = null;
-    }
-    fitAddonRef.current = null;
-    xtermInitializedRef.current = false;
-    if (windowResizeListenerRef.current) {
-      window.removeEventListener("resize", windowResizeListenerRef.current);
-      windowResizeListenerRef.current = null;
-    }
+    disposeXtermInstance();
     setXtermReady(false);
     setXtermInitError(null);
     hasInitialCommandRun.current = false;
@@ -1896,7 +1723,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setShowShortcuts(false);
     setShowPreferences(false);
     setStickyModifier(null);
-  }, [isOpen]);
+  }, [disposeXtermInstance, isOpen]);
 
   // Subscribe to terminal data.
   // Depends on `xtermReady` so subscriptions are established after the
@@ -2262,16 +2089,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       hasInitialCommandRun.current = false;
 
       // Dispose current xterm so the init effect re-runs with the new session
-      if (xtermRef.current) {
-        xtermRef.current.dispose();
-        xtermRef.current = null;
-      }
-      fitAddonRef.current = null;
-      xtermInitializedRef.current = false;
-      if (windowResizeListenerRef.current) {
-        window.removeEventListener("resize", windowResizeListenerRef.current);
-        windowResizeListenerRef.current = null;
-      }
+      disposeXtermInstance();
       setXtermReady(false);
       setXtermInitError(null);
 
@@ -2280,7 +2098,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       });
     });
     return unsub;
-  }, [onSessionInvalid, replaceActiveTabSession]);
+  }, [disposeXtermInstance, onSessionInvalid, replaceActiveTabSession]);
 
   // Overlay dismiss — track mousedown source so a click that starts on the
   // modal but releases on the overlay (e.g. when dragging the resize grip
@@ -2327,20 +2145,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // Used when xterm initialization fails/stalls but the backend session is fine.
   const handleReinitialize = useCallback(() => {
     // Dispose any partially-initialized xterm
-    if (xtermRef.current) {
-      xtermRef.current.dispose();
-      xtermRef.current = null;
-    }
-    fitAddonRef.current = null;
-    xtermInitializedRef.current = false;
-    if (windowResizeListenerRef.current) {
-      window.removeEventListener("resize", windowResizeListenerRef.current);
-      windowResizeListenerRef.current = null;
-    }
+    disposeXtermInstance();
     // Clear error state and reset readiness so the init effect re-runs
     setXtermInitError(null);
     setXtermReady(false);
-  }, []);
+  }, [disposeXtermInstance]);
 
   const handleRefreshPage = useCallback(() => {
     window.location.reload();
@@ -2488,12 +2297,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const modalClassName = `modal terminal-modal${isMobileTerminal && !embedded ? " terminal-modal--mobile" : ""}${isTabletTerminal && !isMobileTerminal && !embedded ? " terminal-modal--tablet" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}${embedded ? " terminal-modal--embedded" : ""}`;
   /*
   FNXC:TerminalWorkspaces 2026-07-13-00:00:
-  The workspace picker menu is portaled to `document.body`, so floating terminal mode must compare it in the same root stacking context as the panel. Keep the menu one layer above the panel's shared `floatingZ`; otherwise the fixed CSS fallback band sits below the 10100+ floating stack and the menu appears invisible behind the modal.
+  The workspace picker menu is portaled to `document.body`, so floating terminal mode keeps it in the utility floating band above the terminal panel. FloatingWindow owns the panel stack claim; this fixed menu band preserves the menu's root-portal visibility.
 
   FNXC:TerminalWorkspaces 2026-07-13-00:00:
   The portaled listbox has CSS fallback coordinates for non-JS resilience, but it must never paint there during the open-frame measurement pass. Position in a layout effect and keep the menu invisible/non-interactive until the computed trigger-relative coordinates are applied.
   */
-  const terminalWorkspaceMenuFloatingZ = isFloatingMode ? Math.max(5000, floatingZ + 1) : undefined;
+  const terminalWorkspaceMenuFloatingZ = isFloatingMode ? currentFloatingZ() + 1 : undefined;
 
   const modalStyle = {
     ...(keyboardOverlap > 0
@@ -2509,16 +2318,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       : {}),
     ...(isDockedMode ? { "--terminal-docked-height": `${dockedHeight}px` } : {}),
     ...(isBelowMode ? { "--terminal-below-height": `${clampTerminalBelowHeight(dockedHeight || TERMINAL_BELOW_DEFAULT_HEIGHT)}px` } : {}),
-    ...(isFloatingMode
-      ? {
-          "--terminal-float-x": `${floatingPosition.x}px`,
-          "--terminal-float-y": `${floatingPosition.y}px`,
-          "--terminal-float-width": `${floatingSize.width}px`,
-          "--terminal-float-height": `${floatingSize.height}px`,
-          // FNXC:FloatingWindow 2026-06-22-21:30: Inline z from the shared cross-type stack; only the floating panel participates.
-          zIndex: floatingZ,
-        }
-      : {}),
   } as CSSProperties;
 
   /*
@@ -2701,14 +2500,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     </div>
   );
 
-  const terminalPanel = (
+  const terminalContent = (
     <div
       ref={modalRef}
       className={modalClassName}
       data-testid="terminal-modal"
       style={modalStyle}
-      onPointerDownCapture={isFloatingMode ? bringFloatingToFront : undefined}
-      onFocusCapture={isFloatingMode ? bringFloatingToFront : undefined}
       role={isBelowMode ? "region" : undefined}
       aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
     >
@@ -2722,19 +2519,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             onPointerDown={handleDockedResizePointerDown}
           />
         )}
-        {!embedded && isFloatingMode && TERMINAL_RESIZE_DIRECTIONS.map((direction) => (
-          <div
-            key={direction}
-            className={`terminal-floating-resize-handle terminal-floating-resize-handle--${direction}`}
-            data-testid={`terminal-floating-resize-${direction}`}
-            role="separator"
-            aria-label={t("terminal.resizeFloatingPanel", "Resize terminal window")}
-            onPointerDown={(event) => handleFloatingResizePointerDown(event, direction)}
-          />
-        ))}
         {/* Header — on mobile (≤768px) use compact selector/actions;
             .terminal-title is hidden; action button labels are hidden (icons only) */}
-        <div className={`terminal-header${isFloatingMode ? " terminal-header--draggable" : ""}`} onPointerDown={handleFloatingDragPointerDown}>
+        <div className="terminal-header">
           {/* Tab Bar */}
           {isMobileTerminal ? renderTerminalMobileTabs() : (
             <div className="terminal-tab-region" ref={terminalTabRegionRef}>
@@ -3343,6 +3130,32 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     </div>
   );
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-27-18:20:
+  Only the terminal pop-out uses the shared floating host. Docked, below, mobile, and embedded
+  presentations retain their existing layout and lifecycle because they are not floating windows.
+  The legacy size/position pair intentionally resets to one project-scoped geometry record.
+  */
+  const terminalPanel = isFloatingMode ? (
+    <FloatingWindow
+      title={t("terminal.title", "Terminal")}
+      onClose={onClose}
+      windowKey={`terminal-${projectId ?? "default"}`}
+      defaultSize={{ width: TERMINAL_FLOAT_DEFAULT_WIDTH, height: TERMINAL_FLOAT_DEFAULT_HEIGHT }}
+      minSize={{ width: TERMINAL_FLOAT_MIN_WIDTH, height: TERMINAL_FLOAT_MIN_HEIGHT }}
+      hideHeader
+      dragHandleSelector=".terminal-header"
+      persistGeometryKey={`fusion:terminal-float-geometry-${projectId ?? "default"}`}
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      ariaLabel={t("terminal.title", "Terminal")}
+      className={modalClassName}
+      testId="terminal-modal-overlay"
+    >
+      {terminalContent}
+    </FloatingWindow>
+  ) : terminalContent;
+
   if (embedded) {
     return (
       <div className="terminal-embedded-host" data-testid="terminal-embedded-host">
@@ -3370,7 +3183,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     );
   }
 
-  // FNXC:FloatingWindow 2026-06-22-22:30: Portaled to document.body so overlay terminal modes share the ONE root stacking context with other floating modals. Below mode intentionally skips the portal so it can reserve in-flow application space.
+  if (isFloatingMode) return terminalPanel;
+
+  // Docked and mobile terminal presentations retain their established overlay host.
   return createPortal(
     <div
       className={overlayClassName}
@@ -3380,8 +3195,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       aria-modal="true"
       data-testid="terminal-modal-overlay"
       style={{
-        // FNXC:FloatingWindow 2026-06-22-23:00: In floating mode the z-index lives on the fixed overlay (it owns the stacking context); a panel z is trapped inside it and loses to page stacking contexts like the right dock (position:absolute z-index:20). Docked/mobile keep their CSS z.
-        ...(isFloatingMode ? { zIndex: floatingZ } : {}),
         ...(keyboardOverlap > 0 ? { "--overlay-padding-top": "0px" } : {}),
       } as CSSProperties}
     >

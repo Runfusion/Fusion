@@ -1561,7 +1561,6 @@
         "description": "",
         "error": "",
         "maxConcurrent": "",
-        "maxTriageConcurrent": "",
         "maxWorktrees": "",
         "title": "",
         "runningGlobal": "",
@@ -5994,7 +5993,12 @@
       "reportDiscussionCategorySelect": "토론 카테고리 선택",
       "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
       "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6043,8 +6047,16 @@
       "enableProactiveTaskChatHint": "",
       "releaseChannel": "",
       "releaseChannelHelp": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": "",
       "channelStable": "",
-      "channelBeta": ""
+      "channelBeta": "",
+      "agentToolOutputLimit": "",
+      "agentToolOutputLimitHint": "",
+      "noLimitOnAgentToolOutput": "",
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -6718,7 +6730,6 @@
       "maximumConcurrentPlanningAgents": "",
       "maximumStuckDetectorRetriesBeforeATaskIs": "",
       "maxStuckRetries": "",
-      "maxTriageConcurrent": "",
       "numberOfDaysATaskCanStayIn": "",
       "off": "",
       "optionalFileOrDirectoryPathsToIgnoreWhen": "",
@@ -6796,6 +6807,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": "",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "",
       "maxWorktrees": "",
+      "worktreeLimitEnabled": "",
+      "worktreeLimitEnabledHelp": "",
       "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "승인 열기",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
@@ -7778,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "진행 중으로 돌아가기",
+      "backTo": "{{column}}(으)로 돌아가기",
       "cancelMove": "이동 취소",
       "keepProgress": "진행 상태 유지",
       "movedTo": "{{column}}으로 이동됨",
@@ -8532,7 +8546,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "재계획"
+    "statusReplan": "재계획",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

@@ -411,7 +411,6 @@ export class CeSessionStore {
    * Session orchestration uses these async siblings so backend mode persists through the project-bound AsyncDataLayer while SQLite callers retain their established synchronous API. PostgreSQL reads ignore caller-supplied cross-project filters and always enforce the layer's project ID.
    */
   async createAsync(input: CreateCeSessionInput): Promise<CeSession> {
-    if (!this.asyncLayer) return this.create(input);
     const projectId = this.requireProjectId();
     const session = this.newSession({ ...input, projectId });
     await this.insertAsync(session);
@@ -419,11 +418,10 @@ export class CeSessionStore {
   }
 
   async createWithPlanHandoffClaimAsync(input: CreateCeSessionInput, artifactPath: string): Promise<CeSession> {
-    if (!this.asyncLayer) return this.createWithPlanHandoffClaim(input, artifactPath);
     const projectId = this.requireProjectId();
     const session = this.newSession({ ...input, projectId, artifactPath });
     try {
-      await this.asyncLayer.transactionImmediate(async (tx) => {
+      await this.requireLayer().transactionImmediate(async (tx) => {
         await tx.execute(sql`INSERT INTO project.ce_sessions
           (id, stage, status, current_question, conversation_history, project_id, artifact_path, error, turn_interval_ms, last_activity_at, created_at, updated_at)
           VALUES(${session.id}, ${session.stage}, ${session.status}, NULL, '[]', ${projectId}, ${artifactPath}, NULL, ${session.turnIntervalMs}, ${session.lastActivityAt}, ${session.createdAt}, ${session.updatedAt})`);
@@ -432,7 +430,7 @@ export class CeSessionStore {
       });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        const rows = await this.asyncLayer.db.execute(sql`SELECT session_id FROM project.ce_plan_handoff_claims WHERE project_id=${projectId} AND artifact_path=${artifactPath} LIMIT 1`) as unknown as Array<{ session_id: string }>;
+        const rows = await this.requireLayer().db.execute(sql`SELECT session_id FROM project.ce_plan_handoff_claims WHERE project_id=${projectId} AND artifact_path=${artifactPath} LIMIT 1`) as unknown as Array<{ session_id: string }>;
         throw new PlanHandoffClaimError(artifactPath, rows[0]?.session_id ?? "unknown");
       }
       throw error;
@@ -440,33 +438,39 @@ export class CeSessionStore {
     return session;
   }
 
+  /*
+  FNXC:SqliteDualPathCleanup 2026-07-26-15:20:
+  Async session methods require AsyncDataLayer after SQLite dual-path removal; assert for TS null narrowing.
+  */
+  private requireLayer() {
+    if (!this.asyncLayer) throw new Error("CE PostgreSQL persistence requires a project-bound data layer");
+    return this.asyncLayer;
+  }
+
   private requireProjectId(): string {
-    const projectId = this.asyncLayer?.projectId;
+    const projectId = this.requireLayer().projectId?.trim();
     if (!projectId) throw new Error("CE PostgreSQL persistence requires a project-bound data layer");
     return projectId;
   }
 
   private async insertAsync(session: CeSession): Promise<void> {
-    await this.asyncLayer!.db.execute(sql`INSERT INTO project.ce_sessions
+    await this.requireLayer().db.execute(sql`INSERT INTO project.ce_sessions
       (id, stage, status, current_question, conversation_history, project_id, artifact_path, error, turn_interval_ms, last_activity_at, created_at, updated_at)
       VALUES(${session.id}, ${session.stage}, ${session.status}, NULL, ${JSON.stringify(session.conversationHistory)}, ${session.projectId}, ${session.artifactPath}, NULL, ${session.turnIntervalMs}, ${session.lastActivityAt}, ${session.createdAt}, ${session.updatedAt})`);
   }
 
   async getAsync(id: string): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.get(id);
-    const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id} LIMIT 1`) as unknown as CeSessionRow[];
+    const rows = await this.requireLayer().db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id} LIMIT 1`) as unknown as CeSessionRow[];
     return rows[0] ? rowToSession(rows[0]) : undefined;
   }
 
   async listAsync(filter: { status?: CeSessionStatus; stage?: string; projectId?: string } = {}): Promise<CeSession[]> {
-    if (!this.asyncLayer) return this.list(filter);
     const projectId = this.requireProjectId();
-    const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${projectId} AND (${filter.status ?? null}::text IS NULL OR status=${filter.status ?? null}) AND (${filter.stage ?? null}::text IS NULL OR stage=${filter.stage ?? null}) ORDER BY updated_at DESC, id`) as unknown as CeSessionRow[];
+    const rows = await this.requireLayer().db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${projectId} AND (${filter.status ?? null}::text IS NULL OR status=${filter.status ?? null}) AND (${filter.stage ?? null}::text IS NULL OR stage=${filter.stage ?? null}) ORDER BY updated_at DESC, id`) as unknown as CeSessionRow[];
     return rows.map(rowToSession);
   }
 
   async updateAsync(id: string, patch: Partial<Pick<CeSession, "status" | "currentQuestion" | "conversationHistory" | "artifactPath" | "error" | "lastActivityAt" | "projectId">>): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.update(id, patch);
     const projectId = this.requireProjectId();
     const updatedAt = new Date().toISOString();
     const lastActivityAt = patch.lastActivityAt ?? Date.now();
@@ -475,7 +479,7 @@ export class CeSessionStore {
      * FNXC:CompoundEngineeringConcurrency 2026-07-14-00:18:
      * PostgreSQL session patches must update only the fields named by the caller. A prior read-modify-write rewrote the entire row, allowing a delayed heartbeat to restore stale history or a pre-terminal status after a question/completion had committed.
      */
-    const rows = await this.asyncLayer.db.execute(sql`
+    const rows = await this.requireLayer().db.execute(sql`
       UPDATE project.ce_sessions SET
         status = CASE WHEN ${has("status")} THEN ${patch.status ?? null}::text ELSE status END,
         current_question = CASE WHEN ${has("currentQuestion")} THEN ${patch.currentQuestion ? JSON.stringify(patch.currentQuestion) : null}::text ELSE current_question END,
@@ -492,11 +496,10 @@ export class CeSessionStore {
 
   /** Atomically append one history turn so simultaneous progress/terminal writes cannot drop either turn. */
   async appendHistoryAsync(id: string, turn: CeConversationTurn): Promise<CeSession | undefined> {
-    if (!this.asyncLayer) return this.appendHistory(id, turn);
     const projectId = this.requireProjectId();
     const now = Date.now();
     const updatedAt = new Date(now).toISOString();
-    const rows = await this.asyncLayer.db.execute(sql`
+    const rows = await this.requireLayer().db.execute(sql`
       UPDATE project.ce_sessions SET
         conversation_history = ((conversation_history::jsonb || jsonb_build_array(${JSON.stringify(turn)}::jsonb))::text),
         last_activity_at = ${now},
@@ -510,7 +513,7 @@ export class CeSessionStore {
   /** Atomically touch only liveness columns; safe to run beside terminal/history mutations. */
   async touchActivityAsync(id: string, at = Date.now()): Promise<boolean> {
     if (!this.asyncLayer) return Boolean(this.update(id, { lastActivityAt: at }));
-    const rows = await this.asyncLayer.db.execute(sql`
+    const rows = await this.requireLayer().db.execute(sql`
       UPDATE project.ce_sessions
       SET last_activity_at=${at}, updated_at=${new Date(at).toISOString()}
       WHERE project_id=${this.requireProjectId()} AND id=${id}
@@ -518,10 +521,9 @@ export class CeSessionStore {
     `) as unknown as Array<{ id: string }>;
     return rows.length > 0;
   }
-  async deleteAsync(id: string): Promise<boolean> { if (!this.asyncLayer) return this.delete(id); const existing = await this.getAsync(id); if (!existing) return false; await this.asyncLayer.db.execute(sql`DELETE FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id}`); return true; }
+  async deleteAsync(id: string): Promise<boolean> { const existing = await this.getAsync(id); if (!existing) return false; await this.requireLayer().db.execute(sql`DELETE FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND id=${id}`); return true; }
   async recoverStaleSessionsAsync(now = Date.now(), multiple = STALE_INTERVAL_MULTIPLE): Promise<string[]> {
-    if (!this.asyncLayer) return this.recoverStaleSessions(now, multiple);
-    const rows = await this.asyncLayer.db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND status IN ('active', 'launching') AND last_activity_at < (${now}::bigint - (${multiple}::bigint * turn_interval_ms::bigint))`) as unknown as CeSessionRow[];
+    const rows = await this.requireLayer().db.execute(sql`SELECT id, stage, status, current_question AS "currentQuestion", conversation_history AS "conversationHistory", project_id AS "projectId", artifact_path AS "artifactPath", error, turn_interval_ms AS "turnIntervalMs", last_activity_at AS "lastActivityAt", created_at AS "createdAt", updated_at AS "updatedAt" FROM project.ce_sessions WHERE project_id=${this.requireProjectId()} AND status IN ('active', 'launching') AND last_activity_at < (${now}::bigint - (${multiple}::bigint * turn_interval_ms::bigint))`) as unknown as CeSessionRow[];
     const candidates = rows.map(rowToSession);
     await Promise.all(candidates.map((session) => this.updateAsync(
       session.id,

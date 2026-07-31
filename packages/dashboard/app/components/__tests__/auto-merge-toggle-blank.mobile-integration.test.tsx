@@ -39,6 +39,32 @@ vi.mock("../../api", async (importOriginal) => {
       return Promise.resolve({ ...mockSettings });
     }),
     fetchWorkflowSteps: vi.fn(() => Promise.resolve([])),
+    /*
+    FNXC:WorkflowColumns 2026-07-30-07:45:
+    The board needs a RESOLVED lane payload. This file builds its mock with
+    `createDashboardApiMock`, which SPREADS the real module, so `fetchBoardWorkflows` was the real
+    network call — it never resolves under jsdom, `boardWorkflows` stays null, and Board.tsx:874 holds
+    `BoardWorkflowSkeleton` ("Loading workflow lanes") with no lanes, task cards or Auto-merge toggle.
+    Overriding it with the default lifecycle lanes is what a real board sends.
+    */
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        {
+          id: "builtin:coding",
+          name: "Coding",
+          columns: [
+            { id: "todo", name: "Todo", flags: { intake: true, hold: true } },
+            { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
+            { id: "in-review", name: "In Review", flags: { mergeBlocker: true, humanReview: true } },
+            { id: "done", name: "Done", flags: { complete: true } },
+            { id: "archived", name: "Archived", flags: { archived: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: {},
+    })),
     fetchAgents: vi.fn(() => Promise.resolve([])),
     fetchTaskReview: vi.fn(() =>
       Promise.resolve({

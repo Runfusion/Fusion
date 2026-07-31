@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-devserver-manager");
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createConnection } from "node:net";
@@ -116,7 +119,7 @@ export class DevServerManager extends EventEmitter<DevServerManagerEvents> {
         return;
       }
 
-      console.error("[devserver] process error", {
+      severityAuditLog.error("[devserver] process error", {
         id: config.id,
         error: error.message,
       });
@@ -339,7 +342,7 @@ export class DevServerManager extends EventEmitter<DevServerManagerEvents> {
         child.kill("SIGTERM");
       }
     } catch (error) {
-      console.warn("[devserver] failed to send SIGTERM", { error });
+      severityAuditLog.warn("[devserver] failed to send SIGTERM", { error });
     }
   }
 
@@ -353,7 +356,7 @@ export class DevServerManager extends EventEmitter<DevServerManagerEvents> {
         child.kill("SIGKILL");
       }
     } catch (error) {
-      console.warn("[devserver] failed to send SIGKILL", { error });
+      severityAuditLog.warn("[devserver] failed to send SIGKILL", { error });
     }
   }
 }

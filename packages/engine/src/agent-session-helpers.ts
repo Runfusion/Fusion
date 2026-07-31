@@ -15,6 +15,7 @@ import {
   GROK_CLI_PROVIDER_ID,
   isGrokApiKeyFusionVisible,
   isTestModeActive,
+  resolveAgentToolOutputMaxChars,
   resolveExecutionSettingsModel,
   resolveExecutorFallbackModel,
   resolveMergerSettingsModel,
@@ -37,6 +38,7 @@ import {
   isRetryableModelSelectionError,
   wrapToolsWithActionGate,
   wrapToolsWithPermanentAgentGating,
+  wrapToolsWithOutputBudget,
   wrapToolsWithRtkRewrite,
   type FallbackModelUsedPayload,
 } from "./pi.js";
@@ -80,7 +82,7 @@ const RUNTIMES_WITH_INTERNAL_TOOL_GATING = new Set(["pi"]);
  */
 export function wrapCustomToolsForPluginRuntime(
   tools: ToolDefinition[] | undefined,
-  options: Pick<AgentRuntimeOptions, "actionGateContext" | "permanentAgentGating">,
+  options: Pick<AgentRuntimeOptions, "actionGateContext" | "permanentAgentGating" | "toolOutputMaxChars">,
   logContext?: { runtimeId: string; sessionPurpose: string },
 ): ToolDefinition[] | undefined {
   if (!tools || tools.length === 0) {
@@ -95,7 +97,11 @@ export function wrapCustomToolsForPluginRuntime(
   }
   const withRtk = wrapToolsWithRtkRewrite(tools);
   const withPermanent = wrapToolsWithPermanentAgentGating(withRtk, options.permanentAgentGating);
-  return wrapToolsWithActionGate(withPermanent, options.actionGateContext);
+  const withActionGate = wrapToolsWithActionGate(withPermanent, options.actionGateContext);
+  // FNXC:ToolOutputBudget 2026-08-06-16:00:
+  // Non-pi runtimes do not pass through createFnAgent, so apply the same outermost
+  // setting-derived clamp here exactly once. A null budget leaves tools byte-identical.
+  return wrapToolsWithOutputBudget(withActionGate, { maxChars: options.toolOutputMaxChars });
 }
 
 function shouldWrapCustomToolsForRuntime(runtimeId: string): boolean {
@@ -873,8 +879,17 @@ export async function createResolvedAgentSession(
   createResolvedAgentSession must preserve additionalSkillPaths into runtime.createSession.
   Plugin skill names alone never deliver bodies; chat, step, and cron lanes require both halves of the #2017 contract (FN-8443 / #2364).
   */
+  /*
+  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  Resolve the merged settings once at this all-lanes seam. A caller can still provide
+  an explicit runtime value (including null for unlimited); otherwise settings supply
+  the finite default, custom cap, or explicit no-limit sentinel interpretation.
+  */
   const runtimeOptions: AgentRuntimeOptions = {
     ...runtimeOptionsRaw,
+    toolOutputMaxChars: runtimeOptionsRaw.toolOutputMaxChars !== undefined
+      ? runtimeOptionsRaw.toolOutputMaxChars
+      : resolveAgentToolOutputMaxChars(settings ?? {}),
     ...(mergedSkillNames.length > 0 ? { skills: mergedSkillNames } : {}),
   };
   // FNXC:McpConfig 2026-06-25-22:06:

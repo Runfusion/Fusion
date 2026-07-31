@@ -89,7 +89,7 @@ describe("TaskDetailModal Summary tab", () => {
       />,
     );
 
-    expect(container.querySelector(".detail-tabs")?.firstElementChild?.textContent).toBe("Activity");
+    expect(document.querySelector(".detail-tabs")?.firstElementChild?.textContent).toBe("Activity");
     const summaryButton = screen.getByRole("button", { name: "Summary" });
     expectButtonActive(summaryButton);
     /*
@@ -110,7 +110,7 @@ describe("TaskDetailModal Summary tab", () => {
     fireEvent.click(activityButton);
     expectButtonActive(activityButton);
     expect(screen.queryByText("Completion summary")).toBeNull();
-    expect(container.querySelector(".detail-section--chat [data-testid='task-chat-tab']")).toBeTruthy();
+    expect(document.querySelector(".detail-section--chat [data-testid='task-chat-tab']")).toBeTruthy();
   });
 
   it("honors explicit initialTab=\"chat\" for done tasks", () => {
@@ -513,7 +513,7 @@ describe("TaskDetailModal Summary tab", () => {
   it("keeps relocated Merge Details inside the existing mobile pr-card containment", () => {
     const { container } = render(<TaskSummaryTab task={doneTask({ mergeDetails: { commitSha: "abcdef1234567890", prNumber: 42 } })} />);
     const summary = screen.getByTestId("task-summary-tab");
-    const mergeCard = container.querySelector(".task-summary-tab .merge-details-card.pr-card");
+    const mergeCard = document.querySelector(".task-summary-tab .merge-details-card.pr-card");
 
     expect(mergeCard).toBeTruthy();
     expect(summary.contains(mergeCard)).toBe(true);
@@ -561,7 +561,7 @@ describe("TaskDetailModal Summary tab", () => {
       />,
     );
 
-    const tabs = container.querySelector(".detail-tabs");
+    const tabs = document.querySelector(".detail-tabs");
     const summaryButton = screen.getByRole("button", { name: "Summary" });
     expect(tabs?.contains(summaryButton)).toBe(true);
     expect(summaryButton.classList.contains("detail-tab")).toBe(true);
@@ -581,7 +581,7 @@ describe("TaskDetailModal Summary tab", () => {
     );
 
     expectButtonActive(screen.getByRole("button", { name: "Summary" }));
-    expect(container.querySelector(".detail-tabs")?.firstElementChild?.textContent).toBe("Activity");
+    expect(document.querySelector(".detail-tabs")?.firstElementChild?.textContent).toBe("Activity");
     expect(screen.getByText("Completion summary")).toBeTruthy();
   });
 });

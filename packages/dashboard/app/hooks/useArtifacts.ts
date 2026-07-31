@@ -183,7 +183,22 @@ export function useArtifacts(options?: {
       params.set("projectId", projectId);
     }
     const query = params.size > 0 ? `?${params.toString()}` : "";
+    /*
+    FNXC:ArtifactRegistry 2026-07-26-14:44:
+    Missed-event recovery. The gallery refreshed only from live artifact/message events, so artifacts
+    registered during an SSE gap (error reconnect, or the mobile hidden-tab suspend) stayed invisible
+    until the view remounted. Reuse the same debounced authoritative refetch the event path uses.
+    */
+    const resyncArtifacts = () => {
+      if (context.isStale() || sseRefreshDebounceRef.current) return;
+      sseRefreshDebounceRef.current = setTimeout(() => {
+        sseRefreshDebounceRef.current = null;
+        void refreshRef.current();
+      }, 300);
+    };
+
     const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: resyncArtifacts,
       events: {
         "artifact:registered": handleAuthoritativeArtifact,
         // FNXC:ArtifactRegistry 2026-07-10-15:20: in-place doc edits from the Artifacts viewer emit artifact:updated; open galleries refresh through the same debounced path as registrations.

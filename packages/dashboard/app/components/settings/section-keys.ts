@@ -54,7 +54,11 @@ export interface SectionKeyEntry {
  * save-split.ts for the project-models lane overrides instead of duplicating
  * them.
  */
-const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
+/*
+FNXC:UiMetadataApi 2026-07-14-00:00:
+Expose project reset-registry ids for the no-drift contract test so a reset-owning section cannot exist without discoverable Settings metadata. This is read-only inspection and does not change reset ownership or behavior.
+*/
+export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> = {
   general: [
     "allowAbsoluteFileBrowserPaths",
     "capacityRiskBannerEnabled",
@@ -66,6 +70,15 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "completionDocumentationMode",
     "reviewArtifacts",
     "enabledBuiltinWorkflowIds",
+    /*
+    FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+    Owned by "general" because that is where both pickers render. Resetting them writes
+    null, which restores the unset = "Selected workflow" behavior. `boardSelectedWorkflowId`
+    is deliberately NOT listed: it is a dashboard-written mirror of the current Board lane,
+    not an operator-editable field, so a per-menu reset has no business clearing it.
+    */
+    "taskCreateWorkflowId",
+    "refinementTaskWorkflowId",
     "ephemeralAgentTaskCreationPolicy",
     "ephemeralAgentsEnabled",
     "sessionAdvisorEnabledByDefault",
@@ -106,6 +119,7 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
   worktrees: [
     "executorAllowSiblingBranchRename",
     "maxWorktrees",
+    "worktreeLimitEnabled",
     "recycleWorktrees",
     "showWorktreeGrouping",
     "worktreeCopyFiles",
@@ -135,7 +149,6 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
     "maxConcurrent",
     "maxConcurrentVerifications",
     "maxStuckKills",
-    "maxTriageConcurrent",
     "overlapIgnorePaths",
     "pollIntervalMs",
     "preserveProgressOnStuckRequeue",
@@ -206,10 +219,8 @@ const PROJECT_SECTION_KEYS: Record<string, readonly string[]> = {
 export const EXCLUDED_RESET_SECTIONS: Record<string, string> = {
   /*
   FNXC:SettingsReset 2026-07-15-18:52:
-  scheduling-global owns exactly one control (`globalMaxConcurrent`), and it is not a settings-blob key: it is read and written through the dedicated global-concurrency endpoint, so per-menu reset has nothing here to reset.
   Listed explicitly rather than left to the unknown-id fallback: an unregistered id is reset-ineligible with NO reason, which renders the dialog without telling the operator why the button is unavailable.
   */
-  "scheduling-global": "The global concurrency cap is managed by the global-concurrency endpoint, not the settings form.",
   secrets: "Secrets are managed by the Secrets store, not the settings form.",
   "global-mcp": "MCP servers are managed by their own add/edit/remove flow.",
   mcp: "MCP servers are managed by their own add/edit/remove flow.",

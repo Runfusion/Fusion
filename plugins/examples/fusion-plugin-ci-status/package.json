@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/ci-status",
-  "version": "0.2.82-beta.3",
+  "version": "0.2.82-beta.5",
   "type": "module",
   "description": "Polls CI status for branches and provides a custom API to query results",
   "keywords": [
@@ -23,6 +23,6 @@
   "devDependencies": {
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

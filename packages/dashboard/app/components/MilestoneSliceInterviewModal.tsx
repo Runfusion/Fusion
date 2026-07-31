@@ -33,6 +33,7 @@ import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { FloatingWindow } from "./FloatingWindow";
 
 const WARNING_ICON = "⚠️";
 const MILESTONE_SLICE_OTHER_RESPONSE_KEY = "_other";
@@ -406,13 +407,8 @@ export function MilestoneSliceInterviewModal({
   if (!isOpen) return null;
 
   return (
-    <div
-      className="modal-overlay open"
-      onClick={(e) => e.target === e.currentTarget && handleCancel()}
-      role="dialog"
-      aria-modal="true"
-      data-testid="milestone-slice-interview-modal"
-    >
+    <FloatingWindow windowKey="milestone-slice-interview" modal testId="milestone-slice-interview-modal" title={t("missions.planTargetTitle", "Plan {{targetLabel}}: {{targetTitle}}", { targetLabel, targetTitle })} ariaLabel={t("missions.planTargetTitle", "Plan interview")} onClose={handleCancel} hideHeader dragHandleSelector=".planning-modal .modal-header" className="floating-window--milestone-slice-interview" defaultSize={{ width: 760, height: 640 }} minSize={{ width: 440, height: 320 }} persistGeometryKey="floating-window:milestone-slice-interview" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Interview dismissal still routes through handleCancel so confirmation semantics survive shared tablet geometry. */}
       <div className="modal modal-lg planning-modal" style={keyboardStyle}>
         <div className="modal-header">
           <div className="detail-title-row">
@@ -572,7 +568,7 @@ export function MilestoneSliceInterviewModal({
           )}
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }
 

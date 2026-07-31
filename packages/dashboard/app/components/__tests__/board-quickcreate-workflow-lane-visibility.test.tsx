@@ -125,11 +125,11 @@ function mkTask(overrides: Partial<Task> & { id: string }): Task {
   };
 }
 
-function workflowPayload(taskWorkflowIds: Record<string, string>, flagEnabled = true): BoardWorkflowsPayload {
+function workflowPayload(taskWorkflowIds: Record<string, string>): BoardWorkflowsPayload {
   return {
-    flagEnabled,
+    flagEnabled: true,
     defaultWorkflowId: DEFAULT_WORKFLOW.id,
-    workflows: flagEnabled ? [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW, CODING_IDEAS_WORKFLOW] : [],
+    workflows: [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW, CODING_IDEAS_WORKFLOW],
     taskWorkflowIds,
   };
 }
@@ -186,8 +186,6 @@ function BoardHarness({ createdTaskId = "FN-new", createReturnsTask = true, onCr
       showWorktreeGrouping={false}
       planAutoApproveEnabled={false}
       onTogglePlanAutoApprove={vi.fn()}
-      workflowColumnsEnabled
-      settingsLoaded
     />
   );
 }
@@ -221,8 +219,6 @@ function ListHarness({ createdTaskId = "FN-new", createReturnsTask = true, onCre
       onOpenDetail={vi.fn()}
       addToast={vi.fn()}
       onQuickCreate={onQuickCreate}
-      workflowColumnsEnabled
-      settingsLoaded
     />
   );
 }
@@ -315,21 +311,13 @@ describe("workflow lane quick-create visibility", () => {
     expect(within(screen.getByTestId("column-ideas")).getByText("Created builtin:coding-ideas")).toBeTruthy();
   });
 
-  it("leaves the legacy flag-off Board quick-create path unchanged", async () => {
-    const inputs: TaskCreateInput[] = [];
-    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({}, false));
-
-    render(<BoardHarness onCreateInput={(input) => inputs.push(input)} />);
-    await waitFor(() => expect(screen.getByTestId("quick-create-triage")).toBeTruthy());
-
-    await act(async () => {
-      fireEvent.click(screen.getByTestId("quick-create-triage"));
-    });
-
-    expect(screen.getByText("Created legacy")).toBeTruthy();
-    expect(inputs[0]?.workflowId).toBeUndefined();
-  });
-
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  "leaves the legacy flag-off Board quick-create path unchanged" is DELETED with the
+  legacy single-lane board it exercised (it clicked `quick-create-triage`, a legacy
+  hardcoded-column affordance that no longer renders). The surviving cases cover
+  quick-create on workflow lanes, which is now the only quick-create path.
+  */
   it.each([
     ["Board", BoardHarness, () => fireEvent.click(screen.getByTestId("quick-create-intake"))],
     ["ListView", ListHarness, () => fireEvent.click(screen.getByTestId("list-quick-create"))],
@@ -387,8 +375,6 @@ function boardProps(tasks: Task[]) {
     showWorktreeGrouping: false,
     planAutoApproveEnabled: false,
     onTogglePlanAutoApprove: vi.fn(),
-    workflowColumnsEnabled: true as const,
-    settingsLoaded: true as const,
   };
 }
 

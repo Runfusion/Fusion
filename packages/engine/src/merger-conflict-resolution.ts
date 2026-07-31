@@ -106,7 +106,7 @@ export async function resolveWithOurs(filePath: string, cwd: string): Promise<vo
   try {
     await execFileAsync("git", ["checkout", "--ours", "--", filePath], { cwd });
     await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} using --ours`);
+    mergerLog.debug(`Auto-resolved ${filePath} using --ours`);
   } catch (error) {
     throw new Error(`Failed to auto-resolve ${filePath} with ours: ${error}`);
   }
@@ -120,7 +120,7 @@ export async function resolveWithTheirs(filePath: string, cwd: string): Promise<
   try {
     await execFileAsync("git", ["checkout", "--theirs", "--", filePath], { cwd });
     await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} using --theirs`);
+    mergerLog.debug(`Auto-resolved ${filePath} using --theirs`);
   } catch (error) {
     throw new Error(`Failed to auto-resolve ${filePath} with theirs: ${error}`);
   }
@@ -134,7 +134,7 @@ export async function resolveTrivialWhitespace(filePath: string, cwd: string): P
   try {
     await execFileAsync("git", ["checkout", "--ours", "--", filePath], { cwd });
     await execFileAsync("git", ["add", "--", filePath], { cwd });
-    mergerLog.log(`Auto-resolved ${filePath} (trivial whitespace)`);
+    mergerLog.debug(`Auto-resolved ${filePath} (trivial whitespace)`);
   } catch (error) {
     throw new Error(`Failed to auto-resolve ${filePath} trivial conflict: ${error}`);
   }

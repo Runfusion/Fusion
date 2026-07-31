@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-view-chunk-manifest");
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -53,7 +56,7 @@ function warnOnce(set: Set<string>, key: string, message: string): void {
     return;
   }
   set.add(key);
-  console.warn(message);
+  severityAuditLog.warn(message);
 }
 
 export function loadViewChunkManifest(clientDir: string): Record<TaskViewId, ViewChunkManifestEntry> {

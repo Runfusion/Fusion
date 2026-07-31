@@ -222,13 +222,37 @@ export function nearestColumnIndex(scroller: HTMLElement, columns: HTMLElement[]
   return nearestIndex;
 }
 
-/** scrollLeft that centers `column` in the scroller viewport (integer pixels). */
+/*
+FNXC:BoardNavigation 2026-07-26-09:15:
+A swipe starting on the FAR-LEFT column jumped two columns while the same swipe mid-board moved one.
+Cause: columns are narrower than the phone viewport, so the edge columns' ideal centered scrollLeft
+falls OUTSIDE the reachable range (negative at the left edge, past max at the right edge). The board
+therefore never read as "centered" while resting at an edge, `gestureStartCentered` was false, and
+`commitDirectionalPage` fell back to taking its origin at RELEASE — which had already advanced onto
+the next column — so the +1 page landed two columns over.
+Clamping the centering target to the reachable scroll range makes an edge rest count as centered
+(rest position IS the column's reachable center), so edge swipes page exactly one column like every
+other position. It also stops `applySnapTo` from pinning an unreachable value, which left the pin
+watchdog hard-jumping to a scrollLeft the browser keeps clamping away.
+*/
+/**
+ * scrollLeft that centers `column` in the scroller viewport (integer pixels), clamped to the
+ * scroller's reachable range so edge columns resolve to the position they actually rest at.
+ *
+ * The upper clamp is skipped when `scrollWidth` is unusable (jsdom reports 0); the lower clamp at 0
+ * is always valid.
+ */
 function scrollLeftToCenterColumn(scroller: HTMLElement, column: HTMLElement): number {
   const scrollerRect = scroller.getBoundingClientRect();
   const viewportWidth = scroller.clientWidth || scrollerRect.width;
   const viewportCenter = scrollerRect.left + viewportWidth / 2;
   const columnRect = column.getBoundingClientRect();
-  return Math.round(scroller.scrollLeft + columnRect.left + columnRect.width / 2 - viewportCenter);
+  const ideal = Math.round(
+    scroller.scrollLeft + columnRect.left + columnRect.width / 2 - viewportCenter,
+  );
+  const maxScrollLeft = scroller.scrollWidth - viewportWidth;
+  const upperBound = maxScrollLeft > 0 ? maxScrollLeft : Number.POSITIVE_INFINITY;
+  return Math.min(Math.max(ideal, 0), upperBound);
 }
 
 /** Whether the viewport is already centered on one of its eligible snap columns. */
@@ -740,8 +764,20 @@ export function useColumnScrollSnap(
       }
 
       const nearestIndex = nearestColumnIndex(scroller, columns);
-      // A gesture begun mid-transit has no trustworthy origin: page from where it actually is.
-      const originIndex = gestureStartCentered ? gestureStartColumnIndex : nearestIndex;
+      /*
+      FNXC:BoardNavigation 2026-07-26-09:15:
+      A gesture begun mid-transit has no trustworthy rest origin, so it pages from where it actually
+      is — but that origin must never sit FURTHER ALONG the travel direction than the column the
+      gesture started on, or the drag gets counted twice (once as travel, once as a bumped origin)
+      and the board advances two columns for a one-column swipe. `resolveFlingTargetIndex` still
+      floors the result at `nearestIndex`, so a long drag keeps its own landing point.
+      */
+      const startIndex = Math.min(Math.max(gestureStartColumnIndex, 0), columns.length - 1);
+      const originIndex = gestureStartCentered
+        ? gestureStartColumnIndex
+        : direction > 0
+          ? Math.min(nearestIndex, startIndex)
+          : Math.max(nearestIndex, startIndex);
       /*
       FNXC:BoardNavigation 2026-07-25-09:40:
       Net gesture travel gates multi-column reach. Take the larger of the board's own scroll delta

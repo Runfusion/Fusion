@@ -190,7 +190,8 @@ export function collectPluginSkillNames(
       additionalSkillPathSet.add(dirname(bodyDir));
     }
 
-    piLog.log(`[skills] Plugin ${pluginId} contributes skill: ${name}`);
+    // FNXC:EngineDiagnostics 2026-07-26-08:17: one line per plugin skill per session is steady-state discovery chatter.
+    piLog.debug(`[skills] Plugin ${pluginId} contributes skill: ${name}`);
   }
 
   return {
@@ -366,7 +367,8 @@ function mergePluginSkills(
   }
 
   if (appendedPluginNames.length > 0) {
-    piLog.log(
+    // FNXC:EngineDiagnostics 2026-07-26-08:17: merge summary is expected every session that has plugin skills — debug-only.
+    piLog.debug(
       `[skills] Merged ${appendedPluginNames.length} plugin skill(s) into ${sessionPurpose} session: [${appendedPluginNames.join(", ")}]`,
     );
   }

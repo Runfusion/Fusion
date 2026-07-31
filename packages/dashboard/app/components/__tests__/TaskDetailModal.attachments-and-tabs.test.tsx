@@ -216,7 +216,8 @@ describe("TaskDetailModal", () => {
       mockUpload.mockResolvedValueOnce(mockAttachment);
       const addToast = vi.fn();
 
-      const { container } = render(
+      // FNXC:TaskDetailModalTests 2026-07-26-21:28: Query baseElement because FloatingWindow portals modal content into document.body, outside React Testing Library's local render container.
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask()}
           onClose={noop}
@@ -358,7 +359,7 @@ describe("TaskDetailModal", () => {
   });
 
   it("renders in-review PR content only in the Pull Request tab body", () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <TaskDetailModal
         task={makeTask({ column: "in-review", status: "creating-pr", dependencies: ["FN-001"] })}
         onClose={noop}
@@ -392,7 +393,7 @@ describe("TaskDetailModal", () => {
   });
 
   it("activity list does not have nested scroll constraints", () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <TaskDetailModal
         task={makeTask({
           log: [
@@ -493,7 +494,7 @@ describe("TaskDetailModal", () => {
       oversight gating, so pin plannerOversightLevel: "off" to keep the
       three-label Activity-view assertion meaningful and honest (FN-7607).
       */
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", plannerOversightLevel: "off" })}
           taskDetailChatFirst
@@ -533,7 +534,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("switches to Feed segment via Activity tab and shows activity feed", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             prompt: "# Hello\n\nContent",
@@ -563,7 +564,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("Feed segment renders log entries correctly", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             log: [
@@ -601,7 +602,7 @@ describe("TaskDetailModal", () => {
 
     it("Feed segment preserves legacy text/detail and duplicate entries", () => {
       const duplicateEntry = { timestamp: "2026-01-01T00:02:00Z", action: "Repeated diagnostic", outcome: "same payload" };
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             log: [
@@ -629,7 +630,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("Feed segment keeps action/outcome rendering intact", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             log: [
@@ -673,7 +674,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("Feed segment shows empty state when no logs", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ log: [] })}
           onClose={noop}
@@ -699,7 +700,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("can switch between all tabs and Activity segments", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             prompt: "# Hello\n\nContent",
@@ -751,7 +752,7 @@ describe("TaskDetailModal", () => {
       const { useAgentLogs } = await import("../../hooks/useAgentLogs");
       const mockUseAgentLogs = vi.mocked(useAgentLogs);
 
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -819,7 +820,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("switches to Comments tab", async () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -843,7 +844,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("shows correct top-level tabs without Logs", async () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask()}
           onClose={noop}
@@ -928,12 +929,14 @@ describe("TaskDetailModal", () => {
 
       expect(css).not.toContain(".activity-toolbar");
       expect(css).not.toContain("activity-toolbar--expand-only");
-      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: 0;\n}");
+      expect(css).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
+      expect(css).toContain("padding-inline-end: calc(var(--space-2xl) + var(--space-md));");
       expect(activityOverlayRule).toContain("position: absolute");
       expect(activityOverlayRule).toContain("top: var(--space-md)");
       expect(activityOverlayRule).toContain("right: var(--space-md)");
       expect(activityOverlayRule).toContain("z-index: 3");
-      expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: 0;\n  }");
+      expect(mobileCss).not.toContain("  .detail-activity {\n    padding-inline-end:");
       expect(mobileCss).toContain("  .activity-expand-toggle--overlay {\n    top: var(--space-sm);\n    right: var(--space-sm);\n  }");
       expect(expandedTitleRule).not.toContain("display: none");
       expect(expandedMetaRule).toContain("display: none");
@@ -949,7 +952,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6370/FN-6517 expands and collapses Activity Live without leaving chrome hidden", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -992,7 +995,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-7325 keeps Activity expansion available and sticky across Live, Feed, and Raw Logs", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({
             prompt: "# Hello\n\nContent",
@@ -1074,7 +1077,7 @@ describe("TaskDetailModal", () => {
 
     it("FN-7320 removes branch group chrome only while Activity is expanded", () => {
       const branchContext = { groupId: "BG-7320", source: "planning", assignmentMode: "shared" } as const;
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
           taskDetailChatFirst
@@ -1106,7 +1109,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-7320 expands Activity for tasks without branch groups without rendering branch shells", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
           taskDetailChatFirst
@@ -1129,7 +1132,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6517 keeps the title row visible when embedded chat expands", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailContent
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onMoveTask={noopMove}
@@ -1191,7 +1194,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6370 resets expanded Activity when entering edit mode", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ column: "triage", prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -1213,7 +1216,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6532 restores planner Chat first when Chat-first is enabled while preserving explicit Activity requests", () => {
-      const { container, rerender } = render(
+      const { baseElement: container, rerender } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           taskDetailChatFirst
@@ -1266,7 +1269,7 @@ describe("TaskDetailModal", () => {
       const blocker = makeTask({ id: "FN-6574", title: "Definition task", prompt: "# Spec\n\nDefinition body unique text.", dependencies: ["FN-100"], githubTracking: { enabled: true } });
       const dependency = makeTask({ id: "FN-100", title: "Dependency task" });
       const dependent = makeTask({ id: "FN-200", title: "Dependent task", dependencies: ["FN-6574"] });
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={blocker}
           tasks={[blocker, dependency, dependent]}
@@ -1292,7 +1295,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6347 applies chat modifiers only while the Activity tab is active", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           taskDetailChatFirst
@@ -1325,7 +1328,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("FN-6347 removes the chat body modifier while editing", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ column: "triage", prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -1348,7 +1351,7 @@ describe("TaskDetailModal", () => {
 
   describe("Raw Logs full-height layout", () => {
     it("applies detail-body--agent-log class when Activity → Raw Logs segment is active", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -1381,7 +1384,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("wraps AgentLogViewer in detail-section--agent-log class", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           onClose={noop}
@@ -1405,7 +1408,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("does not apply detail-body--agent-log when editing", () => {
-      const { container } = render(
+      const { baseElement: container } = render(
         <TaskDetailModal
           task={makeTask({ column: "triage", prompt: "# Hello\n\nContent" })}
           onClose={noop}

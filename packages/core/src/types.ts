@@ -63,7 +63,7 @@ import {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn, normalizeColumnId,
+  normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 } from "./types/board.js";
@@ -73,7 +73,7 @@ export {
   COLUMNS,
   DEFAULT_COLUMN,
   isColumn,
-  normalizeColumn, normalizeColumnId,
+  normalizeColumnId,
   TASK_PRIORITIES,
   DEFAULT_TASK_PRIORITY,
 };
@@ -345,6 +345,10 @@ export interface BatchStatusResponse {
 
 // ── task-log ──────────────────────────────────────────────────────────
 // FNXC:CodeOrganization 2026-07-22-14:00: Peels live in types/task-log.ts
+
+// FNXC:WorkflowLifecycleColumns 2026-07-30-10:55: a VALUE re-export (not a type) — the
+// planner AGENT ROLE name, so role comparisons stop reading as column guards.
+export { PLANNER_AGENT_ROLE } from "./types/task-log.js";
 
 import type {
   StepStatus,

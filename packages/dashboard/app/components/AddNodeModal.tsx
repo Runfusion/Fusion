@@ -7,6 +7,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import "./AddNodeModal.css";
 
+import { FloatingWindow } from "./FloatingWindow";
 export interface AddNodeInput {
   name: string;
   type: "local" | "remote";
@@ -255,8 +256,9 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, onDiscoverRemoteProjec
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={closeModal}>
-      <div className="modal modal-md add-node-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={t("nodes.addNode", "Add Node")}>
+    /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
+    <FloatingWindow windowKey="add-node" title={t("nodes.addNode", "Add Node")} ariaLabel={`${t("nodes.addNode", "Add Node")} dialog`} onClose={closeModal} hideHeader dragHandleSelector=".modal-header" className="floating-window--add-node" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:add-node" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      <div className="modal modal-md add-node-modal" aria-label={t("nodes.addNode", "Add Node")}>
         <div className="modal-header">
           <h3>{t("nodes.addNode", "Add Node")}</h3>
           <button className="modal-close" onClick={closeModal} disabled={isSubmitting} aria-label={t("nodes.closeNodeModal", "Close add node modal")}>
@@ -468,6 +470,6 @@ export function AddNodeModal({ isOpen, onClose, onSubmit, onDiscoverRemoteProjec
           </button>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

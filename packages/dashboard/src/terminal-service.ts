@@ -16,9 +16,11 @@ import { stat } from "node:fs/promises";
 // fallback, and permission repair) lives in @fusion/engine so PTY owners share
 // one implementation. See packages/engine/src/pty-native.ts.
 import { loadPtyModule } from "@fusion/engine";
+import { createLogger } from "@fusion/core";
 import { isAuthorizedProjectOrRegisteredWorktreePath, isPathWithin } from "./git-worktree-safety.js";
 
 // Maximum scrollback buffer size (characters)
+const terminalLog = createLogger("dashboard-terminal");
 const MAX_SCROLLBACK_SIZE = 50000; // ~50KB per terminal
 
 // Session limit constants
@@ -311,7 +313,7 @@ export class TerminalService extends EventEmitter {
 
     // Reject paths with null bytes (could bypass path checks)
     if (cwd.includes("\0")) {
-      console.warn(`Rejecting path with null byte: ${cwd.replace(/\0/g, "\\0")}`);
+      terminalLog.warn(`Rejecting path with null byte: ${cwd.replace(/\0/g, "\\0")}`);
       throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
     }
 
@@ -322,7 +324,7 @@ export class TerminalService extends EventEmitter {
     cwd = path.resolve(this.projectRoot, cwd);
 
     if (!isAbsoluteRequest && !isPathWithin(this.projectRoot, cwd)) {
-      console.warn(`Terminal relative working directory escape blocked: ${requestedCwd}`);
+      terminalLog.warn(`Terminal relative working directory escape blocked: ${requestedCwd}`);
       throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
     }
 
@@ -332,7 +334,7 @@ export class TerminalService extends EventEmitter {
       this.registeredWorktreeCache,
     );
     if (!authorized) {
-      console.warn(`Terminal working directory outside project worktrees blocked: ${requestedCwd}`);
+      terminalLog.warn(`Terminal working directory outside project worktrees blocked: ${requestedCwd}`);
       throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
     }
 
@@ -342,9 +344,9 @@ export class TerminalService extends EventEmitter {
       if (cwdStat.isDirectory()) {
         return cwd;
       }
-      console.warn(`Working directory is not a directory: ${cwd}`);
+      terminalLog.debug(`Working directory is not a directory: ${cwd}`);
     } catch {
-      console.warn(`Working directory does not exist: ${cwd}`);
+      terminalLog.debug(`Working directory does not exist: ${cwd}`);
     }
 
     throw new TerminalCwdError("Terminal working directory is not a readable directory.");
@@ -484,7 +486,7 @@ export class TerminalService extends EventEmitter {
 
     // Check session limit
     if (this.sessions.size >= this.maxSessions) {
-      console.error(`Max sessions (${this.maxSessions}) reached, refusing new session`);
+      terminalLog.warn(`Max sessions (${this.maxSessions}) reached, refusing new session`);
       return {
         success: false,
         code: "max_sessions",
@@ -499,7 +501,7 @@ export class TerminalService extends EventEmitter {
 
     // Validate shell is allowed
     if (!this.isAllowedShell(shell)) {
-      console.error(`Shell not allowed: ${shell}`);
+      terminalLog.warn(`Shell not allowed: ${shell}`);
       return {
         success: false,
         code: "invalid_shell",
@@ -552,7 +554,7 @@ export class TerminalService extends EventEmitter {
     try {
       pty = await loadPtyModule();
     } catch (loadErr) {
-      console.error(`[terminal] Failed to load PTY module: ${loadErr}`);
+      terminalLog.error(`Failed to load PTY module: ${loadErr}`);
       return {
         success: false,
         code: "pty_load_failed",
@@ -616,8 +618,8 @@ export class TerminalService extends EventEmitter {
         break;
       } catch (spawnError) {
         lastSpawnError = spawnError;
-        console.error(
-          `[createSession] PTY spawn failed (${attempt.reason}) for ${attempt.shell} ${attempt.args.join(" ")}:`,
+        terminalLog.warn(
+          `PTY spawn failed (${attempt.reason}) for ${attempt.shell} ${attempt.args.join(" ")}:`,
           spawnError,
           spawnDiagnostics,
         );
@@ -625,7 +627,7 @@ export class TerminalService extends EventEmitter {
     }
 
     if (!ptyProcess) {
-      console.error(`[createSession] All PTY spawn attempts failed`, lastSpawnError, spawnDiagnostics);
+      terminalLog.error("All PTY spawn attempts failed", lastSpawnError, spawnDiagnostics);
       return {
         success: false,
         code: "pty_spawn_failed",
@@ -813,13 +815,13 @@ export class TerminalService extends EventEmitter {
 
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.warn(`Session ${sessionId} not found`);
+      terminalLog.debug(`Session ${sessionId} not found`);
       return false;
     }
 
     // Reject data with null bytes
     if (data.includes("\0")) {
-      console.warn(`Rejecting input with null byte to session ${sessionId}`);
+      terminalLog.warn(`Rejecting input with null byte to session ${sessionId}`);
       return false;
     }
 
@@ -845,7 +847,7 @@ export class TerminalService extends EventEmitter {
 
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.warn(`Session ${sessionId} not found for resize`);
+      terminalLog.debug(`Session ${sessionId} not found for resize`);
       return false;
     }
 
@@ -883,7 +885,7 @@ export class TerminalService extends EventEmitter {
 
       return true;
     } catch (error) {
-      console.error(`Error resizing session ${sessionId}:`, error);
+      terminalLog.warn(`Error resizing session ${sessionId}:`, error);
       session.resizeInProgress = false;
       return false;
     }
@@ -943,7 +945,7 @@ export class TerminalService extends EventEmitter {
 
       return true;
     } catch (error) {
-      console.error(`Error killing session ${sessionId}:`, error);
+      terminalLog.warn(`Error killing session ${sessionId}:`, error);
       this.resolveReady(session);
       this.sessions.delete(sessionId);
       return false;

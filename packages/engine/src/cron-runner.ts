@@ -373,7 +373,8 @@ export class CronRunner {
 
         // Skip if already executed this tick (de-duplication across scopes)
         if (executedIds.has(schedule.id)) {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — already executed from another scope this tick`);
+          // FNXC:EngineDiagnostics 2026-07-26-08:17: multi-scope de-dupe/claim-loss skips are expected steady-state; keep executing lines at info.
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — already executed from another scope this tick`);
           continue;
         }
         executedIds.add(schedule.id);
@@ -381,7 +382,7 @@ export class CronRunner {
         // Log which scope this schedule is from
         const scheduleScope = schedule.scope ?? "project";
         if (scheduleScope !== this.scope && this.scope !== "all") {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — belongs to ${scheduleScope} scope, not polling`);
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — belongs to ${scheduleScope} scope, not polling`);
           continue;
         }
 
@@ -406,7 +407,7 @@ export class CronRunner {
          */
         const claimed = await this.automationStore.claimDueSchedule(schedule.id, schedule.nextRunAt);
         if (!claimed) {
-          log.log(`Skipping ${schedule.name} (${schedule.id}) — claim lost to another poller`);
+          log.debug(`Skipping ${schedule.name} (${schedule.id}) — claim lost to another poller`);
           continue;
         }
 
@@ -978,7 +979,17 @@ export class CronRunner {
     const taskInput: TaskCreateInput = {
       title: step.taskTitle?.trim() || undefined,
       description: step.taskDescription.trim(),
-      column: (step.taskColumn as Column) || "triage",
+      /*
+      FNXC:Automations 2026-07-30-16:40 (greptile #2652 — the UI fix was only half of it):
+      Was `(step.taskColumn as Column) || "triage"`. U11 deletes `triage` from the default workflow, so a
+      step with no explicit column created its task into a column the board does not declare — for EVERY
+      routine, including ones saved through the fixed editor, because this substitution happens after the
+      step is read. The SECOND of two such sites; routine-runner.ts had the identical line.
+
+      Omitted instead of defaulted: `createTask` resolves the workflow's own intake column when none is
+      given (#2589), the only answer correct for every board. An explicit column is still honoured.
+      */
+      column: step.taskColumn ? (step.taskColumn as Column) : undefined,
       modelProvider: step.modelProvider?.trim() || undefined,
       modelId: step.modelId?.trim() || undefined,
       thinkingLevel: (step.thinkingLevel?.trim() || undefined) as TaskCreateInput["thinkingLevel"],

@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/auto-label",
-  "version": "0.2.82-beta.3",
+  "version": "0.2.82-beta.5",
   "type": "module",
   "description": "Automatically labels tasks based on description content",
   "keywords": [
@@ -23,6 +23,6 @@
   "devDependencies": {
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

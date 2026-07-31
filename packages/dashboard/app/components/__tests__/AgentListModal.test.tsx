@@ -272,7 +272,15 @@ describe("AgentListModal", () => {
         expect(screen.getAllByText((_, el) => el?.textContent === "FN-PROGRESS · In Progress").length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText((_, el) => el?.textContent === "FN-BARE · Unresolved task").length).toBeGreaterThanOrEqual(1);
       });
-      expect(container.querySelectorAll(".agent-task").length).toBe(3);
+  /*
+      FNXC:PortalQueryRoot 2026-07-31-20:10:
+      document, not container — this modal renders through a PORTAL.
+
+      `container` from `render()` is empty for a portalled subtree, so this lookup could only ever
+      return nothing. Same defect as #2885 / #2890 / #2893 / #2895 / #2907; probed here before
+      converting (`PROBE container=0 document=3`).
+      */
+      expect(document.querySelectorAll(".agent-task").length).toBe(3);
     });
 
     it("shows empty state when no agents exist", async () => {

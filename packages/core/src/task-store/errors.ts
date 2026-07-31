@@ -35,6 +35,48 @@ export class TaskSelfDeleteError extends Error {
   }
 }
 
+/**
+ * FNXC:TaskLookup404 2026-07-26-11:20:
+ * Requirement: a task-detail read for a task that does not exist must surface as
+ * HTTP 404, never 500 — clients (dashboard task detail, polling widgets, CLI)
+ * must be able to distinguish "this task is gone" from "the server is broken".
+ *
+ * `getTaskImpl` previously signalled the miss with a bare `new Error(...)`, so
+ * the only thing routes could match on was an errno `code === "ENOENT"` — a
+ * leftover from the file-backed storage era. In Postgres/backend mode nothing on
+ * the read path sets an errno code, so EVERY missing/unknown/soft-deleted/
+ * wrong-project task read returned 500 (reported repro:
+ * `GET /api/tasks/FN-8610/runtime-fallback`).
+ *
+ * `message` is deliberately byte-identical to the legacy string
+ * (`Task ${taskId} not found`) because existing code paths and tests match on
+ * it; the typed class is the new primary signal, the message is back-compat.
+ */
+export class TaskNotFoundError extends Error {
+  readonly code = "TASK_NOT_FOUND" as const;
+  readonly taskId: string;
+
+  constructor(taskId: string) {
+    super(`Task ${taskId} not found`);
+    this.name = "TaskNotFoundError";
+    this.taskId = taskId;
+  }
+}
+
+/**
+ * FNXC:TaskLookup404 2026-07-26-11:20:
+ * Type guard used by API boundaries to map a task miss to 404. Structural (name
+ * + code) rather than `instanceof`-only so the check survives a duplicated
+ * `@fusion/core` module instance (bundled CLI vs workspace dist) and errors that
+ * crossed a serialization boundary.
+ */
+export function isTaskNotFoundError(error: unknown): error is TaskNotFoundError {
+  if (error instanceof TaskNotFoundError) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown };
+  return candidate.name === "TaskNotFoundError" || candidate.code === "TASK_NOT_FOUND";
+}
+
 export class TaskDeletedError extends Error {
   constructor(
     public readonly taskId: string,

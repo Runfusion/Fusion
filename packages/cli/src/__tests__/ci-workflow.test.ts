@@ -259,6 +259,25 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
     expect(compositeAction.inputs?.["install-args"]?.default).toBe("--frozen-lockfile");
   });
 
+  /*
+  FNXC:CI 2026-07-26-23:05:
+  skip-install pack jobs never create a pnpm store; setup-node must not enable
+  cache: pnpm on that path or post-job cache save fails the whole job after a
+  successful pack (agent-browser-install pack-fixture).
+  */
+  it("disables pnpm store cache when skip-install is true", () => {
+    const setupSteps = (compositeAction.runs?.steps ?? []).filter(
+      (step: any) => typeof step.uses === "string" && step.uses.startsWith("actions/setup-node@"),
+    );
+    const withCache = setupSteps.find((step: any) => step.with?.cache === "pnpm");
+    const withoutCache = setupSteps.find((step: any) => step.with?.cache === undefined || step.with?.cache === "");
+    expect(withCache?.if).toContain("skip-install");
+    expect(withCache?.if).toContain("!=");
+    expect(withoutCache?.if).toContain("skip-install");
+    expect(withoutCache?.if).toContain("==");
+    expect(withoutCache?.with?.cache).toBeUndefined();
+  });
+
   it("keeps lint as install + lint only, without Bun/setup build coupling", () => {
     const lintSteps = workflow.jobs?.lint?.steps ?? [];
     expect(
@@ -826,6 +845,8 @@ describe("Cross-platform agent-browser install workflow", () => {
     const packFixture = workflow.jobs?.["pack-fixture"];
     const installSmoke = workflow.jobs?.["install-smoke"];
     expect(packFixture?.["runs-on"]).toBe("ubuntu-latest");
+    // FNXC:CI 2026-07-26-23:05: pack fixture must keep skip-install so the composite
+    // takes the no-store-cache setup-node path (see setup-node-pnpm action).
     expect(findCompositeSetupStep(packFixture?.steps ?? [])?.with?.["skip-install"]).toBe("true");
     expect(installSmoke?.needs).toBe("pack-fixture");
     expect(installSmoke?.["runs-on"]).toBe("${{ matrix.os }}");
@@ -837,7 +858,12 @@ describe("Cross-platform agent-browser install workflow", () => {
     expect(content).toContain("pnpm pack --pack-destination");
     expect(content).toContain('dependencies["agent-browser"]');
     expect(content).toContain("agent-browser-version.txt");
-    expect(content).toContain("actions/upload-artifact@v4");
+    /*
+    FNXC:CI 2026-07-28-01:35:
+    Dependabot PR #2444 bumps actions/upload-artifact 4→7 on the agent-browser install workflow.
+    Gate pin must track the workflow pin; download-artifact stays at v4 until a paired bump.
+    */
+    expect(content).toContain("actions/upload-artifact@v7");
     expect(content).toContain("actions/download-artifact@v4");
     expect(content).toContain("Packed Fusion manifest lost the exact agent-browser pin");
     expect(content).toContain("Packed Fusion manifest lost the agent-browser bin");

@@ -179,24 +179,6 @@ The hosted view is a flex child of the dock body; without min-height:0 it cannot
   min-block-size: 0;
 }
 
-/*
-FNXC:RightDock 2026-06-22-17:40:
-The right-dock pop-out is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window. The user positions it anywhere on screen and keeps using the app behind it. This overlay MUST out-specify the base `.modal-overlay` (which dims the page with a backdrop + blur). Both base and override are single-class selectors, so if styles.css loads after this file the dim/blur would win and the page would fade; qualify with `.modal-overlay` (two classes) so the pop-out reliably keeps a transparent, non-blurring, click-through backdrop regardless of stylesheet order. `pointer-events: none` lets behind-clicks pass through to the app; the floating panel re-enables `pointer-events: auto`.
-*/
-.modal-overlay.right-dock-expand-modal-overlay {
-  align-items: stretch;
-  justify-content: flex-start;
-  padding: 0;
-  background: transparent;
-  backdrop-filter: none;
-  pointer-events: none;
-  /*
-  FNXC:FloatingWindow 2026-06-22-21:30:
-  Reset the base `.modal-overlay` z-index:100 to auto so this click-through overlay does NOT establish a stacking context. The floating panel carries an inline z-index from the SHARED floatingWindowStack (4000+); without this reset that inline z would be clamped inside the overlay's own stacking context and could never interleave with the other floating modal types (terminal, New Task, FloatingWindow) that all draw from the same stack.
-  */
-  z-index: auto;
-}
-
 .right-dock-expand-modal {
   display: flex;
   flex-direction: column;
@@ -204,22 +186,19 @@ The right-dock pop-out is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window.
 }
 
 /*
-FNXC:RightDock 2026-06-22-17:40:
-Floating panel positioned by state-driven inline `left/top/width/height`. min/max keep content usable and the panel on-screen. `resize: none` because resizing is handled by the corner/edge handles (the native grip conflicts with the drag/resize pointer handlers). `pointer-events: auto` re-enables interaction on the panel only.
+FNXC:ModalTouchGeometry 2026-07-27-19:00:
+The expanded dock is now content within FloatingWindow. Retain its visual identity while letting
+its dimensions and position belong exclusively to the shared host rather than a nested fixed panel.
 */
 .right-dock-expand-modal--floating {
-  --floating-window-shadow: var(--shadow-lg);
-  position: fixed;
-  min-width: calc(var(--space-2xl) * 7.5);
-  min-height: calc(var(--space-2xl) * 5.83);
-  max-width: calc(100vw - (var(--space-lg) * 2));
-  max-height: calc(100dvh - (var(--space-lg) * 2));
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
   resize: none;
   pointer-events: auto;
-  /*
-  FNXC:FloatingWindow 2026-06-23-23:32:
-  Floating modals share a gentle theme-controlled elevation token. Use the app shadow fallback instead of undefined --shadow-xl so themes can opt out or tune shadow strength consistently across Right Dock, New Task, Terminal, and shared FloatingWindow panels.
-  */
   box-shadow: var(--floating-window-shadow, var(--shadow-lg));
 }
 
@@ -241,51 +220,6 @@ Touch dragging was janky because the browser claimed the header's touch stream f
 .right-dock-expand-modal__header--draggable:active {
   cursor: grabbing;
 }
-
-/*
-FNXC:RightDock 2026-06-22-17:40:
-Edge + corner resize handles. touch-action:none keeps the drag from being hijacked by scroll/gestures so resizing stays smooth.
-*/
-.right-dock-expand-resize-handle {
-  position: absolute;
-  z-index: 2;
-  touch-action: none;
-}
-
-.right-dock-expand-resize-handle--n,
-.right-dock-expand-resize-handle--s {
-  left: var(--space-sm);
-  right: var(--space-sm);
-  height: var(--space-sm);
-  cursor: ns-resize;
-}
-
-.right-dock-expand-resize-handle--n { top: 0; }
-.right-dock-expand-resize-handle--s { bottom: 0; }
-
-.right-dock-expand-resize-handle--e,
-.right-dock-expand-resize-handle--w {
-  top: var(--space-sm);
-  bottom: var(--space-sm);
-  width: var(--space-sm);
-  cursor: ew-resize;
-}
-
-.right-dock-expand-resize-handle--e { right: 0; }
-.right-dock-expand-resize-handle--w { left: 0; }
-
-.right-dock-expand-resize-handle--ne,
-.right-dock-expand-resize-handle--nw,
-.right-dock-expand-resize-handle--se,
-.right-dock-expand-resize-handle--sw {
-  width: var(--space-lg);
-  height: var(--space-lg);
-}
-
-.right-dock-expand-resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
-.right-dock-expand-resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
-.right-dock-expand-resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
-.right-dock-expand-resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
 
 .right-dock-expand-modal__header,
 .right-dock-expand-modal__title {

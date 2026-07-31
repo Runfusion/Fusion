@@ -123,13 +123,14 @@ export const centralActivityLog = centralSchema.table("central_activity_log", {
 ]);
 
 // ── Global concurrency state (single row) ────────────────────────────
-export const globalConcurrency = centralSchema.table("global_concurrency", {
-  id: integer("id").primaryKey(),
-  globalMaxConcurrent: integer("global_max_concurrent").default(4),
-  currentlyActive: integer("currently_active").default(0),
-  queuedCount: integer("queued_count").default(0),
-  updatedAt: text("updated_at"),
-}, (t) => [check("global_concurrency_id_check", sql`${t.id} = 1`)]);
+/*
+FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+The `global_concurrency` singleton table is DELETED (migration 0037). It held the
+machine-wide agent cap plus currently_active/queued_count counters whose only
+writers — acquireGlobalSlot/releaseGlobalSlot — had no production caller. Capacity
+is two numbers PER PROJECT; live cross-project telemetry comes from
+CentralCore.getLiveRunningAgentCounts, never from a persisted counter.
+*/
 
 // ── Central settings (single row) ────────────────────────────────────
 export const centralSettings = centralSchema.table("central_settings", {
@@ -337,7 +338,7 @@ export const centralMeta = centralSchema.table("__meta", {
  */
 export const centralTableNames = [
   "projects", "nodes", "project_node_path_mappings", "project_health",
-  "central_activity_log", "global_concurrency", "central_settings",
+  "central_activity_log", "central_settings",
   "peer_nodes", "settings_sync_state", "managed_docker_nodes",
   "plugin_installs", "project_plugin_states", "mesh_shared_snapshots",
   "mesh_write_queue", "secrets_global", "task_claims", "global_routines", "__meta",

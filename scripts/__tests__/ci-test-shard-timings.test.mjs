@@ -7,9 +7,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   bucketDuration,
@@ -18,8 +20,12 @@ import {
   buildTimingsSnapshot,
   writeTimings,
   TIMINGS_SNAPSHOT_RELATIVE,
+  TIMINGS_STALENESS_DAYS,
   discoverWorkspaceTimingFiles,
+  loadPlanningTimings,
 } from "../ci-test-shard.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 const PACKAGES = [
   { name: "@fusion/core", dir: "packages/core" },
@@ -41,6 +47,48 @@ function makeReport(projectRoot, files) {
 function tmpRoot() {
   return mkdtempSync(path.join(tmpdir(), "fusion-timings-test-"));
 }
+
+/*
+ * FNXC:CITestSharding 2026-07-27-03:20:
+ * The committed timing snapshot must remain current and refer only to live test
+ * files. Stale or phantom-path entries silently degrade CI shard balancing and
+ * can hide merge-gate regressions, so this guard fails before that drift lands.
+ */
+test("committed timing snapshot is fresh, parseable, and references live test files", () => {
+  const snapshotPath = path.join(REPO_ROOT, TIMINGS_SNAPSHOT_RELATIVE);
+  const snapshot = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  assert.ok(snapshot.packages && typeof snapshot.packages === "object");
+  assert.ok(Object.keys(snapshot.packages).length > 0, "snapshot must contain package timings");
+
+  const capturedAtMs = new Date(snapshot.capturedAt).getTime();
+  assert.ok(Number.isFinite(capturedAtMs), `capturedAt must be a valid ISO timestamp: ${snapshot.capturedAt}`);
+  assert.ok(capturedAtMs <= Date.now(), `capturedAt must not be future-dated: ${snapshot.capturedAt}`);
+  assert.ok(
+    (Date.now() - capturedAtMs) / 86_400_000 <= TIMINGS_STALENESS_DAYS,
+    `capturedAt exceeds the ${TIMINGS_STALENESS_DAYS}-day staleness budget: ${snapshot.capturedAt}`,
+  );
+
+  const recordedFiles = Object.values(snapshot.packages).flatMap((pkg) => Object.keys(pkg.files ?? {}));
+  const missingFiles = recordedFiles.filter((file) => !existsSync(path.join(REPO_ROOT, file)));
+  assert.deepEqual(missingFiles, [], `timing snapshot references missing test files:\n${missingFiles.join("\n")}`);
+
+  const timings = loadPlanningTimings({ projectRoot: REPO_ROOT });
+  assert.equal(timings.present, true);
+  assert.equal(timings.stale, false);
+  assert.ok(timings.fileDurations.size > 0, "committed snapshot must expose duration-weighted files");
+
+  const dryRun = spawnSync(
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts/ci-test-shard.mjs"), "--dry-run", "--total", "4"],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  assert.doesNotMatch(
+    `${dryRun.stdout}\n${dryRun.stderr}`,
+    /timing snapshot is stale|no timing snapshot found/i,
+    "dry-run must use the committed duration snapshot without missing or stale warnings",
+  );
+});
 
 test("bucketDuration rounds to nearest 100ms, floors non-zero to one bucket", () => {
   assert.equal(bucketDuration(0), 0);

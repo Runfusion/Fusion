@@ -1,3 +1,4 @@
+import { createLogger } from "@fusion/core";
 /**
  * Shared AI-Session Diagnostics Helper
  *
@@ -186,18 +187,17 @@ let _sink: DiagnosticsSink = defaultSink;
  * All methods are non-throwing (safe to call even if console is mocked).
  */
 function defaultSink(level: DiagnosticsLevel, scope: string, message: string, context: DiagnosticsContext): void {
-  const prefix = `[${scope}]`;
-  const logArgs = [prefix, message, context];
+  const log = createLogger(scope);
   try {
     switch (level) {
       case "info":
-        console.log(...logArgs);
+        log.log(message, context);
         break;
       case "warn":
-        console.warn(...logArgs);
+        log.warn(message, context);
         break;
       case "error":
-        console.error(...logArgs);
+        log.error(message, context);
         break;
     }
   } catch {

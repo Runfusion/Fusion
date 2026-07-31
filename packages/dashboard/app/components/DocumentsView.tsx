@@ -18,6 +18,7 @@ import { LoadingSpinner } from "./LoadingSpinner";
 import { ArtifactsGallery, getArtifactCategory, type ArtifactCategory } from "./ArtifactsGallery";
 import { ViewHeader } from "./ViewHeader";
 import { useColumnLabel } from "../i18n/labels";
+import type { ExecutorColumnFlags } from "../hooks/useExecutorStats";
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -42,8 +43,17 @@ const TASK_ARTIFACT_CATEGORY_ICONS: Record<ArtifactCategory, typeof ImageIcon> =
   other: Package,
 };
 
+/** Board-workflow column traits, indexed by task id — the shape App already builds for the footer. */
+export type DocumentsColumnFlags = Pick<ExecutorColumnFlags, "complete" | "archived" | "intake" | "hold">;
+
 export interface DocumentsViewProps {
   projectId?: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:05: optional on purpose — the status dot degrades
+  to the documented legacy names when a task's column has no traits (remote rows, historical
+  columns absent from the current board), rather than guessing.
+  */
+  columnFlagsByTaskId?: ReadonlyMap<string, DocumentsColumnFlags>;
   addToast: (message: string, type?: ToastType) => void;
   onOpenDetail: (task: TaskDetail) => void;
   onOpenArtifactTaskDetail?: (task: TaskDetail) => void;
@@ -67,12 +77,41 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getTaskColumnStatusDotClass(taskColumn: string): string {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-12:05 (Phase C convergence — DocumentsView.tsx):
+
+WHAT THE GUARD MEANT, checked rather than swapped: the four dots are LIFECYCLE ROLES —
+complete, archived, pre-implementation (waiting), and everything else (working). Only the
+pre-implementation arm named columns, and it named the default lineage's two, so on a renamed
+board a queued card showed the "working" dot.
+
+FLAGS FIRST, legacy names only with NO BASIS. `flags` are the board-workflow column traits the
+dashboard already threads to the footer (`ExecutorColumnFlags`); when present they decide, and
+they cover renamed and custom columns. When ABSENT there is nothing to resolve from — the
+documents list spans archived and historical tasks whose columns are not in the current board
+map — and "not pre-implementation" would be as much a guess as the legacy pair. Same rule as
+`live-agent-count.ts`'s no-flags fallback, and same reason: an invented answer moves what the
+operator sees.
+*/
+export function getTaskColumnStatusDotClass(taskColumn: string, flags?: DocumentsColumnFlags): string {
+  if (flags) {
+    if (flags.archived) return "status-dot status-dot--offline";
+    if (flags.complete) return "status-dot status-dot--online";
+    if (flags.intake || flags.hold) return "status-dot status-dot--pending";
+    return "status-dot status-dot--connecting";
+  }
+  /* DELIBERATE-LITERAL — the no-metadata fallback. The resolved-trait branch is immediately above
+     (`if (flags) { ... }`); these lines answer only when a task has no flags at all, and deleting
+     them makes every such row render the neutral "connecting" dot. */
   if (taskColumn === "done") return "status-dot status-dot--online";
+  /* DELIBERATE-LITERAL — same no-metadata fallback as the line above. */
   if (taskColumn === "archived") return "status-dot status-dot--offline";
-  if (taskColumn === "todo" || taskColumn === "triage") return "status-dot status-dot--pending";
+  if (LEGACY_PRE_IMPLEMENTATION_COLUMNS.has(taskColumn)) return "status-dot status-dot--pending";
   return "status-dot status-dot--connecting";
 }
+
+/** The pre-U11 planner column ids, used only when a column has no trait flags. */
+const LEGACY_PRE_IMPLEMENTATION_COLUMNS: ReadonlySet<string> = new Set(["triage", "todo"]);
 
 function getTaskArtifactCategoryLabel(t: TFunction<"app">, category: ArtifactCategory): string {
   switch (category) {
@@ -213,7 +252,7 @@ function TaskArtifactInlineViewer({ artifact, projectId, content, loading, error
   );
 }
 
-export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifactTaskDetail, onSendSelectionToTask }: DocumentsViewProps) {
+export function DocumentsView({ projectId, columnFlagsByTaskId, addToast, onOpenDetail, onOpenArtifactTaskDetail, onSendSelectionToTask }: DocumentsViewProps) {
   const { t } = useTranslation("app");
   // FNXC:ArtifactsView 2026-07-11-11:30: Artifacts is the first tab and the landing tab — the view is the artifact gallery first, with project files and task documents as secondary tabs.
   const [activeTab, setActiveTab] = useState<DocumentsTab>("artifacts");
@@ -1048,7 +1087,9 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
               <aside className="documents-view-sidebar documents-task-documents-sidebar" aria-label={t("documents.taskDocumentsListLabel", "Task documents")}>
                 {groupedTaskItems.map(({ taskId, taskTitle, taskColumn, documents: taskDocs, artifacts: taskArtifacts }) => {
                   const taskStatusLabel = taskColumn ? columnLabel(taskColumn as ColumnId) : null;
-                  const taskStatusDotClass = taskColumn ? getTaskColumnStatusDotClass(taskColumn) : "status-dot";
+                  const taskStatusDotClass = taskColumn
+                    ? getTaskColumnStatusDotClass(taskColumn, columnFlagsByTaskId?.get(taskId))
+                    : "status-dot";
 
                   return (
                     <section key={taskId} className="documents-task-sidebar-group" aria-labelledby={`documents-task-group-${taskId}`}>

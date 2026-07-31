@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/quality",
-  "version": "0.1.7-beta.3",
+  "version": "0.1.7-beta.5",
   "type": "module",
   "description": "Quality hub and Task QA surfaces for Fusion",
   "private": true,
@@ -33,10 +33,10 @@
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.5.2",
     "@types/react": "^19.0.0",
-    "jsdom": "^27.4.0",
+    "jsdom": "^29.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.2.4",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

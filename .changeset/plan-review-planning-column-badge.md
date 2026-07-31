@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": minor
+---
+
+summary: Plan Review now runs in the planning lane before a task takes an implementation slot, with a "Plan Review" card badge.
+category: feature
+dev: Every coding workflow is plan-in-place — `plan`, `plan-review`, and `plan-replan` sit in `todo`, and the card crosses into `in-progress` once, at `parse`, via the scheduler. This required a graph ENTRY CONTRACT: `resolveColumnResumeNode` makes a run with no durable continuation resume at the card's own column instead of replaying from `start` (a card in `in-progress` resumes at `parse` rather than re-planning and dragging itself backward out of the WIP column). `isUnplannedForExecution`'s pre-release gate now applies only when the plan-review node's column equals the card's column AND the group is enabled for the task. Dashboard: the gate badge drops its planning-lane restriction and reads "Plan Review" instead of "Reviewing"; the status badge no longer duplicates the step name and maps the `planning` status to "Planning". Coding (Ideas)'s private planning-node re-home is deleted — the default graph it clones is already plan-in-place. Scheduler/release fixtures must now model a card whose Plan Review passed. Coding (Ideas) renames its planner column to "Planning" (id `todo` unchanged). Self-healing gains `reconcile-undeclared-task-columns`, which re-homes a row whose column its workflow no longer declares to the workflow's hold/intake column.

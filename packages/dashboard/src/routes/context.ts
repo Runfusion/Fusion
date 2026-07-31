@@ -1,9 +1,13 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-context");
 import { Router, type Request } from "express";
 import { resolve, sep } from "node:path";
 import {
   createProjectScopedPluginMcpProvider,
   PluginLoader,
   type PluginStore,
+  type PluginLoaderOptions,
   type TaskStore,
 } from "@fusion/core";
 import type { ServerOptions } from "../server.js";
@@ -30,6 +34,38 @@ function rethrowAsApiError(error: unknown, fallbackMessage = "Internal server er
   }
 
   throw internalError(fallbackMessage);
+}
+
+/**
+ * FNXC:PluginMcpServers 2026-07-23-12:00:
+ * FN-8596 requires dashboard cross-root MCP inspection to use a private,
+ * non-persisting loader so ordinary requests cannot unload an engine runtime.
+ */
+export function createDiscoveryPluginLoaderOptions(
+  otherStore: Pick<TaskStore, "getPluginStore">,
+): PluginLoaderOptions {
+  return {
+    pluginStore: otherStore.getPluginStore() as PluginStore,
+    taskStore: otherStore as TaskStore,
+    lifecycleScope: "isolated",
+    persistRuntimeState: false,
+  };
+}
+
+/**
+ * FNXC:PluginMcpServers 2026-07-23-12:00:
+ * FN-8596 keeps this narrow dashboard binding seam testable: every cross-root
+ * request must construct only an isolated, non-persisting discovery loader.
+ */
+export function createDashboardProjectScopedPluginMcpProvider(input: {
+  hostRootDir: string;
+  hostLoader: PluginLoader;
+}): ReturnType<typeof createProjectScopedPluginMcpProvider> {
+  return createProjectScopedPluginMcpProvider({
+    hostRootDir: input.hostRootDir,
+    hostLoader: input.hostLoader,
+    createScopedLoader: (otherStore) => new PluginLoader(createDiscoveryPluginLoaderOptions(otherStore as TaskStore)),
+  });
 }
 
 export function classifyRemoteRouteError(error: unknown): RemoteRouteErrorClassification {
@@ -101,7 +137,7 @@ export function warnLaunchDirFallbackOnce(options?: ServerOptions): void {
   if (logger?.warn) {
     logger.warn(message);
   } else {
-    console.warn(message);
+    severityAuditLog.warn(message);
   }
 }
 
@@ -379,13 +415,9 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
 
     let provider = projectMcpProviders.get(loader);
     if (!provider) {
-      provider = createProjectScopedPluginMcpProvider({
+      provider = createDashboardProjectScopedPluginMcpProvider({
         hostRootDir: context.store.getRootDir(),
         hostLoader: loader,
-        createScopedLoader: (otherStore) => new PluginLoader({
-          pluginStore: otherStore.getPluginStore() as PluginStore,
-          taskStore: otherStore as TaskStore,
-        }),
       });
       projectMcpProviders.set(loader, provider);
     }

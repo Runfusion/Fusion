@@ -1,3 +1,6 @@
+import { createLogger, resolveTaskLifecycleColumns } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-github-tracking-comments");
 import type { GlobalSettings, MergeDetails, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { deriveTitleFromDescription } from "./github-tracking.js";
 import { GitHubClient } from "./github.js";
@@ -159,6 +162,19 @@ export function formatTrackingComment(
   linkContext?: TrackingLinkContext,
   options?: { currentVersion?: string | (() => string) },
 ): string {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:10 DELIBERATE-LITERAL: a transition KIND, not a board column.
+
+  `transition` is the closed union `"in-progress" | "done"` declared in this function's own signature.
+  It names WHICH COMMENT TEMPLATE to render; the caller decides that from the task's resolved lanes and
+  passes the kind down. Resolving it against a workflow would be a category error — there is no task
+  column in scope here at all.
+
+  The census matches on the spelling, so this reads as an unconverted lifecycle guard. It is the same
+  bare-variable false-positive class as the reports plugin's `ReportStatus`: the AST cannot tell a
+  foreign enum from a column id because the receiver name carries no type. Marked rather than left
+  counted, so it is not re-dispatched for conversion indefinitely.
+  */
   if (transition === "done") {
     const currentVersion = options?.currentVersion;
     let comment = buildDoneComment(task, linkContext, { includeCommitSubject: true, includeFilesLine: true, currentVersion });
@@ -214,7 +230,7 @@ export class GitHubTrackingCommentService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes(`Task ${taskId} not found`)) {
-        console.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
+        severityAuditLog.warn(`[github-tracking-comments] Unable to write log entry for deleted task ${taskId}: ${message}`);
         return;
       }
       throw error;
@@ -226,11 +242,34 @@ export class GitHubTrackingCommentService {
       return;
     }
 
-    if (event.to !== "in-progress" && event.to !== "done") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:55 (fleet: github-tracking-comments.ts):
+    Resolved ONCE here — after the tracking-enabled gate — so a move on an UNTRACKED task pays nothing.
+
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (PR #2715 review — greptile):
+    THE TRACKING GATE NOW RUNS FIRST, AND THE COLUMN TEST IS RESOLVED.
+
+    An earlier version kept a literal `to !== "in-progress" && to !== "done"` early return ABOVE the
+    tracking gate, on the reasoning that converting it would make every task move in the project
+    resolve a workflow. That reasoning was sound about cost and wrong about correctness: on a renamed
+    board the literal never matched, so the function returned before reaching any of the resolved
+    code below and the tracking comment was silently skipped. A conversion that cannot be reached is
+    not a conversion.
+
+    Reordering satisfies both. The tracking-enabled check is a plain property read on the event's own
+    task, so it costs nothing and still short-circuits every UNTRACKED move — which is the population
+    the cost argument was actually about. Only tracked tasks resolve a workflow, and those are the
+    ones that need the answer.
+    */
+    if (event.task.githubTracking?.enabled !== true) {
       return;
     }
 
-    if (event.task.githubTracking?.enabled !== true) {
+    const movedLifecycle = await resolveTaskLifecycleColumns(this.store, event.task.id);
+    const wipColumn = movedLifecycle?.wip ?? "in-progress";
+    const completeColumn = movedLifecycle?.complete ?? "done";
+
+    if (event.to !== wipColumn && event.to !== completeColumn) {
       return;
     }
 
@@ -249,7 +288,7 @@ export class GitHubTrackingCommentService {
       return;
     }
 
-    if (event.to === "in-progress") {
+    if (event.to === wipColumn) {
       if (this.inProgressCommentClaims.has(event.task.id)) {
         return;
       }
@@ -265,7 +304,7 @@ export class GitHubTrackingCommentService {
     const authoritativeTask = await this.store.getTask(event.task.id).catch(() => null);
     const taskForComment = authoritativeTask ?? event.task;
     if (
-      event.to === "in-progress"
+      event.to === wipColumn
       && (
         taskForComment.githubTracking?.inProgressCommentedAt
         || taskForComment.log?.some((entry) => (
@@ -276,9 +315,17 @@ export class GitHubTrackingCommentService {
     ) {
       return;
     }
-    const body = event.to === "done"
-      ? formatTrackingComment(taskForComment, event.to, { owner, repo })
-      : formatTrackingComment(taskForComment, event.to);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (PR #2715 review — greptile):
+    `formatTrackingComment`'s second parameter is a TRANSITION KIND, not a column id — it chooses
+    which comment to build. Passing `event.to` only type-checked because the literal early return had
+    narrowed it to the two legacy ids, so the id and the kind coincided on the default board. They do
+    not coincide on a renamed one, which is the conflation this whole conversion is about. The role is
+    now passed explicitly.
+    */
+    const body = event.to === completeColumn
+      ? formatTrackingComment(taskForComment, "done", { owner, repo })
+      : formatTrackingComment(taskForComment, "in-progress");
 
     let commentPosted = false;
     try {
@@ -286,7 +333,7 @@ export class GitHubTrackingCommentService {
       const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
       const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
       if (!resolution.ok) {
-        if (event.to === "in-progress") {
+        if (event.to === wipColumn) {
           this.inProgressCommentClaims.delete(event.task.id);
         }
         await this.safeLogDeletedTaskEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
@@ -298,7 +345,7 @@ export class GitHubTrackingCommentService {
         : new GitHubClient({ forceMode: "gh-cli" });
       await client.commentOnIssue(owner, repo, number, body);
       commentPosted = true;
-      if (event.to === "in-progress") {
+      if (event.to === wipColumn) {
         try {
           await this.store.updateTask(event.task.id, {
             githubTracking: { inProgressCommentedAt: new Date().toISOString() },
@@ -309,7 +356,7 @@ export class GitHubTrackingCommentService {
             "Posted GitHub tracking comment",
             `${owner}/${repo}#${number} (${event.to})`,
           );
-          console.warn(
+          severityAuditLog.warn(
             `[github-tracking-comments] Posted in-progress comment for ${event.task.id}, but failed to persist its marker: ${markerError instanceof Error ? markerError.message : String(markerError)}`,
           );
           return;
@@ -321,7 +368,7 @@ export class GitHubTrackingCommentService {
         `${owner}/${repo}#${number} (${event.to})`,
       );
     } catch (err) {
-      if (event.to === "in-progress" && !commentPosted) {
+      if (event.to === wipColumn && !commentPosted) {
         this.inProgressCommentClaims.delete(event.task.id);
       }
       const message = err instanceof Error ? err.message : String(err);

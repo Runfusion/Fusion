@@ -1,3 +1,8 @@
+import { createLogger } from "./logger.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
+
+const severityAuditLog = createLogger("core-async-mission-store");
 /**
  * Event-emitting PostgreSQL MissionStore facade.
  *
@@ -47,6 +52,7 @@ import type { Goal } from "./goal-types.js";
 import {
   deriveMilestoneAcceptanceCriteriaFromFeatures,
 } from "./mission-store.js";
+import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import type {
   MissionSummary,
   MissionAssertionBackfillReport,
@@ -977,7 +983,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       try {
         await this.triageSlice(id);
       } catch (err) {
-        console.error(`[AsyncMissionStore] Auto-triage failed for slice ${id}:`, err);
+        severityAuditLog.error(`[AsyncMissionStore] Auto-triage failed for slice ${id}:`, err);
       }
     }
     this.emit("slice:activated", updated);
@@ -1070,12 +1076,35 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return updated;
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:50 (batch-core):
+  "Is this linked task ARCHIVED?" for the two mission guards below, resolved from the task's own
+  workflow. Keyed on the literal, a renamed board answered NO for every archived card: `deleteFeature`
+  treated an archived task as still live and refused the delete without `force`, and feature bootstrap
+  accepted an archived task as an active target.
+
+  `taskStore` is optional on this class, and a workflow that expresses no trait at all is a v1 upgrade
+  rather than a board without an archive lane — both keep the legacy id, which is the behaviour these
+  guards already had.
+  */
+  private async archivedLanesFor(taskId: string): Promise<ReadonlySet<string>> {
+    if (!this.taskStore) return new Set(["archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.taskStore, taskId);
+      if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
+      const archived = columnsWithFlag(ir, "archived");
+      return archived.length > 0 ? new Set(archived) : new Set(["archived"]);
+    } catch {
+      return new Set(["archived"]);
+    }
+  }
+
   async deleteFeature(id: string, force = false): Promise<void> {
     const feature = await getFeature(this.db, id);
     if (!feature) throw new Error(`Feature ${id} not found`);
     if (feature.taskId) {
       const linkedTask = await getLiveTaskById(this.db, feature.taskId);
-      const linkedToLiveTask = linkedTask && linkedTask.column !== "archived";
+      const linkedToLiveTask = linkedTask && !(await this.archivedLanesFor(feature.taskId)).has(linkedTask.column);
       if (linkedToLiveTask && !force) {
         throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
       }
@@ -1130,7 +1159,26 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
-      const evidence = await getTerminalTaskEvidence(tx, taskId);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+      Resolve the board's terminal lanes and hand them down; without this the predicate is inert.
+
+      Keyed on the literals, a genuinely completed card on a renamed board fell through every branch
+      to `nonterminal`, and this method then threw `TASK_NOT_TERMINAL: ... must be in done or
+      supported archived state, not shipped`. Mission shipped-delivery repair refused valid work, and
+      the message named the real column while the check could not see it.
+
+      `this.taskStore` is optional on the class but the single production construction site supplies
+      it (`workflow-definitions.ts`). Absent, the resolver is skipped and the legacy ids answer —
+      which is what every test that constructs the store without one already relies on.
+      */
+      const terminalColumns = this.taskStore
+        ? {
+            complete: await resolveProjectColumnsForRoles(this.taskStore, ["complete"]).catch(() => undefined),
+            archived: await resolveProjectColumnsForRoles(this.taskStore, ["archived"]).catch(() => undefined),
+          }
+        : undefined;
+      const evidence = await getTerminalTaskEvidence(tx, taskId, terminalColumns);
       if (evidence.kind === "missing") {
         throw new TerminalTaskReconciliationError("TASK_NOT_FOUND", `Delivery task ${taskId} not found`);
       }
@@ -1259,7 +1307,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         sql`${schema.project.tasks.deletedAt} is null`,
       ));
     const task = taskRows[0];
-    if (!task || task.column === "archived") {
+    if (!task || (await this.archivedLanesFor(input.taskId)).has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {

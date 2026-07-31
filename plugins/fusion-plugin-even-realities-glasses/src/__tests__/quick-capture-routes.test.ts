@@ -10,6 +10,8 @@ function getRoute() {
 function createCtx(overrides: Record<string, unknown> = {}) {
   return {
     pluginId: "fusion-plugin-even-realities-glasses",
+    // `triage` was removed from the default lineage by #2515; capture now falls to the
+    // workflow's own intake column rather than creating a card in a column it does not declare.
     settings: { apiKey: "secret", quickCaptureDefaultColumn: "triage" },
     taskStore: {
       createTask: vi.fn(async (input) => ({ id: "FN-100", ...input, title: "write the spec", column: input.column })),
@@ -66,7 +68,7 @@ describe("quickCaptureRoutes", () => {
     expect(createTask).toHaveBeenCalledTimes(1);
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        column: "triage",
+        column: "todo",
         description: expect.stringContaining("write the spec"),
         source: expect.objectContaining({ sourceMetadata: expect.objectContaining({ channel: "glasses-quick-capture" }) }),
       }),

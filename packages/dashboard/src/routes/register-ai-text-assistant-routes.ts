@@ -84,53 +84,68 @@ router.post("/ai/refine-text", async (req, res) => {
 /**
  * POST /api/ai/translate-text
  * AI-powered translation for GitHub/GitLab import preview title+body.
- * Body: { fields: { title?: string, body?: string }, targetLocale: string, sourceLocale?: string }
+ * Body: { fields: { title?: string, body?: string }, targetLocale: string, sourceLocale?: string,
+ *         provider?: "github" | "gitlab", repoKey?: string, issueNumber?: number }
  * Returns: { fields: { title?: string, body?: string } }
  *
- * Rate limited: shared AI-helper budget (10 requests per hour per IP with refine/draft)
- *
- * FNXC:GitHubImportTranslate 2026-07-14-12:00:
- * Import Tasks offers on-demand translation when selected content is not the dashboard language.
+ * FNXC:GitHubImportTranslate 2026-07-19-13:00:
+ * Manual and auto translation must use one 300/hour translate-only budget and one settings model lane.
+ * The old shared refine/draft limiter made an unrelated 10/hour helper cap reject Translate clicks.
+ * Validation, service, and rate-limit failures deliberately have stable distinct codes so the client can
+ * tell an invalid request from provider availability and operator throttling.
  */
 router.post("/ai/translate-text", async (req, res) => {
   try {
-    const { fields, targetLocale, sourceLocale } = req.body ?? {};
+    const { fields, targetLocale, sourceLocale, provider, repoKey, issueNumber } = req.body ?? {};
     const ip = req.ip || req.socket.remoteAddress || "unknown";
-
     const { store: scopedStore } = await getProjectContext(req);
     const rootDir = scopedStore.getRootDir();
     const settings = await scopedStore.getSettings();
-
     const {
       validateTranslateRequest,
-      checkRateLimit,
-      getRateLimitResetTime,
+      checkTranslateRateLimit,
+      getTranslateRateLimitResetTime,
       translateText,
-      AiServiceError: _AiServiceErrorTranslate,
+      MAX_TRANSLATE_REQUESTS_PER_HOUR,
       ValidationError,
     } = await import("../ai-translate.js");
-
-    if (!checkRateLimit(ip)) {
-      const resetTime = getRateLimitResetTime(ip);
-      throw rateLimited(
-        `Rate limit exceeded. Maximum 10 AI helper requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
-      );
-    }
+    const { getCachedImportTranslation, hashSourceContent } = await import("../import-translate-service.js");
 
     let validated;
     try {
-      validated = validateTranslateRequest(fields, targetLocale, sourceLocale);
+      validated = validateTranslateRequest(fields, targetLocale, sourceLocale, { provider, repoKey, issueNumber });
     } catch (err) {
-      if (err instanceof ValidationError) {
-        throw badRequest(err instanceof Error ? err.message : String(err));
-      }
+      if (err instanceof ValidationError) throw badRequest("TRANSLATE_VALIDATION_ERROR");
       throw err;
     }
 
-    /*
-    FNXC:GitHubImportTranslate 2026-07-15-09:30:
-    Manual (operator-clicked) translation resolves the same translate lane as auto-translation, so the model shown in Settings is the model that actually runs on both paths.
-    */
+    const identity = validated.importIdentity;
+    const item = identity ? {
+      number: identity.issueNumber,
+      title: validated.fields.title ?? "",
+      body: validated.fields.body ?? "",
+    } : null;
+    if (identity && item) {
+      const cached = await getCachedImportTranslation({
+        store: scopedStore,
+        provider: identity.provider,
+        repoKey: identity.repoKey,
+        targetLocale: validated.targetLocale,
+      }, item);
+      if (cached) {
+        res.json({ fields: cached });
+        return;
+      }
+    }
+
+    // Cache misses alone reserve capacity; durable hits cost neither model nor budget.
+    if (!checkTranslateRateLimit(ip)) {
+      const resetTime = getTranslateRateLimitResetTime(ip);
+      throw new ApiError(429, "TRANSLATE_RATE_LIMIT", {
+        message: `Maximum ${MAX_TRANSLATE_REQUESTS_PER_HOUR} translation requests per hour. Reset at ${resetTime?.toISOString() || "unknown"}`,
+      });
+    }
+
     const resolvedTranslateModel = resolveImportTranslateSettingsModel(settings);
     const translated = await translateText(
       validated,
@@ -140,19 +155,63 @@ router.post("/ai/translate-text", async (req, res) => {
       resolvedTranslateModel.provider,
       resolvedTranslateModel.modelId,
     );
-    res.json({ fields: translated });
+    const result = {
+      title: translated.title ?? validated.fields.title ?? "",
+      body: translated.body ?? validated.fields.body ?? "",
+    };
+    if (identity && item) {
+      await scopedStore.recordImportTranslation({
+        provider: identity.provider,
+        repoKey: identity.repoKey,
+        issueNumber: identity.issueNumber,
+        targetLocale: validated.targetLocale,
+        sourceHash: hashSourceContent(item.title, item.body ?? ""),
+      }, {
+        translatedTitle: result.title,
+        translatedBody: result.body,
+        detectedLocale: null,
+      });
+    }
+    res.json({ fields: result });
   } catch (err: unknown) {
-    if (err instanceof ApiError) {
-      throw err;
+    if (err instanceof ApiError) throw err;
+    if (err instanceof Error && err.name === "AiServiceError") {
+      throw new ApiError(503, "TRANSLATE_SERVICE_ERROR");
     }
-    if (err instanceof Error && err.name === "RateLimitError") {
-      throw rateLimited(err.message);
-    } else if (err instanceof Error && err.name === "AiServiceError") {
-      rethrowAsApiError(err, "AI service error");
-    } else {
-      rethrowAsApiError(err, "Failed to translate text");
-    }
+    rethrowAsApiError(err, "Failed to translate text");
   }
+});
+
+/*
+FNXC:GitHubImportTranslate 2026-07-19-13:00:
+Hydration is a separate GET because POST read-through cannot re-display a durable translation when
+an operator reselects an item, reopens the modal, or reloads without another Translate click.
+This endpoint is intentionally lookup-only: it must never call a model, reserve budget, or write cache state.
+*/
+router.get("/ai/import-translation", async (req, res) => {
+  const { provider, repoKey, issueNumber, targetLocale, title, body } = req.query;
+  const { store: scopedStore } = await getProjectContext(req);
+  const { validateTranslateRequest } = await import("../ai-translate.js");
+  const { getCachedImportTranslation } = await import("../import-translate-service.js");
+  const validated = validateTranslateRequest(
+    { title, body },
+    targetLocale,
+    undefined,
+    { provider, repoKey, issueNumber: typeof issueNumber === "string" ? Number(issueNumber) : issueNumber },
+  );
+  const identity = validated.importIdentity;
+  if (!identity) throw badRequest("TRANSLATE_VALIDATION_ERROR");
+  const cached = await getCachedImportTranslation({
+    store: scopedStore,
+    provider: identity.provider,
+    repoKey: identity.repoKey,
+    targetLocale: validated.targetLocale,
+  }, {
+    number: identity.issueNumber,
+    title: validated.fields.title ?? "",
+    body: validated.fields.body ?? "",
+  });
+  res.json({ fields: cached });
 });
 
 /**

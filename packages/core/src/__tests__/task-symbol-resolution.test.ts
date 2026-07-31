@@ -73,7 +73,7 @@ describe("task symbol declaration resolution", () => {
 });
 
 /**
- * FNXC:SymbolLock 2026-07-31-11:00:
+ * FNXC:SymbolLock 2026-07-20-11:00:
  * SQLite was removed from the runtime, so createTaskStoreTestHarness cannot
  * initialize a non-backend TaskStore. Exercise the retained file-task
  * constructor directly with its filesystem seam instead. This keeps the
