@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core"; // register built-in traits
-import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
+import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
 import { SelfHealingManager } from "../self-healing.js";
 
 /*
@@ -160,5 +160,97 @@ describe("self-healing pre-WIP column vocabulary", () => {
       cache,
     );
     expect(vi.mocked(store.getWorkflowDefinition)).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:20 (fleet — pause-abort router vocabulary):
+The pause-abort recovery router routed on three literals: `in-review` twice (review progress, manual
+merge hold) and `todo || in-progress` (active work). On a renamed board all three stopped matching, so
+a parked card in a renamed lane fell through to `no-action` and was never recovered — silently, and with
+every existing test still green, because they all use the legacy ids.
+
+Each case below asserts the RENAMED lane routes correctly. Reverting any of the three conversions turns
+its case into `no-action`, so these fail if the guards go back to literals.
+
+Note the ACTIVE-WORK set is hold + countsTowardWip, NOT the intake + hold that `resolvePreWipColumns`
+above returns: a card in intake is not mid-flight and must not be requeued as active work. The two sets
+overlap on `hold`, which is exactly why using the wrong one would look right in a legacy-id test.
+*/
+const RENAMED_WITH_REVIEW: WorkflowIr = {
+  version: "v2",
+  name: "renamed-lifecycle-review",
+  columns: [
+    { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+    { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+    { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+    /* Trait names are kebab (`merge`); `mergeOrchestration` is the FLAG that trait sets. */
+    { id: "signoff", name: "Signoff", traits: [{ trait: "merge" }, { trait: "human-review" }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+  ],
+  nodes: [],
+  edges: [],
+} as unknown as WorkflowIr;
+
+const PARK_ERROR =
+  "Workflow graph failure surfaced after paused engine abort during pause/resume in 'todo' at node 'execute' — operator action required; retry or explicitly unpause/resume after inspecting the task";
+
+type PauseAbortInternals = {
+  resolveActiveWorkColumnsFor(taskId: string, cache: Map<string, unknown>): Promise<ReadonlySet<string>>;
+  resolvePauseAbortColumnsFor(taskId: string, cache: Map<string, unknown>): Promise<{ review: ReadonlySet<string>; activeWork: ReadonlySet<string> }>;
+  classifyPausedAbortWorkflowRecovery(
+    task: Task,
+    settings: unknown,
+    isExecuting: boolean,
+    columns: { review: ReadonlySet<string>; activeWork: ReadonlySet<string> },
+  ): { kind: string; reason: string };
+};
+
+const parked = (column: string, steps: Array<{ status: string }> = []): Task => ({
+  id: "FN-9100",
+  column,
+  status: "failed",
+  error: PARK_ERROR,
+  steps,
+} as unknown as Task);
+
+describe("self-healing pause-abort router column vocabulary", () => {
+  const settings = { autoMerge: true } as unknown as Settings;
+
+  it("resolves ACTIVE WORK as hold + wip on a renamed board, excluding intake", async () => {
+    const manager = managerFor(storeFor(RENAMED_WITH_REVIEW)) as unknown as PauseAbortInternals;
+    const active = await manager.resolveActiveWorkColumnsFor("FN-9100", new Map());
+    expect(active.has("backlog")).toBe(true);
+    expect(active.has("building")).toBe(true);
+    // Intake is NOT active work — this is the distinction from resolvePreWipColumns.
+    expect(active.has("inbox")).toBe(false);
+  });
+
+  it("requeues a park sitting in a RENAMED wip lane", async () => {
+    const manager = managerFor(storeFor(RENAMED_WITH_REVIEW)) as unknown as PauseAbortInternals;
+    const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
+    const route = manager.classifyPausedAbortWorkflowRecovery(parked("building"), settings, false, columns);
+    expect(route).toEqual({ kind: "node-requeue", reason: "pause-abort-active-work" });
+  });
+
+  it("resumes a completed park sitting in a RENAMED review lane", async () => {
+    const manager = managerFor(storeFor(RENAMED_WITH_REVIEW)) as unknown as PauseAbortInternals;
+    const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
+    const task = parked("signoff", [{ status: "done" }, { status: "done" }]);
+    const route = manager.classifyPausedAbortWorkflowRecovery(task, settings, false, columns);
+    expect(route).toEqual({ kind: "work-item-resume", reason: "pause-abort-review-progress" });
+  });
+
+  /*
+  The degraded path is the reason both resolvers union the legacy ids: an unreadable workflow must keep
+  its former recovery behaviour rather than resolve an empty set and go inert.
+  */
+  it("keeps recovering legacy-id boards when the workflow is unresolvable", async () => {
+    const manager = managerFor(storeFor(undefined)) as unknown as PauseAbortInternals;
+    const columns = await manager.resolvePauseAbortColumnsFor("FN-9100", new Map());
+    expect(manager.classifyPausedAbortWorkflowRecovery(parked("in-progress"), settings, false, columns).kind)
+      .toBe("node-requeue");
+    expect(manager.classifyPausedAbortWorkflowRecovery(parked("todo"), settings, false, columns).kind)
+      .toBe("node-requeue");
   });
 });
