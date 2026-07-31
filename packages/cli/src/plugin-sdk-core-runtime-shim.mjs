@@ -12,6 +12,28 @@ import * as postgresSchema from "../../core/src/postgres/schema/index.js";
 
 export { postgresSchema };
 
+/*
+ * FNXC:BundledPlugins 2026-07-31-09:55:
+ * Lifecycle ROLE resolution, re-exported for bundled plugins.
+ *
+ * A plugin that asks "is this card in a terminal lane?" must resolve the board's roles rather than
+ * compare against `done`/`archived`, or it stalls forever on a renamed board. That is what the
+ * compound-engineering reconciler now does — but this shim is what `@fusion/core` resolves to inside
+ * the bundled build, so an import it does not re-export is a hard esbuild failure ("No matching
+ * export"), not a runtime fallback. The plugin built fine in the workspace and broke only in the CLI
+ * bundle.
+ *
+ * Source paths, not the package barrel, for the reason above: esbuild follows core's source here and
+ * the CLI must not take a private @fusion/core dependency.
+ */
+import {
+  columnsWithFlag,
+  resolveReviewColumns,
+} from "../../core/src/workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../../core/src/workflow-ir-resolver.js";
+
+export { columnsWithFlag, resolveReviewColumns, resolveWorkflowIrForTask };
+
 export const FUSION_RESTART_EXIT_CODE = 86;
 
 export function superviseSpawn(command, args = [], options = {}) {
