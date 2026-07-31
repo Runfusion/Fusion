@@ -716,8 +716,40 @@ const CODING_IDEAS_WORKFLOW_ID = "builtin:coding-ideas";
 FNXC:GitHubTracking 2026-07-22-00:46:
 Ideas tasks must be able to opt into or out of GitHub tracking before planning, whether they remain in the Ideas intake column or have advanced in Coding (Ideas). Use the resolved workflow ID rather than its display name so localized names and arbitrary custom workflows cannot gain this editing capability.
 */
-function canTaskEditGithubTracking(column: ColumnId, workflowId: string | undefined): boolean {
-  return GITHUB_TRACKING_EDITABLE_COLUMNS.has(column) || workflowId === CODING_IDEAS_WORKFLOW_ID;
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+THE EDITABLE SET IS A HARDCODED LEGACY LANE LIST, so on a renamed board this capability disappeared.
+
+`GITHUB_TRACKING_EDITABLE_COLUMNS` is `{triage, todo, in-progress, in-review, ideas}` — every lane
+except the terminal two. It was consulted with `.has(column)` and had NO resolved branch and NO flags
+fallback, so on a board with renamed lanes it matched nothing and `canTaskEditGithubTracking` returned
+false for EVERY task. The operator simply could not turn GitHub tracking on or off, with no error and
+no explanation; the only thing keeping it reachable was the unrelated `builtin:coding-ideas` escape
+hatch on the right.
+
+WHY NO CHECK SAW IT. The census counts COMPARISONS against legacy ids. This is a Set literal — a
+DEFINITION — consulted via `.has()`, so nothing in the backlog ever pointed here. Same blind spot that
+hid `TIME_INDICATOR_COLUMNS` and `BLOCKER_ESCALATION_COLUMNS`, both of which were also found by hand
+rather than by any gate.
+
+The set's meaning is "not finished": every lane except complete and archived. That is what the roles
+now express. Flags are OPTIONAL and the legacy set remains the fallback, so a render before the
+workflow metadata lands behaves exactly as it does today.
+
+FLAGS MUST BE THE TASK-IDENTITY-GUARDED VALUE. The caller passes `detailColumnFlags`, which is
+`undefined` unless `workflowMoveMetadata` describes THIS task — `workflowMoveMetadata` outlives a task
+switch, and this file's 2026-07-30-17:30 note records six review findings from consumers that read
+around that guard. Passing the unguarded value would answer about the previous card's workflow, which
+is worse than the legacy fallback because it is confidently wrong rather than merely stale.
+*/
+function canTaskEditGithubTracking(
+  column: ColumnId,
+  workflowId: string | undefined,
+  columnFlags: TaskContextMenuColumnFlags | undefined,
+): boolean {
+  if (workflowId === CODING_IDEAS_WORKFLOW_ID) return true;
+  if (!columnFlags) return GITHUB_TRACKING_EDITABLE_COLUMNS.has(column);
+  return !isCompleteColumnRole(columnFlags, column) && !isArchivedColumnRole(columnFlags, column);
 }
 
 export function TaskDetailContent({
@@ -1931,7 +1963,7 @@ export function TaskDetailContent({
   const canEdit = isTaskFieldEditableColumn(task.column, detailColumnFlags) && !isSaving;
   /** The card's column name as its own workflow declares it; `undefined` when unresolved. */
   const workflowColumnDisplayName = workflowMoveMetadata?.moveColumns?.find((column) => column.id === task.column)?.label;
-  const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id) && !isSaving;
+  const canEditGithubTracking = canTaskEditGithubTracking(task.column, taskWorkflowBadge?.id, detailColumnFlags) && !isSaving;
   const githubTrackingEnabled = githubTrackingEnabledDraft ?? (workingTask.githubTracking?.enabled === true);
   const githubTrackedIssue = workingTask.githubTracking?.issue;
   const gitlabTrackedItem = workingTask.gitlabTracking?.item;
