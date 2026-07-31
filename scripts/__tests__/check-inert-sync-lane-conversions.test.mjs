@@ -22,7 +22,7 @@ about its output.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -126,4 +126,57 @@ test("the gate is still actually scanning source, not just comparing numbers", (
   const result = runGate();
   assert.match(`${result.stdout}${result.stderr}`, /guard\(s\) consuming a sync-resolved lane/);
   assert.ok(JSON.parse(readFileSync(BASELINE, "utf8")).total > 0, "baseline should not be empty");
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3122):
+WRAPPER TAINT IS EXACTLY ONE LEVEL, and these two cases pin both sides of that boundary.
+
+The implementation recursed while its own comment said "One level, deliberately" — so the scope was
+whatever the code happened to do. Measured at the time: both forms report the same 20 guards on this
+tree, so recursion detected nothing and the contradiction was the only real defect.
+
+One level is now the contract: a sync call as a DIRECT argument taints; a sync call nested inside
+another wrapper does not. The second case is a deliberate, documented blind spot rather than an
+accident — deeper nesting is where a wrapper is likelier to discard its argument, and a false positive
+there would be absorbed into the baseline. If a real nested shape appears, widen it with a failing
+case first.
+*/
+test("taints a wrapper whose DIRECT argument is a sync call", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-wrap1.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `function merge(a: unknown, b: unknown) { return (a ?? b) as { hold?: string }; }`,
+    `export function probe(store: unknown, id: string, from: string): boolean {`,
+    `  const lanes = merge(localSync(store, id), { hold: "todo" });`,
+    `  return from !== lanes.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-wrap1.ts"], 1);
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
+
+test("does NOT taint through a second wrapper level (documented blind spot)", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-wrap2.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `function inner(a: unknown) { return a as { hold?: string }; }`,
+    `function outer(a: unknown) { return a as { hold?: string }; }`,
+    `export function probe(store: unknown, id: string, from: string): boolean {`,
+    `  const lanes = outer(inner(localSync(store, id)));`,
+    `  return from !== lanes.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-wrap2.ts"] ?? 0, 0);
+  } finally {
+    rmSync(probe, { force: true });
+  }
 });

@@ -147,8 +147,30 @@ function syncLaneLocals(sf, sources) {
       ? call.expression.name.getText(sf)
       : call.expression.getText(sf);
     if (sources.has(callee)) return true;
-    /* Laundered: `wrapper(resolveTaskParkedColumnsSync(...), lanes)`. */
-    return call.arguments.some((arg) => isSourceCall(arg));
+    /*
+    Laundered: `wrapper(resolveTaskParkedColumnsSync(...), lanes)`.
+
+    FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3122 — the code contradicted its
+    own comment): this recursed, so `outer(wrapper(syncCall(...)))` was tainted too while the note
+    above said "One level, deliberately". MEASURED before choosing: both forms report the same 20
+    guards (scheduler 13 + triage 7), so recursion detects nothing on this tree.
+
+    Given that, one level wins — it is what the comment claims, what the PR scoped, and it keeps the
+    ratchet's behaviour predictable. Deeper nesting is also where a wrapper is likelier to DISCARD its
+    argument, which would be a false positive, and this gate's baseline must not absorb those.
+
+    If a genuinely nested shape appears, the honest fix is to widen this deliberately with a case that
+    fails first — not to leave unbounded recursion standing on the chance it is needed.
+    */
+    return call.arguments.some((arg) => {
+      let inner = arg;
+      if (ts.isAwaitExpression(inner)) inner = inner.expression;
+      if (!ts.isCallExpression(inner)) return false;
+      const innerCallee = ts.isPropertyAccessExpression(inner.expression)
+        ? inner.expression.name.getText(sf)
+        : inner.expression.getText(sf);
+      return sources.has(innerCallee);
+    });
   };
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
