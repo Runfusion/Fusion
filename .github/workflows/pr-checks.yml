@@ -64,6 +64,8 @@ jobs:
         run: pnpm check:fnxc-future-dates
       - name: Lane-wiring ratchet
         run: pnpm check:lane-wiring
+      - name: Plugin interop declarations match the dashboard API
+        run: pnpm check:plugin-interop-drift
 
   typecheck:
     name: Typecheck
