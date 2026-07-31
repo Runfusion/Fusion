@@ -1298,6 +1298,7 @@ export {
 export type { FnBinaryStatus, FnBinaryName } from "./fn-binary.js";
 export {
   validateNodeOverrideChange,
+  resolveNodeOverrideLanes,
   type NodeOverrideValidationResult,
   type NodeOverrideBlockReason,
 } from "./node-override-guard.js";

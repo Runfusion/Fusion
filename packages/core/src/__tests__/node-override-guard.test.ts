@@ -53,6 +53,35 @@ describe("resolveNodeOverrideLanes builds the set from traits, with legacy as an
     expect([...lanes.completeColumns]).toEqual(["shipped"]);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+  EVERY wip lane, not the first — the case that separates this resolver from `resolveLifecycleColumns`.
+
+  A board may carry the wip trait on more than one column (a build lane beside a verify lane). This
+  resolver answers with all of them (`columnsWithFlag`); `resolveLifecycleColumns` answers with the
+  FIRST (`resolved.find(...)`, workflow-lifecycle-traits.ts:353). The two are interchangeable on every
+  single-wip-lane board, so substituting one for the other reads as correct and is not.
+
+  It is not hypothetical: #3019 wired the CLI's `fn_task_update` guard with the first-match resolver,
+  and a task sitting in the SECOND wip lane went on slipping the mid-flight check the PR set out to
+  close. A single-wip-lane test passes against both, which is why this case names two.
+  */
+  it("returns EVERY wip lane, not just the first", async () => {
+    const ir = {
+      version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "verifying", name: "Verifying", traits: [{ trait: "wip" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    const lanes = await resolveNodeOverrideLanes(storeFor(ir), "FN-1");
+
+    expect([...lanes.wipColumns].sort()).toEqual(["building", "verifying"]);
+    /* The load-bearing half: a task in the second lane must still be seen as executing. */
+    expect(lanes.wipColumns.has("verifying")).toBe(true);
+  });
+
   it("falls back to the legacy ids for a V1-UPGRADED board that traits nothing", async () => {
     const v1 = {
       version: "v2", id: "wf", name: "wf", nodes: [], edges: [],
