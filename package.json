@@ -22,6 +22,7 @@
     "check:lifecycle-columns": "node scripts/lifecycle-column-census.mjs --strict",
     "check:sql-column-literals": "node scripts/check-sql-column-literals.mjs",
     "check:inert-flag-seams": "node scripts/check-inert-flag-seams.mjs",
+    "check:inert-sync-lanes": "node scripts/check-inert-sync-lane-conversions.mjs",
     "check:fnxc-future-dates": "node scripts/check-fnxc-future-dates.mjs",
     "check:lane-wiring": "node scripts/check-lane-wiring.mjs",
     "check:plugin-interop-drift": "node scripts/check-plugin-interop-drift.mjs",
