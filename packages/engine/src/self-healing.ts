@@ -949,11 +949,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     super();
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-13:10:
+  THE LANE ANSWERS ARRIVE AS PARAMETERS WITH LEGACY DEFAULTS, because this classifier is SYNC and
+  must stay sync: it runs inside `tasks.filter(...)` at its first call site, and an `await` there
+  turns a predicate into a promise that filters nothing away.
+
+  Its only caller already resolves both sets once per sweep, so the resolution is paid where an
+  await is legal and passed down. REQUIRED, not optional-with-a-literal-default: an optional
+  parameter leaves the legacy ids in the file as a silent fallback, and the next caller gets the
+  pre-conversion behaviour by writing nothing. `resolveProjectColumnsForRoles` seeds the legacy ids
+  itself, so an unconverted board still answers exactly as it did.
+
+  MEMBERSHIP, not a target. The routing question is "is this card resting in a review / an active
+  lane", which a renamed board can answer with more than one column; `resolveLifecycleColumns`'
+  first match would silently route only the first.
+  */
   private classifyPausedAbortWorkflowRecovery(
     task: Task,
     settings: Settings,
     isExecuting: boolean,
+    lanes: {
+      /** Review MEMBERSHIP — replaces the `in-review` literal. */
+      reviewColumns: ReadonlySet<string>;
+      /** Waiting ∪ wip MEMBERSHIP — replaces the `todo`/`in-progress` pair. */
+      activeWorkColumns: ReadonlySet<string>;
+    },
   ): WorkflowRecoveryRoute {
+    const isReviewLane = (column: string): boolean => lanes.reviewColumns.has(column);
+    const isActiveWorkLane = (column: string): boolean => lanes.activeWorkColumns.has(column);
     const isPausedAbortPark =
       task.status === "failed" &&
       typeof task.error === "string" &&
@@ -973,13 +997,13 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       && task.steps.every((step) => step.status === "done" || step.status === "skipped");
     const sharedBranchMember = isSharedBranchGroupMemberIntegration(task);
     const hasReviewProgress =
-      task.column === "in-review"
+      isReviewLane(task.column)
       && allowsAutoMergeProcessing(task, settings)
       && task.mergeDetails?.mergeConfirmed !== true
       && !isTerminalMergePark
       && completedSteps;
     const hasManualMergeHoldProgress =
-      task.column === "in-review"
+      isReviewLane(task.column)
       && (!allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
       && !sharedBranchMember
       && task.mergeDetails?.mergeConfirmed !== true
@@ -1002,7 +1026,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     if (hasReviewProgress) {
       return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
     }
-    if (task.column === "todo" || task.column === "in-progress") {
+    if (isActiveWorkLane(task.column)) {
       return { kind: "node-requeue", reason: "pause-abort-active-work" };
     }
     return { kind: "no-action", reason: "unsafe-or-not-routable" };
@@ -1126,9 +1150,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   this. (Distinct from `isWorkspaceTaskLive`, which probes the session REGISTRY; this probes the
   task ROW lifecycle.)
   */
-  private isWorkspaceOwnerLive(owner: Task | null | undefined): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-13:35:
+  `completeColumns` is REQUIRED and resolved by the caller, because this predicate is sync and its
+  caller is not — it runs inside the lease sweep's loop where the await is already paid once.
+
+  MEMBERSHIP of `complete` ONLY, deliberately: the literal it replaces was `done` alone, and the
+  comment above spells out that every non-terminal state must read LIVE. Adding `archived` here
+  would widen what counts as terminal and reclaim leases the old code kept — a behaviour change
+  riding in a column conversion, which is exactly what this program forbids. If archived owners
+  should also be reclaimable that is its own change, with its own test.
+  */
+  private isWorkspaceOwnerLive(owner: Task | null | undefined, completeColumns: ReadonlySet<string>): boolean {
     if (!owner) return false; // not found / deleted → terminal.
-    if (owner.column === "done") return false;
+    if (completeColumns.has(owner.column)) return false;
     if (owner.status === "failed") return false;
     return true;
   }
@@ -1358,11 +1393,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * FN-7566: the FN-6736 liveness gate (`agentPresent` heartbeat, `checkedOutBy` lease, `hasRecentRunAudit`) is structurally blind to EPHEMERAL EXECUTOR agents (`agentId: "executor"`): they never emit heartbeat runs (so `activeHeartbeatTaskIds` never contains them), never acquire a checkout lease (`checkedOutBy` stays null), and normal execution activity (sandbox:run / task:log / verification) writes no `runAuditEvents` rows (so `getRecentRunAuditActivityAgeMs` stays null). With all three permanently false, the ONLY surviving gate was age > graceMs*3 (~30 min), so any ephemeral executor task running longer than 30 minutes — a heavy foreach workflow, a slow model — was killed mid-flight on the next self-healing sweep and hard-moved to `todo`, corrupting overlapping-worktree/task-link state.
    * The fix adds the in-process live-session truth that DOES track ephemeral executors: a worktree path registered as active in `activeSessionRegistry` (the executor/step-session/workflow-step session holds it for the whole run), the `executingTaskLock`, or `isTaskActive`. This mirrors the canonical `isWorkspaceTaskLive` / `sessionDead` predicate. A genuinely leaked binding (FN-6736) still has an EMPTY registry / no lock / inactive task, so legitimate phantom recovery is preserved; a live ephemeral executor now vetoes the phantom verdict regardless of the durable-agent signals.
    */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-13:35:
+  `wipColumns` is REQUIRED and supplied by the caller, which resolved the same set one line earlier
+  to decide whether to call this at all (`lanesOfReclaim(task.id).wip`). Two reads of one board,
+  one resolved and one literal, is the shape this program keeps finding — here they were three
+  lines apart.
+  */
   private isPhantomExecutorBinding(task: Task, options: {
     executionAgeMs: number | null;
     graceMs: number;
     activeHeartbeatTaskIds: Set<string>;
     lastActivityMs: number | null;
+    /** Wip MEMBERSHIP — replaces the `in-progress` literal. */
+    wipColumns: ReadonlySet<string>;
   }): { phantom: boolean; metadata: Record<string, unknown> } {
     const normalizedId = task.id.toUpperCase();
     const agentPresent = options.activeHeartbeatTaskIds.has(normalizedId);
@@ -1395,7 +1439,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     return {
-      phantom: task.column === "in-progress"
+      phantom: options.wipColumns.has(task.column)
         && worktreeExists
         && options.executionAgeMs !== null
         && options.executionAgeMs > safeAgeMs
@@ -1475,6 +1519,50 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     log.debug(`[${stage}] ${task.id}: false-positive requeue suppressed (${reason})`);
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:05:
+  SYNC lane membership for the `task:moved` fan-out listener, mirroring the scheduler's
+  `resolveTaskParkedColumnsSync`. The listener body must stay synchronous: `task:moved` is emitted
+  synchronously, so an `await` before its existing work defers everything after it to a microtask
+  and reorders this handler against every other subscriber. Resolution therefore uses the store's
+  sync IR path, never `resolveProjectColumnsForRoles`.
+
+  Every set is SEEDED with the legacy id it replaces. Two reasons, and the second is the load-bearing
+  one: an inclusion-widened superset can only make the fan-out fire on a transition it used to
+  ignore, and `synthesizeDefaultColumns` emits trait-less placeholder columns for v1-upgraded
+  workflows — on those boards `columnsWithFlag` returns EMPTY for every trait, so an unseeded set
+  would silently switch the whole fan-out off (see the hazard note in `workflow-lifecycle-traits.ts`).
+
+  Fail-soft: an unresolvable workflow answers with exactly the legacy ids, i.e. today's behaviour.
+  */
+  private resolveFanoutLanesSync(taskId: string): {
+    wip: ReadonlySet<string>;
+    waiting: ReadonlySet<string>;
+    review: ReadonlySet<string>;
+    complete: ReadonlySet<string>;
+    archived: ReadonlySet<string>;
+  } {
+    const legacy = {
+      wip: new Set(["in-progress"]),
+      waiting: new Set(["todo"]),
+      review: new Set(["in-review"]),
+      complete: new Set(["done"]),
+      archived: new Set(["archived"]),
+    };
+    try {
+      const ir = this.store.resolveTaskWorkflowIrSync(taskId);
+      return {
+        wip: new Set([...legacy.wip, ...columnsWithFlag(ir, "countsTowardWip")]),
+        waiting: new Set([...legacy.waiting, ...columnsWithFlag(ir, "hold"), ...columnsWithFlag(ir, "intake")]),
+        review: new Set([...legacy.review, ...columnsWithFlag(ir, "mergeOrchestration"), ...columnsWithFlag(ir, "mergeBlocker"), ...columnsWithFlag(ir, "humanReview")]),
+        complete: new Set([...legacy.complete, ...columnsWithFlag(ir, "complete")]),
+        archived: new Set([...legacy.archived, ...columnsWithFlag(ir, "archived")]),
+      };
+    } catch {
+      return legacy;
+    }
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────
 
   start(): void {
@@ -1485,23 +1573,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.store.on("settings:updated", this.settingsListener);
 
     this.taskMovedFanoutListener = ({ task, from, to }) => {
+      /* One sync resolution per move, reused by all three guards below. */
+      const lanes = this.resolveFanoutLanesSync(task.id);
       if (
-        from === "in-progress"
-        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
+        lanes.wip.has(from)
+        && (lanes.waiting.has(to) || lanes.review.has(to) || lanes.complete.has(to) || lanes.archived.has(to))
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.
         this.boardStallWindow.transitionsOutOfInProgressInWindow++;
       }
-      if (to === "in-review") {
+      if (lanes.review.has(to)) {
         void this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
           log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
         });
       }
       const shouldReconcile =
-        (from === "in-review" && to === "done") ||
-        (from === "done" && to === "archived");
+        (lanes.review.has(from) && lanes.complete.has(to)) ||
+        (lanes.complete.has(from) && lanes.archived.has(to));
       if (!shouldReconcile) return;
       void this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -3885,6 +3975,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               executionAgeMs,
               graceMs: STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
               activeHeartbeatTaskIds: activeTaskIds,
+              wipColumns: lanesOfReclaim(task.id).wip,
               lastActivityMs,
             });
 
@@ -9718,6 +9809,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const entries = activeSessionRegistry.entriesByKind("workspace-repo-land");
       if (entries.length === 0) return 0;
 
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-13:35: resolved once per sweep, AFTER the early
+         return above, so a board with no leases still pays nothing. See `isWorkspaceOwnerLive`. */
+      const leaseOwnerCompleteColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+
       const graceMs = settings.taskStuckTimeoutMs ?? STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS;
       const staleFloorMs = graceMs * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
@@ -9747,7 +9842,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const owner = await this.store.getTask(entry.taskId).catch(() => null);
           const ownerColumn = owner?.column ?? "deleted";
           // Only a DEMONSTRABLY TERMINAL owner's lease is reclaimed (review C fix).
-          if (this.isWorkspaceOwnerLive(owner)) continue;
+          if (this.isWorkspaceOwnerLive(owner, leaseOwnerCompleteColumns)) continue;
 
           activeSessionRegistry.unregisterPath(entry.path);
           await createRunAuditor(this.store, {
@@ -12067,6 +12162,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       /* Waiting MEMBERSHIP (hold u intake) for the notification guard below; the requeue TARGET is a
          single column and resolves per task at its call site. */
       const pausedAbortWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-13:10:
+      "Active work" for the ROUTER is waiting ∪ wip, matching the `todo`/`in-progress` pair it
+      replaces: a card parked in the queue and a card parked mid-execution both route to a node
+      requeue. Resolved here, where an await is legal, and passed into the sync classifier.
+      */
+      const pausedAbortWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const pausedAbortActiveWorkColumns: ReadonlySet<string> = new Set([
+        ...pausedAbortWaitingColumns,
+        ...pausedAbortWipColumns,
+      ]);
+      const pausedAbortLanes = {
+        reviewColumns: pausedAbortReviewColumns,
+        activeWorkColumns: pausedAbortActiveWorkColumns,
+      };
     try {
       // FNXC:WorkflowLifecycle 2026-06-20-00:00: self-guard against global/engine
       // pause at the method entry, not just the batch-2 runner. This method is
@@ -12080,7 +12190,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const tasks = await this.store.listTasks({ slim: true });
 
       const parked = tasks.filter((t) =>
-        this.classifyPausedAbortWorkflowRecovery(t, settings, executingIds.has(t.id)).kind !== "no-action",
+        this.classifyPausedAbortWorkflowRecovery(t, settings, executingIds.has(t.id), pausedAbortLanes).kind !== "no-action",
       );
 
       if (parked.length === 0) return 0;
@@ -12117,7 +12227,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             log.debug(`[self-healing] deferring pause-abort recovery for ${fresh.id}: a live session surface is registered`);
             continue;
           }
-          const route = this.classifyPausedAbortWorkflowRecovery(fresh, settings, latestExecutingIds.has(fresh.id));
+          const route = this.classifyPausedAbortWorkflowRecovery(fresh, settings, latestExecutingIds.has(fresh.id), pausedAbortLanes);
           if (route.kind === "no-action") {
             continue;
           }
@@ -12959,6 +13069,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     swallowed that case — `self-healing.test.ts` "recovers durable running agents linked to todo
     tasks" caught it immediately.
     */
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-14:20: the parked pair (`todo`/`triage`) this sweep
+       hands `evaluateParkedAgentTaskLink`; legacy-seeded, so unconverted boards are unchanged. */
+    const agentParkedColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
     const inactiveAgentLifecycleColumns = await resolveProjectColumnsForRoles(
       this.store,
       ["countsTowardWip", ...REVIEW_ROLES, "complete", "archived"],
@@ -12984,7 +13097,23 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const activeRun = await agentStore.getActiveHeartbeatRun(agent.id);
       const proof = evaluateParkedAgentTaskLink({
         agent,
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-14:20:
+        The synthetic stand-in for a MISSING task stays the legacy id ON PURPOSE, and it is now
+        correct rather than merely unconverted: `parkedColumns` below is resolved through
+        `resolveProjectColumnsForRoles`, which SEEDS the legacy ids, so `todo` is a member on every
+        board. There is also no task left to resolve a workflow from — a deleted row has no
+        selection — so any "renamed" placeholder would be a guess about which lane a task that no
+        longer exists belonged to.
+        */
         linkedTask: linkedTask ?? { column: "todo" } as Pick<Task, "column">,
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-14:20:
+        Previously omitted, so this call fell back to `LEGACY_PARKED_COLUMNS` (`todo`/`triage`) and
+        a live agent linked to a card resting in a RENAMED hold lane read as not-parked — the
+        safeguard that preserves its task link never applied, and the link was dropped.
+        */
+        parkedColumns: [...agentParkedColumns],
         activeRun,
         hasActiveAgentExecution: this.options.hasActiveAgentExecution,
         now,
