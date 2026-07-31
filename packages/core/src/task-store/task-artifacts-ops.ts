@@ -548,7 +548,7 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     if (store.isWatching) store.taskCache.set(task.id, { ...task });
 
     /*
-    FNXC:WorkflowEvents 2026-08-01-00:40 (fleet):
+    FNXC:WorkflowEvents 2026-07-31-00:40 (fleet):
     Carry the resolved lanes, like the main move path in `moves.ts`. Listeners read `task:moved`
     synchronously and cannot resolve for themselves, so an emit WITHOUT lanes hands every consumer
     its legacy fallback — which on a renamed board is the wrong answer, not a missing one.
