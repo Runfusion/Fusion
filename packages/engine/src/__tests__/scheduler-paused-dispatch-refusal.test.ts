@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler } from "../scheduler.js";
 import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 import type { Settings, Task, TaskStore, WorkflowIr } from "@fusion/core";
@@ -36,22 +36,29 @@ its own right, and a guard written as `task.paused` alone would pass every other
 const WF = "custom:paused-dispatch";
 
 /*
-FNXC:TaskDispatch 2026-07-31-01:35 (PR #2779 review — greptile P2):
-Each `createStore` mints a temp tasks dir for the planned spec, so without this every local and CI
-run leaves `fusion-paused-dispatch-*` directories behind in the OS temp dir forever.
+FNXC:TestHygiene 2026-07-30-14:45:
+NO per-file temp cleanup here, on purpose — the harness already owns it.
 
-Removed by exact recorded path — never by scanning the temp root. AGENTS.md forbids an unbounded
-walk of $TMPDIR//var/folders, and this file has no need of one: it created these paths, so it knows
-them. `force` keeps teardown quiet if a case never got as far as seeding. Per-test rather than per-file so
-nothing accumulates even across a long run.
+Two review rounds on PR #2779 flagged `createStore`'s `mkdtempSync` as leaking
+`fusion-paused-dispatch-*` into the OS temp root forever, and each round was answered by adding its
+own tracking array plus its own `afterEach`. Both then collected the SAME `tasksDir` and removed it
+twice; the second `rmSync` only looked harmless because `force: true` silences ENOENT on a path that
+is already gone.
+
+MEASURED: the leak never existed. `packages/core/src/__test-utils__/vitest-setup.ts` REDIRECTS
+`os.tmpdir()` to a per-worker sink and sweeps it by owning pid, so `tmpdir()` in a test does not
+resolve to the real temp root at all. Probing the actual paths this file creates gives
+`.../fusion-test-workers-<id>/redir-<pid>/fusion-paused-dispatch-<id>`. Disabling the cleanup
+entirely and re-probing leaks ZERO directories — the sink is reclaimed either way.
+
+That is why both were deleted rather than merged into one. A cleanup that cannot be observed to
+clean anything is not a safety net; it is a claim the file cannot back, and it misreports which
+layer owns temp lifetime.
+
+If a future review flags this again: check where `tmpdir()` actually points before adding an
+`afterEach`. If the redirect is ever removed, cleanup belongs in the shared setup for every test —
+not re-added file by file.
 */
-const seededTaskDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of seededTaskDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -104,16 +111,6 @@ function createStore(task: Task, freshTask: Task | null = null, settings: Partia
   `isUnplannedSeedPrompt` predicate, so a future change to the heuristic fails loudly here.
   */
   const tasksDir = mkdtempSync(join(tmpdir(), "fusion-paused-dispatch-"));
-  seededTaskDirs.push(tasksDir);
-  /*
-  FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
-  Every `createStore` call seeds a real spec on disk, and nothing removed it, so each local and CI
-  run left another `fusion-paused-dispatch-*` directory in the OS temp root forever. Tracked and
-  removed in `afterEach` below rather than swept later: the project forbids the recursive temp-root
-  scan that finding stale fixtures would otherwise require, so the only safe cleanup is the one that
-  remembers the exact paths it created.
-  */
-  allocatedFixtureDirs.push(tasksDir);
   /*
   The moves MUTATE the row, because the release path is `moveTaskIf(hold -> wip, predicate)` and a
   stub that always answers `moved: false` makes the hold release unobservable — the control then
@@ -163,18 +160,6 @@ async function dispatchAttempted(store: TaskStore): Promise<boolean> {
     (call: unknown[]) => call[1] === "in-progress",
   );
 }
-
-/*
-FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
-Exact paths only — see the note at the allocation site for why this cannot be a temp-root sweep.
-*/
-const allocatedFixtureDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of allocatedFixtureDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 describe("the scheduler refuses to dispatch a parked card", () => {
   beforeEach(() => {
