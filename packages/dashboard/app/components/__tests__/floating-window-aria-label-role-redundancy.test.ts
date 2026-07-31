@@ -52,6 +52,25 @@ describe("a FloatingWindow's accessible name never restates its role", () => {
     expect(sources.filter((s) => s.text.includes("ariaLabel=")).length).toBeGreaterThan(5);
   });
 
+  /*
+  THE MATCHER ITSELF IS COVERED, because the scan above is only as good as this regex: loosening it
+  (or breaking it during an unrelated edit) would leave a guard that scans everything and finds
+  nothing, reporting success while covering zero. The negative cases matter more than the positive
+  ones — each is a real string in this codebase that must NOT be flagged.
+  */
+  it.each([
+    ["ariaLabel={`Settings dialog`}", true, "trailing role word in a template literal"],
+    ['ariaLabel="Git Manager dialog"', true, "trailing role word in a plain string"],
+    ["ariaLabel={`Node details modal`}", true, "'modal' is equally redundant"],
+    ['ariaLabel={t("settings.title", "Settings")}', false, "a clean t() call"],
+    ['ariaLabel="Settings"', false, "a clean literal"],
+    ['aria-label="Close confirmation dialog"', false, "a BUTTON's aria-label — not a dialog, name is correct"],
+    ['ariaLabel="Dialog settings"', false, "role word present but not the trailing noun"],
+    ['ariaLabel="Windows update"', false, "'Windows' merely contains a role word"],
+  ])("matcher: %s -> %s (%s)", (source, shouldFlag) => {
+    expect(new RegExp(REDUNDANT_ROLE_SUFFIX.source, "i").test(source)).toBe(shouldFlag);
+  });
+
   it("no ariaLabel ends in a word the dialog role already announces", () => {
     const offenders: string[] = [];
     for (const { file, text } of componentSources()) {
