@@ -1863,7 +1863,25 @@ function TaskCardComponent({
       ? formatCompactLifecycleDate(completionSource, locale, new Date(lifecycleNowMs))
       : null;
     return { created, completed };
-  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:20:
+  `isCompleteColumn` AND `isArchivedColumn` BELONG IN THIS LIST — both derive from the async
+  `taskColumnFlags` prop, and the completion date is gated on them.
+
+  The board resolves workflow traits after first paint, so the first computation runs with the flags
+  undefined and the role helpers fall back to the legacy ids. On a renamed board that answers false,
+  `completed` is null, and the "Completed <date>" line never renders. When the flags arrive nothing in
+  the old list had changed — every entry was a `task.*` field, `locale`, or `lifecycleNowMs`.
+
+  WHY THE SWEEP IN #3001 CALLED THIS COVERED: `lifecycleNowMs` does change, so the memo does
+  eventually recompute — but its timer fires at the viewer's LOCAL MIDNIGHT (see the
+  `millisecondsUntilNextLocalMidnight` effect). A dependency that turns over once a day is not
+  coverage for a value that must be right on first paint; the card shows no completion date for the
+  rest of the session.
+
+  A default board hides it: `column === "done"` is already true before the flags land.
+  */
+  }, [task.createdAt, task.executionCompletedAt, task.archivedAt, task.column, locale, lifecycleNowMs, isCompleteColumn, isArchivedColumn]);
 
   const liveBadgeData = badgeUpdates.get(`${projectId ?? "default"}:${task.id}`);
 
