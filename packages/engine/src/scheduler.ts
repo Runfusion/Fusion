@@ -449,6 +449,55 @@ function mergeParkedColumns(
   };
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet):
+The ASYNC twin. The sync one below cannot answer for a custom workflow in production, so any guard that
+can reach this one must.
+
+THE CRITERION IS WHETHER THE ANSWER IS CONSUMED SYNCHRONOUSLY, not whether the enclosing listener is
+declared sync — I got that wrong earlier in this program and it cost a revert. The three call sites
+converted to this all fail that test: two only feed `schedule()`, which is itself `async`,
+fire-and-forget and re-entrance-guarded, and the third already sits below an `await getSettings()`.
+Deferring them by a microtask changes nothing observable.
+
+Same fail-soft legacy default as its sync twin, so an unresolvable workflow behaves exactly as before.
+*/
+async function resolveTaskParkedColumns(store: TaskStore, taskId: string): Promise<{ hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
+  const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
+  try {
+    const l = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId));
+    const complete = l?.complete ?? legacy.complete;
+    const archived = l?.archived ?? legacy.archived;
+    return {
+      hold: l?.hold ?? legacy.hold,
+      intake: l?.intake ?? legacy.intake,
+      wip: l?.wip ?? legacy.wip,
+      review: l?.review ?? legacy.review,
+      complete,
+      archived,
+      terminal: new Set([complete, archived]),
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-01-02:05 (fleet):
+      The wake set UNIONS the legacy ids rather than replacing them, and that is load-bearing rather
+      than defensive. Post-U11 the default lineage has no `triage` column, so a RESOLVED answer returns
+      `intake: "todo"` where the old inert path fell back to `"triage"`. Converting without the union
+      therefore NARROWS the set and stops waking cards that sit in a legacy-named lane — caught by
+      `scheduler-planning-finished-wake.test.ts` -> "schedules when planning clears in triage".
+
+      A resolved conversion must be a superset of what it replaces, or it is a behaviour change wearing
+      a vocabulary change's clothes.
+      */
+      wake: new Set([l?.hold ?? legacy.hold, l?.intake ?? legacy.intake, legacy.hold, legacy.intake]),
+    };
+  } catch {
+    return {
+      ...legacy,
+      terminal: new Set([legacy.complete, legacy.archived]),
+      wake: new Set([legacy.hold, legacy.intake]),
+    };
+  }
+}
+
 function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
   const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
   const legacyTerminal: ReadonlySet<string> = new Set([legacy.complete, legacy.archived]);
@@ -1219,11 +1268,15 @@ export class Scheduler {
             schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on unpause: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
-        const unpausedParked = resolveTaskParkedColumnsSync(this.store, task.id);
-        if (this.running && (task.column === unpausedParked.hold || task.column === unpausedParked.intake)) {
-          schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
-          this.schedule();
-        }
+        /* FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet): the answer only gates `schedule()`,
+           which is async and fire-and-forget, so resolving it properly costs nothing observable. */
+        void (async () => {
+          const unpausedParked = await resolveTaskParkedColumns(this.store, task.id);
+          if (this.running && unpausedParked.wake.has(task.column)) {
+            schedulerLog.log(`Task ${task.id} unpaused — triggering scheduling`);
+            void this.schedule();
+          }
+        })();
       }
 
       /*
@@ -1246,17 +1299,22 @@ export class Scheduler {
         this.planningTaskIds.add(task.id);
       } else if (this.planningTaskIds.has(task.id)) {
         this.planningTaskIds.delete(task.id);
-        const planningParked = resolveTaskParkedColumnsSync(this.store, task.id);
-        if (
-          this.running
-          && !task.status
-          && !task.paused
-          && !task.userPaused
-          && (task.column === planningParked.hold || task.column === planningParked.intake)
-        ) {
-          schedulerLog.log(`Task ${task.id} finished planning — triggering scheduling`);
-          this.schedule();
-        }
+        /* FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet): as with the unpause wake above, the
+           answer only gates `schedule()`. The `planningTaskIds.delete` stays SYNCHRONOUS — it is the
+           edge-trigger bookkeeping, and deferring it would let a second update re-enter this branch. */
+        void (async () => {
+          const planningParked = await resolveTaskParkedColumns(this.store, task.id);
+          if (
+            this.running
+            && !task.status
+            && !task.paused
+            && !task.userPaused
+            && planningParked.wake.has(task.column)
+          ) {
+            schedulerLog.log(`Task ${task.id} finished planning — triggering scheduling`);
+            void this.schedule();
+          }
+        })();
       }
 
       if (!this.options.prMonitor) return;
@@ -1299,7 +1357,7 @@ export class Scheduler {
             return;
           }
 
-          const deletedParked = resolveTaskParkedColumnsSync(this.store, task.id);
+          const deletedParked = await resolveTaskParkedColumns(this.store, task.id);
           /*
           FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
           A HALF-CONVERTED PAIR, one line apart. The hold read above already resolved its lane while

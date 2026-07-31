@@ -166,20 +166,23 @@ pgDescribe("scheduler parked-column resolution against a live store", () => {
     expect(await unblockOutcome(store, DEFAULT_VOCAB, "wf-default-parked")).toBeNull();
   });
 
-  it("CHARACTERIZATION — a dependent in a RENAMED hold column is NEVER unblocked", async () => {
+  it("REGRESSION — a dependent in a RENAMED hold column IS unblocked when its blocker is deleted", async () => {
     /*
-    The live consequence of the inert sync read. `resolveTaskParkedColumnsSync` answers
-    `{ hold: "todo" }` for this task even though its workflow's hold column is `backlog`, so the
-    reconciliation queries a column this board does not have, finds no dependents, and leaves
-    `blockedBy` pointing at a task that no longer exists.
+    FNXC:WorkflowResolvedColumns 2026-08-01-02:20 (fleet — the flip this test was written to catch):
+    This was a CHARACTERIZATION of the inert sync read: `resolveTaskParkedColumnsSync` answered
+    `{ hold: "todo" }` for a board whose hold column is `backlog`, so the reconciliation queried a
+    column that does not exist, found no dependents, and left `blockedBy` pointing at a deleted task.
 
-    Asserting the defect, not blessing it. Expected to flip to `null` the moment the resolver is
-    fixed — and that flip is the whole point of writing it down.
+    Its author wrote "expected to flip to `null` the moment the resolver is fixed — and that flip is
+    the whole point of writing it down." The `task:deleted` handler now resolves asynchronously, so it
+    has flipped, and the assertion is inverted to hold the fix rather than deleted.
+
+    It now asserts the SAME thing as the CONTROL above, which is the point: the renamed board and the
+    default board must behave identically. The control still earns its place — if the settle window
+    were too short, both would return null and this would pass vacuously.
     */
     const store = h.store();
-    const outcome = await unblockOutcome(store, RENAMED_VOCAB, "wf-renamed-parked");
 
-    expect(outcome).not.toBeNull();
-    expect(outcome).toMatch(/^[A-Z]+-\d+$/);
+    expect(await unblockOutcome(store, RENAMED_VOCAB, "wf-renamed-parked")).toBeNull();
   });
 });

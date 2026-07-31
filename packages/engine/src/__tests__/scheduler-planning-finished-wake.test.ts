@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 /*
 FNXC:CodingIdeasWorkflow 2026-07-25-13:10:
@@ -73,32 +74,37 @@ function createScheduler() {
 }
 
 describe("Scheduler wakes on the planning -> dispatchable transition", () => {
-  it("schedules when planning clears in todo", () => {
+  it("schedules when planning clears in todo", async () => {
     const { emit, schedule } = createScheduler();
 
     emit("task:updated", createTask({ status: "planning" }));
     expect(schedule).not.toHaveBeenCalled(); // still planning — nothing to dispatch yet
 
     emit("task:updated", createTask({ status: null }));
+    await flushAsyncHandlers();
     expect(schedule).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules when planning clears in triage", () => {
+  it("schedules when planning clears in triage", async () => {
     const { emit, schedule } = createScheduler();
 
     emit("task:updated", createTask({ column: "triage", status: "planning" }));
     emit("task:updated", createTask({ column: "triage", status: null }));
 
+    await flushAsyncHandlers();
+
     expect(schedule).toHaveBeenCalledTimes(1);
   });
 
-  it("fires once per transition, not on every later update", () => {
+  it("fires once per transition, not on every later update", async () => {
     const { emit, schedule } = createScheduler();
 
     emit("task:updated", createTask({ status: "planning" }));
     emit("task:updated", createTask({ status: null }));
     emit("task:updated", createTask({ status: null }));
     emit("task:updated", createTask({ status: null }));
+
+    await flushAsyncHandlers();
 
     expect(schedule).toHaveBeenCalledTimes(1);
   });

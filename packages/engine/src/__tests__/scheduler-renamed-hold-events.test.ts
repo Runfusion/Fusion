@@ -32,6 +32,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskStore, WorkflowIr } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { evaluateParkedAgentTaskLink } from "../task-agent-sync.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 const WF = "custom:wf";
 
@@ -144,6 +145,7 @@ describe("scheduler event handlers under a renamed hold column", () => {
     it("wakes when a card moves INTO the renamed hold column", async () => {
       const { emit, schedule } = createScheduler();
       await emit("task:moved", { task: task(), from: "building", to: "drafting", source: "engine" });
+      await flushAsyncHandlers();
       expect(schedule).toHaveBeenCalled();
     });
 
@@ -151,6 +153,7 @@ describe("scheduler event handlers under a renamed hold column", () => {
       /* The negative half: converting must not turn every move into a wake. */
       const { emit, schedule } = createScheduler();
       await emit("task:moved", { task: task({ column: "building" }), from: "inbox", to: "building", source: "user" });
+      await flushAsyncHandlers();
       expect(schedule).not.toHaveBeenCalled();
     });
   });
@@ -160,6 +163,7 @@ describe("scheduler event handlers under a renamed hold column", () => {
       const { emit, schedule } = createScheduler();
       await emit("task:updated", task({ paused: true }));
       await emit("task:updated", task({ paused: false }));
+      await flushAsyncHandlers();
       expect(schedule).toHaveBeenCalled();
     });
 
@@ -167,6 +171,7 @@ describe("scheduler event handlers under a renamed hold column", () => {
       const { emit, schedule } = createScheduler();
       await emit("task:updated", task({ column: "inbox", status: "planning" }));
       await emit("task:updated", task({ column: "inbox", status: null }));
+      await flushAsyncHandlers();
       expect(schedule).toHaveBeenCalled();
     });
 
@@ -174,6 +179,7 @@ describe("scheduler event handlers under a renamed hold column", () => {
       const { emit, schedule } = createScheduler();
       await emit("task:updated", task({ column: "building", status: "planning" }));
       await emit("task:updated", task({ column: "building", status: null }));
+      await flushAsyncHandlers();
       expect(schedule).not.toHaveBeenCalled();
     });
   });

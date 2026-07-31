@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 function createStore() {
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
@@ -114,7 +115,7 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
     expect(invalidate).toHaveBeenNthCalledWith(2, "task:updated");
   });
 
-  it("triggers immediate scheduling when a userPaused-only task is unpaused", () => {
+  it("triggers immediate scheduling when a userPaused-only task is unpaused", async () => {
     const { store, emit } = createStore();
     const scheduler = new Scheduler(store, {});
     const schedule = vi.spyOn(scheduler, "schedule").mockResolvedValue(undefined);
@@ -122,6 +123,8 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
 
     emit("task:updated", createTask({ userPaused: true }));
     emit("task:updated", createTask({ userPaused: false }));
+
+    await flushAsyncHandlers();
 
     expect(schedule).toHaveBeenCalledTimes(1);
   });
