@@ -54,6 +54,15 @@ function activeSession(id: string, overrides: Partial<LiveSnapshot["sessions"][n
   };
 }
 
+/**
+ * Drive the real `document.visibilityState` + `visibilitychange` pair the panel listens on.
+ * jsdom's visibilityState is read-only, so it is redefined per call.
+ */
+function setVisibility(state: "visible" | "hidden"): void {
+  Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 beforeEach(() => {
   apiMock.mockReset();
   subscribeMock.mockClear();
@@ -64,6 +73,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setVisibility("visible");
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
 });
@@ -245,5 +255,103 @@ describe("MissionControlPanel — KTD5 push + poll convergence", () => {
     render(<MissionControlPanel />);
     await flush();
     expect(screen.getByTestId("mission-control-error")).toBeTruthy();
+  });
+});
+
+/*
+FNXC:MobileTabRetention 2026-07-26-17:05:
+`useLiveSnapshot` does NOT use the shared `useVisibilityAwarePoll` primitive — it hand-rolls its own
+`visibilitychange` listener because the poll is self-managing (each response decides whether to re-arm).
+Consequence: it is invisible to `visibility-poll-gating.test.ts`'s sampled surfaces AND to the shared
+hook's unit tests, so until this block existed a regression that reintroduced background polling on a
+backgrounded tab would have passed the entire suite. A 5s fetch loop on a hidden tab is a primary iOS
+Safari / Chrome Android page-discard signal, and the discard is the white-splash reload on return.
+
+Two independent behaviors are asserted, because there are two independent ways to reintroduce the leak:
+1. The hidden edge must CLEAR the running interval (the listener's `stopPolling`).
+2. A refetch that completes while hidden must not RE-ARM it (the `documentVisible` gate in `load`'s
+   `finally`). Deleting either one alone leaves the other passing, so both are tested separately.
+The visible edge must then refetch exactly once and resume polling — suspension that never resumes is
+the same silent-staleness defect wearing different clothes.
+*/
+describe("MissionControlPanel — hidden-tab poll gating", () => {
+  it("stops polling while the document is hidden and fires no background fetches", async () => {
+    apiMock.mockResolvedValue(
+      snapshot({ activeSessions: 1, activeNodes: 1, sessions: [activeSession("s1")] }),
+    );
+    render(<MissionControlPanel />);
+    await flush();
+
+    // In-flight work: the interval is armed and a tick fetches.
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_INTERVAL_MS);
+    });
+    await flush();
+    expect(apiMock.mock.calls.length).toBeGreaterThan(1);
+
+    setVisibility("hidden");
+    await flush();
+
+    apiMock.mockClear();
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_INTERVAL_MS * 3);
+    });
+    await flush();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("does not re-arm the poll interval from a refetch that completes while hidden", async () => {
+    apiMock.mockResolvedValue(
+      snapshot({ activeSessions: 1, activeNodes: 1, sessions: [activeSession("s1")] }),
+    );
+    render(<MissionControlPanel />);
+    await flush();
+
+    setVisibility("hidden");
+    await flush();
+
+    // An SSE push (or the reconnect resync) can still land in the window before the bus itself
+    // suspends. Its response reports work in-flight — but a hidden tab must not schedule a timer.
+    await act(async () => {
+      sseHandlers["run:created"]?.({});
+    });
+    await flush();
+
+    apiMock.mockClear();
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_INTERVAL_MS * 3);
+    });
+    await flush();
+    expect(apiMock).not.toHaveBeenCalled();
+  });
+
+  it("refetches exactly once on the hidden -> visible edge and re-arms polling", async () => {
+    apiMock.mockResolvedValue(
+      snapshot({ activeSessions: 1, activeNodes: 1, sessions: [activeSession("s1")] }),
+    );
+    render(<MissionControlPanel />);
+    await flush();
+
+    setVisibility("hidden");
+    await flush();
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_INTERVAL_MS * 3);
+    });
+    await flush();
+
+    apiMock.mockClear();
+    setVisibility("visible");
+    await flush();
+
+    // Exactly one refresh on the edge — not zero (stale panel) and not a burst.
+    expect(apiMock).toHaveBeenCalledTimes(1);
+
+    // ...and polling is live again, so the panel keeps converging while in view.
+    apiMock.mockClear();
+    await act(async () => {
+      vi.advanceTimersByTime(LIVE_POLL_INTERVAL_MS);
+    });
+    await flush();
+    expect(apiMock).toHaveBeenCalledTimes(1);
   });
 });

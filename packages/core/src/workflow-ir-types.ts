@@ -202,19 +202,20 @@ export interface WorkflowLoopConfig {
 
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-11:00:
-An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs ONCE when the group is enabled for the task and passes through (skips) when disabled.
+An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs once per enabled graph attempt and passes through (skips) when disabled.
 Enable state reuses the per-task `enabledWorkflowSteps` facet keyed by the group node id, seeded from `defaultOn` at task creation — this replaces the execution-inert declaration-based optional-steps model (`WorkflowOptionalStep`/`optionalSteps`).
-Single pass only: no iteration, no rework budget. Rework edges are forbidden inside the template so the single-pass guarantee is unambiguous (validated in `validateOptionalGroup`).
+The template itself contains no iteration or internal rework edges (validated in `validateOptionalGroup`). The outer graph may re-enter the group for pre-merge fix/re-review remediation governed by `maxRevisions`.
 
 FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
 Optional-group remediation still runs the template once per graph pass, but workflow authors can set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its own review-attempt partition, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior for generic optional gates.
 
 FNXC:WorkflowRevisionBudget 2026-06-30-20:34:
-Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, those two built-in review paths default to unbounded remediation.
+Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, the authored node config applies. Plan Review and most Code Review groups remain unbounded, while Compound Engineering authors a two-pass Code Review cap.
 */
 /** Config for an `optional-group` container node. `defaultOn` seeds the per-task
- *  enable set at creation; the `template` is the subgraph run once when enabled.
- *  Unlike `foreach`/`loop`, there is no iteration or rework — a single pass. */
+ *  enable set at creation; the `template` is the subgraph run once per enabled
+ *  graph attempt. Unlike `foreach`/`loop`, the template has no internal iteration;
+ *  an outer remediation edge may re-enter it subject to `maxRevisions`. */
 export interface WorkflowOptionalGroupConfig {
   /** Workflow-author default for whether new tasks enable this group. */
   defaultOn?: boolean;
@@ -375,6 +376,48 @@ export interface WorkflowIrColumn {
    *  omitted entirely when unset — never serialized as `agent: null` — so legacy
    *  and default workflows stay byte-identical (R9). */
   agent?: WorkflowColumnAgent;
+  /** Optional recovery policy (U4). Additive; omitted entirely when unset. */
+  recovery?: WorkflowColumnRecovery;
+}
+
+/*
+FNXC:WorkflowRecoveryPolicy 2026-07-28-13:55 (U4):
+The workflow-declared recovery policy for one column — the first key of the U4
+reshape, which moves self-healing from ~53 hardcoded imperative sweeps to rules
+the workflow declares and ONE reconciler applies.
+
+Deliberately tiny. The survey's finding was that a knob per sweep would move 53
+sweeps into 53 config keys and trim nothing, so this grows only when a whole
+FAMILY of sweeps collapses onto a new key.
+
+SAFETY BOUNDARY, ratified and non-negotiable: this type can express WHEN a card
+is considered stuck and WHAT to do about it. It can NEVER express whether to
+respect a user pause, `autoMerge:false`, a dependency, a capacity limit, a
+merge-proof requirement, or an at-most-once guarantee. Those six safeguards are
+enforced by the reconciler OUTSIDE the policy table, because as policy keys a
+workflow author could switch a safety invariant off. `recovery-policy-safety`
+tests fail if any of the six becomes reachable from here.
+*/
+export interface WorkflowColumnRecovery {
+  /**
+   * How long a card may rest in this column before the reconciler treats it as
+   * stuck. Omitted = this column has no staleness rule and is never reconciled
+   * on that basis.
+   */
+  stalenessMs?: number;
+  /** What to do when `stalenessMs` elapses. */
+  onStale?: WorkflowColumnOnStale;
+}
+
+/**
+ * `surface` records an operator-visible signal and mutates NO lifecycle state.
+ * It is the only action in the vertical slice; `rebound` and `archive` land with
+ * the families that need them, so the union stays honest about what is built.
+ */
+export interface WorkflowColumnOnStale {
+  action: "surface";
+  /** Stable signal code written to the task log, e.g. `stale-paused-todo`. */
+  code: string;
 }
 
 /** Release conditions for a `hold` node (KTD-2, R3). */

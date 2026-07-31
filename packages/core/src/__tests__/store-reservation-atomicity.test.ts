@@ -132,7 +132,19 @@ pgTest("FN-7074 task-create reservation atomicity", () => {
       "# Bad prompt\n\n## File Scope\n\n- `origin/fusion/fn-4280`\n";
 
     try {
-      await expect(store.createTask({ description: "bad scope", column: "todo" })).rejects.toBeInstanceOf(InvalidFileScopeError);
+      /*
+      FNXC:MergedPlanningColumn 2026-07-30-11:00 (Phase B — task-creation.ts conversion):
+      Column is now `in-progress`, not `todo`. This test stubs `generateSpecifiedPrompt` to inject a
+      bad `## File Scope`, so it needs a create that actually CALLS that generator. Post-U11 `todo`
+      is the default workflow's INTAKE column, so a create there gets the bootstrap seed instead —
+      and bootstrap intake prompts deliberately skip the file-scope hard-fail, because their body is
+      freeform operator prose where a stray `## File Scope` token is not a real declaration.
+
+      The invariant under test is RESERVATION ROLLBACK when validation throws, not which column the
+      card lands in — so the create is moved to a non-intake column where validation still runs. Using
+      an intake column here would have made the test vacuous: no throw, no rollback exercised.
+      */
+      await expect(store.createTask({ description: "bad scope", column: "in-progress" })).rejects.toBeInstanceOf(InvalidFileScopeError);
     } finally {
       store.generateSpecifiedPrompt = originalGenerate;
     }

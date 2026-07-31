@@ -1,5 +1,5 @@
 import { execSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -231,6 +231,59 @@ describeIfGit("task-revert real-git scenarios", { timeout: 30_000 }, () => {
     expect(result).toMatchObject({ mode: "git", needsHuman: true });
     // Column is a property of the caller-owned task object, not mutated by the service.
     expect(task.column).toBe("in-progress");
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:35:
+  The service's revertable check used a hardcoded {done, archived} while `POST /tasks/:id/revert` already
+  gated on `resolveTerminalColumnsForTask` — resolved membership over the task's own workflow. On a renamed
+  board the two halves DISAGREED: the route admitted the request and the service refused it, so the operator
+  got a dead end from an affordance the UI and the route both offered.
+
+  REVERT CHECK, measured: dropping `revertableColumns` back to the literal pair makes the first case fail —
+  a card in `shipped` is refused with "only done/archived tasks are revertable". The second case is the
+  non-vacuous half: the set must still REFUSE a live lane, or a check that admits everything would satisfy
+  the first.
+  */
+  it("a renamed terminal lane is revertable when the caller supplies resolved columns", async () => {
+    const repo = repoFixture();
+    writeFileSync(join(repo, "foo.ts"), "line1\nfeature-a\n");
+    git(repo, "git add foo.ts && git commit -m 'feat(FN-901): add feature a'");
+    const sha = git(repo, "git rev-parse HEAD");
+
+    const task = makeTask({ column: "shipped" as never, mergeDetails: { commitSha: sha, mergeTargetBranch: "main" } });
+    const result = await performTaskRevert({
+      task,
+      worktreePath: repo,
+      baseBranch: "main",
+      revertableColumns: new Set(["shipped", "attic"]),
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:10 (#2766 review — a negative assertion proved too little):
+    `not.toMatchObject({ needsHuman })` passes for ANY other outcome, including a failed revert. It proved
+    the guard did not refuse, not that the revert happened. Asserting the clean-revert result proves both.
+    */
+    expect(result).toMatchObject({ mode: "git", clean: true });
+    expect(readFileSync(join(repo, "foo.ts"), "utf8")).toBe("line1\n");
+  });
+
+  it("resolved columns still REFUSE a live lane, so the gate is not simply widened", async () => {
+    const repo = repoFixture();
+    writeFileSync(join(repo, "foo.ts"), "line1\nfeature-a\n");
+    git(repo, "git add foo.ts && git commit -m 'feat(FN-902): add feature a'");
+    const sha = git(repo, "git rev-parse HEAD");
+
+    const task = makeTask({ column: "building" as never, mergeDetails: { commitSha: sha, mergeTargetBranch: "main" } });
+    const result = await performTaskRevert({
+      task,
+      worktreePath: repo,
+      baseBranch: "main",
+      revertableColumns: new Set(["shipped", "attic"]),
+    });
+
+    expect(result).toMatchObject({ mode: "git", needsHuman: true });
+    expect(String((result as { reason?: string }).reason)).toContain("revertable");
   });
 
   it("guard rails: autoMerge:false returns a needsHuman result instead of force-writing", async () => {

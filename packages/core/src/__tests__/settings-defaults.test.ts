@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_CONSECUTIVE_TOOL_FAILURE_RETRY_BACKOFF_MS, DEFAULT_MAX_CONSECUTIVE_TOOL_FAILURE_RETRIES, DEFAULT_MAX_AUTO_MERGE_RETRIES, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries } from "../in-review-stall.js";
 import { isExperimentalFeatureEnabled } from "../experimental-features.js";
 import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECT_SETTINGS, GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS, isGlobalOnlySettingsKey } from "../settings-schema.js";
-import { isWorkflowColumnsEnabled } from "../workflow-columns-settings.js";
 import {
   __resetLegacyCwdMainWarningForTests,
   normalizeMergeIntegrationWorktreeMode,
@@ -70,7 +69,6 @@ describe("settings defaults invariants", () => {
     expect(isExperimentalFeatureEnabled(undefined, "workflowGraphExecutor")).toBe(false);
     expect(isExperimentalFeatureEnabled(undefined, "workflowInterpreterDualObserve")).toBe(false);
     expect(isExperimentalFeatureEnabled({ experimentalFeatures: { workflowInterpreterDualObserve: true } }, "workflowInterpreterDualObserve")).toBe(false);
-    expect(isWorkflowColumnsEnabled({ experimentalFeatures: { workflowColumns: false } })).toBe(true);
   });
 
   it("defaults maxAutoMergeRetries to the historical project-scoped cap", () => {
@@ -306,8 +304,23 @@ describe("settings defaults invariants", () => {
       expect(normalizeMergeIntegrationWorktreeMode("cwd-main")).toBe("cwd-integration-branch");
       expect(normalizeMergeIntegrationWorktreeMode("cwd-main")).toBe("cwd-integration-branch");
 
+      /*
+      FNXC:EngineDiagnostics 2026-07-30-18:00:
+      Asserted with a CONTAINS check, because the logger deliberately wraps every message in a
+      machine-readable severity marker — `withSeverityMarker` (logger.ts:31) prepends an
+      `fnlvl=<level>` marker plus a `[core-merge-policy]` subsystem tag. Pinning the raw string
+      coupled this case to log FORMATTING rather than to the behaviour it exists to check, so it
+      broke when that convention landed.
+
+      Same defect and same fix as the audit-emitter assertion in central-archive-secrets (PR #2675).
+      Two instances is a pattern: `toHaveBeenCalledWith` on a logger is brittle by construction here,
+      because the logger's job is to decorate the message.
+
+      What this case actually cares about — warn-once semantics, and that the warning names the legacy
+      value and its replacement — is unchanged and still fully asserted.
+      */
       expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy).toHaveBeenCalledWith(
+      expect(String(warnSpy.mock.calls[0]![0])).toContain(
         "[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch",
       );
     });

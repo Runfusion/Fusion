@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-node-discovery");
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import { Bonjour, type Browser, type Service } from "bonjour-service";
@@ -362,11 +365,11 @@ export class NodeDiscovery extends EventEmitter<NodeDiscoveryEvents> {
 
   private warn(message: string, error?: unknown): void {
     if (error) {
-      console.warn(`[node-discovery] ${message}`, error);
+      severityAuditLog.warn(`[node-discovery] ${message}`, error);
       return;
     }
 
-    console.warn(`[node-discovery] ${message}`);
+    severityAuditLog.warn(`[node-discovery] ${message}`);
   }
 
   private reportError(message: string, error: unknown): void {

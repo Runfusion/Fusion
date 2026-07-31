@@ -1,3 +1,5 @@
+import { createLogger } from "@fusion/core";
+
 export type RuntimeLogLevel = "info" | "warn" | "error";
 
 export interface RuntimeLogContext {
@@ -24,18 +26,17 @@ function defaultRuntimeLogSink(
   message: string,
   context?: RuntimeLogContext,
 ): void {
-  const line = `[${scope}] ${message}`;
-  const args = context === undefined ? [line] : [line, context];
+  const log = createLogger(scope);
   try {
     switch (level) {
       case "info":
-        console.log(...args);
+        log.log(message, context);
         break;
       case "warn":
-        console.warn(...args);
+        log.warn(message, context);
         break;
       case "error":
-        console.error(...args);
+        log.error(message, context);
         break;
     }
   } catch {

@@ -1561,7 +1561,6 @@
         "description": "",
         "error": "",
         "maxConcurrent": "",
-        "maxTriageConcurrent": "",
         "maxWorktrees": "",
         "title": "",
         "runningGlobal": "",
@@ -5994,7 +5993,12 @@
       "reportDiscussionCategorySelect": "選擇討論分類",
       "reportDiscussionCategoryUnavailable": "Discussion categories are unavailable for the configured repository.",
       "reportDiscussionCategoryEmpty": "No Discussion categories are available for the configured repository.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6043,8 +6047,16 @@
       "enableProactiveTaskChatHint": "",
       "releaseChannel": "",
       "releaseChannelHelp": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": "",
       "channelStable": "",
-      "channelBeta": ""
+      "channelBeta": "",
+      "agentToolOutputLimit": "",
+      "agentToolOutputLimitHint": "",
+      "noLimitOnAgentToolOutput": "",
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -6718,7 +6730,6 @@
       "maximumConcurrentPlanningAgents": "",
       "maximumStuckDetectorRetriesBeforeATaskIs": "",
       "maxStuckRetries": "",
-      "maxTriageConcurrent": "",
       "numberOfDaysATaskCanStayIn": "",
       "off": "",
       "optionalFileOrDirectoryPathsToIgnoreWhen": "",
@@ -6796,6 +6807,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": "",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "",
       "maxWorktrees": "",
+      "worktreeLimitEnabled": "",
+      "worktreeLimitEnabledHelp": "",
       "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "開啟審批",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
@@ -7778,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "返回進行中",
+      "backTo": "返回{{column}}",
       "cancelMove": "取消移動",
       "keepProgress": "保留進度",
       "movedTo": "已移至 {{column}}",
@@ -8532,7 +8546,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "重新規劃"
+    "statusReplan": "重新規劃",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

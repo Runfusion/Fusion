@@ -35,6 +35,35 @@ import {
   WorkspaceTaskMergeError,
 } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveCompleteColumn } from "@fusion/core";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (census-invisible moveTask destinations):
+Resolve THIS task's complete lane, falling back to the legacy id.
+
+Both merge-completion paths below passed a hardcoded `"done"` to `moveTask`. The destination is a call
+ARGUMENT, so the lifecycle-column census — an AST scan for comparisons — never pointed at either. Since
+U12 hoisted the `workflowHasColumn` rejection out of its dead flag-gated branch, a board that does not
+declare `done` REJECTS the move.
+
+That matters here because both callers run `updateTask({ status: null, mergeRetries: 0 })` FIRST: on a
+rejection the merge has already landed and the bookkeeping is already cleared, but the card never
+reaches its complete lane — so the operator sees a merged branch and a card still sitting in review,
+with the retry counter reset.
+
+Unioned with the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+throwing.
+*/
+export async function resolveCompleteTargetForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const complete = resolveCompleteColumn(ir);
+      if (complete) return complete;
+    }
+  } catch { /* degraded: legacy id */ }
+  return "done";
+}
 import { activeSessionRegistry, resolveIntegrationBranch } from "@fusion/engine";
 import type {
   CreateGroupPrFn,
@@ -683,7 +712,7 @@ async function finalizePullRequestMerge(
 ): Promise<void> {
   await cleanupMergedTaskArtifacts(cwd, task, { pool });
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  const movedTask = await store.moveTask(task.id, "done");
+  const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
   await store.logEntry(task.id, message, `PR #${prInfo.number}: ${prInfo.url}`);
   const settings = await store.getSettings();
@@ -721,7 +750,7 @@ async function finalizeNoOpMergeTask(
   const branch = task.branch ?? getTaskBranchName(task.id);
   await cleanupMergedTaskArtifacts(cwd, task, { pool });
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  const movedTask = await store.moveTask(task.id, "done");
+  const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
   await store.logEntry(task.id, reason, `Branch ${branch} has no commits relative to the base branch; nothing to merge.`);
   store.emit("task:merged", {

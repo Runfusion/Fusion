@@ -436,3 +436,140 @@ describe("EphemeralWorkerManager", () => {
     expect(harness.manager.getOwner("FN-RESET")).toBeUndefined();
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+
+THE INVARIANT: the zombie sweep asks the task's OWN workflow whether its worker is still working.
+
+A LIVE WORKER WAS REAPED ON A RENAMED BOARD, and the two guards compounded in the worst possible
+order. `shouldDeleteOnSweep` tested a hard-coded terminal Set first, then fell through to
+`return task.column !== "in-progress"`. On a renamed board the terminal test missed, and the fallthrough
+is TRUE for a renamed wip lane — so an ephemeral worker ACTIVELY EXECUTING a task was classified as a
+zombie and deleted, destroying work in flight.
+
+Census-invisible on both halves: the terminal check is a `Set` literal (a definition, not a
+comparison), and the wip check was reached only after it. Found by grepping for lane-shaped list
+literals, not by the backlog.
+
+THE FALLBACK IS DELIBERATELY ASYMMETRIC. An unresolvable workflow keeps the legacy literals rather
+than guessing: failing to reap a dead worker costs a slot, reaping a live one destroys work. Those
+are not symmetric, so the uncertain case must fail toward keeping the worker.
+
+REVERT PROOF, measured: restore the literal pair and the renamed-wip case fails — the live worker is
+deleted.
+*/
+describe("ephemeral zombie sweep resolves the board's own lanes", () => {
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function renamedHarness() {
+    const harness = createHarness();
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    Object.assign(harness.taskStore as unknown as Record<string, unknown>, {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+    });
+    return harness;
+  }
+
+  it("KEEPS a worker whose task sits in a RENAMED wip lane", async () => {
+    const harness = renamedHarness();
+    const live = makeAgent("renamed-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "building" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+
+  it("still reaps a worker whose task reached a RENAMED complete lane", async () => {
+    // The sweep must keep sweeping — keeping everything would be its own leak.
+    const harness = renamedHarness();
+    const done = makeAgent("renamed-done", { metadata: { agentKind: "task-worker" }, taskId: "FN-DONE" });
+    harness.agentStore.agents.set(done.id, done);
+    harness.taskStore.tasks.set("FN-DONE", makeTask("FN-DONE", { column: "shipped" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(done.id)).toBe(false);
+  });
+
+  it("still reaps a worker parked in a RENAMED hold lane", async () => {
+    const harness = renamedHarness();
+    const parked = makeAgent("renamed-parked", { metadata: { agentKind: "task-worker" }, taskId: "FN-PARKED" });
+    harness.agentStore.agents.set(parked.id, parked);
+    harness.taskStore.tasks.set("FN-PARKED", makeTask("FN-PARKED", { column: "backlog" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(parked.id)).toBe(false);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+A SECOND wip lane must keep its worker too.
+
+`resolveLifecycleColumns` returns the FIRST column carrying each trait, so the first version of this
+fix recognised only one implementation lane. A board declaring two — a common shape once a workflow
+splits implementation from, say, an integration lane — still reaped a live worker in the second. The
+same defect this suite exists to prevent, one degree narrower, and it would have surfaced the first
+time someone added that column rather than at conversion time.
+
+The guard now unions `columnsWithFlag(ir, "countsTowardWip")`, which is every wip-bearing column.
+
+REVERT PROOF, measured: narrow the check back to `lanes.wip` and the second-lane case below fails.
+*/
+describe("the zombie sweep honours EVERY wip lane, not the first", () => {
+  const TWO_WIP_IR = {
+    version: "v2", id: "wf-two-wip", name: "two wip", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "integrating", name: "Integrating", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function twoWipHarness() {
+    const harness = createHarness();
+    const selection = { workflowId: "wf-two-wip", stepIds: [] as string[] };
+    Object.assign(harness.taskStore as unknown as Record<string, unknown>, {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: TWO_WIP_IR }),
+    });
+    return harness;
+  }
+
+  it("KEEPS a worker whose task sits in the SECOND wip lane", async () => {
+    const harness = twoWipHarness();
+    const live = makeAgent("second-lane-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "integrating" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+
+  it("still keeps a worker in the FIRST wip lane", async () => {
+    const harness = twoWipHarness();
+    const live = makeAgent("first-lane-live", { metadata: { agentKind: "task-worker" }, taskId: "FN-LIVE" });
+    harness.agentStore.agents.set(live.id, live);
+    harness.taskStore.tasks.set("FN-LIVE", makeTask("FN-LIVE", { column: "building" }));
+
+    await harness.manager.reconcileOrphaned();
+
+    expect(harness.agentStore.agents.has(live.id)).toBe(true);
+  });
+});

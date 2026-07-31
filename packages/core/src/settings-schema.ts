@@ -298,6 +298,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Verbose tool arguments and results are default-off to reduce persisted log volume and payload exposure. Operators who need saved tool details can explicitly opt in with persistAgentToolOutput: true; tool timeline rows remain logged either way.
   */
   persistAgentToolOutput: false,
+  /*
+  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  FN-8616 lets operators raise, lower, or disable the FN-8614 per-result tool-output
+  budget. Undefined preserves the finite 16,000-character default; only 0 means no limit.
+  */
+  agentToolOutputMaxChars: undefined,
   // Task chat remains an operator-directed conversation by default. Enable this
   // explicitly to add engine-authored lifecycle narration to the transcript.
   proactiveTaskChatEnabled: false,
@@ -404,6 +410,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // already-shipped code, so default them to the stricter review-heavy
   // workflow; empty/unset means inherit the project default workflow.
   aiUndoTaskWorkflowId: "builtin:review-heavy",
+  // FNXC:OriginWorkflowSelection 2026-07-26-19:40: unset = "Selected workflow"
+  // (board lane mirror, then project default). A concrete id pins the origin.
+  taskCreateWorkflowId: undefined,
+  refinementTaskWorkflowId: undefined,
+  boardSelectedWorkflowId: undefined,
   enabledBuiltinWorkflowIds: undefined,
   approvedWorkflowCliCommands: undefined,
   approvedCliAutonomyAdapters: undefined,
@@ -415,9 +426,15 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Default one verification at a time process-wide so concurrent tasks cannot each run verify:fast / full builds simultaneously and peg the host. Operators with spare cores may raise this in Scheduling settings (clamped 1–8 at runtime).
   */
   maxConcurrentVerifications: 1,
-  maxTriageConcurrent: 2,
-  globalMaxConcurrent: 4,
   maxWorktrees: 4,
+  /*
+  FNXC:CapacityModel 2026-07-28-11:20:
+  Worktrees ON is the default and the supported shape — everything (planning
+  included) runs in a worktree. OFF drops maxWorktrees from the dispatch gate so
+  capacity is total agents only; it is a counting statement, not permission for
+  concurrent agents to share one checkout.
+  */
+  worktreeLimitEnabled: true,
   pollIntervalMs: 15000,
   heartbeatMultiplier: 1,
   autoClaimCandidatesInPrompt: 5,
@@ -443,6 +460,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // with this on but auto-merge off, review threads are resolved but the PR is not merged.
   autoResolveReviewComments: true,
   testMode: undefined,
+  /*
+  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  Project settings participate in the existing effective-settings merge, allowing a
+  project-specific tool-output cap or explicit no-limit sentinel to override global policy.
+  */
+  agentToolOutputMaxChars: undefined,
   voiceInput: undefined,
   mergeRequestContractShadowEnabled: false,
   mergeStrategy: "direct",
@@ -611,8 +634,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   inReviewStalledThresholdMs: 24 * 60 * 60_000,
   stalePausedTodoThresholdMs: 24 * 60 * 60_000,
   pausedScopeDecayMs: 30 * 60_000,
-  metaTaskStallAutoCloseMs: 2 * 60 * 60_000,
-  metaTaskActiveExecutionGraceMs: 30 * 60_000,
   boardStallSweepWindowMs: 2 * 60 * 60_000,
   boardStallBlockedGrowthThreshold: 3,
   // Capacity risk warning default: only warn once todo is meaningfully backlogged.
@@ -622,11 +643,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   backlogPressureRatioThreshold: 10,
   backlogPressureMinTodoCount: 5,
   backlogPressureAlertCooldownMs: 24 * 60 * 60_000,
-  dependencyBlockedTodoReportEnabled: true,
-  dependencyBlockedTodoFreshAgeMs: 30 * 60_000,
-  dependencyBlockedTodoStaleAgeMs: 4 * 60 * 60_000,
-  dependencyBlockedTodoMinCount: 1,
-  dependencyBlockedTodoReportCooldownMs: 6 * 60 * 60_000,
   staleHighFanoutBlockerAgeThresholdMs: 2 * 60 * 60 * 1000,
   staleInProgressWarningMs: 4 * 60 * 60_000,
   staleInProgressCriticalMs: 24 * 60 * 60_000,
@@ -644,8 +660,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   maxTotalRetriesBeforeFail: 25,
   preserveProgressOnStuckRequeue: true,
   // maxPostReviewFixes MOVED to workflow settings (U4).
-  maxSpawnedAgentsPerParent: 5,
-  maxSpawnedAgentsGlobal: 20,
   // Run maintenance (including WAL checkpointing) every 5 minutes by default.
   maintenanceIntervalMs: 300_000,
   autoArchiveDoneTasksEnabled: true,

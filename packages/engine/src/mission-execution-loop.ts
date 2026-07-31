@@ -25,7 +25,9 @@ import type {
   Mission,
   ValidationDiagnostics,
 } from "@fusion/core";
-import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription } from "@fusion/core";
+import { MissionRemediationStoppedError, normalizeMissionAssertionType, normalizeValidationDiagnostics, renderValidationFailureDescription,
+  resolveTaskLifecycleColumns, resolveWorkflowIrForTask, columnsWithFlag,
+} from "@fusion/core";
 import { GitCheckoutMaterializer, type CheckoutMaterializer, type VerificationOutcome } from "./mission-verification.js";
 import { createFnAgent, promptWithFallback, type AgentResult } from "./pi.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -318,7 +320,13 @@ export class MissionExecutionLoop extends EventEmitter {
                   // If the feature has a linked task that's already done, re-trigger validation
                   if (feature.taskId) {
                     const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                    if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                    const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                       await this.processTaskOutcome(feature.taskId);
                     }
                   }
@@ -335,7 +343,13 @@ export class MissionExecutionLoop extends EventEmitter {
                 if (feature.taskId) {
                   try {
                     const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                    if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                    const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                       await this.processTaskOutcome(feature.taskId);
                     }
                     recoveredCount++;
@@ -361,7 +375,13 @@ export class MissionExecutionLoop extends EventEmitter {
 
                 try {
                   const linkedTask = await this.taskStore.getTask(feature.taskId).catch(() => null);
-                  if (linkedTask && (linkedTask.column === "done" || linkedTask.column === "archived")) {
+                  const linkedLifecycle = linkedTask
+                      ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id)
+                      : undefined;
+                    if (linkedTask && (
+                      linkedTask.column === (linkedLifecycle?.complete ?? "done")
+                      || linkedTask.column === (linkedLifecycle?.archived ?? "archived")
+                    )) {
                     loopLog.log(`Recovery: re-triggering implementing feature ${feature.id} from completed task ${feature.taskId}`);
                     await this.processTaskOutcome(feature.taskId);
                     recoveredCount++;
@@ -665,7 +685,12 @@ export class MissionExecutionLoop extends EventEmitter {
     if (!taskId) return null;
     const linkedTask = await this.taskStore.getTask(taskId).catch(() => null);
     const column = linkedTask?.column;
-    if (!column || column === "done" || column === "archived") return null;
+    const premergeLifecycle = linkedTask ? await resolveTaskLifecycleColumns(this.taskStore, linkedTask.id) : undefined;
+    if (
+      !column
+      || column === (premergeLifecycle?.complete ?? "done")
+      || column === (premergeLifecycle?.archived ?? "archived")
+    ) return null;
     return column;
   }
 
@@ -1719,7 +1744,30 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
         // FNXC:MissionValidationDiagnostics 2026-07-23-13:15: A stale task ID
         // is not proof that remediation is live. Only an open, non-deleted task
         // makes duplicate triage safe to suppress; otherwise persist an action.
-        const hasLiveFixTask = Boolean(linkedFixTask && !linkedFixTask.deletedAt && linkedFixTask.column !== "done" && linkedFixTask.column !== "archived" && linkedFixTask.status !== "failed");
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-11:55 (batch-engine tail):
+        "Open" is the COMPLETE and ARCHIVED roles, not the two ids. The note above states the rule this
+        line implements — only an OPEN task makes duplicate triage safe to suppress — and on a renamed
+        board the rule inverts: a FINISHED fix task reads as live, so remediation for a fresh validation
+        failure is suppressed indefinitely and the mission stalls with no error surfaced.
+
+        Resolved from the FIX TASK's own workflow (it need not share the feature's), unioned with the
+        legacy pair because `resolveWorkflowIrForTask` returns the BUILT-IN IR for a missing or corrupt
+        workflow rather than throwing — without the union a degraded board resolves a terminal set that
+        excludes its own terminal lanes and every fix task reads as live, which is the bug being fixed.
+        */
+        const fixTaskTerminalColumns = new Set<string>(["done", "archived"]);
+        if (linkedFixTask) {
+          try {
+            const fixIr = await resolveWorkflowIrForTask(this.taskStore, linkedFixTask.id);
+            if (fixIr) {
+              for (const flag of ["complete", "archived"] as const) {
+                for (const id of columnsWithFlag(fixIr, flag)) fixTaskTerminalColumns.add(id);
+              }
+            }
+          } catch { /* degraded: legacy pair only */ }
+        }
+        const hasLiveFixTask = Boolean(linkedFixTask && !linkedFixTask.deletedAt && !fixTaskTerminalColumns.has(linkedFixTask.column) && linkedFixTask.status !== "failed");
         if (hasLiveFixTask) {
           loopLog.log(`Fix feature ${fixFeature.id} already has canonical task ${fixFeature.taskId}; skipping duplicate triage`);
         } else try {

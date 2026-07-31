@@ -8,7 +8,7 @@ FNXC:CodingIdeasWorkflow 2026-07-04-09:15:
 Operators need a manual-capture intake ("Ideas") in front of the default coding pipeline so they can park tasks without the engine auto-planning them. This workflow clones the current default Coding graph (stepwise execution + final review) and swaps the board columns to a five-stage Ideas → Todo → In-progress → In-review → Done shape.
 
 FNXC:CodingIdeasWorkflow 2026-07-04-09:18:
-The "Ideas" column is the intake column with autoTriage disabled. Tasks created into this workflow land there and are NOT picked up by the triage service until an operator moves them to "Todo" (the merged planner + capacity column). Planning then runs in place inside "Todo"; a "ready" badge distinguishes planned (real PROMPT.md) tasks from unplanned (bootstrap stub) ones while they wait for an in-progress slot. See createTask intake-column wiring (store.ts) and the triage todo-discovery extension (triage.ts).
+The "Ideas" column is the intake column with autoTriage disabled. Tasks created into this workflow land there and are NOT picked up by the triage service until an operator moves them to "Planning" (the merged planner + capacity column, id `todo`). Specification and Plan Review then run in place inside "Planning"; a "ready" badge distinguishes planned (real PROMPT.md) tasks from unplanned (bootstrap stub) ones while they wait for an in-progress slot. See createTask intake-column wiring (store.ts) and the triage todo-discovery extension (triage.ts).
 */
 
 /** The board columns for the Coding (Ideas) workflow. The "ideas" intake carries
@@ -22,9 +22,16 @@ const CODING_IDEAS_COLUMNS: WorkflowIrColumn[] = [
     name: "Ideas",
     traits: [{ trait: "intake", config: { autoTriage: false } }],
   },
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-26-19:10:
+  Named "Planning", not "Todo": this column is where the spec is written and Plan Review runs
+  (plan-in-place), and the card leaves it only when there is implementation capacity. "Todo" named a
+  queue the operator was supposed to fill; the column's actual job is planning. The id stays `todo`
+  — it is the workflow's hold column in every trait lookup, task row, and stored selection.
+  */
   {
     id: "todo",
-    name: "Todo",
+    name: "Planning",
     traits: [{ trait: "hold", config: { release: "capacity" } }, { trait: "reset-on-entry" }],
   },
   {
@@ -45,15 +52,6 @@ const CODING_IDEAS_COLUMNS: WorkflowIrColumn[] = [
   { id: "archived", name: "Archived", traits: [{ trait: "archived" }] },
 ];
 
-/** Planning-stage node ids that sit in the legacy "triage" / "in-progress"
- *  columns in the cloned default graph. They are re-homed to the merged "todo"
- *  planner column so an agent is visibly working while the spec is produced. */
-const PLANNING_NODE_IDS: Record<string, true> = {
-  plan: true,
-  "plan-review": true,
-  "plan-replan": true,
-};
-
 const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {
   const ir = JSON.parse(JSON.stringify(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)) as WorkflowIr;
   ir.name = "builtin-coding-ideas";
@@ -69,16 +67,15 @@ const RAW_BUILTIN_CODING_IDEAS_WORKFLOW_IR: WorkflowIr = (() => {
 
   /*
   FNXC:CodingIdeasWorkflow 2026-07-04-09:30:
-  Re-home graph nodes to the new column shape: the start node becomes the "ideas" intake anchor; planning-stage nodes move to the merged "todo" column; every execution / review / merge / done node keeps its existing column id (in-progress / in-review / done), which still exists in the new column set. Unknown legacy columns (e.g. a leftover "triage" placement) default to "todo" so no node is ever left dangling in a column the workflow no longer declares.
+  Re-home graph nodes to the new column shape: the start node becomes the "ideas" intake anchor; every execution / review / merge / done node keeps its existing column id (in-progress / in-review / done), which still exists in the new column set. Unknown legacy columns (e.g. a leftover "triage" placement) default to "todo" so no node is ever left dangling in a column the workflow no longer declares.
+
+  FNXC:PlanReviewStep 2026-07-26-17:10:
+  The explicit planning-node re-home is GONE: the cloned default graph is itself plan-in-place now, so plan / plan-review / plan-replan already declare "todo". This preset no longer has a private planning shape to maintain — it differs from the default only in its intake column and its reduced node set.
   */
   const knownColumnIds = new Set(v2.columns.map((c) => c.id));
   for (const node of v2.nodes) {
     if (node.kind === "start") {
       node.column = "ideas";
-      continue;
-    }
-    if (PLANNING_NODE_IDS[node.id]) {
-      node.column = "todo";
       continue;
     }
     if (node.id === "code-review" || node.id === "completion-summary" || node.id.startsWith("merge-")) {

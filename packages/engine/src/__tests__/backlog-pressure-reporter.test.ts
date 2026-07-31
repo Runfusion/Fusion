@@ -211,3 +211,77 @@ describe("BacklogPressureReporter", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining("[backlog-pressure]"));
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-20:10:
+
+THE INVARIANT: the backlog-pressure ratio counts the board's OWN hold and wip lanes.
+
+THE QUERY, NOT THE COMPARISON — this reporter had no comparison to convert. `listTasks({ column })`
+filters in the store, so on a renamed board both reads return EMPTY and the ratio is computed as 0/0:
+the alert never fires, on a board that may be under exactly the pressure it exists to report.
+
+That is the class #2800 measured at 49 sites in `self-healing.ts` alone. The census cannot see any of
+them: it scores comparisons, and a query filter is not a comparison. This file had a census count of
+ZERO and was completely inert on a custom board.
+
+The resolution goes through `resolveProjectColumnsForRoles`, which answers the PROJECT-level question
+a read needs — there is no task in hand yet to resolve from — and always unions the legacy id, so a
+board mid-rename still counts rows stored under the old one.
+
+REVERT PROOF, measured: restore `listTasks({ column: "todo" })` and the renamed case reports
+`under-threshold` from an empty backlog instead of alerting.
+*/
+describe("backlog pressure resolves the board's own lanes", () => {
+  /* `logger` is scoped to the other describe block; restated rather than hoisted. */
+  const laneLogger = { warn: vi.fn(), error: vi.fn() };
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function renamedStore(counts: { hold: number; wip: number }): TaskStore {
+    const make = (id: string, column: string) => ({ id, column, title: id, priority: "normal" }) as unknown as Task;
+    const hold = Array.from({ length: counts.hold }, (_, i) => make(`H-${i}`, "backlog"));
+    const wip = Array.from({ length: counts.wip }, (_, i) => make(`W-${i}`, "building"));
+    return {
+      getSettings: vi.fn().mockResolvedValue({ backlogPressureRatioThreshold: 2, backlogPressureMinTodoCount: 3 }),
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      listTasks: vi.fn(async (options?: { column?: string }) => {
+        if (options?.column === "backlog") return hold;
+        if (options?.column === "building") return wip;
+        /* The legacy ids are still queried and correctly return nothing on this board. */
+        return [];
+      }),
+      getInsightStore: vi.fn(() => ({ upsertInsight: vi.fn(), listInsights: vi.fn(async () => []) })),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+  }
+
+  it("alerts on a RENAMED board that is genuinely under pressure", async () => {
+    // Pre-fix: both reads asked for todo/in-progress, got nothing, and the ratio was 0/0.
+    const reporter = new BacklogPressureReporter({
+      store: renamedStore({ hold: 10, wip: 1 }),
+      projectId: "p1",
+      logger: laneLogger,
+    });
+
+    const result = await reporter.report();
+
+    expect(result.alerted).toBe(true);
+  });
+
+  it("still stays quiet when the renamed board is genuinely under threshold", async () => {
+    // The alert must remain conditional — firing always would be its own bug.
+    const reporter = new BacklogPressureReporter({
+      store: renamedStore({ hold: 1, wip: 5 }),
+      projectId: "p1",
+      logger: laneLogger,
+    });
+
+    expect((await reporter.report()).alerted).toBe(false);
+  });
+});

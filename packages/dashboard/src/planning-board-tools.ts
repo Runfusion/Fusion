@@ -1,5 +1,7 @@
 import * as fusionCore from "@fusion/core";
 import { MAX_TASK_LIST_TEXT_CHARS, type TaskStore } from "@fusion/core";
+import { completeColumnsForTask } from "./task-lifecycle-lanes.js";
+import type { WorkflowIr } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
@@ -53,7 +55,21 @@ export function createPlanningBoardTools(store: TaskStore): ToolDefinition[] {
     parameters: { type: "object", properties: {}, additionalProperties: false },
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
-      const active = tasks.filter((t) => t.column !== "done");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:05 (batch-core):
+      "Not finished yet" for the planner's duplicate check. Keyed on the literal, a renamed board
+      listed every FINISHED task as active, so the planner was told to check for duplicates against
+      work that was already done — the opposite of the tool's purpose, and it degrades quietly
+      because the list is merely wrong rather than empty.
+
+      Complete only (the query already passes `includeArchived: false`), and one shared IR cache
+      across the scan so this costs one workflow read per distinct workflow rather than per task.
+      */
+      const activeIrCache = new Map<string, WorkflowIr>();
+      const active: typeof tasks = [];
+      for (const t of tasks) {
+        if (!(await completeColumnsForTask(store, t.id, activeIrCache)).has(t.column)) active.push(t);
+      }
       if (active.length === 0) {
         return {
           content: [{ type: "text" as const, text: "No active tasks." }],

@@ -17,7 +17,6 @@ import { TaskCommitAssociation } from "../types.js";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 
-
 export async function getTaskCommitAssociationsByLineageIdImpl(store: TaskStore, lineageId: string): Promise<TaskCommitAssociation[]> {
     /*
     FNXC:PostgresCutover 2026-07-04:
@@ -26,34 +25,23 @@ export async function getTaskCommitAssociationsByLineageIdImpl(store: TaskStore,
     Drizzle select returns camelCase columns (schema-mapped), cast to the
     shared TaskCommitAssociationRow shape used by normalizeTaskCommitAssociation.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db
-        .select()
-        .from(schema.project.taskCommitAssociations)
-        .where(eq(schema.project.taskCommitAssociations.taskLineageId, lineageId))
-        .orderBy(
-          desc(schema.project.taskCommitAssociations.authoredAt),
-          desc(schema.project.taskCommitAssociations.createdAt),
-        );
-      return (rows as TaskCommitAssociationRow[]).map((row) =>
-        normalizeTaskCommitAssociation({
-          ...row,
-          note: row.note ?? undefined,
-          additions: row.additions ?? undefined,
-          deletions: row.deletions ?? undefined,
-        }),
+        const layer = store.asyncLayer!;
+    const rows = await layer.db
+      .select()
+      .from(schema.project.taskCommitAssociations)
+      .where(eq(schema.project.taskCommitAssociations.taskLineageId, lineageId))
+      .orderBy(
+        desc(schema.project.taskCommitAssociations.authoredAt),
+        desc(schema.project.taskCommitAssociations.createdAt),
       );
-    }
-    const rows = store.db.prepare(
-      `SELECT * FROM task_commit_associations WHERE taskLineageId = ? ORDER BY authoredAt DESC, createdAt DESC`,
-    ).all(lineageId) as TaskCommitAssociationRow[];
-    return rows.map((row) => normalizeTaskCommitAssociation({
-      ...row,
-      note: row.note ?? undefined,
-      additions: row.additions ?? undefined,
-      deletions: row.deletions ?? undefined,
-    }));
+    return (rows as TaskCommitAssociationRow[]).map((row) =>
+      normalizeTaskCommitAssociation({
+        ...row,
+        note: row.note ?? undefined,
+        additions: row.additions ?? undefined,
+        deletions: row.deletions ?? undefined,
+      }),
+    );
 }
 
 export async function replaceLegacyTaskCommitAssociationsImpl(store: TaskStore,
@@ -69,31 +57,22 @@ export async function replaceLegacyTaskCommitAssociationsImpl(store: TaskStore,
     preserved (matched only on the three legacy sources), matching the SQLite
     path's IN-filter exactly.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
-        .delete(schema.project.taskCommitAssociations)
-        .where(
-          and(
-            eq(schema.project.taskCommitAssociations.taskLineageId, lineageId),
-            inArray(schema.project.taskCommitAssociations.matchedBy, [
-              "legacy-task-id-trailer",
-              "legacy-subject",
-              "manual-reconciliation",
-            ]),
-          ),
-        );
-      for (const association of associations) {
-        await store.upsertTaskCommitAssociation({ ...association, taskLineageId: lineageId });
-      }
-      return;
-    }
-    const deleteStmt = store.db.prepare(
-      `DELETE FROM task_commit_associations WHERE taskLineageId = ? AND matchedBy IN ('legacy-task-id-trailer', 'legacy-subject', 'manual-reconciliation')`,
-    );
-    deleteStmt.run(lineageId);
+        const layer = store.asyncLayer!;
+    await layer.db
+      .delete(schema.project.taskCommitAssociations)
+      .where(
+        and(
+          eq(schema.project.taskCommitAssociations.taskLineageId, lineageId),
+          inArray(schema.project.taskCommitAssociations.matchedBy, [
+            "legacy-task-id-trailer",
+            "legacy-subject",
+            "manual-reconciliation",
+          ]),
+        ),
+      );
     for (const association of associations) {
       await store.upsertTaskCommitAssociation({ ...association, taskLineageId: lineageId });
     }
+    return;
 }
 

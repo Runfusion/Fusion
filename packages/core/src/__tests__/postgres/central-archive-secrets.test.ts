@@ -446,10 +446,22 @@ pgDescribe("PostgreSQL central-db / archive-db / secrets-store (U6 satellite-cen
       await expect(
         resilientStore.createSecret({ scope: "project", key: "RESILIENT", plaintextValue: "still-created" }),
       ).resolves.toMatchObject({ key: "RESILIENT" });
-      expect(warning).toHaveBeenCalledWith(
-        "[async-secrets-store] audit emitter failed",
-        expect.objectContaining({ message: "audit transport unavailable" }),
-      );
+      /*
+      FNXC:EngineDiagnostics 2026-07-30-15:00:
+      Asserted with stringContaining, because the logger deliberately wraps every message in a
+      machine-readable severity marker: `withSeverityMarker` (logger.ts:31) emits
+      `\u0000fnlvl=warn\u0000[core-async-secrets-store] …` so the TUI log pane can colour by level.
+      This case pinned the raw string and so broke when that convention landed — the assertion was
+      coupled to log FORMATTING, not to the behaviour it exists to check.
+
+      What it actually cares about is that a failing audit emitter is reported and does not take the
+      create down with it. Both are still asserted: the resolves.toMatchObject above proves the secret
+      was created anyway, and this proves the failure was surfaced with its cause.
+      */
+      expect(warning).toHaveBeenCalledTimes(1);
+      const [loggedMessage, loggedCause] = warning.mock.calls[0]!;
+      expect(String(loggedMessage)).toContain("[async-secrets-store] audit emitter failed");
+      expect((loggedCause as { message?: string })?.message).toBe("audit transport unavailable");
     } finally {
       warning.mockRestore();
     }

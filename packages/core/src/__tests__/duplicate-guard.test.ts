@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Column, Task } from "../types.js";
 import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "../duplicate-detection.js";
-import { findRecentTasksByContentFingerprintImpl } from "../task-store/branch-and-pr-entities.js";
+import { resolveFingerprintWindowMs } from "../task-store/branch-and-pr-entities.js";
 import {
   FINGERPRINT_WINDOW_DEFAULT_MS,
   FINGERPRINT_WINDOW_MAX_MS,
@@ -305,6 +305,51 @@ describe("reconcileDeterministicDuplicate", () => {
     }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-19:45 (census-invisible moveTask destinations):
+  DIFFERENTIAL over the archive lane's id. The case above asserts `moveTask("FN-2", "archived")` — the
+  LEGACY id, which is exactly what the hardcoded destination passed, so it was green before this
+  conversion and would stay green for a broken one.
+
+  The destination of a `moveTask` is a call ARGUMENT, so the lifecycle-column census (an AST scan for
+  comparisons) never pointed at it. Since U12 hoisted the `workflowHasColumn` rejection out of its dead
+  flag-gated branch, a board that does not declare `archived` REJECTS this move instead of silently
+  landing the card there — so the duplicate is never archived and keeps sitting on the operator's board
+  as live work, already stamped `deterministicDuplicateOf`.
+
+  REVERT CHECK, measured: with the literal `"archived"` restored, this fails — `moveTask` is called with
+  `"archived"` on a board whose archive lane is `boxed`.
+  */
+  it("archives a deterministic duplicate into the workflow's OWN archive lane", async () => {
+    const canonicalTs = new Date(Date.now() - 2_000).toISOString();
+    const createdTs = new Date().toISOString();
+    const canonical = mkTask({ id: "FN-1", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
+    const created = mkTask({ id: "FN-2", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: createdTs, updatedAt: createdTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
+    const { store } = makeStore([canonical, created]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([canonical, created]);
+    /* A workflow whose archive lane is NOT the legacy id. Everything else is irrelevant to this path. */
+    const ir = {
+      version: "v2", id: "dup-lifecycle", name: "dup",
+      columns: [
+        { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "boxed", name: "Boxed", traits: [{ trait: "archived" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "todo" }],
+      edges: [],
+    };
+    Object.assign(store, {
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "dup-lifecycle", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "dup-lifecycle", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "dup-lifecycle" ? { ir } : undefined)),
+    });
+
+    const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
+
+    expect(result).toEqual({ outcome: "archived", canonical });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-2", "boxed");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-2", "archived");
+  });
+
   it("fails open when archive move throws", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const createdTs = new Date().toISOString();
@@ -325,50 +370,54 @@ describe("reconcileDeterministicDuplicate", () => {
 FNXC:TaskCreationDeduplication 2026-07-26-07:40:
 The store query owns a SECOND clamp on the same window. Code review found that widening only
 duplicate-guard.ts capped the effective window at the store's own 5-minute ceiling, and no test
-caught it because the guard tests stub the query. These assertions pin the real cutoff the SQL
-receives, so the two clamps cannot drift apart again.
+caught it because the guard tests stub the query. The second clamp now lives in ONE exported policy
+function that both the guard and the store query call, so the two cannot drift apart again — and it is
+asserted directly rather than recovered from a stubbed query's cutoff string.
 */
-describe("findRecentTasksByContentFingerprintImpl window", () => {
-  function stubStore(): { store: TaskStore; cutoffs: string[] } {
-    const cutoffs: string[] = [];
-    const store = {
-      backendMode: false,
-      getTaskSelectClause: () => "t.*",
-      rowToTask: (row: unknown) => row as Task,
-      db: {
-        prepare: () => ({
-          all: (_fingerprint: string, cutoffIso: string) => {
-            cutoffs.push(cutoffIso);
-            return [];
-          },
-        }),
-      },
-    } as unknown as TaskStore;
-    return { store, cutoffs };
-  }
+describe("duplicate-guard fingerprint window policy", () => {
 
-  it("defaults to the shared 10-minute window, not the store's old 60s/5m pair", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp");
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeGreaterThanOrEqual(FINGERPRINT_WINDOW_DEFAULT_MS - 5_000);
-    expect(windowMs).toBeLessThanOrEqual(FINGERPRINT_WINDOW_DEFAULT_MS + 5_000);
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-04:20:
+  Asserted on the pure policy function instead of through a store fake. These three drove
+  `findRecentTasksByContentFingerprintImpl` against a fake modelling the DELETED SQLite path
+  (`db.prepare().all()`) and recovered the window by parsing a captured cutoff string; that fake broke
+  when the query moved to `asyncLayer` + Drizzle ("Cannot read properties of undefined (reading
+  'projectId')").
+
+  Rebuilding a Drizzle chain to recover a number the policy already returns would be mock-the-world
+  for no gain. Targeting `resolveFingerprintWindowMs` also removes the +/-5s timing tolerance the old
+  shape needed, so these now assert exact values.
+  */
+  it("defaults to the shared 10-minute window, not the store's old 60s/5m pair", () => {
+    expect(resolveFingerprintWindowMs()).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    expect(FINGERPRINT_WINDOW_DEFAULT_MS).toBeGreaterThan(300_000);
   });
 
-  it("honors an explicit window above the old 5-minute ceiling", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp", { windowMs: 20 * 60_000 });
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeGreaterThan(300_000);
+  it("honors an explicit window above the old 5-minute ceiling", () => {
+    expect(resolveFingerprintWindowMs(20 * 60_000)).toBe(20 * 60_000);
+    expect(resolveFingerprintWindowMs(20 * 60_000)).toBeGreaterThan(300_000);
   });
 
-  it("still clamps to the shared ceiling", async () => {
-    const { store, cutoffs } = stubStore();
-    const before = Date.now();
-    await findRecentTasksByContentFingerprintImpl(store, "fp", { windowMs: 24 * 60 * 60_000 });
-    const windowMs = before - Date.parse(cutoffs[0]!);
-    expect(windowMs).toBeLessThanOrEqual(FINGERPRINT_WINDOW_MAX_MS + 5_000);
+  it("still clamps to the shared ceiling", () => {
+    expect(resolveFingerprintWindowMs(24 * 60 * 60_000)).toBe(FINGERPRINT_WINDOW_MAX_MS);
+  });
+
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-05:40 (coderabbit, major):
+  Regression for a PRE-EXISTING crash the extraction exposed: `Math.trunc(NaN)` is NaN and both clamps
+  pass it through, so the caller's `new Date(Date.now() - windowMs).toISOString()` threw "Invalid time
+  value". Verified by running the old inline expression directly.
+  */
+  it("falls back to the default for a non-finite request instead of propagating NaN", () => {
+    expect(resolveFingerprintWindowMs(Number.NaN)).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    expect(resolveFingerprintWindowMs(Number.POSITIVE_INFINITY)).toBe(FINGERPRINT_WINDOW_DEFAULT_MS);
+    // The point of the guard: the value must be usable as a Date offset.
+    expect(() => new Date(Date.now() - resolveFingerprintWindowMs(Number.NaN)).toISOString()).not.toThrow();
+  });
+
+  it("floors at 1ms so a zero or negative request cannot produce a future cutoff", () => {
+    // The `Math.max(1, ...)` half of the policy, which the old cutoff-parsing shape could not see.
+    expect(resolveFingerprintWindowMs(0)).toBe(1);
+    expect(resolveFingerprintWindowMs(-5_000)).toBe(1);
   });
 });

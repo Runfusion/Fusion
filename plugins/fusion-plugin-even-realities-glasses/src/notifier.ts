@@ -1,4 +1,5 @@
-import type { AsyncDataLayer, Task } from "@fusion/core";
+import { resolveTaskLifecycleColumns } from "@fusion/core";
+import type { AsyncDataLayer, Task, WorkflowIr } from "@fusion/core";
 import type { PluginContext } from "@fusion/plugin-sdk";
 import { notificationCard } from "./cards.js";
 import { diffSnapshots } from "./notifications/diff.js";
@@ -77,7 +78,77 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       const tasks = (await deps.taskStore.listTasks({ includeArchived: false })) as Task[];
       const snapshot = await snapshotStore.read(deps.layer);
       const notifyOnColumns = new Set(getNotifyColumns(deps.settings));
-      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone: false });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:05 (#2852 review — greptile P2, and it is right):
+      Each card's OWN complete lane, resolved per task and ONLY when the flag that consumes it is on.
+
+      `diffSnapshots` declared a per-task `completeColumnsByTaskId` that this — its only caller —
+      never built, so its completion test fell through to the literal `"done"` on every real poll.
+      That is the unwired-lane-parameter class, and it is what this change set exists to fix.
+
+      MY FIRST FIX USED THE WRONG SHAPE, which is worth recording because I wrote the warning against
+      it myself. I replaced the per-task map with a flat set from `resolveProjectColumnsForRoles`
+      because it was one read instead of N. But that helper is the READ-shaped answer: it ALWAYS
+      unions the legacy `done` in, which is inert for a query and a false positive for a per-card
+      decision. A workflow that declares `shipped` as its complete lane and reuses `done` as an
+      ordinary lane would have fired a "completed" notification for live work. The header of
+      `project-lane-vocabulary.ts` names this exact mistake — "answering a per-card question from
+      this union" — and I made it anyway, one module over.
+
+      The original author's shape was correct and their comment said why: the poll spans the whole
+      board, so one workflow's complete column can be another workflow's WIP column. Restored.
+
+      THE COST OBJECTION IS ANSWERED BY THE GATE, not by the shape. `alsoNotifyOnDone` decides
+      whether the map is consumed at all, and it is `false` here today — so the per-task reads cost
+      exactly nothing now, and the day someone enables the flag they get the correct answer rather
+      than a cheap wrong one. An IR cache is shared across the tasks so distinct workflows, not
+      distinct cards, drive the resolution count.
+
+      Best-effort per card: a card whose workflow cannot be resolved is simply absent from the map
+      and falls back to the documented legacy default, rather than dropping the whole poll.
+      */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-17:10 (found while closing #2852's review — REPORTED,
+      not fixed):
+
+      THIS CONSTANT MAKES THE WHOLE COMPLETION PATH DEAD, AND THE SEAM CHECKER STILL READS IT AS WIRED.
+
+      `alsoNotifyOnDone` is a hardcoded `false` with no setting behind it — grep it: the only writer is
+      this line. So the block below never runs, `completeColumnsByTaskId` is ALWAYS `undefined`, and
+      `diffSnapshots`'s `isComplete && opts.alsoNotifyOnDone` can never fire. The per-task lane
+      resolution this change set exists to wire is therefore still inert in production, one level
+      further down than the omission it replaced.
+
+      AND THE INSTRUMENT CANNOT SEE IT. `check-inert-flag-seams.mjs` asks whether a call site SUPPLIES
+      the argument. Line 128 does supply it — as a variable that is always `undefined` because a
+      constant `false` guards its construction. "Supplied" and "supplied with a real value" are
+      different questions, and only the first is being asked. This is the sharpest instance of the
+      class the checker was built for, sitting inside the checker's own blind spot.
+
+      LEFT AS-IS DELIBERATELY. Turning this into a setting is a behaviour change — it makes the
+      glasses start emitting completion notifications nobody has opted into — and that belongs to
+      whoever owns this plugin's UX, not to a conversion batch. What must not happen is the seam being
+      counted as fixed. Recorded here so the count is read with the caveat attached.
+      */
+      const alsoNotifyOnDone = false;
+      let completeColumnsByTaskId: Map<string, ReadonlySet<string>> | undefined;
+      if (alsoNotifyOnDone) {
+        const irCache = new Map<string, WorkflowIr>();
+        completeColumnsByTaskId = new Map();
+        for (const task of tasks) {
+          try {
+            const complete = (await resolveTaskLifecycleColumns(
+              deps.taskStore as Parameters<typeof resolveTaskLifecycleColumns>[0],
+              task.id,
+              irCache,
+            ))?.complete;
+            if (complete) completeColumnsByTaskId.set(task.id, new Set([complete]));
+          } catch (err) {
+            deps.logger?.debug?.("could not resolve complete lane for task", { err, pluginId: deps.pluginId, taskId: task.id });
+          }
+        }
+      }
+      const events = diffSnapshots(snapshot, tasks, { notifyOnColumns, alsoNotifyOnDone, completeColumnsByTaskId });
       const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
 
       for (const event of events) {

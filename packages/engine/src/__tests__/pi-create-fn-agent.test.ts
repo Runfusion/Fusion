@@ -2611,7 +2611,8 @@ describe("createFnAgent", () => {
 
   it("logs createFnAgent startup diagnostics without leaking cwd", async () => {
     const { piLog } = await import("../logger.js");
-    const logSpy = vi.spyOn(piLog, "log").mockImplementation(() => {});
+    // FNXC:EngineDiagnostics 2026-07-26-09:55: entry chatter is debug-gated.
+    const debugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
     const { createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
@@ -2622,7 +2623,7 @@ describe("createFnAgent", () => {
       defaultModelId: "gpt-5.4",
     });
 
-    const startupLog = logSpy.mock.calls
+    const startupLog = debugSpy.mock.calls
       .map(([message]) => String(message))
       .find((message) => message.includes("createFnAgent called"));
 
@@ -2634,7 +2635,7 @@ describe("createFnAgent", () => {
     expect(startupLog).not.toContain("cwd=");
     expect(startupLog).not.toContain("/tmp/private-worktree");
 
-    logSpy.mockRestore();
+    debugSpy.mockRestore();
   });
 
   it("falls back during prompt when the primary model has an auth failure", async () => {
@@ -3262,7 +3263,7 @@ describe("createFnAgent", () => {
 
     it("diagnostics are logged via structured logger with [skills] context", async () => {
       const { piLog } = await import("../logger.js");
-      const piLogSpy = vi.spyOn(piLog, "log").mockImplementation(() => {});
+      const piDebugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
 
       // Test diagnostics logging by directly calling createSkillsOverrideFromSelection
       const { createSkillsOverrideFromSelection } = await import("../skill-resolver.js");
@@ -3288,8 +3289,8 @@ describe("createFnAgent", () => {
       // Check that diagnostics were produced
       expect(result.diagnostics.length).toBeGreaterThan(0);
 
-      // Check that diagnostics were logged with [skills] context
-      const skillLogs = piLogSpy.mock.calls.filter(call =>
+      // type=info skill diagnostics (including not-found) are debug-gated
+      const skillLogs = piDebugSpy.mock.calls.filter(call =>
         String(call[0]).includes("[skills]")
       );
       expect(skillLogs.length).toBeGreaterThan(0);
@@ -3298,7 +3299,7 @@ describe("createFnAgent", () => {
       const lastLog = skillLogs[skillLogs.length - 1][0] as string;
       expect(lastLog).toContain("[executor]");
 
-      piLogSpy.mockRestore();
+      piDebugSpy.mockRestore();
     });
   });
 });

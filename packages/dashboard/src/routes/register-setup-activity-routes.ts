@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-setup-activity-routes");
 import type { ActivityEventType } from "@fusion/core";
 import { ApiError, badRequest, rethrowAsApiError } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -103,62 +106,31 @@ router.get("/activity-feed", async (req, res) => {
   }
 });
 
-/**
- * GET /api/global-concurrency
- * Get global concurrency state across all projects.
- * Returns: GlobalConcurrencyState
- */
+/*
+FNXC:CapacityModel 2026-07-28-23:45 (drop the cross-project cap — settings half):
+PUT /api/global-concurrency is DELETED: it set a machine-wide limit that no longer
+exists. Capacity is two numbers PER PROJECT.
+
+GET SURVIVES but returns TELEMETRY ONLY — live "N running" counts per project, via
+CentralCore's registered side-effect-safe source. It no longer reports
+globalMaxConcurrent or queuedCount: those came from the deleted cap and from slot
+bookkeeping that production code never incremented, so publishing them was
+publishing zeros dressed as state. Nothing gates on this route.
+*/
 router.get("/global-concurrency", async (_req, res) => {
   try {
     const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
     const shouldClose = !options?.centralCore;
     if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
 
-    const state = await central.getGlobalConcurrencyState();
     const liveCounts = await central.getLiveRunningAgentCounts();
 
-    /*
-    FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
-    The published global-concurrency route reads currentlyActive/projectsActive through CentralCore's live seam while preserving globalMaxConcurrent/queuedCount from slot bookkeeping. The dashboard-registered source only inspects already-open project stores, so this read stays side-effect-safe and never opens watchers or starts project runtimes.
-    */
-    const liveState = {
-      ...state,
+    if (shouldClose) await central.close();
+
+    res.json({
       currentlyActive: liveCounts.currentlyActive,
       projectsActive: liveCounts.projectsActive,
-    };
-
-    if (shouldClose) await central.close();
-
-    res.json(liveState);
-  } catch (err: unknown) {
-    if (err instanceof ApiError) {
-      throw err;
-    }
-    rethrowAsApiError(err);
-  }
-});
-
-/**
- * PUT /api/global-concurrency
- * Update the system-wide concurrency limit across all projects.
- * Body: { globalMaxConcurrent: number }
- * Returns: GlobalConcurrencyState
- */
-router.put("/global-concurrency", async (req, res) => {
-  const { globalMaxConcurrent } = req.body ?? {};
-  if (!Number.isInteger(globalMaxConcurrent) || globalMaxConcurrent < 1 || globalMaxConcurrent > 10000) {
-    throw badRequest("globalMaxConcurrent must be an integer between 1 and 10000");
-  }
-
-  try {
-    const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
-    const shouldClose = !options?.centralCore;
-    if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
-
-    const state = await central.updateGlobalConcurrency({ globalMaxConcurrent });
-    if (shouldClose) await central.close();
-
-    res.json(state);
+    });
   } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;
@@ -194,7 +166,7 @@ router.get("/first-run-status", async (_req, res) => {
       const hasProjects = detectedProjects.length > 0;
       const singleProjectPath = detectedProjects.length === 1 ? detectedProjects[0].path : null;
 
-      console.warn(
+      severityAuditLog.warn(
         `[routes:first-run-status] Falling back to detected projects after central DB error: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -241,7 +213,7 @@ router.get("/setup-state", async (_req, res) => {
       state = await detector.detectFirstRunState(central);
       projects = await central.listProjects();
     } catch (error) {
-      console.warn(
+      severityAuditLog.warn(
         `[routes:setup-state] Unable to read central DB state: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {

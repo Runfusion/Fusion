@@ -58,8 +58,17 @@ describe("getTaskStatusBadgeLabel", () => {
     expect(label).not.toBe("Replan");
   });
 
+  /*
+  FNXC:TaskStatusBadge 2026-07-26-14:05:
+  With the Plan Review gate badge naming itself, callers drop the workflow-step override while it
+  renders — so this branch is now what a planning card actually reads, and it must be operator copy
+  rather than the raw engine token it used to expose.
+  */
+  it("maps the planning status to operator copy, not the engine token", () => {
+    expect(getTaskStatusBadgeLabel("planning", t)).toBe("Planning");
+  });
+
   it("passes through non-merge statuses", () => {
-    expect(getTaskStatusBadgeLabel("planning", t)).toBe("planning");
     expect(getTaskStatusBadgeLabel("failed", t)).toBe("failed");
     expect(getTaskStatusBadgeLabel(null, t)).toBe("");
   });

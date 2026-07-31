@@ -43,11 +43,13 @@ import {
   resolveColumnAdjacency,
   PLAN_REVIEW_GROUP_ID,
   ACTIVE_WORKFLOW_WORK_ITEM_STATES,
-  DEFAULT_WORKFLOW_POOL_ID,
+  resolveCapacityPoolId,
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
+  isWorkflowOptionalGroupEnabled,
   resolveEffectiveAutoMerge,
+  isTaskBlockedOnApproval,
   type TaskStore,
   type Task,
   type WorkflowIr,
@@ -112,9 +114,11 @@ export interface HoldReleaseResult {
 
 async function effectiveWorkflowId(store: TaskStore, taskId: string): Promise<string> {
   try {
-    return (await store.getTaskWorkflowSelectionAsync(taskId))?.workflowId ?? DEFAULT_WORKFLOW_POOL_ID;
+    return resolveCapacityPoolId((await store.getTaskWorkflowSelectionAsync(taskId))?.workflowId);
   } catch {
-    return DEFAULT_WORKFLOW_POOL_ID;
+    /* An unreadable selection is indistinguishable from no selection for pooling
+       purposes, so it takes the same bucket rather than a second convention. */
+    return resolveCapacityPoolId(undefined);
   }
 }
 
@@ -178,8 +182,33 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   capacity boundary. Releasing first would skip the gate. This does not fire
   when Plan Review already lives in a WIP column.
   */
+  /*
+  FNXC:PlanReview 2026-07-26-14:05:
+  The gate is PLAN-IN-PLACE only: it applies when Plan Review runs in the very column the card is
+  held in (Coding (Ideas) / the benchmark's Plan Review in Todo), which is the same condition the
+  other two consumers of this resolver already require (`seedPreReleasePlanReviewContinuation`,
+  `evaluateStrandedHoldContinuation`). Without the column check, moving the default workflow's Plan
+  Review out of the wip column into the planning column turned "non-wip" into "pre-release" for every
+  card in Todo — including cards whose graph never routes through Todo at all — and the capacity
+  sweep stopped releasing them (no continuation for a boundary they never reach). A review node in an
+  upstream column the card has already left is not something this sweep gates on.
+  */
+  /*
+  FNXC:PlanReview 2026-07-26-17:10:
+  The gate also requires Plan Review to be ENABLED for this task. It exists to stop a card entering
+  implementation before its plan gate ran; a task whose plan-review group is toggled OFF has no such
+  gate, and holding it produced a deadlock — nothing would ever record the evidence the hold was
+  waiting for.
+  */
   const preReleaseReview = resolvePreReleasePlanReviewNode(ir);
-  if (preReleaseReview) {
+  const preReleaseReviewEnabled = preReleaseReview
+    ? isWorkflowOptionalGroupEnabled(
+      task.enabledWorkflowSteps,
+      preReleaseReview.id,
+      (preReleaseReview.config as { defaultOn?: boolean } | undefined)?.defaultOn ?? false,
+    )
+    : false;
+  if (preReleaseReview && preReleaseReviewEnabled && preReleaseReview.column === task.column) {
     // Compatibility for tasks planned before durable continuations existed and
     // for narrow store adapters that expose only the legacy review result.
     const legacyPassed = task.workflowStepResults?.some(
@@ -295,6 +324,20 @@ function resolveReleaseTarget(ir: WorkflowIr, fromColumn: string, preferCapacity
 
 // ── Dependency satisfaction (KTD-5 + FN-5719 dual-accept) ─────────────────────
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-00:20 (Phase B / slice B2) DELIBERATE-LITERAL:
+Reviewed as a U5 conversion candidate and deliberately NOT converted. This is the LEGACY
+half of the FN-5719 dual-accept pair in `dependencySatisfied` below: the trait half already
+handles renamed workflows, and this half exists specifically to honor the pre-trait
+completion signal and to log a `merge:dependency-parity-diff` audit event when the two
+disagree. Converting it to traits would make both halves compute the same answer — deleting
+the compatibility signal AND the divergence detector in one move, while looking like a
+cleanup. The literal IS the semantic here.
+
+Its removal is the dual-accept window CLOSING, which is U12's call, not a Phase B refactor.
+Recorded for the U12 literal ratchet's allowlist; that ratchet does not exist in the tree
+yet, so grep `DELIBERATE-LITERAL` to enumerate the sites it must admit.
+*/
 /** Legacy completion signal: dependency's column is a terminal/handoff column. */
 function legacyDependencySatisfied(dep: Task): boolean {
   return dep.column === "done" || dep.column === "in-review" || dep.column === "archived";
@@ -399,7 +442,7 @@ function countCapacitySlot(
 ): number {
   let count = 0;
   for (const t of allTasks) {
-    if ((effectiveWorkflowIdByTask.get(t.id) ?? DEFAULT_WORKFLOW_POOL_ID) !== workflowId) continue;
+    if (resolveCapacityPoolId(effectiveWorkflowIdByTask.get(t.id)) !== workflowId) continue;
     if (budgetColumns.has(t.column)) {
       count += 1;
       continue;
@@ -533,7 +576,7 @@ export async function runHoldReleaseSweep(
       }
       const capacity = resolveColumnCapacity(ir, target, settings);
       if (capacity.hasCapacity && Number.isFinite(capacity.limit)) {
-        const workflowId = effectiveWorkflowIdByTask.get(task.id) ?? DEFAULT_WORKFLOW_POOL_ID;
+        const workflowId = resolveCapacityPoolId(effectiveWorkflowIdByTask.get(task.id));
         // U4/KTD-9: count occupants across every column sharing the target's
         // budget (a shared `limitSetting` pools multiple wip columns).
         const budgetColumns = new Set(resolveWipBudgetColumns(ir, target));
@@ -643,6 +686,35 @@ async function issueRelease(
   automatic surfaces — the sweep and the webhook release — never pass it, so
   FN-7648's invariant still holds for every non-operator release.
   */
+  /*
+  FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R4):
+  A card blocked on a pending human approval decision must never be released into
+  a processing column by an AUTOMATED surface. `isTaskBlockedOnApproval` is core's
+  declared "single shared predicate ... before rebounding, requeuing, resuming,
+  re-planning, or otherwise advancing a task" (task-merge.ts), and this release
+  path did not consult it.
+
+  How it was reachable: the manual plan-approval gate parks the card by writing
+  `status: "awaiting-approval"` with NO pause flag, so the pre-existing
+  `task.paused || task.userPaused` skip in `runHoldReleaseSweep` did not match,
+  and `isUnplannedForExecution` enumerates only `planning` / `needs-replan`. Once
+  the plan-review gate's evidence landed, the sweep released a card whose plan the
+  operator had never approved — the gate was skipped end to end.
+
+  Checked HERE rather than in each caller because `issueRelease` is the single
+  choke point every release surface funnels through (sweep, `promoteHeldTask`,
+  `releaseHeldTaskByEvent`, and the scheduler's `reserveSlot` guard). Gated on
+  `!options.allowUnplanned` for the same reason the unplanned check is: an
+  explicit operator force-promote IS a human decision about this card, so it
+  waives the human-decision gate, while no automatic surface can.
+  */
+  if (targetIsProcessing && !options.allowUnplanned && isTaskBlockedOnApproval(task)) {
+    schedulerLog.debug(
+      `Hold release for ${task.id} blocked — awaiting a human approval decision (status=${task.status ?? "null"}, pausedReason=${task.pausedReason ?? "null"})`,
+    );
+    return false;
+  }
+
   if (targetIsProcessing && !options.allowUnplanned && (await isUnplannedForExecution(store, task, ir))) {
     /*
     FNXC:StrandedHoldContinuation 2026-07-26-14:15:
@@ -707,11 +779,21 @@ async function issueRelease(
     /*
     FNXC:UserPausedDispatch 2026-07-21-21:45:
     Hold release must test the source column and both pause flags under the same task lock as the move. This makes an operator pause win atomically against scheduler dispatch and also replaces event-identity inference for concurrent release attempts.
+
+    FNXC:PlanApprovalHold 2026-07-27-19:30 (U7 / R6):
+    The approval hold is tested here too, not only in the pre-check above. The
+    pre-check reads a task snapshot the sweep loaded earlier in the pass, so a plan
+    gate (or an operator) that parks the card between that read and this move would
+    otherwise lose the race and the card would release unapproved. Only the
+    predicate under the task lock is authoritative; the pre-check is an early exit.
+    `allowUnplanned` is carried through so an explicit operator force-promote waives
+    the gate here exactly as it does above — one waiver, not two policies.
     */
     const result = await store.moveTaskIf(
       task.id,
       target,
-      (live) => live.column === originalColumn && live.paused !== true && live.userPaused !== true,
+      (live) => live.column === originalColumn && live.paused !== true && live.userPaused !== true
+        && !(targetIsProcessing && !options.allowUnplanned && isTaskBlockedOnApproval(live)),
       {
         moveSource: "scheduler",
         allocateWorktree:
@@ -729,8 +811,9 @@ async function issueRelease(
   } catch (error) {
     if (error instanceof TransitionRejectionError && error.rejection.code === "capacity-exhausted") {
       // Lost the in-txn race for the slot — release the reservation, stay held.
+      // FNXC:EngineDiagnostics 2026-07-26-08:17: capacity races re-hit every sweep while full; same class as deferred-no-slot → debug.
       reservation?.release();
-      schedulerLog.log(`Hold release for ${task.id} rejected on capacity for ${target} — staying held`);
+      schedulerLog.debug(`Hold release for ${task.id} rejected on capacity for ${target} — staying held`);
       return false;
     }
     // Any other failure: release the reservation and let the card stay held.

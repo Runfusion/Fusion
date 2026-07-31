@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { ActivityAnalytics } from "@fusion/core";
 import type { DateRange } from "../DateRangePicker";
@@ -8,6 +8,7 @@ import { LineChart as RechartsLineChart, PieChart } from "../charts/recharts";
 import { AreaShell } from "./AreaShell";
 import { useAnalyticsArea } from "./useAnalyticsArea";
 import { formatCount, isInvalidRange } from "./areaShared";
+import { useVisibilityAwarePoll } from "../../../hooks/visibilitySuspension";
 
 const ACTIVITY_LIVE_REFRESH_MS = 15_000;
 
@@ -46,15 +47,14 @@ export function ActivityArea({ range, projectId }: { range: DateRange; projectId
   const invalidRange = isInvalidRange(range);
   const isInitialLoading = isLoading && data === null;
 
-  useEffect(() => {
-    if (invalidRange) {
-      return undefined;
-    }
-    const interval = window.setInterval(() => {
-      reload();
-    }, ACTIVITY_LIVE_REFRESH_MS);
-    return () => window.clearInterval(interval);
-  }, [invalidRange, reload]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:22:
+  The Activity live refresh is suspended while the document is hidden. Charts nobody is looking at must not
+  keep the page busy — sustained background fetching is a primary iOS/Chrome Android discard signal, and the
+  discard is what forced the white-splash reload on return. One reload fires on the hidden -> visible edge so
+  the charts are current the moment they are seen.
+  */
+  useVisibilityAwarePoll(reload, ACTIVITY_LIVE_REFRESH_MS, { enabled: !invalidRange });
 
   const agentRuns = data?.agentRuns ?? { total: 0, active: 0, completed: 0, failed: 0 };
   const agentRunPieData = useMemo(

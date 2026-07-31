@@ -202,7 +202,8 @@ export class PeerExchangeService {
   async syncWithAllPeers(): Promise<SyncResult[]> {
     // Single-flight: if a sync is already running, return that
     if (this.activeSync) {
-      peerExchangeLog.log("Sync already in progress, skipping");
+      // FNXC:EngineDiagnostics 2026-07-26-08:17: overlapping sync ticks are expected under load — not operator-actionable.
+      peerExchangeLog.debug("Sync already in progress, skipping");
       await this.activeSync;
       return [];
     }
@@ -226,11 +227,15 @@ export class PeerExchangeService {
       );
 
       if (onlineRemoteNodes.length === 0) {
-        peerExchangeLog.log("No online remote nodes to sync with");
+        peerExchangeLog.debug("No online remote nodes to sync with");
         return;
       }
 
-      peerExchangeLog.log(`Starting sync with ${onlineRemoteNodes.length} peers`);
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-08:25:
+      Peer exchange runs on a fixed interval. Start + zero-work complete lines every cycle flooded the TUI. Keep start and empty-result summaries on debug (FUSION_DEBUG=peer-exchange); non-zero discovery counts and failures stay at log/warn. Service start/stop remain at log.
+      */
+      peerExchangeLog.debug(`Starting sync with ${onlineRemoteNodes.length} peers`);
 
       // Sync with each node sequentially (not in parallel to avoid thundering herd)
       let totalAdded = 0;
@@ -249,14 +254,19 @@ export class PeerExchangeService {
         }
       }
 
-      // Log summary
+      // Log summary — zero-work cycles are debug; errors or peer discovery stay visible.
       if (errors.length > 0) {
         peerExchangeLog.log(
           `Sync complete: ${onlineRemoteNodes.length - errors.length} succeeded, ${errors.length} failed. ` +
           `${totalAdded} new peers discovered, ${totalUpdated} updated. Errors: ${errors.join("; ")}`
         );
-      } else {
+      } else if (totalAdded > 0 || totalUpdated > 0) {
         peerExchangeLog.log(
+          `Sync complete: ${onlineRemoteNodes.length} peers synced. ` +
+          `${totalAdded} new peers discovered, ${totalUpdated} updated.`
+        );
+      } else {
+        peerExchangeLog.debug(
           `Sync complete: ${onlineRemoteNodes.length} peers synced. ` +
           `${totalAdded} new peers discovered, ${totalUpdated} updated.`
         );

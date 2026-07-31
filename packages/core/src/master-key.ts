@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-master-key");
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
@@ -119,7 +122,7 @@ export class MasterKeyManager {
         if (afterRace) {
           return { key: afterRace, backend: "keychain" };
         }
-        console.warn("master key keychain unavailable; using file backend");
+        severityAuditLog.warn("master key keychain unavailable; using file backend");
       }
     }
 
@@ -166,7 +169,7 @@ export class MasterKeyManager {
       if (error instanceof MasterKeyCorruptError) {
         throw error;
       }
-      console.warn("master key keychain unavailable; using file backend");
+      severityAuditLog.warn("master key keychain unavailable; using file backend");
       return null;
     }
   }
@@ -218,7 +221,7 @@ export class MasterKeyManager {
       );
       return true;
     } catch {
-      console.warn("master key keychain unavailable; using file backend");
+      severityAuditLog.warn("master key keychain unavailable; using file backend");
       return false;
     }
   }

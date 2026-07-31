@@ -333,6 +333,24 @@ export function setProjectDefaultWorkflow(
   });
 }
 
+/**
+ * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+ * Mirror the Board's current workflow lane into project settings so non-browser
+ * callers (`fn task create`, `fn_task_create`, refinement) can resolve the
+ * "Selected workflow" option for `taskCreateWorkflowId` / `refinementTaskWorkflowId`.
+ * Best-effort and fire-and-forget at the call site: a failed mirror must never
+ * block or revert the operator's lane switch, which localStorage already persisted.
+ */
+export function setProjectBoardSelectedWorkflow(
+  workflowId: string | null,
+  projectId?: string,
+): Promise<{ workflowId: string | null }> {
+  return api<{ workflowId: string | null }>(withProjectId("/project/board-selected-workflow", projectId), {
+    method: "PUT",
+    body: JSON.stringify({ workflowId }),
+  });
+}
+
 // ── Workflow Step Templates ──────────────────────────────────────────────
 
 /** Re-export WorkflowStepTemplate type from core */

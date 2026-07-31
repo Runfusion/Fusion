@@ -12,7 +12,7 @@ import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
 import { MockTaskStore, createTask, flushAsyncWork } from "./notifier.test-harness.js";
 
 vi.mock("../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
 describe("Ntfy notifier helpers", () => {

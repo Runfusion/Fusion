@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, storeLog} from "../store.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -15,7 +16,8 @@ import type {Task, Column, TaskLogEntry, RunMutationContext} from "../types.js";
 import {validateCustomFieldPatch, CustomFieldRejectionError} from "../task-fields.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
-import {validateNodeOverrideChange} from "../node-override-guard.js";
+import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../node-override-guard.js";
+import {isTaskTerminalNodeIdAsync} from "../workflow-ir-resolver.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
@@ -49,7 +51,55 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       const preUpdateDescription = task.description;
 
       if (updates.nodeId !== undefined) {
-        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (#2821 review — greptile, second call site):
+        THE COLUMN IS RE-READ AFTER THE AWAIT.
+
+        `task` was loaded above, and awaiting lane resolution here opened a window: another process
+        moving the card into a resolved WIP lane during that await left the guard judging a STALE
+        non-WIP column, so the mid-flight refusal passed for a task that had started running.
+
+        I fixed exactly this at the sibling call site in `branch-and-pr-entities.ts` by resolving lanes
+        BEFORE the task read, and missed it here — the same half-conversion this program keeps
+        finding, in my own fix. Hoisting is not available at this site because `task` is the working
+        copy the whole function mutates, so the column is re-read instead and only for the guard.
+
+        The re-read is best-effort: if it fails, the already-loaded copy is used, which is strictly no
+        worse than before this change.
+        */
+        const overrideLanes = await resolveNodeOverrideLanes(store, id);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-01:50 (#2821 review — greptile, and it caught a DEADLOCK I shipped):
+        RE-READ WITHOUT THE LOCK. My previous version used `store.getTask(id)`, which acquires the
+        per-task lock. This function is `updateTaskUnlockedImpl` — the caller ALREADY HOLDS that lock,
+        and it is non-reentrant, so the inner read waited on the outer update forever. A stale-column
+        race is a narrow window; a deadlock is every `nodeId` update.
+
+        `readTaskJson` is the lock-free read this function already uses for its own working copy, so
+        the column is refreshed after the await without touching the lock. Falls back to the copy
+        loaded above if the re-read fails, which is no worse than before.
+        */
+        const freshForGuard = await store.readTaskJson(dir).catch(() => null);
+        /*
+        FNXC:StateMachine 2026-08-01-10:20 (PR #2793's finding — the INNER half, merged with #2821):
+        THIS GUARD RUNS SECOND AND USED TO OVERRIDE THE FIRST. `updateTaskImpl` resolves the terminal
+        question and passes it in; this call passed no `isTerminalNodeId`, so it fell to
+        `defaultIsTerminalNodeId` — the bare literal `nodeId === "end"`. An unconverted literal behind
+        a converted call site, which meant converting the outer guard alone changed nothing an
+        operator could see. PR #2793 measured exactly that: correcting either guard on its own left
+        the rejected-`end` case unmoved, because both independently called it terminal.
+
+        Resolved here too, from the task's own workflow, and threaded ALONGSIDE #2821's
+        `overrideLanes` rather than in place of them — the two answer different questions about the
+        same call, and dropping either re-opens a defect the other did not cover.
+        */
+        const terminal = updates.nodeId == null
+          ? false
+          : await isTaskTerminalNodeIdAsync(store, id, updates.nodeId);
+        const validation = validateNodeOverrideChange(freshForGuard ?? task, updates.nodeId ?? null, {
+          ...overrideLanes,
+          isTerminalNodeId: () => terminal,
+        });
         if (!validation.allowed) {
           throw new Error(validation.message);
         }
@@ -107,13 +157,43 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         const hasNewDeps = normalizedDependencies.some((d) => !oldDeps.has(d));
         task.dependencies = normalizedDependencies;
 
-        if (hasNewDeps && task.column === "todo") {
-          task.column = "triage";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        THIS WROTE A COLUMN THAT NO LONGER EXISTS ON ANY BOARD.
+
+        Adding a new dependency to a hold-lane card re-seeds it for re-specification. The destination
+        was the literal `"triage"` — a column U11 (#2515) DELETED. The default lineage is now
+        `todo | in-progress | in-review | done | archived`, so on a stock board today this moves the
+        card into a column nothing declares and nothing renders: the card leaves its lane and appears
+        in none, recoverable only by moving it back by hand.
+
+        That is a live defect independent of renaming, which is why it is fixed rather than flagged:
+        the old behaviour cannot be preserved, because the column it targeted is gone.
+
+        Resolved intake lane, and NO literal fallback. On the default board the intake lane is `todo`
+        — the card's current column — so the move becomes a no-op while the status reset and the log
+        entry still record the re-specification. When the workflow will not resolve, the column is
+        left ALONE: refusing to move is recoverable, writing a column that may not exist is not.
+        */
+        const depLanes = hasNewDeps
+          ? await resolveTaskLifecycleColumns(store, id).catch(() => undefined)
+          : undefined;
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default for the SOURCE lane only; the
+           destination below never falls back to a literal. Reviewed 2026-07-31-02:40. */
+        const holdLane = depLanes === undefined ? "todo" : depLanes.hold;
+        if (hasNewDeps && holdLane !== undefined && task.column === holdLane) {
+          const intakeLane = depLanes?.intake;
+          const relocating = intakeLane !== undefined && intakeLane !== task.column;
+          if (relocating) {
+            task.column = intakeLane;
+            task.columnMovedAt = new Date().toISOString();
+          }
           task.status = undefined;
-          task.columnMovedAt = new Date().toISOString();
           const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
-            action: "Moved to triage for re-specification — new dependency added",
+            action: relocating
+              ? `Moved to ${intakeLane} for re-specification — new dependency added`
+              : "Re-seeded for re-specification — new dependency added",
           };
           if (runContext) {
             depLogEntry.runContext = runContext;
@@ -171,7 +251,25 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       ) {
         task.paused = undefined;
         task.pausedByAgentId = undefined;
-        if (task.column === "in-progress" || task.column === "in-review") {
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        Clearing the `paused` STATUS on unassignment applies to the two lanes where a card is
+        actively being worked — wip and review. Keyed on the literals, a renamed board left
+        `status: "paused"` behind after the pause itself was lifted, so the card read as paused in
+        every status-driven surface while `task.paused` was already false. A card that is not paused
+        but says it is, forever.
+
+        The lanes are compared directly rather than routed through `column-roles.ts`: those helpers
+        take a column's TRAIT FLAGS, and this site holds a resolved lane struct, not flags.
+        Manufacturing flags from lane equality just to call the helper would be a longer way to write
+        the same comparison while looking like it consulted the trait registry.
+        */
+        const unassignLanes = await resolveTaskLifecycleColumns(store, id).catch(() => undefined);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-02:40. */
+        const inActiveWorkLane = unassignLanes === undefined
+          ? task.column === "in-progress" || task.column === "in-review"
+          : task.column === unassignLanes.wip || task.column === unassignLanes.review;
+        if (inActiveWorkLane) {
           if (task.status === "paused") {
             task.status = undefined;
           }
@@ -721,7 +819,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.modifiedFiles !== undefined) {
         task.modifiedFiles = updates.modifiedFiles;
       }
-      /* FNXC:SymbolLock 2026-07-31-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
+      /* FNXC:SymbolLock 2026-07-20-10:00: present undefined is an explicit clear; only absent declarations may hydrate from a prompt write. */
       if (hasOwnDeclaredSymbols(updates)) {
         const normalized = normalizeDeclaredSymbols(Array.isArray(updates.declaredSymbols) ? updates.declaredSymbols : []);
         task.declaredSymbols = normalized.length ? normalized : undefined;
@@ -776,7 +874,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
 
       /*
-      FNXC:MissionSymbolAdmission 2026-08-01-00:00:
+      FNXC:MissionSymbolAdmission 2026-07-20-00:00:
       A workflow failure may park in the current in-progress column rather than
       move out of it. Release that task's durable symbols on the status edge as
       well as moveTask's column-exit path, allowing engine reconciliation to

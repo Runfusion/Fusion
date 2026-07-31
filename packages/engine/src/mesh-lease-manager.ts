@@ -1,3 +1,4 @@
+import { resolveReboundTarget, resolveWorkflowIrForTask } from "@fusion/core";
 import type {
   AgentStore,
   CentralClaimStore,
@@ -29,8 +30,39 @@ export interface LeaseRecoveryContext {
   preserveProgress?: boolean;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-23:20 (Phase B / U5):
+The legacy rebound target — the builtin coding workflow's hold column. Used only
+when the task's workflow resolves to no column vocabulary at all, where the
+conservative choice is to preserve today's behavior exactly rather than guess.
+*/
+const LEGACY_REBOUND_COLUMN = "todo";
+
 export class MeshLeaseManager {
   constructor(private readonly options: MeshLeaseManagerOptions) {}
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-23:20 (Phase B / U5):
+  Where a recovered lease rebounds to. KTD-10 ordering via `resolveReboundTarget`
+  (hold → intake → first column) — the same helper self-healing.ts:714 already
+  uses for "requeue a recovered card", so the two recovery paths cannot drift.
+
+  Resolved ONCE per recovery and threaded to both the move and the audit
+  metadata. They were previously two independent `=== "todo"` comparisons that
+  could disagree, which is how the audit came to claim a card landed in `todo`
+  when the workflow has no such column.
+
+  Fail-soft: any resolution failure falls back to the legacy literal, since a
+  lease recovery must not be abandoned because a workflow lookup failed.
+  */
+  private async resolveReboundColumn(taskId: string): Promise<string> {
+    try {
+      const ir = await resolveWorkflowIrForTask(this.options.taskStore, taskId);
+      return resolveReboundTarget(ir) ?? LEGACY_REBOUND_COLUMN;
+    } catch {
+      return LEGACY_REBOUND_COLUMN;
+    }
+  }
 
   private staleThresholdMs(agentHeartbeatTimeoutMs?: number): number {
     return Math.max((agentHeartbeatTimeoutMs ?? 60_000) * 2, 120_000);
@@ -123,7 +155,13 @@ export class MeshLeaseManager {
     }
   }
 
-  private async clearLocalLease(task: Task, reason: string, context: LeaseRecoveryContext, nextEpoch: number): Promise<void> {
+  private async clearLocalLease(
+    task: Task,
+    reason: string,
+    context: LeaseRecoveryContext,
+    nextEpoch: number,
+    reboundColumn: string,
+  ): Promise<void> {
     await this.options.taskStore.updateTask(
       task.id,
       {
@@ -142,8 +180,8 @@ export class MeshLeaseManager {
       `${reason}; epoch=${nextEpoch}`,
       context.runContext,
     );
-    if (task.column !== "todo") {
-      await this.options.taskStore.moveTask(task.id, "todo", {
+    if (task.column !== reboundColumn) {
+      await this.options.taskStore.moveTask(task.id, reboundColumn, {
         preserveProgress:
           context.preserveProgress ??
           (task.currentStep > 0 || task.steps.some((step) => step.status !== "pending")),
@@ -446,11 +484,18 @@ export class MeshLeaseManager {
       }
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-27-23:20 (Phase B / U5):
+    Resolved once here so the move below and the unreachable audit further down
+    report the SAME column. Two independent resolutions could disagree.
+    */
+    const reboundColumn = await this.resolveReboundColumn(task.id);
+
     try {
-      await this.clearLocalLease(task, `${reason} (${stale.reason ?? "stale"})`, context, nextEpoch);
+      await this.clearLocalLease(task, `${reason} (${stale.reason ?? "stale"})`, context, nextEpoch, reboundColumn);
     } catch (_error) {
       try {
-        await this.clearLocalLease(task, `${reason} (${stale.reason ?? "stale"})`, context, nextEpoch);
+        await this.clearLocalLease(task, `${reason} (${stale.reason ?? "stale"})`, context, nextEpoch, reboundColumn);
       } catch (retryError) {
         if (this.options.centralClaimStore && this.options.projectId) {
           await this.emitLeaseAudit(task, "task:auto-recover-lease-partial-write", {
@@ -502,8 +547,20 @@ export class MeshLeaseManager {
 
     if (isUnreachableOwnerReason) {
       await emitNodeUnreachableRecovery({
-        decisionPath: task.column === "todo" ? "lease-recovered-in-place" : "lease-recovered-to-todo",
-        newColumn: task.column === "todo" ? task.column : "todo",
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-27-23:20 (Phase B / U5):
+        Both fields read the SAME resolved `reboundColumn` the move used, so the
+        audit can no longer claim a landing column the card never reached. Note
+        `task` is the pre-move snapshot, so `task.column` is still the ORIGINAL
+        column here — that is what makes the in-place comparison meaningful.
+
+        `decisionPath` keeps its legacy `lease-recovered-to-todo` wording: it is
+        a stable audit discriminator that existing queries and dashboards match
+        on, and renaming it would break them to describe the same decision. The
+        column that was actually used is carried by `newColumn`.
+        */
+        decisionPath: task.column === reboundColumn ? "lease-recovered-in-place" : "lease-recovered-to-todo",
+        newColumn: reboundColumn,
         leaseEpoch: nextEpoch,
         recoveryReason: reason,
         handoffPolicy,

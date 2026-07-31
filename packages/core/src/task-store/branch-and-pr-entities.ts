@@ -12,18 +12,19 @@ import { TaskStore } from "../store.js";
 import { filterTasksByBranchGroup } from "../branch-assignment.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
-import { fromJson } from "../db.js";
 import { FINGERPRINT_WINDOW_DEFAULT_MS, FINGERPRINT_WINDOW_MAX_MS } from "../duplicate-guard.js";
 import * as schema from "../postgres/schema/index.js";
 import { taskProjectScope } from "../postgres/data-layer.js";
 import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePrEntityForSource as ensurePrEntityForSourceAsync, getActivePrEntityBySource as getActivePrEntityBySourceAsync, getBranchGroup as getBranchGroupAsync, getBranchGroupByBranchName as getBranchGroupByBranchNameAsync, getBranchGroupBySource as getBranchGroupBySourceAsync, getPrEntity as getPrEntityAsync, getPrThreadState as getPrThreadStateAsync, listActivePrEntities as listActivePrEntitiesAsync, listBranchGroups as listBranchGroupsAsync, listPrThreadStates as listPrThreadStatesAsync, recordPrThreadOutcome as recordPrThreadOutcomeAsync } from "./async-branch-groups.js";
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
-import { type TaskRow } from "./persistence.js";
-import { BranchGroupRow, MergeRequestRow, PrEntityRow, PrThreadStateRow, WorkflowWorkItemRow } from "./row-types.js";
+import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
+import { isTaskTerminalNodeIdAsync } from "../workflow-ir-resolver.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
+import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import type { WorkflowIr } from "../workflow-ir-types.js";
 import { WorkflowSettingDefinition } from "../workflow-ir-types.js";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
@@ -33,30 +34,18 @@ import { MoveTaskInternalOptions, MoveTaskOptions, storeLog } from "../store.js"
 
 export async function getBranchGroupImpl(store: TaskStore, id: string): Promise<BranchGroup | null> {
     // FNXC:RuntimeWorkflowAsync 2026-06-24-16:21:
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getBranchGroupAsync(layer.db, id);
-    }
-    const row = store.db.prepare(`SELECT * FROM branch_groups WHERE id = ?`).get(id) as BranchGroupRow | undefined;
-    return row ? store.rowToBranchGroup(row) : null;
+        const layer = store.asyncLayer!;
+    return getBranchGroupAsync(layer.db, id);
 }
 
 export async function getBranchGroupBySourceImpl(store: TaskStore, sourceType: BranchGroup["sourceType"], sourceId: string): Promise<BranchGroup | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getBranchGroupBySourceAsync(layer.db, sourceType, sourceId);
-    }
-    const row = store.db.prepare(`SELECT * FROM branch_groups WHERE sourceType = ? AND sourceId = ?`).get(sourceType, sourceId) as BranchGroupRow | undefined;
-    return row ? store.rowToBranchGroup(row) : null;
+        const layer = store.asyncLayer!;
+    return getBranchGroupBySourceAsync(layer.db, sourceType, sourceId);
 }
 
 export async function getBranchGroupByBranchNameImpl(store: TaskStore, branchName: string): Promise<BranchGroup | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getBranchGroupByBranchNameAsync(layer.db, branchName);
-    }
-    const row = store.db.prepare(`SELECT * FROM branch_groups WHERE branchName = ? AND status = 'open' ORDER BY createdAt DESC LIMIT 1`).get(branchName) as BranchGroupRow | undefined;
-    return row ? store.rowToBranchGroup(row) : null;
+        const layer = store.asyncLayer!;
+    return getBranchGroupByBranchNameAsync(layer.db, branchName);
 }
 
 export async function ensureBranchGroupForSourceImpl(store: TaskStore,
@@ -64,42 +53,16 @@ export async function ensureBranchGroupForSourceImpl(store: TaskStore,
     sourceId: string,
     init: Omit<BranchGroupCreateInput, "sourceType" | "sourceId">,
   ): Promise<BranchGroup> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return ensureBranchGroupForSourceAsync(layer.db, sourceType, sourceId, init);
-    }
-    const existing = await store.getBranchGroupBySource(sourceType, sourceId);
-    if (existing) {
-      return existing;
-    }
-
-    // `branch_groups.branchName` is globally UNIQUE — a branch is represented by
-    // exactly one open group. If another source already owns an open group for
-    // store branch, reuse it rather than calling createBranchGroup and violating
-    // the UNIQUE constraint. Without store, two missions whose shared base resolves
-    // to the same branch (e.g. "main") collide: the throw escapes triageFeature
-    // and is swallowed by its callers, silently stranding "defined" features.
-    const existingByBranch = await store.getBranchGroupByBranchName(init.branchName);
-    if (existingByBranch) {
-      return existingByBranch;
-    }
-
-    return store.createBranchGroup({
-      sourceType,
-      sourceId,
-      ...init,
-    });
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Branch-group ensure is PostgreSQL-only via ensureBranchGroupForSourceAsync (UNIQUE branchName reuse lives in the async helper).
+    */
+    return ensureBranchGroupForSourceAsync(store.asyncLayer!.db, sourceType, sourceId, init);
 }
 
 export async function listBranchGroupsImpl(store: TaskStore, options?: { status?: BranchGroup["status"] }): Promise<BranchGroup[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return listBranchGroupsAsync(layer.db, options);
-    }
-    const rows = options?.status
-      ? store.db.prepare(`SELECT * FROM branch_groups WHERE status = ? ORDER BY createdAt ASC`).all(options.status)
-      : store.db.prepare(`SELECT * FROM branch_groups ORDER BY createdAt ASC`).all();
-    return (rows as BranchGroupRow[]).map((row) => store.rowToBranchGroup(row));
+        const layer = store.asyncLayer!;
+    return listBranchGroupsAsync(layer.db, options);
 }
 
 /*
@@ -120,131 +83,46 @@ export async function listTasksByBranchGroupImpl(store: TaskStore, groupId: stri
 }
 
 export async function getPrEntityImpl(store: TaskStore, id: string): Promise<PrEntity | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getPrEntityAsync(layer.db, id);
-    }
-    const row = store.db.prepare(`SELECT * FROM pull_requests WHERE id = ?`).get(id) as PrEntityRow | undefined;
-    return row ? store.rowToPrEntity(row) : null;
+        const layer = store.asyncLayer!;
+    return getPrEntityAsync(layer.db, id);
 }
 
 export async function getActivePrEntityBySourceImpl(store: TaskStore, sourceType: PrEntity["sourceType"], sourceId: string): Promise<PrEntity | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getActivePrEntityBySourceAsync(layer.db, sourceType, sourceId);
-    }
-    const row = store.db
-      .prepare(
-        `SELECT * FROM pull_requests
-         WHERE sourceType = ? AND sourceId = ? AND state NOT IN ('merged','closed','failed')
-         ORDER BY createdAt DESC LIMIT 1`,
-      )
-      .get(sourceType, sourceId) as PrEntityRow | undefined;
-    return row ? store.rowToPrEntity(row) : null;
+        const layer = store.asyncLayer!;
+    return getActivePrEntityBySourceAsync(layer.db, sourceType, sourceId);
 }
 
 export async function getPrEntityByNumberImpl(store: TaskStore, repo: string, prNumber: number): Promise<PrEntity | null> {
     // No dedicated async helper for by-number lookup; use the sync path's SQL
     // shape via a raw Drizzle query in backend mode.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db
-        .select()
-        .from(schema.project.pullRequests)
-        .where(and(eq(schema.project.pullRequests.repo, repo), eq(schema.project.pullRequests.prNumber, prNumber)))
-        .limit(1);
-      const row = rows[0] as PrEntityRow | undefined;
-      return row ? store.rowToPrEntity(row) : null;
-    }
-    const row = store.db
-      .prepare(`SELECT * FROM pull_requests WHERE repo = ? AND prNumber = ?`)
-      .get(repo, prNumber) as PrEntityRow | undefined;
+        const layer = store.asyncLayer!;
+    const rows = await layer.db
+      .select()
+      .from(schema.project.pullRequests)
+      .where(and(eq(schema.project.pullRequests.repo, repo), eq(schema.project.pullRequests.prNumber, prNumber)))
+      .limit(1);
+    const row = rows[0] as PrEntityRow | undefined;
     return row ? store.rowToPrEntity(row) : null;
 }
 
 export async function ensurePrEntityForSourceImpl(store: TaskStore, input: PrEntityCreateInput): Promise<PrEntity> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return ensurePrEntityForSourceAsync(layer.db, input);
-    }
-    const existing = await store.getActivePrEntityBySource(input.sourceType, input.sourceId);
-    if (existing) return existing;
-    const id = store.generatePrEntityId();
-    const now = Date.now();
-    store.db
-      .prepare(
-        `INSERT INTO pull_requests
-           (id, sourceType, sourceId, repo, headBranch, baseBranch, state,
-            prNumber, prUrl, autoMerge, unverified, responseRounds, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-      )
-      .run(
-        id,
-        input.sourceType,
-        input.sourceId,
-        input.repo,
-        input.headBranch,
-        input.baseBranch ?? null,
-        input.state ?? "creating",
-        input.prNumber ?? null,
-        input.prUrl ?? null,
-        input.autoMerge ? 1 : 0,
-        input.unverified ? 1 : 0,
-        now,
-        now,
-      );
-    store.db.bumpLastModified();
-    const created = await store.getPrEntity(id);
-    return created!;
+        const layer = store.asyncLayer!;
+    return ensurePrEntityForSourceAsync(layer.db, input);
 }
 
 export async function listActivePrEntitiesImpl(store: TaskStore): Promise<PrEntity[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return listActivePrEntitiesAsync(layer.db);
-    }
-    const rows = store.db
-      .prepare(`SELECT * FROM pull_requests WHERE state NOT IN ('merged','closed','failed') ORDER BY createdAt ASC`)
-      .all() as PrEntityRow[];
-    return rows.map((r) => store.rowToPrEntity(r));
+        const layer = store.asyncLayer!;
+    return listActivePrEntitiesAsync(layer.db);
 }
 
 export async function getPrThreadStateImpl(store: TaskStore, prEntityId: string, threadId: string, headOid: string): Promise<PrThreadState | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getPrThreadStateAsync(layer.db, prEntityId, threadId, headOid);
-    }
-    const row = store.db
-      .prepare(`SELECT * FROM pull_request_thread_state WHERE prEntityId = ? AND threadId = ? AND headOid = ?`)
-      .get(prEntityId, threadId, headOid) as PrThreadStateRow | undefined;
-    return row
-      ? {
-          prEntityId: row.prEntityId,
-          threadId: row.threadId,
-          headOid: row.headOid,
-          outcome: row.outcome,
-          fixCommitSha: row.fixCommitSha ?? undefined,
-          updatedAt: row.updatedAt,
-        }
-      : null;
+        const layer = store.asyncLayer!;
+    return getPrThreadStateAsync(layer.db, prEntityId, threadId, headOid);
 }
 
 export async function listPrThreadStatesImpl(store: TaskStore, prEntityId: string): Promise<PrThreadState[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return listPrThreadStatesAsync(layer.db, prEntityId);
-    }
-    const rows = store.db
-      .prepare(`SELECT * FROM pull_request_thread_state WHERE prEntityId = ?`)
-      .all(prEntityId) as PrThreadStateRow[];
-    return rows.map((row) => ({
-      prEntityId: row.prEntityId,
-      threadId: row.threadId,
-      headOid: row.headOid,
-      outcome: row.outcome,
-      fixCommitSha: row.fixCommitSha ?? undefined,
-      updatedAt: row.updatedAt,
-    }));
+        const layer = store.asyncLayer!;
+    return listPrThreadStatesAsync(layer.db, prEntityId);
 }
 
 export async function recordPrThreadOutcomeImpl(store: TaskStore,
@@ -254,19 +132,8 @@ export async function recordPrThreadOutcomeImpl(store: TaskStore,
     outcome: PrThreadOutcome,
     fixCommitSha?: string,
   ): Promise<void> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return recordPrThreadOutcomeAsync(layer.db, prEntityId, threadId, headOid, outcome, fixCommitSha);
-    }
-    store.db
-      .prepare(
-        `INSERT INTO pull_request_thread_state (prEntityId, threadId, headOid, outcome, fixCommitSha, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (prEntityId, threadId, headOid)
-         DO UPDATE SET outcome = excluded.outcome, fixCommitSha = excluded.fixCommitSha, updatedAt = excluded.updatedAt`,
-      )
-      .run(prEntityId, threadId, headOid, outcome, fixCommitSha ?? null, Date.now());
-    store.db.bumpLastModified();
+        const layer = store.asyncLayer!;
+    return recordPrThreadOutcomeAsync(layer.db, prEntityId, threadId, headOid, outcome, fixCommitSha);
 }
 
 export async function getBranchProgressByTaskImpl(store: TaskStore,
@@ -281,94 +148,32 @@ export async function getBranchProgressByTaskImpl(store: TaskStore,
     PostgreSQL. Read the rows async and resolve the winning (latest updatedAt,
     runId tie-break) run per task in JS — per-task row counts are small.
     */
-    if (store.backendMode) {
-      const table = schema.project.workflowRunBranches;
-      const rows = await store.asyncLayer!.db
-        .select({
-          taskId: table.taskId,
-          runId: table.runId,
-          branchId: table.branchId,
-          nodeId: table.currentNodeId,
-          status: table.status,
-          updatedAt: table.updatedAt,
-        })
-        .from(table)
-        .where(inArray(table.taskId, taskIds as string[]));
-      const latestRunByTask = new Map<string, { runId: string; updatedAt: string }>();
-      for (const row of rows) {
-        const current = latestRunByTask.get(row.taskId);
-        if (!current
-          || row.updatedAt > current.updatedAt
-          || (row.updatedAt === current.updatedAt && row.runId > current.runId)) {
-          latestRunByTask.set(row.taskId, { runId: row.runId, updatedAt: row.updatedAt });
-        }
+        const table = schema.project.workflowRunBranches;
+    const rows = await store.asyncLayer!.db
+      .select({
+        taskId: table.taskId,
+        runId: table.runId,
+        branchId: table.branchId,
+        nodeId: table.currentNodeId,
+        status: table.status,
+        updatedAt: table.updatedAt,
+      })
+      .from(table)
+      .where(inArray(table.taskId, taskIds as string[]));
+    const latestRunByTask = new Map<string, { runId: string; updatedAt: string }>();
+    for (const row of rows) {
+      const current = latestRunByTask.get(row.taskId);
+      if (!current
+        || row.updatedAt > current.updatedAt
+        || (row.updatedAt === current.updatedAt && row.runId > current.runId)) {
+        latestRunByTask.set(row.taskId, { runId: row.runId, updatedAt: row.updatedAt });
       }
-      for (const row of rows) {
-        if (latestRunByTask.get(row.taskId)?.runId !== row.runId) continue;
-        const list = result.get(row.taskId) ?? [];
-        list.push({ branchId: row.branchId, nodeId: row.nodeId, status: row.status });
-        result.set(row.taskId, list);
-      }
-      return result;
     }
-    try {
-      // Skip entirely when the table has no rows (cheap existence probe).
-      const any = store.db
-        .prepare("SELECT 1 FROM workflow_run_branches LIMIT 1")
-        .get();
-      if (!any) return result;
-
-      const placeholders = taskIds.map(() => "?").join(", ");
-      // Filter to the latest run per task entirely in SQL (#1413): the
-      // correlated subquery resolves the winning (updatedAt, runId) pair per
-      // task — MAX(updatedAt) with a deterministic MAX(runId) tie-break — and
-      // the JOIN matches both columns so only the latest run's rows are read.
-      // The runId tie-break makes ties on updatedAt deterministic instead of
-      // letting an arbitrary historical run win.
-      const rows = store.db
-        .prepare(
-          `SELECT b.taskId AS taskId, b.runId AS runId, b.branchId AS branchId,
-                  b.currentNodeId AS nodeId, b.status AS status, b.updatedAt AS updatedAt
-             FROM workflow_run_branches b
-             JOIN (
-               -- Resolve the winning run per task: the run owning the row with
-               -- the greatest updatedAt, with runId as a deterministic
-               -- tie-break when two runs share an updatedAt. Returns the whole
-               -- run's rows (all its branches), not just the single max row.
-               SELECT taskId, runId AS latestRunId
-                 FROM (
-                   SELECT taskId, runId,
-                          ROW_NUMBER() OVER (
-                            PARTITION BY taskId
-                            ORDER BY MAX(updatedAt) DESC, runId DESC
-                          ) AS rn
-                     FROM workflow_run_branches
-                    WHERE taskId IN (${placeholders})
-                    GROUP BY taskId, runId
-                 )
-                WHERE rn = 1
-             ) latest_run
-               ON latest_run.taskId = b.taskId
-              AND latest_run.latestRunId = b.runId
-            WHERE b.taskId IN (${placeholders})`,
-        )
-        .all(...taskIds, ...taskIds) as Array<{
-          taskId: string;
-          runId: string;
-          branchId: string;
-          nodeId: string;
-          status: string;
-          updatedAt: string;
-        }>;
-
-      for (const row of rows) {
-        const list = result.get(row.taskId) ?? [];
-        list.push({ branchId: row.branchId, nodeId: row.nodeId, status: row.status });
-        result.set(row.taskId, list);
-      }
-    } catch {
-      // Legacy/missing table or query failure — degrade to no branch progress.
-      return new Map();
+    for (const row of rows) {
+      if (latestRunByTask.get(row.taskId)?.runId !== row.runId) continue;
+      const list = result.get(row.taskId) ?? [];
+      list.push({ branchId: row.branchId, nodeId: row.nodeId, status: row.status });
+      result.set(row.taskId, list);
     }
     return result;
 }
@@ -388,44 +193,24 @@ export async function loadWorkflowRunBranchesImpl(store: TaskStore,
     Backend mode previously returned [] from the sync catch, so parallel-branch
     workflow runs lost their crash-recovery checkpoints on PostgreSQL.
     */
-    if (store.backendMode) {
-      const table = schema.project.workflowRunBranches;
-      const rows = await store.asyncLayer!.db
-        .select({
-          taskId: table.taskId,
-          runId: table.runId,
-          branchId: table.branchId,
-          currentNodeId: table.currentNodeId,
-          status: table.status,
-        })
-        .from(table)
-        .where(and(eq(table.taskId, taskId), eq(table.runId, runId)));
-      return rows as Array<{
-        taskId: string;
-        runId: string;
-        branchId: string;
-        currentNodeId: string;
-        status: "running" | "completed" | "failed" | "aborted";
-      }>;
-    }
-    try {
-      const rows = store.db
-        .prepare(
-          `SELECT taskId, runId, branchId, currentNodeId, status
-             FROM workflow_run_branches
-            WHERE taskId = ? AND runId = ?`,
-        )
-        .all(taskId, runId) as Array<{
-          taskId: string;
-          runId: string;
-          branchId: string;
-          currentNodeId: string;
-          status: "running" | "completed" | "failed" | "aborted";
-        }>;
-      return rows;
-    } catch {
-      return [];
-    }
+        const table = schema.project.workflowRunBranches;
+    const rows = await store.asyncLayer!.db
+      .select({
+        taskId: table.taskId,
+        runId: table.runId,
+        branchId: table.branchId,
+        currentNodeId: table.currentNodeId,
+        status: table.status,
+      })
+      .from(table)
+      .where(and(eq(table.taskId, taskId), eq(table.runId, runId)));
+    return rows as Array<{
+      taskId: string;
+      runId: string;
+      branchId: string;
+      currentNodeId: string;
+      status: "running" | "completed" | "failed" | "aborted";
+    }>;
 }
 
 export async function saveWorkflowRunStepInstanceImpl(store: TaskStore,
@@ -438,44 +223,7 @@ export async function saveWorkflowRunStepInstanceImpl(store: TaskStore,
     async sibling (single PG code path); its !backendMode branch routes back
     here, guarded so there is no recursion.
     */
-    if (store.backendMode) {
-      return saveWorkflowRunStepInstanceAsyncImpl(store, state);
-    }
-    try {
-      store.db
-        .prepare(
-          `INSERT INTO workflow_run_step_instances
-             (taskId, runId, foreachNodeId, stepIndex, pinnedStepCount, currentNodeId, status, baselineSha, checkpointId, reworkCount, branchName, integratedAt, updatedAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(taskId, runId, foreachNodeId, stepIndex) DO UPDATE SET
-             pinnedStepCount = excluded.pinnedStepCount,
-             currentNodeId = excluded.currentNodeId,
-             status = excluded.status,
-             baselineSha = excluded.baselineSha,
-             checkpointId = excluded.checkpointId,
-             reworkCount = excluded.reworkCount,
-             branchName = excluded.branchName,
-             integratedAt = excluded.integratedAt,
-             updatedAt = excluded.updatedAt`,
-        )
-        .run(
-          state.taskId,
-          state.runId,
-          state.foreachNodeId,
-          state.stepIndex,
-          state.pinnedStepCount,
-          state.currentNodeId ?? null,
-          state.status,
-          state.baselineSha ?? null,
-          state.checkpointId ?? null,
-          state.reworkCount ?? 0,
-          state.branchName ?? null,
-          state.integratedAt ?? null,
-          new Date().toISOString(),
-        );
-    } catch {
-      // Legacy/missing table — persistence is additive, so degrade silently.
-    }
+        return saveWorkflowRunStepInstanceAsyncImpl(store, state);
 }
 
 export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
@@ -483,44 +231,12 @@ export async function loadWorkflowRunStepInstancesImpl(store: TaskStore,
     runId: string,
   ): Promise<import("../types.js").WorkflowRunStepInstance[]> {
     // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
-    if (store.backendMode) {
-      return loadWorkflowRunStepInstancesAsyncImpl(store, taskId, runId);
-    }
-    try {
-      const rows = store.db
-        .prepare(
-          `SELECT taskId, runId, foreachNodeId, stepIndex, pinnedStepCount, currentNodeId, status, baselineSha, checkpointId, reworkCount, branchName, integratedAt, updatedAt
-             FROM workflow_run_step_instances
-            WHERE taskId = ? AND runId = ?
-            ORDER BY stepIndex ASC`,
-        )
-        .all(taskId, runId) as import("../types.js").WorkflowRunStepInstance[];
-      return rows;
-    } catch {
-      return [];
-    }
+        return loadWorkflowRunStepInstancesAsyncImpl(store, taskId, runId);
 }
 
 export async function clearWorkflowRunStepInstancesImpl(store: TaskStore, taskId: string, keepRunId?: string): Promise<void> {
     // FNXC:PostgresOnlyDataAccess 2026-07-16-13:40: see saveWorkflowRunStepInstanceImpl.
-    if (store.backendMode) {
-      return clearWorkflowRunStepInstancesAsyncImpl(store, taskId, keepRunId);
-    }
-    try {
-      if (keepRunId === undefined) {
-        store.db
-          .prepare(`DELETE FROM workflow_run_step_instances WHERE taskId = ?`)
-          .run(taskId);
-      } else {
-        store.db
-          .prepare(
-            `DELETE FROM workflow_run_step_instances WHERE taskId = ? AND runId != ?`,
-          )
-          .run(taskId, keepRunId);
-      }
-    } catch {
-      // Legacy/missing table — pruning is additive, so degrade silently.
-    }
+        return clearWorkflowRunStepInstancesAsyncImpl(store, taskId, keepRunId);
 }
 
 /*
@@ -534,9 +250,7 @@ export async function saveWorkflowRunStepInstanceAsyncImpl(
   store: TaskStore,
   state: import("../types.js").WorkflowRunStepInstance,
 ): Promise<void> {
-  if (!store.backendMode) {
-    return saveWorkflowRunStepInstanceImpl(store, state);
-  }
+  
   const layer = store.asyncLayer!;
   const now = new Date().toISOString();
   await layer.db
@@ -583,9 +297,7 @@ export async function loadWorkflowRunStepInstancesAsyncImpl(
   taskId: string,
   runId: string,
 ): Promise<import("../types.js").WorkflowRunStepInstance[]> {
-  if (!store.backendMode) {
-    return loadWorkflowRunStepInstancesImpl(store, taskId, runId);
-  }
+  
   const layer = store.asyncLayer!;
   const rows = await layer.db
     .select()
@@ -617,9 +329,7 @@ export async function clearWorkflowRunStepInstancesAsyncImpl(
   taskId: string,
   keepRunId?: string,
 ): Promise<void> {
-  if (!store.backendMode) {
-    return clearWorkflowRunStepInstancesImpl(store, taskId, keepRunId);
-  }
+  
   const layer = store.asyncLayer!;
   const conditions = [eq(schema.project.workflowRunStepInstances.taskId, taskId)];
   if (keepRunId !== undefined) {
@@ -638,40 +348,56 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
      * via Drizzle, filtering on the same live + merging-status predicate the
      * SQLite path used (TaskStore.ACTIVE_TASKS_WHERE ≡ deletedAt IS NULL).
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const conditions = [
-        isNull(schema.project.tasks.deletedAt),
-        inArray(schema.project.tasks.status, ["merging", "merging-pr"]),
-      ];
-      /*
-       * FNXC:PostgresProjectIsolation 2026-07-17-00:00:
-       * The cross-process merge guard is documented (project-engine.ts) as
-       * "another process is already merging a task for THIS project" — in
-       * SQLite mode the per-project DB file made that scoping implicit. The
-       * shared PG tasks table needs the explicit project_id filter; without it
-       * one merging task anywhere serializes merges across ALL projects
-       * (observed: 697 cross-project "Merge deferred" retries in 10 minutes on
-       * a 6-project deployment, collapsing merge throughput ~6x).
-       */
-      const scope = taskProjectScope(layer);
-      if (scope) conditions.push(scope);
-      if (excludeTaskId) {
-        conditions.push(ne(schema.project.tasks.id, excludeTaskId));
-      }
-      const rows = await layer.db
-        .select({ id: schema.project.tasks.id })
-        .from(schema.project.tasks)
-        .where(and(...conditions))
-        .limit(1);
-      return rows[0]?.id;
+        const layer = store.asyncLayer!;
+    const conditions = [
+      isNull(schema.project.tasks.deletedAt),
+      inArray(schema.project.tasks.status, ["merging", "merging-pr"]),
+    ];
+    /*
+     * FNXC:PostgresProjectIsolation 2026-07-17-00:00:
+     * The cross-process merge guard is documented (project-engine.ts) as
+     * "another process is already merging a task for THIS project" — in
+     * SQLite mode the per-project DB file made that scoping implicit. The
+     * shared PG tasks table needs the explicit project_id filter; without it
+     * one merging task anywhere serializes merges across ALL projects
+     * (observed: 697 cross-project "Merge deferred" retries in 10 minutes on
+     * a 6-project deployment, collapsing merge throughput ~6x).
+     */
+    const scope = taskProjectScope(layer);
+    if (scope) conditions.push(scope);
+    if (excludeTaskId) {
+      conditions.push(ne(schema.project.tasks.id, excludeTaskId));
     }
-    const sql = excludeTaskId
-      ? `SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND status IN ('merging', 'merging-pr') AND id != ? LIMIT 1`
-      : `SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND status IN ('merging', 'merging-pr') LIMIT 1`;
-    const params = excludeTaskId ? [excludeTaskId] : [];
-    const row = store.db.prepare(sql).get(...params) as { id: string } | undefined;
-    return row?.id;
+    const rows = await layer.db
+      .select({ id: schema.project.tasks.id })
+      .from(schema.project.tasks)
+      .where(and(...conditions))
+      .limit(1);
+    return rows[0]?.id;
+}
+
+/*
+FNXC:TaskCreationDeduplication 2026-07-30-04:20:
+The duplicate-guard WINDOW POLICY as a pure function, extracted so it can be asserted without a
+TaskStore. Byte-identical to the expression that was inlined below.
+
+Why extracted: the three tests that own this policy drove it through a store fake modelling the
+deleted SQLite path (`db.prepare().all()`), and read the window back out of a captured cutoff string.
+That fake broke when the query moved to `asyncLayer` + Drizzle (TypeError on `layer.projectId`), and
+rebuilding it would have meant reconstructing a Drizzle chain to recover a number this function
+already returns. Narrow seam over mock-the-world, per docs/testing.md.
+*/
+export function resolveFingerprintWindowMs(requestedWindowMs?: number): number {
+  const requested = requestedWindowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-05:40 (coderabbit, major):
+  NaN must fall back, not propagate. `Math.trunc(NaN)` is NaN and both clamps pass it through, so the
+  caller's `new Date(Date.now() - windowMs).toISOString()` threw "Invalid time value" — a crash rather
+  than a bounded window. This hole is PRE-EXISTING (the inline expression this replaced was
+  byte-identical); naming the policy is what made it reachable by a test.
+  */
+  if (!Number.isFinite(requested)) return FINGERPRINT_WINDOW_DEFAULT_MS;
+  return Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requested)));
 }
 
 export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
@@ -690,8 +416,7 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     window at five minutes and made its ceiling unreachable — the guard asked for ten minutes
     and silently got five. One policy, one pair of bounds.
     */
-    const requestedWindowMs = options?.windowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
-    const windowMs = Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requestedWindowMs)));
+    const windowMs = resolveFingerprintWindowMs(options?.windowMs);
     const cutoffIso = new Date(Date.now() - windowMs).toISOString();
     const includeArchived = options?.includeArchived ?? false;
 
@@ -703,37 +428,28 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
      * operator on the source_metadata column. The soft-delete visibility
      * filter (deletedAt IS NULL) and the createdAt window are preserved.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const conditions = [
-        isNull(schema.project.tasks.deletedAt),
-        sql`${schema.project.tasks.sourceMetadata}->>'contentFingerprint' = ${trimmedFingerprint}`,
-        sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
-      ];
-      if (!includeArchived) {
-        conditions.push(ne(schema.project.tasks.column, "archived"));
-      }
-      const rows = await layer.db
-        .select()
-        .from(schema.project.tasks)
-        .where(and(...conditions))
-        .orderBy(schema.project.tasks.createdAt);
-      return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
+        const layer = store.asyncLayer!;
+    const conditions = [
+      isNull(schema.project.tasks.deletedAt),
+      sql`${schema.project.tasks.sourceMetadata}->>'contentFingerprint' = ${trimmedFingerprint}`,
+      sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
+    ];
+    if (!includeArchived) {
+      conditions.push(ne(schema.project.tasks.column, "archived"));
     }
-
-    const selectClause = store.getTaskSelectClause(false, "t");
-
-    const rows = store.db.prepare(`
-      SELECT ${selectClause}
-      FROM tasks t
-      WHERE t."deletedAt" IS NULL
-        AND json_extract(t.sourceMetadata, '$.contentFingerprint') = ?
-        AND t.createdAt >= ?
-        ${includeArchived ? "" : "AND t.\"column\" != 'archived'"}
-      ORDER BY t.createdAt ASC
-    `).all(trimmedFingerprint, cutoffIso) as TaskRow[];
-
-    return rows.map((row) => store.rowToTask(row));
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Scope fingerprint duplicate-guard to the bound project so another project's matching fingerprint cannot block create.
+    */
+    if (layer.projectId) {
+      conditions.push(eq(schema.project.tasks.projectId, layer.projectId));
+    }
+    const rows = await layer.db
+      .select()
+      .from(schema.project.tasks)
+      .where(and(...conditions))
+      .orderBy(schema.project.tasks.createdAt);
+    return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
 }
 
 export async function findRecentTasksBySourceParentTaskIdImpl(
@@ -746,23 +462,14 @@ export async function findRecentTasksBySourceParentTaskIdImpl(
   const dayMs = 24 * 60 * 60 * 1000;
   const windowMs = Math.max(1, Math.min(dayMs, Math.trunc(options?.windowMs ?? dayMs)));
   const cutoffIso = new Date(Date.now() - windowMs).toISOString();
-  if (store.backendMode) {
     const layer = store.asyncLayer!;
-    const rows = await layer.db.select().from(schema.project.tasks).where(and(
-      isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
-      eq(schema.project.tasks.sourceParentTaskId, parentId),
-      sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
-      ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
-    )).orderBy(asc(schema.project.tasks.createdAt));
-    return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
-  }
-  const selectClause = store.getTaskSelectClause(false, "t");
-  const rows = store.db.prepare(`
-    SELECT ${selectClause} FROM tasks t
-     WHERE t."deletedAt" IS NULL AND t.sourceParentTaskId = ? AND t.createdAt >= ?
-       AND t."column" NOT IN ('archived', 'done') ORDER BY t.createdAt ASC
-  `).all(parentId, cutoffIso) as TaskRow[];
-  return rows.map((row) => store.rowToTask(row));
+  const rows = await layer.db.select().from(schema.project.tasks).where(and(
+    isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
+    eq(schema.project.tasks.sourceParentTaskId, parentId),
+    sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
+    ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
+  )).orderBy(asc(schema.project.tasks.createdAt));
+  return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
 }
 
 export async function clearNearDuplicateReferencesToFailSoftImpl(store: TaskStore,
@@ -788,35 +495,37 @@ export async function getTasksByAssignedAgentImpl(store: TaskStore,
      * FNXC:SqliteFinalRemoval 2026-06-25:
      * In backend mode, use listTasks and filter in-memory instead of raw SQL.
      */
-    if (store.backendMode) {
-      const allTasks = await store.listTasks();
-      return allTasks.filter((task) => {
-        if (task.assignedAgentId !== agentId) return false;
-        if (options?.pausedOnly && !task.paused) return false;
-        if (options?.excludeArchived && task.column === "archived") return false;
-        return true;
-      });
+        const allTasks = await store.listTasks();
+    const assigned = allTasks.filter((task) => {
+      if (task.assignedAgentId !== agentId) return false;
+      if (options?.pausedOnly && !task.paused) return false;
+      return true;
+    });
+    if (options?.excludeArchived !== true) return assigned;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+    `excludeArchived` asks each card's OWN workflow, not the literal id.
+
+    Found by auditing an unwired optional parameter one level up: `rankAssignedTasksForWakeDelta`
+    gained a resolved terminal answer that no caller passed, and reading the caller showed the real
+    gap was HERE — on a renamed board `column === "archived"` matched nothing, so archived cards were
+    returned as open assigned work and the Wake Delta inventory asked a coordinator to unblock or
+    reassign tasks that had already been archived.
+
+    That is the fourth unwired parameter in this sweep whose CALLER held the larger defect.
+
+    Resolution runs only over the rows that already matched `agentId` — a handful — not the whole
+    board, and shares one IR cache. A card whose workflow will not resolve keeps the literal.
+    */
+    const archivedIrCache = new Map<string, WorkflowIr>();
+    const live: Task[] = [];
+    for (const task of assigned) {
+      const lanes = await resolveTaskLifecycleColumns(store, task.id, archivedIrCache).catch(() => undefined);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-13:40. */
+      const isArchived = lanes === undefined ? task.column === "archived" : task.column === lanes.archived;
+      if (!isArchived) live.push(task);
     }
-
-    const whereClauses = ["assignedAgentId = ?", TaskStore.ACTIVE_TASKS_WHERE];
-    const params: Array<string | number> = [agentId];
-
-    if (options?.pausedOnly) {
-      whereClauses.push("paused = 1");
-    }
-
-    if (options?.excludeArchived) {
-      whereClauses.push('"column" != \'archived\'');
-    }
-
-    const selectClause = store.getTaskSelectClause(false);
-    const rows = store.db.prepare(`
-      SELECT ${selectClause} FROM tasks
-      WHERE ${whereClauses.join(" AND ")}
-      ORDER BY createdAt ASC
-    `).all(...params) as TaskRow[];
-
-    return rows.map((row) => store.rowToTask(row));
+    return live;
 }
 
 export function resolveWorkflowMoveActorImpl(store: TaskStore,
@@ -881,10 +590,38 @@ export async function updateTaskImpl(store: TaskStore,
     explicit error instead of letting updateTaskUnlocked write a no-op nodeId field.
     */
     if (updates.nodeId !== undefined) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (#2821 review — greptile):
+      THE COLUMN IS READ AFTER THE AWAIT, NOT BEFORE IT.
+
+      My first version read the task, then awaited lane resolution, then validated — so a move landing
+      in that window was judged with a STALE column against freshly resolved lanes. The dangerous
+      direction is the obvious one: a task that entered a WIP lane during the gap still carried its
+      pre-move column, and the mid-flight guard passed for a task that had started running.
+
+      Resolving the lanes FIRST closes it. `resolveNodeOverrideLanes` needs only the task id, so the
+      order is free, and the column then comes from the latest read before validation. This does not
+      make the check atomic — `updateTaskUnlocked` runs outside the per-task lock by design, as the
+      note above explains — but it removes the window this change introduced rather than leaving a
+      new one behind a resolved-lane improvement.
+      */
+      const overrideLanes = await resolveNodeOverrideLanes(store, id);
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
+        /*
+        FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+        RESOLVED BEFORE the guard, because the guard's callback is synchronous and the real answer
+        needs an await. `validateNodeOverrideChange` asks the question at most once, for
+        `updates.nodeId`, so pre-resolving that single answer is equivalent — and this frame is
+        already async.
+        */
+        const terminal = updates.nodeId == null
+          ? false
+          : await isTaskTerminalNodeIdAsync(store, id, updates.nodeId);
         const validation = validateNodeOverrideChange(currentTask, updates.nodeId ?? null, {
-          isTerminalNodeId: (nodeId) => isTaskTerminalNodeIdImpl(store, id, nodeId),
+          /* Resolved above; `overrideLanes` stays exactly as main computes it. */
+          isTerminalNodeId: () => terminal,
+          ...overrideLanes,
         });
         if (!validation.allowed) {
           throw new Error(validation.message);
@@ -907,23 +644,16 @@ export async function updateTaskImpl(store: TaskStore,
     return store.withTaskLock(id, () => store.updateTaskUnlocked(id, updates, runContext));
 }
 
-/**
- * FNXC:StateMachine 2026-07-07-12:00:
- * Resolve whether `nodeId` is the task's resolved workflow terminal `end` node (kind === "end"),
- * for the nodeId='end' finalize-on-proof-or-error contract (FN-7641 Signature 2). Falls back to
- * the literal id check when the workflow IR cannot be resolved or does not contain the node, which
- * still matches every built-in workflow's terminal node id.
- */
-function isTaskTerminalNodeIdImpl(store: TaskStore, taskId: string, nodeId: string): boolean {
-  try {
-    const ir = store.resolveTaskWorkflowIrSync(taskId);
-    const node = ir.nodes.find((n) => n.id === nodeId);
-    if (node) return node.kind === "end";
-  } catch {
-    // Fall through to the literal-id fallback below.
-  }
-  return nodeId === "end";
-}
+/*
+FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+`isTaskTerminalNodeIdImpl` LIVED HERE and is deleted, not kept as a fallback. It resolved the task's
+graph through `store.resolveTaskWorkflowIrSync`, which answers with the DEFAULT workflow for every
+task under PostgreSQL — so it reported on a board the card is not on. Its replacement,
+`isTaskTerminalNodeIdAsync`, keeps the identical literal fail-soft for an unresolvable workflow.
+
+Keeping both would have re-created the half-conversion this program keeps finding: one caller
+resolved, one not, and no way to tell from a call site which it got.
+*/
 
 export function mergeCustomFieldPatchImpl(store: TaskStore,
     current: Record<string, unknown> | undefined,
@@ -966,8 +696,19 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      *       central-registry project (e.g. "proj_2f4be0f31a404d2c"). This is the
      *       id the rest of the system partitions by, so workflow settings MUST
      *       key by it too.
-     *   (b) `store.db.getProjectIdentity()?.id` — legacy SQLite identity id.
-     *   (c) `store.rootDir` — absolute filesystem path, last-resort legacy key.
+     *   (b) `store.rootDir` — absolute filesystem path, last-resort key.
+     *
+     * FNXC:CentralProjectIdentity 2026-07-30-13:00 (documentation corrected):
+     * There USED to be a middle step reading `store.db.getProjectIdentity()?.id`, and this block still
+     * described it long after `FNXC:SqliteDualPathCleanup 2026-07-26-14:15` removed it. It is not
+     * merely unused — it is unreachable BY CONSTRUCTION: `dbImpl` throws unconditionally and ignores
+     * its store argument (`task-id-integrity.ts:58`), so `store.db` can never yield a usable SQLite
+     * handle in any mode.
+     *
+     * Two cases in `workflow-settings-project-identity.pg.test.ts` were red on main because they
+     * asserted that removed step, using a store double whose `getProjectIdentity()` returns a value —
+     * a shape production cannot produce. Stale documentation is what made that look like a code bug
+     * rather than a stale test, so both are fixed together.
      *
      * BUG this fixes: the old code went straight to (b). In backend mode
      * `store.db` is a SQLite stub whose `getProjectIdentity()` THROWS
@@ -986,15 +727,16 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     An unscoped backend store (asyncLayer present but projectId empty) must NOT
     reach `store.db` below — it throws the removed-SQLite stub, which the catch
     then swallows, so the throw was invisible. Return the same rootDir key the
-    swallow produced, without the spurious stub throw. Only the true legacy
-    (non-backend) path consults the SQLite identity.
+    swallow produced, without the spurious stub throw.
     */
-    if (store.backendMode) return store.rootDir;
-    try {
-      return store.db.getProjectIdentity()?.id ?? store.rootDir;
-    } catch {
-      return store.rootDir;
-    }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG.
+    Unconditional on purpose — see the corrected resolution order above. The comment block immediately
+    before this once said "Only the true legacy (non-backend) path consults the SQLite identity",
+    which has been false for every caller since that cleanup; it is removed rather than left to
+    mislead the next reader the way it misled me.
+    */
+    return store.rootDir;
 }
 
 export async function listWorkflowSettingValuesForProjectImpl(store: TaskStore): Promise<Record<string, Record<string, unknown>>> {
@@ -1002,33 +744,15 @@ export async function listWorkflowSettingValuesForProjectImpl(store: TaskStore):
      * FNXC:PostgresWorkflowSettings 2026-07-14-17:46:
      * Settings exports, dashboard scope responses, memory settings, and cross-node comparisons must include the project-bound PostgreSQL workflow_settings rows. The project id is resolved through the same store binding used for writes so one project's values cannot leak into another export.
      */
-    if (store.backendMode) {
-      const projectId = store.getWorkflowSettingsProjectId();
-      const rows = await store.asyncLayer!.db
-        .select({ workflowId: schema.project.workflowSettings.workflowId, values: schema.project.workflowSettings.values })
-        .from(schema.project.workflowSettings)
-        .where(eq(schema.project.workflowSettings.projectId, projectId));
-      const out: Record<string, Record<string, unknown>> = {};
-      for (const row of rows) {
-        if (row.values && typeof row.values === "object" && !Array.isArray(row.values)) {
-          out[row.workflowId] = row.values as Record<string, unknown>;
-        }
-      }
-      return out;
-    }
-    const projectId = store.getWorkflowSettingsProjectId();
-    const rows = store.db
-      .prepare('SELECT workflowId, "values" FROM workflow_settings WHERE projectId = ?')
-      .all(projectId) as Array<{ workflowId: string; values: string }>;
+        const projectId = store.getWorkflowSettingsProjectId();
+    const rows = await store.asyncLayer!.db
+      .select({ workflowId: schema.project.workflowSettings.workflowId, values: schema.project.workflowSettings.values })
+      .from(schema.project.workflowSettings)
+      .where(eq(schema.project.workflowSettings.projectId, projectId));
     const out: Record<string, Record<string, unknown>> = {};
     for (const row of rows) {
-      try {
-        const parsed = JSON.parse(row.values) as unknown;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          out[row.workflowId] = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Skip corrupt row.
+      if (row.values && typeof row.values === "object" && !Array.isArray(row.values)) {
+        out[row.workflowId] = row.values as Record<string, unknown>;
       }
     }
     return out;
@@ -1042,26 +766,14 @@ export async function computeMovedSettingsTargetWorkflowIdsImpl(store: TaskStore
      * read threw in PG mode. In backend mode, read distinct workflowId via
      * Drizzle.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await layer.db
-        .selectDistinct({ workflowId: schema.project.taskWorkflowSelection.workflowId })
-        .from(schema.project.taskWorkflowSelection);
-      for (const row of rows) {
-        if (row.workflowId && row.workflowId.trim()) targetWorkflowIds.add(row.workflowId);
-      }
-    } else {
-      try {
-        const rows = store.db
-          .prepare("SELECT DISTINCT workflowId FROM task_workflow_selection WHERE workflowId IS NOT NULL AND workflowId != ''")
-          .all() as Array<{ workflowId: string }>;
-        for (const row of rows) {
-          if (row.workflowId && row.workflowId.trim()) targetWorkflowIds.add(row.workflowId);
-        }
-      } catch {
-        // No selections / table issue — fall through to the default below.
-      }
+        const layer = store.asyncLayer!;
+    const rows = await layer.db
+      .selectDistinct({ workflowId: schema.project.taskWorkflowSelection.workflowId })
+      .from(schema.project.taskWorkflowSelection);
+    for (const row of rows) {
+      if (row.workflowId && row.workflowId.trim()) targetWorkflowIds.add(row.workflowId);
     }
+
     let defaultWorkflowId = "builtin:coding";
     try {
       const resolved = await store.getDefaultWorkflowId();
@@ -1076,7 +788,7 @@ export async function computeMovedSettingsTargetWorkflowIdsImpl(store: TaskStore
     return targetWorkflowIds;
 }
 
-export function getWorkflowSettingValuesImpl(store: TaskStore, workflowId: string, projectId: string): Record<string, unknown> {
+export function getWorkflowSettingValuesImpl(_store: TaskStore, _workflowId: string, _projectId: string): Record<string, unknown> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26:
      * P1 fix: no backendMode branch existed, so this threw in PG mode. In
@@ -1084,21 +796,7 @@ export function getWorkflowSettingValuesImpl(store: TaskStore, workflowId: strin
      * empty (the default); the async `updateWorkflowSettingValues` path reads
      * the real values via Drizzle before merging.
      */
-    if (store.backendMode) {
-      return {};
-    }
-    const row = store.db
-      .prepare('SELECT "values" FROM workflow_settings WHERE workflowId = ? AND projectId = ?')
-      .get(workflowId, projectId) as { values: string } | undefined;
-    if (!row) return {};
-    try {
-      const parsed = JSON.parse(row.values) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
-    } catch {
-      return {};
-    }
+        return {};
 }
 
 /**
@@ -1110,7 +808,7 @@ export async function getWorkflowSettingValuesAsyncImpl(
     workflowId: string,
     projectId: string,
   ): Promise<Record<string, unknown>> {
-    if (!store.backendMode) return store.getWorkflowSettingValues(workflowId, projectId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const rows = await store.asyncLayer!.db
       .select({ values: schema.project.workflowSettings.values })
       .from(schema.project.workflowSettings)
@@ -1149,7 +847,7 @@ export async function getWorkflowPromptOverridesAsyncImpl(
     workflowId: string,
     projectId: string,
   ): Promise<Record<string, string>> {
-    if (!store.backendMode) return store.getWorkflowPromptOverrides(workflowId, projectId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const rows = await store.asyncLayer!.db
       .select({ overrides: schema.project.workflowPromptOverrides.overrides })
       .from(schema.project.workflowPromptOverrides)
@@ -1176,51 +874,20 @@ export async function updateWorkflowPromptOverridesImpl(store: TaskStore,
      * FNXC:WorkflowModelLanes 2026-07-14-16:26:
      * Keep PostgreSQL prompt override patches on the same authoritative transaction path as workflow settings; a backend sync-default read must never erase sibling overrides.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return layer.transactionImmediate(async (tx) => {
-        const rows = await tx
-          .select({ overrides: schema.project.workflowPromptOverrides.overrides })
-          .from(schema.project.workflowPromptOverrides)
-          .where(and(
-            eq(schema.project.workflowPromptOverrides.workflowId, workflowId),
-            eq(schema.project.workflowPromptOverrides.projectId, projectId),
-          ))
-          .limit(1);
-        const rawCurrent = rows[0]?.overrides;
-        const current = rawCurrent && typeof rawCurrent === "object" && !Array.isArray(rawCurrent)
-          ? rawCurrent as Record<string, string>
-          : {};
-        const next: Record<string, string> = { ...current };
-        for (const [nodeId, value] of Object.entries(patch)) {
-          if (typeof value !== "string" || value.trim().length === 0) {
-            delete next[nodeId];
-          } else {
-            next[nodeId] = value;
-          }
-        }
-
-        const now = new Date().toISOString();
-        await tx
-          .insert(schema.project.workflowPromptOverrides)
-          .values({
-            workflowId,
-            projectId,
-            overrides: next,
-            updatedAt: now,
-          })
-          .onConflictDoUpdate({
-            target: [schema.project.workflowPromptOverrides.workflowId, schema.project.workflowPromptOverrides.projectId],
-            set: {
-              overrides: next,
-              updatedAt: now,
-            },
-          });
-        return next;
-      });
-    }
-    return store.db.transactionImmediate(() => {
-      const current = store.getWorkflowPromptOverrides(workflowId, projectId);
+        const layer = store.asyncLayer!;
+    return layer.transactionImmediate(async (tx) => {
+      const rows = await tx
+        .select({ overrides: schema.project.workflowPromptOverrides.overrides })
+        .from(schema.project.workflowPromptOverrides)
+        .where(and(
+          eq(schema.project.workflowPromptOverrides.workflowId, workflowId),
+          eq(schema.project.workflowPromptOverrides.projectId, projectId),
+        ))
+        .limit(1);
+      const rawCurrent = rows[0]?.overrides;
+      const current = rawCurrent && typeof rawCurrent === "object" && !Array.isArray(rawCurrent)
+        ? rawCurrent as Record<string, string>
+        : {};
       const next: Record<string, string> = { ...current };
       for (const [nodeId, value] of Object.entries(patch)) {
         if (typeof value !== "string" || value.trim().length === 0) {
@@ -1231,15 +898,21 @@ export async function updateWorkflowPromptOverridesImpl(store: TaskStore,
       }
 
       const now = new Date().toISOString();
-      store.db
-        .prepare(
-          `INSERT INTO workflow_prompt_overrides (workflowId, projectId, overrides, updatedAt)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(workflowId, projectId)
-           DO UPDATE SET overrides = excluded.overrides, updatedAt = excluded.updatedAt`,
-        )
-        .run(workflowId, projectId, JSON.stringify(next), now);
-      store.db.bumpLastModified();
+      await tx
+        .insert(schema.project.workflowPromptOverrides)
+        .values({
+          workflowId,
+          projectId,
+          overrides: next,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [schema.project.workflowPromptOverrides.workflowId, schema.project.workflowPromptOverrides.projectId],
+          set: {
+            overrides: next,
+            updatedAt: now,
+          },
+        });
       return next;
     });
 }
@@ -1249,30 +922,16 @@ export async function getMutationsForRunImpl(store: TaskStore, runId: string): P
      * FNXC:SqliteFinalRemoval 2026-06-26:
      * In backend mode, use the async layer to read tasks instead of store.db.
      */
-    if (store.backendMode) {
-      const tasks = await store.listTasks();
-      const mutations: TaskLogEntry[] = [];
-      for (const task of tasks) {
-        const logEntries = task.log || [];
-        for (const entry of logEntries) {
-          if (entry.runContext?.runId === runId) {
-            mutations.push(entry);
-          }
-        }
-      }
-      return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    }
-    const rows = store.db.prepare(`SELECT log FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ log: string | null }>;
+        const tasks = await store.listTasks();
     const mutations: TaskLogEntry[] = [];
-    for (const row of rows) {
-      const logEntries = fromJson<TaskLogEntry[]>(row.log) || [];
+    for (const task of tasks) {
+      const logEntries = task.log || [];
       for (const entry of logEntries) {
         if (entry.runContext?.runId === runId) {
           mutations.push(entry);
         }
       }
     }
-    // Sort by timestamp ascending
     return mutations.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
@@ -1393,74 +1052,47 @@ export async function upsertMergeRequestRecordImpl(store: TaskStore,
      * sync path's audit fan-out). The audit uses the fire-and-forget async
      * helper (recordRunAuditEventAsync) for parity with other backend paths.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const now = input.now ?? new Date().toISOString();
-      const attemptCount = input.attemptCount ?? 0;
-      const lastError = input.lastError ?? null;
-      const result = await layer.transactionImmediate(async (tx) => {
-        await tx
-          .insert(schema.project.mergeRequests)
-          .values({
-            taskId,
+        const layer = store.asyncLayer!;
+    const now = input.now ?? new Date().toISOString();
+    const attemptCount = input.attemptCount ?? 0;
+    const lastError = input.lastError ?? null;
+    const result = await layer.transactionImmediate(async (tx) => {
+      await tx
+        .insert(schema.project.mergeRequests)
+        .values({
+          taskId,
+          state: input.state,
+          createdAt: now,
+          updatedAt: now,
+          attemptCount,
+          lastError,
+        })
+        .onConflictDoUpdate({
+          target: [schema.project.mergeRequests.projectId, schema.project.mergeRequests.taskId],
+          set: {
             state: input.state,
-            createdAt: now,
             updatedAt: now,
             attemptCount,
             lastError,
-          })
-          .onConflictDoUpdate({
-            target: [schema.project.mergeRequests.projectId, schema.project.mergeRequests.taskId],
-            set: {
-              state: input.state,
-              updatedAt: now,
-              attemptCount,
-              lastError,
-            },
-          });
-        const rows = await tx
-          .select()
-          .from(schema.project.mergeRequests)
-          .where(eq(schema.project.mergeRequests.taskId, taskId))
-          .limit(1);
-        const row = rows[0] as MergeRequestRow | undefined;
-        if (!row) throw new Error(`Failed to upsert merge request for ${taskId}`);
-        return row;
-      });
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeRequest:upsert",
-        target: taskId,
-        metadata: { taskId, state: result.state, attemptCount: result.attemptCount, lastError: result.lastError },
-      });
-      return store.rowToMergeRequestRecord(result);
-    }
-    return store.db.transactionImmediate(() => {
-      const now = input.now ?? new Date().toISOString();
-      store.db.prepare(`
-        INSERT INTO merge_requests (taskId, state, createdAt, updatedAt, attemptCount, lastError)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(taskId) DO UPDATE SET
-          state = excluded.state,
-          updatedAt = excluded.updatedAt,
-          attemptCount = excluded.attemptCount,
-          lastError = excluded.lastError
-      `).run(taskId, input.state, now, now, input.attemptCount ?? 0, input.lastError ?? null);
-
-      const row = store.db.prepare("SELECT * FROM merge_requests WHERE taskId = ?").get(taskId) as MergeRequestRow | undefined;
+          },
+        });
+      const rows = await tx
+        .select()
+        .from(schema.project.mergeRequests)
+        .where(eq(schema.project.mergeRequests.taskId, taskId))
+        .limit(1);
+      const row = rows[0] as MergeRequestRow | undefined;
       if (!row) throw new Error(`Failed to upsert merge request for ${taskId}`);
-
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeRequest:upsert",
-        target: taskId,
-        metadata: { taskId, state: row.state, attemptCount: row.attemptCount, lastError: row.lastError },
-      });
-
-      return store.rowToMergeRequestRecord(row);
+      return row;
     });
+    store.insertRunAuditEventRow({
+      taskId,
+      domain: "database",
+      mutationType: "mergeRequest:upsert",
+      target: taskId,
+      metadata: { taskId, state: result.state, attemptCount: result.attemptCount, lastError: result.lastError },
+    });
+    return store.rowToMergeRequestRecord(result);
 }
 
 export async function transitionMergeRequestStateImpl(store: TaskStore,
@@ -1475,55 +1107,15 @@ export async function transitionMergeRequestStateImpl(store: TaskStore,
      * merge_requests row inside a transactionImmediate and fire the audit
      * event, mirroring the sync path's transition guard + audit fan-out.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const now = opts.now ?? new Date().toISOString();
-      const updated = await layer.transactionImmediate(async (tx) => {
-        const existingRows = await tx
-          .select()
-          .from(schema.project.mergeRequests)
-          .where(eq(schema.project.mergeRequests.taskId, taskId))
-          .limit(1);
-        const existing = existingRows[0] as MergeRequestRow | undefined;
-        if (!existing) {
-          throw new Error(`Merge request record not found for ${taskId}`);
-        }
-        const fromState = store.normalizeMergeRequestState(existing.state);
-        if (!store.isValidMergeRequestTransition(fromState, toState)) {
-          throw new Error(`Invalid merge request state transition for ${taskId}: ${fromState} -> ${toState}`);
-        }
-
-        await tx
-          .update(schema.project.mergeRequests)
-          .set({
-            state: toState,
-            updatedAt: now,
-            attemptCount: opts.attemptCount ?? existing.attemptCount,
-            lastError: opts.lastError ?? existing.lastError,
-          })
-          .where(eq(schema.project.mergeRequests.taskId, taskId));
-
-        const updatedRows = await tx
-          .select()
-          .from(schema.project.mergeRequests)
-          .where(eq(schema.project.mergeRequests.taskId, taskId))
-          .limit(1);
-        const row = updatedRows[0] as MergeRequestRow | undefined;
-        if (!row) throw new Error(`Merge request record disappeared for ${taskId}`);
-        return { row, fromState };
-      });
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeRequest:transition",
-        target: taskId,
-        metadata: { taskId, fromState: updated.fromState, toState, attemptCount: updated.row.attemptCount, lastError: updated.row.lastError },
-      });
-      return store.rowToMergeRequestRecord(updated.row);
-    }
-    return store.db.transactionImmediate(() => {
-      const now = opts.now ?? new Date().toISOString();
-      const existing = store.db.prepare("SELECT * FROM merge_requests WHERE taskId = ?").get(taskId) as MergeRequestRow | undefined;
+        const layer = store.asyncLayer!;
+    const now = opts.now ?? new Date().toISOString();
+    const updated = await layer.transactionImmediate(async (tx) => {
+      const existingRows = await tx
+        .select()
+        .from(schema.project.mergeRequests)
+        .where(eq(schema.project.mergeRequests.taskId, taskId))
+        .limit(1);
+      const existing = existingRows[0] as MergeRequestRow | undefined;
       if (!existing) {
         throw new Error(`Merge request record not found for ${taskId}`);
       }
@@ -1532,27 +1124,33 @@ export async function transitionMergeRequestStateImpl(store: TaskStore,
         throw new Error(`Invalid merge request state transition for ${taskId}: ${fromState} -> ${toState}`);
       }
 
-      store.db.prepare(`
-        UPDATE merge_requests
-           SET state = ?,
-               updatedAt = ?,
-               attemptCount = ?,
-               lastError = ?
-         WHERE taskId = ?
-      `).run(toState, now, opts.attemptCount ?? existing.attemptCount, opts.lastError ?? existing.lastError, taskId);
+      await tx
+        .update(schema.project.mergeRequests)
+        .set({
+          state: toState,
+          updatedAt: now,
+          attemptCount: opts.attemptCount ?? existing.attemptCount,
+          lastError: opts.lastError ?? existing.lastError,
+        })
+        .where(eq(schema.project.mergeRequests.taskId, taskId));
 
-      const updated = store.db.prepare("SELECT * FROM merge_requests WHERE taskId = ?").get(taskId) as MergeRequestRow | undefined;
-      if (!updated) throw new Error(`Merge request record disappeared for ${taskId}`);
-
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeRequest:transition",
-        target: taskId,
-        metadata: { taskId, fromState, toState, attemptCount: updated.attemptCount, lastError: updated.lastError },
-      });
-      return store.rowToMergeRequestRecord(updated);
+      const updatedRows = await tx
+        .select()
+        .from(schema.project.mergeRequests)
+        .where(eq(schema.project.mergeRequests.taskId, taskId))
+        .limit(1);
+      const row = updatedRows[0] as MergeRequestRow | undefined;
+      if (!row) throw new Error(`Merge request record disappeared for ${taskId}`);
+      return { row, fromState };
     });
+    store.insertRunAuditEventRow({
+      taskId,
+      domain: "database",
+      mutationType: "mergeRequest:transition",
+      target: taskId,
+      metadata: { taskId, fromState: updated.fromState, toState, attemptCount: updated.row.attemptCount, lastError: updated.row.lastError },
+    });
+    return store.rowToMergeRequestRecord(updated.row);
 }
 
 export function insertCompletionHandoffWorkflowWorkAuditImpl(store: TaskStore,
@@ -1588,6 +1186,11 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
       const existing = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
       if (!existing) throw new Error(`Workflow work item ${id} not found`);
       const fromState = store.normalizeWorkflowWorkItemState(existing.state);
+      // FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+      // Mirrors the async path's compare-and-set no-op so the two cannot drift.
+      if (patch.expectedState !== undefined && fromState !== patch.expectedState) {
+        return store.rowToWorkflowWorkItem(existing);
+      }
       if (store.isTerminalWorkflowWorkItemState(fromState) && fromState !== state) {
         throw new Error(`Workflow work item ${id} is terminal (${fromState}) and cannot transition to ${state}`);
       }
@@ -1632,12 +1235,8 @@ export function transitionWorkflowWorkItemSyncImpl(store: TaskStore,
 }
 
 export async function getWorkflowWorkItemImpl(store: TaskStore, id: string): Promise<WorkflowWorkItem | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getWorkflowWorkItemAsync(layer.db, id);
-    }
-    const row = store.db.prepare("SELECT * FROM workflow_work_items WHERE id = ?").get(id) as WorkflowWorkItemRow | undefined;
-    return row ? store.rowToWorkflowWorkItem(row) : null;
+        const layer = store.asyncLayer!;
+    return getWorkflowWorkItemAsync(layer.db, id);
 }
 
 export type ToolFailureRetryClaim =

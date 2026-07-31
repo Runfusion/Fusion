@@ -33,6 +33,7 @@ import type { TaskView } from "../hooks/useViewState";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { getPluginDashboardViewNavIcon } from "./pluginNavIcon";
 import { GithubIcon } from "./GithubIcon";
+import { getDashboardViewLabel } from "../../src/shared/dashboard-views";
 
 export interface LeftSidebarExperimentalFeatures {
   insights?: boolean;
@@ -296,7 +297,7 @@ export function LeftSidebarNav({
     */
     {
       id: "command-center",
-      label: t("nav.commandCenter", "Dashboard"),
+      label: t("nav.commandCenter", getDashboardViewLabel("command-center")),
       view: "command-center",
       isActive: view === "command-center",
       icon: Gauge,
@@ -305,7 +306,7 @@ export function LeftSidebarNav({
     },
     {
       id: "board",
-      label: t("nav.board", "Board"),
+      label: t("nav.board", getDashboardViewLabel("board")),
       view: "board",
       isActive: view === "board",
       icon: LayoutGrid,
@@ -314,7 +315,7 @@ export function LeftSidebarNav({
     },
     {
       id: "list",
-      label: t("nav.list", "List"),
+      label: t("nav.list", getDashboardViewLabel("list")),
       view: "list",
       isActive: view === "list",
       icon: List,
@@ -328,7 +329,7 @@ export function LeftSidebarNav({
     */
     {
       id: "planning",
-      label: t("nav.planning", "Planning"),
+      label: t("nav.planning", getDashboardViewLabel("planning")),
       view: "planning",
       isActive: view === "planning",
       icon: Lightbulb,
@@ -339,7 +340,7 @@ export function LeftSidebarNav({
     },
     {
       id: "missions",
-      label: t("nav.missions", "Missions"),
+      label: t("nav.missions", getDashboardViewLabel("missions")),
       view: "missions",
       isActive: view === "missions",
       icon: Target,
@@ -350,7 +351,7 @@ export function LeftSidebarNav({
       ? [
           {
             id: "agents",
-            label: t("nav.agents", "Agents"),
+            label: t("nav.agents", getDashboardViewLabel("agents")),
             view: "agents" as TaskView,
             isActive: view === "agents",
             icon: Bot,
@@ -361,7 +362,7 @@ export function LeftSidebarNav({
       : []),
     {
       id: "chat",
-      label: t("nav.chat", "Chat"),
+      label: t("nav.chat", getDashboardViewLabel("chat")),
       view: "chat",
       isActive: view === "chat",
       icon: MessageSquare,
@@ -371,7 +372,7 @@ export function LeftSidebarNav({
     },
     {
       id: "mailbox",
-      label: t("nav.mailbox", "Mailbox"),
+      label: t("nav.mailbox", getDashboardViewLabel("mailbox")),
       view: "mailbox",
       isActive: view === "mailbox",
       icon: Mail,
@@ -385,10 +386,10 @@ export function LeftSidebarNav({
     Skills and Memory sit directly after Mailbox (still flag-gated by showSkillsTab / memoryView).
     */
     ...(showSkillsTab
-      ? [{ id: "skills", label: t("header.skillsView", "Skills"), view: "skills" as TaskView, isActive: view === "skills", icon: Zap, testId: "sidebar-nav-skills", onSelect: () => onChangeView("skills") }]
+      ? [{ id: "skills", label: t("header.skillsView", getDashboardViewLabel("skills")), view: "skills" as TaskView, isActive: view === "skills", icon: Zap, testId: "sidebar-nav-skills", onSelect: () => onChangeView("skills") }]
       : []),
     ...(experimentalFeatures?.memoryView
-      ? [{ id: "memory", label: t("header.memoryView", "Memory"), view: "memory" as TaskView, isActive: view === "memory", icon: Brain, testId: "sidebar-nav-memory", onSelect: () => onChangeView("memory") }]
+      ? [{ id: "memory", label: t("header.memoryView", getDashboardViewLabel("memory")), view: "memory" as TaskView, isActive: view === "memory", icon: Brain, testId: "sidebar-nav-memory", onSelect: () => onChangeView("memory") }]
       : []),
     {
       id: "documents",
@@ -396,7 +397,7 @@ export function LeftSidebarNav({
       FNXC:Navigation 2026-06-21-18:25:
       FN-6890 renames the top-level Documents label to Artifacts while preserving the documents view id and sidebar-nav-documents test id.
       */
-      label: t("nav.documents", "Artifacts"),
+      label: t("nav.documents", getDashboardViewLabel("documents")),
       view: "documents",
       isActive: view === "documents",
       icon: FileText,
@@ -404,7 +405,7 @@ export function LeftSidebarNav({
       onSelect: () => onChangeView("documents"),
     },
     ...(experimentalFeatures?.goalsView
-      ? [{ id: "goals", label: t("header.goalsView", "Goals"), view: "goalsView" as TaskView, isActive: view === "goalsView", icon: Target, testId: "sidebar-nav-goals", onSelect: () => onChangeView("goalsView") }]
+      ? [{ id: "goals", label: t("header.goalsView", getDashboardViewLabel("goalsView")), view: "goalsView" as TaskView, isActive: view === "goalsView", icon: Target, testId: "sidebar-nav-goals", onSelect: () => onChangeView("goalsView") }]
       : []),
     /*
     FNXC:Navigation 2026-06-22-00:00 (reordered 2026-06-23-01:45):
@@ -412,7 +413,7 @@ export function LeftSidebarNav({
     */
     {
       id: "automations",
-      label: t("nav.automations", "Automations"),
+      label: t("nav.automations", getDashboardViewLabel("automations")),
       view: "automations" as TaskView,
       isActive: view === "automations",
       icon: Clock,
@@ -421,7 +422,7 @@ export function LeftSidebarNav({
     },
     {
       id: "import-tasks",
-      label: t("nav.importTasks", "Import Tasks"),
+      label: t("nav.importTasks", getDashboardViewLabel("import-tasks")),
       view: "import-tasks" as TaskView,
       isActive: view === "import-tasks",
       icon: GithubIcon,
@@ -431,7 +432,7 @@ export function LeftSidebarNav({
     ...(compoundPluginEntry ? [mapPluginEntry(compoundPluginEntry)] : []),
     {
       id: "workflows",
-      label: t("nav.workflows", "Workflows"),
+      label: t("nav.workflows", getDashboardViewLabel("workflows")),
       view: "workflows" as TaskView,
       isActive: view === "workflows",
       icon: Workflow,
@@ -439,16 +440,16 @@ export function LeftSidebarNav({
       onSelect: () => onChangeView("workflows"),
     },
     ...(experimentalFeatures?.insights
-      ? [{ id: "insights", label: t("header.insightsView", "Insights"), view: "insights" as TaskView, isActive: view === "insights", icon: Sparkles, testId: "sidebar-nav-insights", onSelect: () => onChangeView("insights") }]
+      ? [{ id: "insights", label: t("header.insightsView", getDashboardViewLabel("insights")), view: "insights" as TaskView, isActive: view === "insights", icon: Sparkles, testId: "sidebar-nav-insights", onSelect: () => onChangeView("insights") }]
       : []),
     ...(experimentalFeatures?.researchView
-      ? [{ id: "research", label: t("header.researchView", "Research"), view: "research" as TaskView, isActive: view === "research", icon: Search, testId: "sidebar-nav-research", onSelect: () => onChangeView("research") }]
+      ? [{ id: "research", label: t("header.researchView", getDashboardViewLabel("research")), view: "research" as TaskView, isActive: view === "research", icon: Search, testId: "sidebar-nav-research", onSelect: () => onChangeView("research") }]
       : []),
     ...(experimentalFeatures?.ideationView
-      ? [{ id: "ideation", label: t("nav.ideation", "Ideation"), view: "ideation" as TaskView, isActive: view === "ideation", icon: Lightbulb, testId: "sidebar-nav-ideation", onSelect: () => onChangeView("ideation") }]
+      ? [{ id: "ideation", label: t("nav.ideation", getDashboardViewLabel("ideation")), view: "ideation" as TaskView, isActive: view === "ideation", icon: Lightbulb, testId: "sidebar-nav-ideation", onSelect: () => onChangeView("ideation") }]
       : []),
     ...(experimentalFeatures?.evalsView
-      ? [{ id: "evals", label: t("header.evalsView", "Evals"), view: "evals" as TaskView, isActive: view === "evals", icon: Target, testId: "sidebar-nav-evals", onSelect: () => onChangeView("evals") }]
+      ? [{ id: "evals", label: t("header.evalsView", getDashboardViewLabel("evals")), view: "evals" as TaskView, isActive: view === "evals", icon: Target, testId: "sidebar-nav-evals", onSelect: () => onChangeView("evals") }]
       : []),
     ...remainingPluginViews.map(mapPluginEntry),
   ];
@@ -529,14 +530,14 @@ export function LeftSidebarNav({
         <button
           type="button"
           className="btn left-sidebar-nav__item left-sidebar-nav__settings"
-          aria-label={t("header.settings", "Settings")}
-          title={t("header.settings", "Settings")}
+          aria-label={t("header.settings", getDashboardViewLabel("settings"))}
+          title={t("header.settings", getDashboardViewLabel("settings"))}
           data-testid="sidebar-nav-settings"
           /* FNXC:Navigation 2026-06-22-12:00: Wrap so React's MouseEvent is not forwarded as onOpenSettings' settingsInitialSection arg. */
           onClick={() => onOpenSettings?.()}
         >
           <Settings size={16} />
-          <span className="left-sidebar-nav__label">{t("header.settings", "Settings")}</span>
+          <span className="left-sidebar-nav__label">{t("header.settings", getDashboardViewLabel("settings"))}</span>
         </button>
       </div>
 

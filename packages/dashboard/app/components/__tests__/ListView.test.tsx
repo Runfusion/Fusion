@@ -1,3 +1,4 @@
+import React from "react";
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import { useEffect, useState } from "react";
@@ -210,6 +211,7 @@ vi.mock("../TaskDetailModal", () => ({
 }));
 
 import { fetchTaskDetail, batchUpdateTaskModels, fetchBoardWorkflows, fetchNodes, refreshPrStatus, updateTask } from "../../api";
+import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
 import { readAppFile } from "../../test/cssFixture";
 
 const mockConfirm = vi.fn();
@@ -404,11 +406,316 @@ function mockDesktopViewport() {
   }));
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The default workflow's real lane set, used both as the resolved fetch value and as
+the first-paint session-cache seed. Its six column ids are the same ones the deleted
+`LEGACY_LIST_COLUMNS` fallback synthesized, so existing per-test assertions carry
+over — the difference is that they now assert against columns resolved from a
+workflow rather than from the hardcoded legacy enum.
+*/
+const DEFAULT_LANE_PAYLOAD = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [
+    {
+      id: "builtin:coding",
+      name: "Coding",
+      columns: [
+        { id: "triage", name: "Planning", flags: { intake: true } },
+        { id: "todo", name: "Todo", flags: { hold: true } },
+        { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+        { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+        { id: "archived", name: "Archived", flags: { archived: true } },
+      ],
+    },
+  ],
+  taskWorkflowIds: {},
+};
+
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+File-level, so it applies to EVERY describe here — several have their own
+`beforeEach` and would otherwise fall back to the loading skeleton.
+
+First-paint parity with production: `useBoardWorkflows` hydrates from the
+project-scoped session cache in its `useState` initializer, so lanes are present on
+the FIRST synchronous render. Seeding only the resolved fetch value is not enough —
+`mockResolvedValue` settles a microtask later, and this file's assertions are
+overwhelmingly synchronous `render(...)` + `getBy...`.
+*/
+beforeEach(() => {
+  window.sessionStorage.clear();
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache(TEST_PROJECT_ID, DEFAULT_LANE_PAYLOAD);
+  // Lanes are cached per project, so seed every project id this file renders —
+  // including `undefined`, which the cache stores under its "default" key and which
+  // a few cases reach by re-rendering <ListView> without a projectId.
+  writeBoardWorkflowsCache(undefined, DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache("project-a", DEFAULT_LANE_PAYLOAD);
+  writeBoardWorkflowsCache("project-b", DEFAULT_LANE_PAYLOAD);
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — PR #2525 review, greptile):
+List must self-heal a task whose workflow mapping the payload does not yet carry — the
+routine case, because the SSE task list updates before board-workflows does. Board has
+done this since FN-7591; List had not, so a just-created card kept an approximated move
+menu until some unrelated refresh.
+
+REVERT CHECK: remove the `useUnmappedWorkflowRefetch` call from ListView and this fails
+— `fetchBoardWorkflows` is never called a second time, so the mapping never resolves.
+*/
+describe("ListView unmapped-workflow self-heal", () => {
+  it("forces one board-workflows refetch when a rendered task has no workflow mapping", async () => {
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      ...DEFAULT_LANE_PAYLOAD,
+      // FN-901 is rendered but absent from the mapping: newer than the payload.
+      taskWorkflowIds: {},
+    });
+
+    renderListView({ tasks: [createMockTask({ id: "FN-901", column: "todo", title: "Fresh card" })] });
+
+    await waitFor(() => expect(vi.mocked(fetchBoardWorkflows).mock.calls.length).toBeGreaterThan(1));
+    // Forced fresh, so a cached payload cannot satisfy the repair.
+    expect(vi.mocked(fetchBoardWorkflows).mock.calls.some(([, options]) => options?.forceFresh === true)).toBe(true);
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
+  The forced fetch can return BEFORE the workflow-selection write commits, reporting the
+  same suspect set. A one-shot guard treated that as "unresolvable" and gave up, leaving
+  the card on approximate metadata until an unrelated refresh.
+
+  REVERT CHECK: restore the one-shot guard (return whenever the signature repeats) and
+  this fails — only ONE forced fetch is issued, so the mapping that arrives on the
+  second response never triggers the repair.
+  */
+  it("retries once more when the forced fetch races the selection write", async () => {
+    const unmappedPayload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} };
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(unmappedPayload);
+
+    renderListView({ tasks: [createMockTask({ id: "FN-903", column: "todo", title: "Racing card" })] });
+
+    // Two forced attempts for the same still-suspect signature, then it must stop —
+    // loop protection is kept, just not at one attempt.
+    await waitFor(() => {
+      expect(vi.mocked(fetchBoardWorkflows).mock.calls.filter(([, o]) => o?.forceFresh === true).length).toBe(2);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(fetchBoardWorkflows).mock.calls.filter(([, o]) => o?.forceFresh === true).length).toBe(2);
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile, second round):
+  A REJECTED forced fetch must not end the repair. `refreshBoardWorkflows` swallows a
+  transient failure by design, so `boardWorkflows` never changes and an effect-driven
+  retry would never re-run — the repair would die on exactly the failure it exists to
+  survive.
+
+  HONEST LIMITATION: this case pins the OUTCOME (the repair reaches its second attempt
+  despite a rejected first) but it does NOT discriminate the mechanism. I checked:
+  removing the self re-arm still passes it, because in this environment something else
+  re-renders after the rejection and the effect happens to run again. I could not
+  construct a case that isolates the self-driving loop without freezing re-renders in a
+  way that no longer resembles the app, so I am not claiming revert-proof coverage for
+  it — the loop is defensive against a state where nothing re-renders, which is real in
+  production but not reproducible here.
+
+  The bounded-retry budget IS revert-proof; see the racing-selection-write case above.
+  */
+  it("still spends its second attempt when the first forced fetch rejects", async () => {
+    const unmappedPayload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} };
+    vi.mocked(fetchBoardWorkflows)
+      .mockResolvedValueOnce(unmappedPayload)
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValue(unmappedPayload);
+
+    renderListView({ tasks: [createMockTask({ id: "FN-904", column: "todo", title: "Rejected repair" })] });
+
+    await waitFor(
+      () => {
+        expect(vi.mocked(fetchBoardWorkflows).mock.calls.filter(([, o]) => o?.forceFresh === true).length).toBe(2);
+      },
+      { timeout: 2000 },
+    );
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
+  A SLOW forced refresh must not have its successor started before it settles. On a
+  fixed timer alone, a request in flight for longer than the retry delay had its second
+  attempt fired anyway, so both attempts were spent on the same unresolved state before
+  either answer arrived — the budget gone, the card still approximate.
+
+  REVERT CHECK: re-arm on the plain timer (drop the settle-await) and this fails —
+  the second attempt fires while the first is still pending.
+  */
+  it("waits for a slow forced refresh to settle before spending the next attempt", async () => {
+    const unmappedPayload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} };
+    let releaseFirstForced: (() => void) | undefined;
+    let forcedCalls = 0;
+    vi.mocked(fetchBoardWorkflows).mockImplementation((_projectId?: string, options?: { forceFresh?: boolean }) => {
+      if (options?.forceFresh !== true) return Promise.resolve(unmappedPayload);
+      forcedCalls += 1;
+      if (forcedCalls === 1) {
+        return new Promise((resolve) => { releaseFirstForced = () => resolve(unmappedPayload); });
+      }
+      return Promise.resolve(unmappedPayload);
+    });
+
+    renderListView({ tasks: [createMockTask({ id: "FN-905", column: "todo", title: "Slow repair" })] });
+
+    await waitFor(() => expect(forcedCalls).toBe(1));
+    // Well past the retry delay, with the first attempt still in flight.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(forcedCalls).toBe(1);
+
+    await act(async () => { releaseFirstForced?.(); await Promise.resolve(); });
+    await waitFor(() => expect(forcedCalls).toBe(2), { timeout: 2000 });
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
+  A repair pending across a PROJECT SWITCH must abandon itself. Otherwise its
+  continuation runs through the OLD project's `refreshBoardWorkflows` closure, and that
+  stale request can claim the newest shared fetch sequence number — discarding the
+  CURRENT project's response and leaving the new board without workflow metadata.
+
+  REVERT CHECK: drop the `projectIdRef` comparison in the settle/timer continuations and
+  this fails — a forced fetch is issued for the OLD project after the switch.
+  */
+  it("abandons a pending repair when the project changes", async () => {
+    const unmappedPayload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} };
+    let releaseFirstForced: (() => void) | undefined;
+    const forcedProjects: (string | undefined)[] = [];
+    vi.mocked(fetchBoardWorkflows).mockImplementation((projectId?: string, options?: { forceFresh?: boolean }) => {
+      if (options?.forceFresh !== true) return Promise.resolve(unmappedPayload);
+      forcedProjects.push(projectId);
+      if (forcedProjects.length === 1) {
+        return new Promise((resolve) => { releaseFirstForced = () => resolve(unmappedPayload); });
+      }
+      return Promise.resolve(unmappedPayload);
+    });
+
+    const tasks = [createMockTask({ id: "FN-906", column: "todo", title: "Switching card" })];
+    const view = renderListView({ tasks, projectId: "project-a" });
+    await waitFor(() => expect(forcedProjects).toEqual(["project-a"]));
+
+    // Switch projects while the repair is still in flight, then let it settle.
+    view.rerender(<ListView tasks={tasks} projectId="project-b" onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} />);
+    await act(async () => { releaseFirstForced?.(); await Promise.resolve(); });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // No follow-up may be issued for the project that is no longer displayed.
+    expect(forcedProjects.filter((id) => id === "project-a")).toHaveLength(1);
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — CodeRabbit):
+  A repair in flight at UNMOUNT must not resume. The cleanup can only clear the timer
+  that exists at unmount; a settling request afterwards would schedule a fresh timer
+  nobody will ever clear, and fire a refresh for a view that is gone.
+
+  REVERT CHECK: drop the `mountedRef` guards and this fails — a forced fetch is issued
+  after the component has been unmounted.
+  */
+  it("does not resume a repair that settles after unmount", async () => {
+    const unmappedPayload = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} };
+    let releaseFirstForced: (() => void) | undefined;
+    let forcedCalls = 0;
+    vi.mocked(fetchBoardWorkflows).mockImplementation((_projectId?: string, options?: { forceFresh?: boolean }) => {
+      if (options?.forceFresh !== true) return Promise.resolve(unmappedPayload);
+      forcedCalls += 1;
+      if (forcedCalls === 1) {
+        return new Promise((resolve) => { releaseFirstForced = () => resolve(unmappedPayload); });
+      }
+      return Promise.resolve(unmappedPayload);
+    });
+
+    const view = renderListView({ tasks: [createMockTask({ id: "FN-907", column: "todo", title: "Unmount card" })] });
+    await waitFor(() => expect(forcedCalls).toBe(1));
+
+    view.unmount();
+    await act(async () => { releaseFirstForced?.(); await Promise.resolve(); });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(forcedCalls).toBe(1);
+  });
+
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
+  StrictMode replays effects as mount -> cleanup -> mount while PRESERVING refs. A
+  mounted latch that is only ever cleared stays `false` after the replay, so every
+  deferred continuation exits at the guard and the repair is silently dead for the whole
+  session — in production, since the dashboard root uses StrictMode.
+
+  REVERT CHECK: remove `mountedRef.current = true` from the effect SETUP and this fails —
+  no forced fetch is ever issued under StrictMode.
+  */
+  it("still repairs under StrictMode effect replay", async () => {
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({ ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: {} });
+
+    render(
+      <React.StrictMode>
+        <ListView
+          tasks={[createMockTask({ id: "FN-908", column: "todo", title: "Strict card" })]}
+          projectId={TEST_PROJECT_ID}
+          onMoveTask={vi.fn()}
+          onOpenDetail={vi.fn()}
+          addToast={mockAddToast}
+        />
+      </React.StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(vi.mocked(fetchBoardWorkflows).mock.calls.filter(([, o]) => o?.forceFresh === true).length).toBeGreaterThan(0);
+    }, { timeout: 2000 });
+  });
+
+  it("does not refetch when every rendered task is mapped", async () => {
+    const mapped = { ...DEFAULT_LANE_PAYLOAD, taskWorkflowIds: { "FN-902": "builtin:coding" } };
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(mapped);
+    // Seed the FIRST-PAINT cache too: the file-level seed maps no tasks, so without this
+    // the initial render legitimately sees an unmapped card and schedules the repair —
+    // which would make this case assert the opposite of what it means to.
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, mapped);
+
+    renderListView({ tasks: [createMockTask({ id: "FN-902", column: "todo", title: "Mapped card" })] });
+
+    // Let the initial load settle, then watch only what happens AFTER it: other
+    // mechanisms (mount fetch, switcher open) legitimately call the fetcher, so
+    // counting from zero would measure them rather than the self-heal.
+    await act(async () => { await Promise.resolve(); });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vi.mocked(fetchBoardWorkflows).mockClear();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The signature guard must not turn a healthy board into a refetch loop.
+    expect(vi.mocked(fetchBoardWorkflows).mock.calls.filter(([, options]) => options?.forceFresh === true)).toHaveLength(0);
+  });
+});
+
 describe("ListView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(fetchNodes).mockImplementation(() => new Promise(() => {}));
-    vi.mocked(fetchBoardWorkflows).mockImplementation(() => new Promise(() => {}));
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    This default used to be a NEVER-RESOLVING promise. With `workflowColumnsEnabled`
+    left unset, ListView's old gate evaluated to false, so `boardWorkflows` stayed
+    null and every test in this file rendered `LEGACY_LIST_COLUMNS` — the synthesized
+    legacy-enum column set. Production never reached that state: MainContent passed
+    `workflowColumnsEnabled` as a literal `true`, which held the skeleton until lanes
+    resolved. So this file's coverage was pointed at a configuration that could not
+    occur, and a real regression in the workflow list would not have failed it.
+
+    Resolve the DEFAULT workflow's real lane set instead. The column ids are the same
+    six the legacy fallback synthesized, so per-test assertions carry over unchanged —
+    what changes is that they now assert against columns resolved from a workflow.
+    Tests that need a different lane shape still override this mock locally.
+    */
     vi.mocked(fetchTaskDetail).mockResolvedValue({
       ...createMockTask(),
       prompt: "# Detail",
@@ -845,7 +1152,7 @@ describe("ListView", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Move to In Progress" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Move to In progress" })).toBeInTheDocument();
     expect(failedRow).not.toHaveClass("list-row--selected");
     expect(onOpenDetail).not.toHaveBeenCalled();
     expect(fetchTaskDetail).not.toHaveBeenCalled();
@@ -856,7 +1163,17 @@ describe("ListView", () => {
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Refine" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeInTheDocument();
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+    "In progress", not "In Progress". The label is now interpolated from the WORKFLOW's
+    own column name (`BUILTIN_CODING_WORKFLOW_IR` declares "In progress") instead of the
+    hardcoded English string `taskDetail.move.backToInProgress`. This assertion is the
+    visible proof that the label follows the workflow: rename that column and the menu
+    renames with it. Task Detail cases that render before board-workflows resolves still
+    read "Back to In Progress" — they go through the no-metadata fallback, which uses
+    the legacy column label map.
+    */
+    expect(screen.getByRole("menuitem", { name: "Back to In progress" })).toBeInTheDocument();
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-006"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
@@ -922,12 +1239,76 @@ describe("ListView", () => {
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-030"]') as HTMLElement, { clientX: 40, clientY: 50 });
     fireEvent.click(screen.getByRole("menuitem", { name: "Plan" }));
-    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", null);
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    Was `null`. That was the LEGACY value: `getTaskPlanningWorkflowId` only returns
+    null when `workflowMode` is false, which production never was. With lanes
+    resolved it returns the task's workflow (here the default), so Planning Mode is
+    seeded with the right workflow — the behaviour operators have always had.
+    */
+    expect(onPlanningMode).toHaveBeenCalledWith("Seed from list", "builtin:coding");
     expect(onOpenDetail).not.toHaveBeenCalled();
 
     fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-031"]') as HTMLElement, { clientX: 40, clientY: 50 });
     expect(screen.queryByRole("menuitem", { name: "Plan" })).not.toBeInTheDocument();
     viewportSpy.mockRestore();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:45 (fleet phase — evidence for the ListView row-menu conversion):
+  The Archive and Revert row entries were gated on `task.column === "done"` / `=== "archived"`, so on a
+  board whose terminal lanes are RENAMED they simply did not render. No error, no log — the operator just
+  has no way to archive or revert from the list.
+
+  Driven through the real `fetchBoardWorkflows` seam with a renamed vocabulary rather than by poking
+  flags in, so the assertion covers the whole path the component actually uses: payload -> listColumns ->
+  columnFlagsById -> row menu.
+
+  REVERT CHECK, measured. Restoring the id comparisons makes the renamed case fail — the menu renders
+  with neither entry ("Unable to find ... name Archive"). The DEFAULT-vocabulary case passes either way,
+  which is why the renamed one exists.
+  */
+  it("offers Archive and Revert on a RENAMED complete lane, which the id comparisons could not see", async () => {
+    const RENAMED_LANE_PAYLOAD = {
+      flagEnabled: true,
+      defaultWorkflowId: "custom:renamed",
+      workflows: [
+        {
+          id: "custom:renamed",
+          name: "Renamed",
+          columns: [
+            { id: "backlog", name: "Backlog", flags: { hold: true } },
+            { id: "building", name: "Building", flags: { countsTowardWip: true } },
+            { id: "checking", name: "Checking", flags: { mergeBlocker: true } },
+            { id: "shipped", name: "Shipped", flags: { complete: true } },
+            { id: "attic", name: "Attic", flags: { archived: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: { "FN-090": "custom:renamed" },
+    };
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue(RENAMED_LANE_PAYLOAD as never);
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, RENAMED_LANE_PAYLOAD as never);
+
+    const shipped = createMockTask({
+      id: "FN-090",
+      title: "Shipped row",
+      column: "shipped" as never,
+      mergeDetails: { commitSha: "abc1234" } as never,
+    });
+
+    renderListView({
+      tasks: [shipped],
+      onOpenDetail: vi.fn(),
+      onArchiveTask: vi.fn(),
+      onRevertTask: vi.fn(),
+    });
+
+    await waitFor(() => expect(document.querySelector('.list-row[data-id="FN-090"]')).toBeTruthy());
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-090"]') as HTMLElement, { clientX: 40, clientY: 50 });
+
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Revert" })).toBeInTheDocument();
   });
 
   it("enables GitHub tracking from desktop and mobile list context menus without selecting rows", async () => {
@@ -999,7 +1380,7 @@ describe("ListView", () => {
     const onOpenDetail = vi.fn();
     const tasks = [createMockTask({ id: "FN-012", title: "Custom complete", column: "complete" as any, status: "done" })];
 
-    renderListView({ tasks, onOpenDetail, workflowColumnsEnabled: true, settingsLoaded: true });
+    renderListView({ tasks, onOpenDetail });
 
     await screen.findByText("Custom complete");
     const row = document.querySelector('.list-row[data-id="FN-012"]') as HTMLElement;
@@ -1139,37 +1520,38 @@ describe("ListView", () => {
   });
 
   it("refreshes workflow columns when workflow metadata SSE arrives", async () => {
+    const wf = (columns: { id: string; name: string; flags: Record<string, boolean> }[]) => ({
+      flagEnabled: true,
+      defaultWorkflowId: "wf-custom",
+      workflows: [{ id: "wf-custom", name: "Custom", columns }],
+      taskWorkflowIds: { "FN-001": "wf-custom" },
+    });
+    const before = wf([
+      { id: "backlog", name: "Backlog", flags: { intake: true } },
+      { id: "complete", name: "Complete", flags: { complete: true } },
+    ]);
+    const after = wf([
+      { id: "ready", name: "Ready", flags: { intake: true } },
+      { id: "complete", name: "Complete", flags: { complete: true } },
+    ]);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12):
+    Seed the FIRST-PAINT cache with `before`. The file-level seed maps no tasks, so
+    without this the initial render sees FN-001 as unmapped, the unmapped-workflow
+    self-heal correctly forces an extra board-workflows fetch, and that fetch eats the
+    `Once` payload this test is asserting on. Seeding makes the first paint already
+    consistent, which is what the test means to start from.
+
+    The trailing `mockResolvedValue(after)` covers the self-heal firing legitimately
+    AFTER the SSE swap: `backlog` -> `ready` leaves FN-001 in a column its workflow no
+    longer declares, so a repair fetch is correct there. Without a fallback it would
+    resolve `undefined` and wipe the payload.
+    */
+    writeBoardWorkflowsCache(TEST_PROJECT_ID, before);
     vi.mocked(fetchBoardWorkflows)
-      .mockResolvedValueOnce({
-        flagEnabled: true,
-        defaultWorkflowId: "wf-custom",
-        workflows: [
-          {
-            id: "wf-custom",
-            name: "Custom",
-            columns: [
-              { id: "backlog", name: "Backlog", flags: { intake: true } },
-              { id: "complete", name: "Complete", flags: { complete: true } },
-            ],
-          },
-        ],
-        taskWorkflowIds: { "FN-001": "wf-custom" },
-      })
-      .mockResolvedValueOnce({
-        flagEnabled: true,
-        defaultWorkflowId: "wf-custom",
-        workflows: [
-          {
-            id: "wf-custom",
-            name: "Custom",
-            columns: [
-              { id: "ready", name: "Ready", flags: { intake: true } },
-              { id: "complete", name: "Complete", flags: { complete: true } },
-            ],
-          },
-        ],
-        taskWorkflowIds: { "FN-001": "wf-custom" },
-      });
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(after)
+      .mockResolvedValue(after);
 
     renderListView({
       tasks: [createMockTask({ id: "FN-001", column: "backlog", title: "Workflow task" })],
@@ -2119,7 +2501,7 @@ describe("ListView", () => {
 
     const row = screen.getByText("FN-7831").closest("tr") as HTMLElement;
     expect(row.className).toContain("agent-active");
-    const badge = within(row).getByText("Reviewing");
+    const badge = within(row).getByText("Plan Review");
     expect(badge.className).toContain("pulsing");
   });
 
@@ -2144,7 +2526,7 @@ describe("ListView", () => {
 
       const card = screen.getByText("FN-7831").closest(".list-card") as HTMLElement;
       expect(card.className).toContain("agent-active");
-      expect(within(card).getByText("Reviewing").className).toContain("pulsing");
+      expect(within(card).getByText("Plan Review").className).toContain("pulsing");
     } finally {
       matchMediaSpy.mockRestore();
     }
@@ -2162,7 +2544,7 @@ describe("ListView", () => {
 
     const row = screen.getByText("FN-8055-paused").closest("tr") as HTMLElement;
     expect(row.className).not.toContain("agent-active");
-    expect(within(row).queryByText("Reviewing")).toBeNull();
+    expect(within(row).queryByText("Plan Review")).toBeNull();
   });
 
   it("does not show the Reviewing badge after Plan Review completes", () => {
@@ -2185,7 +2567,7 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    expect(screen.queryByText("Reviewing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plan Review")).not.toBeInTheDocument();
   });
 
   it("FN-8475 renders Todo planning in desktop table rows without a placeholder", () => {
@@ -2207,7 +2589,8 @@ describe("ListView", () => {
 
       for (const id of ["FN-8475-todo", "FN-8475-active", "FN-8475-triage"]) {
         const row = screen.getByText(id).closest("tr") as HTMLElement;
-        expect(within(row).getByText("planning")).toHaveClass("list-status-badge");
+        // The row also renders the "Planning" COLUMN name, so assert on the badge element itself.
+        expect(row.querySelector(".list-status-badge")).toHaveTextContent("Planning");
         expect(row.querySelector(".list-status-badge")).not.toHaveTextContent("-");
       }
       expect(within(screen.getByText("FN-8475-executing").closest("tr") as HTMLElement).getByText("executing")).toBeInTheDocument();
@@ -2224,7 +2607,7 @@ describe("ListView", () => {
       });
 
       const card = screen.getByText("FN-8475-todo-mobile").closest(".list-card") as HTMLElement;
-      expect(within(card).getByText("planning")).toHaveClass("list-status-badge");
+      expect(card.querySelector(".list-status-badge")).toHaveTextContent("Planning");
     } finally {
       matchMediaSpy.mockRestore();
     }
@@ -2370,16 +2753,16 @@ describe("ListView", () => {
     // Use getAllByText and check length since column names appear in both drop zones and badges
     expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In progress").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
 
     // Check that badges have the correct styling by querying within the table
     const table = document.querySelector(".list-table");
     expect(table?.textContent).toContain("Planning");
     expect(table?.textContent).toContain("Todo");
-    expect(table?.textContent).toContain("In Progress");
-    expect(table?.textContent).toContain("In Review");
+    expect(table?.textContent).toContain("In progress");
+    expect(table?.textContent).toContain("In review");
     expect(table?.textContent).toContain("Done");
   });
 
@@ -2598,8 +2981,8 @@ describe("ListView", () => {
 
     expect(screen.getByText("Planning")).toBeDefined();
     expect(screen.getByText("Todo")).toBeDefined();
-    expect(screen.getByText("In Progress")).toBeDefined();
-    expect(screen.getByText("In Review")).toBeDefined();
+    expect(screen.getByText("In progress")).toBeDefined();
+    expect(screen.getByText("In review")).toBeDefined();
     expect(screen.getByText("Done")).toBeDefined();
   });
 
@@ -2813,8 +3196,8 @@ describe("ListView", () => {
     // Check that section headers are rendered with column names
     expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In progress").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("In review").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Done").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -2928,7 +3311,7 @@ describe("ListView", () => {
 
     renderListView({ tasks });
 
-    expect(getSectionTaskIds("In Review")).toEqual(["FN-301", "FN-300"]);
+    expect(getSectionTaskIds("In review")).toEqual(["FN-301", "FN-300"]);
   });
 
   it("maintains sort order within each section", () => {
@@ -5282,7 +5665,7 @@ describe("ListView - Bulk Selection", () => {
       });
 
       for (const id of ["FN-8170-mobile-todo", "FN-8170-mobile-active", "FN-8170-mobile-triage"]) {
-        expect(within(container.querySelector(`[data-id="${id}"]`) as HTMLElement).getByText("planning")).toHaveClass("list-status-badge");
+        expect((container.querySelector(`[data-id="${id}"]`) as HTMLElement).querySelector(".list-status-badge")).toHaveTextContent("Planning");
       }
       expect(within(container.querySelector('[data-id="FN-8170-mobile-executing"]') as HTMLElement).getByText("executing")).toBeInTheDocument();
     });

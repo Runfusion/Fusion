@@ -990,6 +990,24 @@ rows while preserving their existing badge geometry.
   border-bottom: 1px solid var(--border);
 }
 
+/*
+FNXC:ListViewWindowing 2026-07-26-11:40:
+Each list section renders only a window of its tasks so a large project cannot inflate the DOM to the
+point where mobile browsers reclaim the backgrounded tab. This is the container for the shared
+"Load more" affordance that reveals the next increment; it only positions the button — the button
+itself reuses the board's `.btn.btn-secondary.btn-sm` primitive so List and Board read as one system.
+*/
+.list-section-load-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.list-section-load-more-row:hover {
+  background: transparent; /* not a task row — suppress the row hover affordance */
+}
+
 /* === List View Single-Pane Responsive ===
 FNXC:ListView 2026-07-10-00:00 (FN-7809):
 Tablet-width List view shares the mobile single-pane scaffolding so the full-width toolbar and QuickEntryBox are not clipped by the desktop split sidebar. Mobile behavior stays unchanged; desktop split rules remain active above the tablet tier.

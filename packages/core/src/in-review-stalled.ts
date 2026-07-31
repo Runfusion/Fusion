@@ -17,6 +17,9 @@ export interface InReviewStalledSignal {
 }
 
 export interface InReviewStalledContext {
+  /** The workflow's REVIEW (merge-orchestration) column. Defaults to the legacy
+   *  `"in-review"` so unconverted callers are byte-identical. */
+  reviewColumn?: string;
   now?: number;
   thresholdMs?: number;
   autoMerge?: boolean;
@@ -40,7 +43,14 @@ export function getInReviewStalledSignal(
   task: InReviewStalledTask,
   context: InReviewStalledContext = {},
 ): InReviewStalledSignal | undefined {
-  if (task.column !== "in-review" || task.paused === true) return undefined;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-23:55 (U4 — surfacing family):
+  REVIEW role, not the literal `in-review` id. Same conversion and same reason as
+  its sibling in stale-paused-review.ts; defaults to the legacy id so existing
+  callers are byte-identical.
+  */
+  const reviewColumn = context.reviewColumn ?? "in-review";
+  if (task.column !== reviewColumn || task.paused === true) return undefined;
   if (context.autoMerge === false) return undefined;
   if (task.mergeDetails?.mergeConfirmed === true) return undefined;
   if (task.status === "awaiting-user-review" || task.status === "awaiting-approval") return undefined;

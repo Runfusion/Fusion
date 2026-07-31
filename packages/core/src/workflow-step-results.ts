@@ -117,6 +117,17 @@ graph executor and unit tests share one lease implementation.
  *  FN-6736 staleness-floor standard for durable single-owner leases. */
 export const PLAN_REVIEW_LEASE_STALENESS_MS = 15 * 60 * 1000;
 
+/**
+ * Identity a caller supplies so {@link classifyReviewLease} can recognize leases left behind by a
+ * PREVIOUS process on the SAME node. `nodeId` must be the cluster node id stamped into
+ * `WorkflowStepResult.leaseNodeId`; `processBootAt` is this process's start time (epoch ms).
+ * Omit it entirely to keep pure staleness-floor semantics.
+ */
+export interface LocalNodeLeaseIdentity {
+  nodeId: string;
+  processBootAt: number;
+}
+
 /** Classification of a review-gate's current lease state for a re-entering run. */
 export type ReviewLeaseDisposition =
   /** No prior result — this run should claim the lease and dispatch the reviewer. */
@@ -158,6 +169,7 @@ export function classifyReviewLease(
   stepId: string,
   now: number,
   stalenessMs: number = PLAN_REVIEW_LEASE_STALENESS_MS,
+  localNode?: LocalNodeLeaseIdentity,
 ): ReviewLeaseDisposition {
   const existing = results?.find((r) => r.workflowStepId === stepId);
   if (!existing) return { kind: "claim" };
@@ -165,6 +177,29 @@ export function classifyReviewLease(
   // existing.status === "pending": it is a lease.
   const startedMs = existing.startedAt ? Date.parse(existing.startedAt) : Number.NaN;
   const ageMs = Number.isFinite(startedMs) ? now - startedMs : Number.POSITIVE_INFINITY;
+  /*
+  FNXC:PlanReviewLease 2026-07-26-20:12:
+  Pre-boot reclaim. A lease stamped with THIS node's id whose `startedAt` predates this process's
+  boot is provably dead: the process that could have owned it no longer exists. Reclaim it
+  immediately instead of waiting out the staleness floor — the floor exists to protect leases we
+  cannot attribute, and this one we can.
+
+  Deliberately narrow, because every widening is a double-dispatch risk:
+  - `leaseNodeId` must be PRESENT and EQUAL to ours. Absent (legacy rows) or a peer's id both keep
+    the floor — under multi-node, a fresh peer lease is very likely genuinely running.
+  - `startedAt` must parse and be STRICTLY before boot. A lease taken by this process after boot is
+    a live in-process claim and must still be adopted.
+  Motivating incident FN-8603: an engine restart killed a Code Review session 34s in; the lease then
+  read "fresh" for the remaining ~14 minutes of the floor, so nothing re-ran the gate until it aged
+  out and was marked failed.
+  */
+  const ownedByDeadLocalProcess =
+    localNode !== undefined &&
+    existing.leaseNodeId !== undefined &&
+    existing.leaseNodeId === localNode.nodeId &&
+    Number.isFinite(startedMs) &&
+    startedMs < localNode.processBootAt;
+  if (ownedByDeadLocalProcess) return { kind: "reclaim", priorOwner: existing.leaseOwner };
   const stale = !existing.leaseOwner || !Number.isFinite(startedMs) || ageMs >= stalenessMs;
   if (stale) return { kind: "reclaim", priorOwner: existing.leaseOwner };
   // Not stale ⇒ `leaseOwner` is guaranteed set (the stale check requires it).

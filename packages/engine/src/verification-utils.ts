@@ -408,7 +408,12 @@ async function runVerificationCommandUnlocked(
   command: string,
   type: "test" | "build",
   signal: AbortSignal | undefined,
-  log?: { log: (message: string, ...args: unknown[]) => void; error: (message: string, ...args: unknown[]) => void; warn: (message: string, ...args: unknown[]) => void },
+  log?: {
+    log: (message: string, ...args: unknown[]) => void;
+    debug?: (message: string, ...args: unknown[]) => void;
+    error: (message: string, ...args: unknown[]) => void;
+    warn: (message: string, ...args: unknown[]) => void;
+  },
   agentLabel?: string,
   extraEnv?: NodeJS.ProcessEnv,
   timeoutMsOverride?: number,
@@ -416,6 +421,13 @@ async function runVerificationCommandUnlocked(
 ): Promise<VerificationCommandResult> {
   const logger = log ?? { log: console.log, error: console.error, warn: console.warn };
   const label = (agentLabel ?? "merger") as AgentRole;
+  /*
+  FNXC:EngineDiagnostics 2026-07-26-09:33:
+  Start + success lines for test/build verification fire on every green run and drown real events in the TUI. Prefer logger.debug when the caller supplies it (createLogger instances); never fall back to log for success chatter. Failures stay on error.
+  */
+  const debugLog = (message: string, ...args: unknown[]) => {
+    if (typeof logger.debug === "function") logger.debug(message, ...args);
+  };
 
   if (signal?.aborted) {
     throw Object.assign(
@@ -424,7 +436,7 @@ async function runVerificationCommandUnlocked(
     );
   }
 
-  logger.log(`${taskId}: running ${type} command: ${command}`);
+  debugLog(`${taskId}: running ${type} command: ${command}`);
   await store.logEntry(taskId, `[verification] Running ${type} command: ${command}`);
   await store.appendAgentLog(taskId, `Running ${type} command`, "tool", command, label);
 
@@ -475,7 +487,7 @@ async function runVerificationCommandUnlocked(
     const verificationDurationMs = Date.now() - verificationStartedAt;
     const timingDetail = `${verificationDurationMs}ms`;
     if (bufferOverflow) {
-      logger.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
+      debugLog(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
       await store.logEntry(
         taskId,
         `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
@@ -488,7 +500,7 @@ async function runVerificationCommandUnlocked(
         label,
       );
     } else {
-      logger.log(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
+      debugLog(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
       await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
       await store.appendAgentLog(
         taskId,
@@ -536,7 +548,7 @@ async function runVerificationCommandUnlocked(
     }
 
     if (result.success) {
-      logger.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
+      debugLog(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
       await store.logEntry(
         taskId,
         `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,

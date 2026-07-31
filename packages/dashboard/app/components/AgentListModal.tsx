@@ -17,6 +17,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 
+import { FloatingWindow } from "./FloatingWindow";
 interface AgentListModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -286,7 +287,8 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+        <FloatingWindow windowKey="agent-list" modal title={t("agents.modalTitle", "Agents")} ariaLabel={t("agents.modalTitle", "Agents")} onClose={onClose} hideHeader dragHandleSelector=".agent-list-modal .modal-header" className="floating-window--agent-list" defaultSize={{ width: 900, height: 680 }} minSize={{ width: 480, height: 360 }} persistGeometryKey="floating-window:agent-list" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:07: Agents is a long-lived workspace; shared geometry persists on desktop/tablet while explicit outside dismissal preserves its former overlay behavior. */}
       <div className="modal modal--wide agent-list-modal">
         <div className="modal-header">
           <h2 className="modal-title">
@@ -718,6 +720,6 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
           </div>
         </div>
       </div>
-   </div>
+   </FloatingWindow>
   );
 }

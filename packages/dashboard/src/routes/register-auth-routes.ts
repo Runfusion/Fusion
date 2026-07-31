@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-auth-routes");
 import type { Request } from "express";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -887,7 +890,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         try {
           options.onUseClaudeCliToggled(prev, next);
         } catch (hookErr) {
-          console.warn(
+          severityAuditLog.warn(
             `[auth/claude-cli] onUseClaudeCliToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
           );
         }
@@ -952,7 +955,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         try {
           options.onUseDroidCliToggled(prev, next);
         } catch (hookErr) {
-          console.warn(
+          severityAuditLog.warn(
             `[auth/droid-cli] onUseDroidCliToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
           );
         }
@@ -1366,7 +1369,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         try {
           options.onUseLlamaCppToggled(prev, next);
         } catch (hookErr) {
-          console.warn(
+          severityAuditLog.warn(
             `[auth/llama-cpp] onUseLlamaCppToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
           );
         }
@@ -1477,7 +1480,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       void inputPromise.catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         if (message !== "cancelled") {
-          console.warn(`[auth/login] manual OAuth input promise rejected for ${provider}: ${message}`);
+          severityAuditLog.warn(`[auth/login] manual OAuth input promise rejected for ${provider}: ${message}`);
         }
       });
       const pendingLogin: PendingLogin = {
@@ -1583,7 +1586,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           rejectAuthInfo(error);
           if (error.message !== "cancelled") {
             lastLoginError.set(provider, error.message);
-            console.error(`[auth/login] background login failed for ${provider}: ${error.message}`);
+            severityAuditLog.error(`[auth/login] background login failed for ${provider}: ${error.message}`);
           }
         })
         .finally(() => {

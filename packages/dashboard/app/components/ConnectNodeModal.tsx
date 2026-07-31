@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { NodeCreateInput, NodeInfo } from "../api";
 
+import { FloatingWindow } from "./FloatingWindow";
 export interface ConnectNodeInput {
   name: string;
   url: string;
@@ -166,12 +167,10 @@ export function ConnectNodeModal({ open, onClose, onConnected, addToast, onSubmi
   if (!open) return null;
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
+    <FloatingWindow windowKey="connect-node" title={t("nodes.modal.title", "Connect to Node")} ariaLabel={`${t("nodes.modal.title", "Connect to Node")} dialog`} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--connect-node" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:connect-node" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       <div
         className="modal modal-md connect-node-modal"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
         aria-label={t("nodes.modal.title", "Connect to Node")}
       >
         <div className="modal-header">
@@ -274,6 +273,6 @@ export function ConnectNodeModal({ open, onClose, onConnected, addToast, onSubmi
           </button>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

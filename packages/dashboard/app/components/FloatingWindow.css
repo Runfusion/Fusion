@@ -20,6 +20,19 @@ sheet in the layout tree. `visibility: hidden` removes paint while preserving ch
 message-list scroll state; `pointer-events: none` keeps the already click-through overlay inert.
 Never replace this with `display: none`, which collapses layout and makes reopening visibly reflow.
 */
+/*
+FNXC:ModalTouchGeometry 2026-07-26-19:46:
+FN-8619's blocking modal migrations retain the visible scrim and blur that Agent Detail previously
+owned locally. Modal windows block the application beneath them; utility FloatingWindows remain
+transparent and click-through so concurrent tools continue to coexist.
+*/
+.floating-window-overlay--modal {
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  -webkit-backdrop-filter: blur(var(--space-xs));
+  backdrop-filter: blur(var(--space-xs));
+  pointer-events: auto;
+}
+
 .floating-window-overlay--hidden {
   visibility: hidden;
   pointer-events: none;
@@ -107,48 +120,238 @@ Headerless task pop-outs still need a visible drag affordance. The embedded task
 }
 
 /*
-FNXC:FloatingWindow 2026-07-21-00:00:
-Tablet task-detail popups prioritize symmetric content insets over desktop resize affordances. Their body removes the desktop scrollbar-clearance gutter only while all resize handles are suppressed; desktop retains the clearance and resize-safe handles, and the delegated task header remains draggable.
+FNXC:ModalTouchGeometry 2026-07-26-12:19:
+A bare `(pointer: coarse)` rule hid task-detail handles on every touch-primary device,
+including tablets that must be movable and resizable. The JS tablet-touch discriminator
+composes physical screen class, touch capability, and the 768px boundary, so phone sheets
+and desktop hybrids retain their existing geometry while tablet touch gets active targets.
+The shared scrollbar gutter stays in place: it keeps hosted scrollbars clear of east handles.
 */
-@media (min-width: 769px) and (max-width: 1024px) {
-  .floating-window--task-detail .floating-window__body {
-    margin-inline-end: 0;
-  }
-
-  .floating-window--task-detail .floating-window__resize-handle {
-    display: none;
-  }
+.floating-window--touch-geometry {
+  overflow: visible;
 }
 
 /*
-FNXC:FloatingWindow 2026-07-25-00:00:
-The tablet carve-out above is width-gated at 1024px, so a landscape tablet (iPad Air/Pro report 1180-1366 CSS px) fell back to the desktop contract and kept FN-8015's `margin-inline-end: var(--space-lg)` body gutter — content stopped ~17px short of the right edge while the left edge stayed flush, reading as unexplained dead space on the right of the task pop-up.
-Width cannot answer this: the gutter exists to keep a hosted scrollbar out of the east/north-east/south-east resize hot zones, which only matters when a pointer can actually grab them. Gate the carve-out on the input device instead, so every touch-primary tablet gets symmetric insets at any width. `(pointer: coarse)` is primary-input only, so a touchscreen laptop driven by a trackpad still reports `fine` and keeps desktop resize clearance.
-Kept as a separate block rather than folded into the width query so the existing 769-1024px contract stays independently addressable.
+FNXC:ModalTouchGeometry 2026-07-26-12:19:
+The painted borders remain mouse-sized, but tablet fingers receive FN-8602's shared
+44px effective target outside the panel. Edges begin beyond corner targets so they do
+not cover close controls, hosted footer actions, or scrollable content.
 */
-@media (pointer: coarse) {
-  .floating-window--task-detail .floating-window__body {
-    margin-inline-end: 0;
-  }
-
-  .floating-window--task-detail .floating-window__resize-handle {
-    display: none;
-  }
+.floating-window--touch-geometry .floating-window__resize-handle {
+  z-index: 3;
+  touch-action: none;
 }
 
 /*
+FNXC:ModalTouchGeometry 2026-07-26-12:34:
+A headerless window delegates dragging to a caller-owned header, so that resolved element must
+receive the same tablet-only target floor as FloatingWindow's built-in header. Generic windows
+retain that established 44px layout contract.
+*/
+.floating-window--touch-geometry .floating-window__delegated-drag-handle {
+  box-sizing: border-box;
+  min-block-size: var(--modal-resize-touch-target);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-26-15:30:
+Task-detail pop-outs are the only delegated-header surface with the reported tablet density
+regression. Their 44px drag contract is hit-area-only: an absolute pseudo-element extends the
+pointer target without making the painted task header taller. Keep the target below controls so a
+close or action button receives its tap. Do not widen this selector because FloatingWindow also
+hosts unrelated chat, import, workflow, and utility panels.
+*/
+.floating-window--task-detail.floating-window--touch-geometry .floating-window__delegated-drag-handle {
+  min-block-size: 0;
+  position: relative;
+  z-index: 0;
+}
+
+.floating-window--task-detail.floating-window--touch-geometry .floating-window__delegated-drag-handle::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-inline: 0;
+  block-size: var(--modal-resize-touch-target);
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-26-16:00:
+The invisible tablet drag extension must stay beneath actionable task-header descendants.
+Explicit stacking preserves the 44px parent hit area while buttons and links retain their normal
+activation instead of beginning a window drag.
+*/
+.floating-window--task-detail.floating-window--touch-geometry .floating-window__delegated-drag-handle :is(button, a, input, select, textarea, [role="button"]) {
+  position: relative;
+  z-index: 1;
+}
+
+.floating-window--touch-geometry .floating-window__delegated-drag-handle:active {
+  cursor: grabbing;
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--n,
+.floating-window--touch-geometry .floating-window__resize-handle--s {
+  left: var(--modal-resize-touch-target);
+  right: var(--modal-resize-touch-target);
+  height: var(--modal-resize-touch-target);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--n {
+  top: calc((var(--modal-resize-touch-target) - var(--space-sm)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--s {
+  bottom: calc((var(--modal-resize-touch-target) - var(--space-sm)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--e,
+.floating-window--touch-geometry .floating-window__resize-handle--w {
+  top: var(--modal-resize-touch-target);
+  bottom: var(--modal-resize-touch-target);
+  width: var(--modal-resize-touch-target);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--e {
+  right: calc((var(--modal-resize-touch-target) - var(--space-sm)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--w {
+  left: calc((var(--modal-resize-touch-target) - var(--space-sm)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--ne,
+.floating-window--touch-geometry .floating-window__resize-handle--nw,
+.floating-window--touch-geometry .floating-window__resize-handle--se,
+.floating-window--touch-geometry .floating-window__resize-handle--sw {
+  width: var(--modal-resize-touch-target);
+  height: var(--modal-resize-touch-target);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--ne {
+  top: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  right: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--nw {
+  top: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  left: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--se {
+  bottom: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  right: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+}
+
+.floating-window--touch-geometry .floating-window__resize-handle--sw {
+  bottom: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+  left: calc((var(--modal-resize-touch-target) - var(--space-lg)) * -1);
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-26-12:19:
+Phone sheets are strictly below 768px. At exactly 768px this query must not match so
+`isTabletTouchViewport` can expose the active tablet touch targets without a cascade conflict.
+
 FNXC:ChatModal 2026-06-22-14:49:
 On mobile/narrow app viewports, opening Quick Chat should present the full Chat modal as a full-screen sheet instead of a small draggable desktop window. Scope this to the chat FloatingWindow and override the inline desktop geometry only at the mobile breakpoint; desktop pop-out behavior remains movable/resizable.
 */
-@media (max-width: 768px) {
+/*
+FNXC:ModalTouchGeometry 2026-07-26-13:25:
+FN-8606 migrated core and workflow dialogs share FloatingWindow's pointer contract. Their
+caller-owned headers remain the drag target on desktop/tablet; true phones and short sheets hide
+all floating affordances so persisted desktop geometry cannot imply a draggable sheet.
+*/
+.floating-window--activity-log .floating-window__body,
+.floating-window--scripts .floating-window__body,
+.floating-window--add-node .floating-window__body,
+.floating-window--connect-node .floating-window__body,
+.floating-window--node-detail .floating-window__body,
+.floating-window--workflow-add-step .floating-window__body,
+.floating-window--group-task .floating-window__body,
+.floating-window--changes-diff .floating-window__body,
+.floating-window--model-onboarding .floating-window__body,
+.floating-window--git-manager .floating-window__body,
+.floating-window--settings .floating-window__body,
+.floating-window--planning-mode .floating-window__body,
+/* FNXC:ModalTouchGeometry 2026-07-26-19:25: Create Room shares migrated dialogs' host-owned body sizing while its nested member list retains picker scrolling. */
+.floating-window--create-room .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--activity-log .modal,
+.floating-window--scripts .modal,
+.floating-window--add-node .modal,
+.floating-window--connect-node .modal,
+.floating-window--node-detail .modal,
+.floating-window--group-task .modal,
+.floating-window--workflow-add-step .wf-add-step-dialog,
+.floating-window--changes-diff .changes-diff-modal,
+.floating-window--model-onboarding .model-onboarding-modal,
+.floating-window--git-manager .gm-modal,
+.floating-window--settings .settings-modal,
+.floating-window--planning-mode .planning-modal,
+.floating-window--create-room .create-room-modal {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: inherit;
+}
+
+@media (max-width: 767.98px), (max-height: 480px) {
   /*
   FNXC:FloatingWindow 2026-07-12-17:35:
   Mobile keeps the global `styles.css` pan-y lockdown so the dashboard cannot drift, but movable FloatingWindow headers must still resolve to an effective `touch-action: none`. Reassert the drag-handle contract at the mobile breakpoint, excluding full-screen sheet variants, so a single-finger header drag stays on the captured pointermove stream instead of being intersected back into page pan by the ancestor chain. Desktop drag/resize and mobile sheet variants are unchanged.
   */
-  .floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail):not(.floating-window--task-detail):not(.floating-window--workflow-editor):not(.floating-window--automation):not(.floating-window--mission-interview):not(.floating-window--file-browser):not(.floating-window--pr-create):not(.artifacts-gallery-window) .floating-window__header {
+  .floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail):not(.floating-window--task-detail):not(.floating-window--workflow-editor):not(.floating-window--automation):not(.floating-window--mission-interview):not(.floating-window--file-browser):not(.floating-window--pr-create):not(.floating-window--activity-log):not(.floating-window--scripts):not(.floating-window--add-node):not(.floating-window--connect-node):not(.floating-window--node-detail):not(.floating-window--workflow-add-step):not(.floating-window--group-task):not(.floating-window--changes-diff):not(.floating-window--model-onboarding):not(.floating-window--git-manager):not(.floating-window--settings):not(.floating-window--planning-mode):not(.artifacts-gallery-window) .floating-window__header {
     touch-action: none;
   }
 
+  /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Automations shares every FN-8606 sheet breakpoint: a short viewport must not expose desktop geometry even when it remains wider than a phone. */
+  /*
+  FNXC:ModalTouchGeometry 2026-07-28-14:30:
+  FN-8607's agent, onboarding, mailbox, interview, and subtask modal classes use the
+  same phone/short-viewport sheet contract as the earlier FloatingWindow migrations.
+  FN-8620's New Task, right-dock, and terminal hosts share that contract and must remain
+  included. Geometry suspension in React must also change the panel, rather than leaving
+  a fixed desktop-sized dialog on a short or true-phone viewport.
+  */
+  .floating-window.new-task-modal,
+  .floating-window.right-dock-expand-modal--floating,
+  .floating-window.terminal-modal--floating,
+  .floating-window--agent-list,
+  .floating-window--agent-import,
+  .floating-window--agent-generation,
+  .floating-window--agent-onboarding,
+  .floating-window--experimental-agent-onboarding,
+  .floating-window--setup-wizard,
+  .floating-window--native-shell-onboarding,
+  .floating-window--docker-node-onboarding,
+  .floating-window--agent-detail,
+  .floating-window--github-import,
+  .floating-window--mailbox,
+  .floating-window--milestone-slice-interview,
+  .floating-window--subtask-breakdown,
+  .floating-window--automation,
+  .floating-window--activity-log,
+  .floating-window--scripts,
+  .floating-window--add-node,
+  .floating-window--connect-node,
+  .floating-window--node-detail,
+  .floating-window--workflow-add-step,
+  .floating-window--group-task,
+  .floating-window--changes-diff,
+  .floating-window--model-onboarding,
+  .floating-window--git-manager,
+  .floating-window--settings,
+  .floating-window--planning-mode,
+  .floating-window--create-room,
   .floating-window--chat {
     inset: 0 !important;
     width: 100vw !important;
@@ -162,6 +365,36 @@ On mobile/narrow app viewports, opening Quick Chat should present the full Chat 
     box-shadow: none;
   }
 
+  .floating-window.new-task-modal .floating-window__resize-handle,
+  .floating-window.right-dock-expand-modal--floating .floating-window__resize-handle,
+  .floating-window.terminal-modal--floating .floating-window__resize-handle,
+  .floating-window--agent-list .floating-window__resize-handle,
+  .floating-window--agent-import .floating-window__resize-handle,
+  .floating-window--agent-generation .floating-window__resize-handle,
+  .floating-window--agent-onboarding .floating-window__resize-handle,
+  .floating-window--experimental-agent-onboarding .floating-window__resize-handle,
+  .floating-window--setup-wizard .floating-window__resize-handle,
+  .floating-window--native-shell-onboarding .floating-window__resize-handle,
+  .floating-window--docker-node-onboarding .floating-window__resize-handle,
+  .floating-window--agent-detail .floating-window__resize-handle,
+  .floating-window--github-import .floating-window__resize-handle,
+  .floating-window--mailbox .floating-window__resize-handle,
+  .floating-window--milestone-slice-interview .floating-window__resize-handle,
+  .floating-window--subtask-breakdown .floating-window__resize-handle,
+  .floating-window--automation .floating-window__resize-handle,
+  .floating-window--activity-log .floating-window__resize-handle,
+  .floating-window--scripts .floating-window__resize-handle,
+  .floating-window--add-node .floating-window__resize-handle,
+  .floating-window--connect-node .floating-window__resize-handle,
+  .floating-window--node-detail .floating-window__resize-handle,
+  .floating-window--workflow-add-step .floating-window__resize-handle,
+  .floating-window--group-task .floating-window__resize-handle,
+  .floating-window--changes-diff .floating-window__resize-handle,
+  .floating-window--model-onboarding .floating-window__resize-handle,
+  .floating-window--git-manager .floating-window__resize-handle,
+  .floating-window--settings .floating-window__resize-handle,
+  .floating-window--planning-mode .floating-window__resize-handle,
+  .floating-window--create-room .floating-window__resize-handle,
   .floating-window--chat .floating-window__resize-handle {
     display: none;
   }

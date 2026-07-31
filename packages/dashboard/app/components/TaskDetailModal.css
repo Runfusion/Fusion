@@ -8,14 +8,11 @@
 }
 
 .modal.task-detail-modal {
-  width: min(95vw, 800px);
-  max-width: 95vw;
-  min-width: 480px;
-  height: 85vh;
-  min-height: 480px;
-  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  resize: both;
 }
 
 /*
@@ -1786,35 +1783,6 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
     resize: none;
   }
 
-  /*
-  FNXC:TaskModalResize 2026-08-07-00:00:
-  Phone CSS also matches a known 768px touch tablet. The shared runtime class
-  records the physical-screen-aware tablet result, restoring bounded modal
-  geometry and the existing resize grip without weakening true-phone sheets.
-  */
-  .modal-overlay:has(.task-detail-modal.task-modal--tablet) {
-    --overlay-padding-top: 6vh;
-    padding-top: var(--overlay-padding-top);
-    align-items: flex-start;
-    justify-content: center;
-  }
-
-  .modal.task-detail-modal.task-modal--tablet {
-    width: 98vw;
-    min-width: 480px;
-    max-width: 98vw;
-    height: 92vh;
-    min-height: 480px;
-    max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - var(--space-md));
-    margin: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    resize: both;
-  }
-
-  .task-modal--tablet .modal-resize-grip {
-    display: block;
-  }
 
   .detail-body--chat {
     display: flex;
@@ -1837,6 +1805,21 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
     display: none;
   }
 
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-08-13-12:20:
+The inclusive legacy phone query also matches the 768px tablet boundary. FloatingWindow grants
+that boundary drag and resize, so its inner panel must fill the floating host rather than viewport.
+*/
+@media (min-width: 768px) and (max-width: 768px) {
+  .modal.task-detail-modal {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: inherit;
+  }
 }
 
 /*
@@ -3246,20 +3229,27 @@ The body-portaled menu must paint above the owning task-detail modal/popup while
   font-weight: 600;
 }
 
+/*
+FNXC:TaskDetailActivity 2026-07-27-02:15:
+FN-8624 requires Task Detail content insets to stay symmetric at every breakpoint,
+including modal, pop-out, and embedded surfaces. The fixed Live/Feed overlay can cover
+only the first row, so its tokenized clearance belongs there rather than on this container;
+this generalizes FN-8166's mobile-only correction to desktop and tablet.
+*/
 .detail-activity {
   position: relative;
+  padding-inline-end: 0;
+}
+
+.detail-activity:not(.detail-activity--interventions) > h4,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-truncated,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-loading,
+.detail-activity:not(.detail-activity--interventions) > .detail-log-empty,
+.detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child {
   padding-inline-end: calc(var(--space-2xl) + var(--space-md));
 }
 
-/*
-FNXC:PlannerOversight 2026-07-05-00:00:
-The Interventions Activity segment (FN-7571) renders no `.activity-expand-toggle--overlay`
-button, so it must not reserve the shared `.detail-activity` padding-inline-end that exists
-solely to keep that overlay toggle from covering Live/Feed content. Without this override the
-FN-7519 Intervention Timeline is inset from the right edge (worse on mobile, where the base
-reserved padding grows). FN-7581 zeroes the reserved padding for this segment only; Live/Feed/
-Raw keep the base rule unchanged.
-*/
+/* FNXC:PlannerOversight 2026-07-27-02:15: Retain the explicit zero inset for the overlay-free Interventions segment; it documents the FN-7581 full-width timeline contract even though the shared container is now symmetric. */
 .detail-activity--interventions {
   padding-inline-end: 0;
 }
@@ -3303,26 +3293,16 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   }
 
   /*
-  FNXC:TaskDetailActivity 2026-07-16-00:00:
-  FN-8166 removes the residual mobile Feed container right inset so `.detail-body`
-  provides equal left and right insets. Reserve overlay-toggle clearance only on
-  top-of-panel first-row elements, keeping the first visible row uncovered.
+  FNXC:TaskDetailActivity 2026-07-27-02:15:
+  FN-8624 keeps the base container symmetric; at mobile sizes the smaller fixed
+  overlay needs correspondingly smaller first-row clearance without covering log text.
   */
-  .detail-activity {
-    padding-inline-end: 0;
-  }
-
   .detail-activity:not(.detail-activity--interventions) > h4,
   .detail-activity:not(.detail-activity--interventions) > .detail-log-truncated,
   .detail-activity:not(.detail-activity--interventions) > .detail-log-loading,
   .detail-activity:not(.detail-activity--interventions) > .detail-log-empty,
   .detail-activity:not(.detail-activity--interventions) > .detail-activity-list > .detail-log-entry:first-child {
     padding-inline-end: calc(var(--space-2xl) + var(--space-sm));
-  }
-
-  /* FNXC:PlannerOversight 2026-07-05-00:00: mobile reserves more padding for the overlay toggle; neutralize it for Interventions too so FN-7519's timeline stays full width on mobile per FN-7581. */
-  .detail-activity--interventions {
-    padding-inline-end: 0;
   }
 
   .activity-expand-toggle {

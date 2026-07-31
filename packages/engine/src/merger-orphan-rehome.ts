@@ -25,6 +25,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { TaskStore } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import type { RunAuditor } from "./run-audit.js";
 import {
   advanceIntegrationBranchRef,
@@ -91,7 +92,18 @@ export async function classifyOrphanOurAdvance(
 
   const sourceTask = await input.taskStore.getTask(sourceTaskId);
   if (!sourceTask) return { orphan: false, reason: "source-task-not-found" };
-  if (sourceTask.column !== "done") return { orphan: false, reason: "source-task-not-done" };
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-engine tail):
+  Orphan rehoming only applies once the SOURCE task has finished. Keyed on the literal, a renamed
+  complete lane made every source read as unfinished, so orphaned commits were never rehomed and simply
+  stayed stranded off the integration branch.
+  */
+  const sourceCompleteColumns = new Set<string>(["done"]);
+  try {
+    const sourceIr = await resolveWorkflowIrForTask(input.taskStore, sourceTaskId);
+    if (sourceIr) for (const id of columnsWithFlag(sourceIr, "complete")) sourceCompleteColumns.add(id);
+  } catch { /* degraded: legacy id only */ }
+  if (!sourceCompleteColumns.has(sourceTask.column)) return { orphan: false, reason: "source-task-not-done" };
 
   const integrationRef = `refs/heads/${input.integrationBranch}`;
   if (await isAncestor(input.repoDir, input.commitSha, integrationRef)) {

@@ -34,6 +34,9 @@ describe("useViewState", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    // The hook also mirrors the live view into sessionStorage for same-tab reload/discard restore;
+    // clear it too or one test's view leaks into the next test's landing resolution.
+    sessionStorage.clear();
     vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockImplementation(() => false);
   });
 
@@ -576,6 +579,8 @@ describe("useViewState", () => {
 
     for (const view of legacyViews) {
       localStorage.clear();
+      // Each loop iteration is a separate fresh boot, not a same-tab reload.
+      sessionStorage.clear();
       localStorage.setItem(`kb:proj_123:kb-dashboard-task-view`, view);
 
       const { result } = renderHook(() =>
@@ -689,5 +694,60 @@ describe("useViewState", () => {
 
     // Project A's view should still be insights (not affected by project B load)
     expect(resultA.current.taskView).toBe("insights");
+  });
+
+  // ── Session task-view copy is project-scoped ONLY ─────────────────
+  /*
+  FNXC:ViewState 2026-07-26-20:50:
+  The per-tab session copy documented itself as "never mirrored unscoped", but `scopedKey(base,
+  undefined)` returns the BARE key and the persist effect runs during boot and every project-switch
+  window with `currentProject === undefined` — so it DID write the unscoped mirror, and the
+  initializer read it back for first paint. That is the leak the doc forbade: the previous project's
+  view landing in the next project's session. These tests pin both halves (never written, never read)
+  so the claim cannot go back to being aspirational.
+  */
+  it("never writes the unscoped session task-view mirror while the project is unknown", async () => {
+    const { result } = renderHook(() => useViewState(createOptions({ currentProject: null })));
+
+    await act(async () => {
+      result.current.handleChangeTaskView("insights");
+    });
+
+    expect(result.current.taskView).toBe("insights");
+    expect(sessionStorage.getItem("kb-dashboard-task-view-session")).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("still writes the project-scoped session copy once a project is known", async () => {
+    const { result } = renderHook(() => useViewState(createOptions({ currentProject: PROJECT })));
+
+    await act(async () => {
+      result.current.handleChangeTaskView("insights");
+    });
+
+    expect(sessionStorage.getItem("kb:proj_123:kb-dashboard-task-view-session")).toBe("insights");
+    expect(sessionStorage.getItem("kb-dashboard-task-view-session")).toBeNull();
+  });
+
+  it("never paints an unscoped session task-view left behind by an earlier build", async () => {
+    // A pre-fix build (or another project's tab) wrote the bare key.
+    sessionStorage.setItem("kb-dashboard-task-view-session", "insights");
+    localStorage.setItem("kb-dashboard-task-view", "list");
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "list");
+
+    // Every rendered value, so the FIRST PAINT (the initializer's value) is asserted too — the
+    // unscoped read only ever affected first paint, which a post-effect assertion cannot see.
+    const painted: string[] = [];
+    const { result } = renderHook(() => {
+      const state = useViewState(createOptions({ currentProject: PROJECT }));
+      painted.push(state.taskView);
+      return state;
+    });
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("list");
+    });
+    expect(painted[0]).toBe("list");
+    expect(painted).not.toContain("insights");
   });
 });

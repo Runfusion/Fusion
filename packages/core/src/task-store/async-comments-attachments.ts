@@ -120,10 +120,26 @@ function rowToArtifact(row: ArtifactRow): Artifact {
  * or soft-deleted tasks. Returns the task's column if live, or `null` if the
  * task is absent, archived, or soft-deleted.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+The sentinel is only as correct as the lane test that PRODUCES it.
+
+A dozen call sites across five files compare this function's result against the string "archived",
+and every one of those comparisons is right precisely because this function manufactures it. Keyed on
+the literal, a live row in a renamed archived lane (`vault`, not soft-deleted) was reported as LIVE —
+so documents stayed readable and writable, artifacts listed, and log writes were accepted on a card
+the board shows as archived. Fixing the twelve comparisons individually would have been wrong twice
+over: they are sentinels, and the defect is here.
+
+`archivedColumns` is threaded from the store-level impls, which are the only layer that can resolve
+it — this function holds a `db` handle. Omitted, the legacy id answers, which is the behaviour every
+caller had before.
+*/
 export async function getLiveTaskColumn(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   projectId?: string,
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<string | null> {
   /*
   FNXC:PostgresArchiveSafety 2026-07-14-21:48:
@@ -139,9 +155,37 @@ export async function getLiveTaskColumn(
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  if (row.column === "archived" || row.deletedAt != null) return "archived";
+  const isArchivedLane = archivedColumns ? archivedColumns.has(row.column) : row.column === "archived";
+  if (isArchivedLane || row.deletedAt != null) return "archived";
   return row.column;
 }
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
+The ARCHIVED-lane checks that read a task row, as opposed to the sentinel ones that do not.
+
+`packages/core/src/task-store/async-comments-attachments.ts` holds both classes spelled identically,
+which is why they were miscounted once already (#2877 review). The comparisons downstream of
+`getLiveTaskColumn` test that function's MANUFACTURED "archived" and must stay literal. These two test
+`task.column` straight off a row `select`, so they are board lanes and a renamed archived column is
+simply not recognised:
+
+  - `upsertTaskDocument` fails to reject, so an ARCHIVED card's documents stay WRITABLE;
+  - `publishArchivedTaskDocumentAddition` fails to accept, rejecting a legitimate archived-document
+    publication as `parent-not-archived` / `archived-state-inconsistent` — a false rejection of valid
+    operator work, which is the sharper of the two.
+
+Both take an `AsyncDataLayer` and cannot resolve anything themselves; their store-level impls can, so
+the lane set arrives as a parameter. Optional with the legacy id as the default, so a caller that
+resolves nothing keeps today's behaviour exactly.
+*/
+const LEGACY_ARCHIVED_LANES: ReadonlySet<string> = new Set(["archived"]);
+
+/** Board columns that mean "archived"; omit to keep the built-in id. */
+export type ArchivedLanes = ReadonlySet<string> | undefined;
+
+const isArchivedLane = (column: string | null | undefined, lanes: ArchivedLanes): boolean =>
+  column != null && (lanes ?? LEGACY_ARCHIVED_LANES).has(column);
 
 // ── Task documents ───────────────────────────────────────────────────
 
@@ -156,8 +200,9 @@ export async function getTaskDocument(
   taskId: string,
   key: string,
   projectId?: string,
-): Promise<TaskDocument | null> {
-  const column = await getLiveTaskColumn(db, taskId, projectId);
+
+  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocument | null> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
   if (column === null) return null;
 
   const rows = await db
@@ -193,6 +238,7 @@ export async function upsertTaskDocument(
   layer: AsyncDataLayer,
   taskId: string,
   input: TaskDocumentCreateInput,
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<TaskDocument> {
   return layer.transactionImmediate(async (tx) => {
     const projectId = projectPartition(layer.projectId);
@@ -210,7 +256,7 @@ export async function upsertTaskDocument(
       .limit(1)
       .for("update");
     const task = taskRows[0];
-    if (task?.column === "archived" || task?.deletedAt != null) {
+    if (isArchivedLane(task?.column, archivedColumns) || task?.deletedAt != null) {
       throw new Error(`Task ${taskId} is archived — documents are read-only`);
     }
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -312,6 +358,7 @@ export async function publishArchivedTaskDocumentAddition(
   layer: AsyncDataLayer,
   taskId: string,
   input: ArchivedTaskDocumentAdditionInput,
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<ArchivedTaskDocumentAdditionResult> {
   validateArchivedTaskDocumentAddition(input);
   return layer.transactionImmediate(async (tx) => {
@@ -329,7 +376,7 @@ export async function publishArchivedTaskDocumentAddition(
     if (!task) {
       throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-found", projectId, taskId, input.key);
     }
-    if (task.column !== "archived" && task.deletedAt == null) {
+    if (!isArchivedLane(task.column, archivedColumns) && task.deletedAt == null) {
       throw new ArchivedTaskDocumentPublicationRejectedError("parent-not-archived", projectId, taskId, input.key);
     }
 
@@ -342,7 +389,7 @@ export async function publishArchivedTaskDocumentAddition(
       ))
       .limit(1)
       .for("key share");
-    if (task.column !== "archived" || task.deletedAt == null || !archiveRows[0]) {
+    if (!isArchivedLane(task.column, archivedColumns) || task.deletedAt == null || !archiveRows[0]) {
       throw new ArchivedTaskDocumentPublicationRejectedError("archived-state-inconsistent", projectId, taskId, input.key);
     }
 
@@ -434,8 +481,22 @@ export async function listTaskDocuments(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   projectId?: string,
-): Promise<TaskDocument[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId);
+
+  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocument[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+  
+  This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+  "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+  which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+  
+  STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+  lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+  rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+  archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+  the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+  */
   if (column === null || column === "archived") return [];
 
   const rows = await db
@@ -457,8 +518,9 @@ export async function getTaskDocumentRevisions(
   taskId: string,
   key: string,
   projectId?: string,
-): Promise<TaskDocumentRevisionRow[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId);
+
+  archivedColumns?: ReadonlySet<string>,): Promise<TaskDocumentRevisionRow[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
   if (column === null) return [];
 
   const rows = await db
@@ -493,9 +555,23 @@ export async function deleteTaskDocument(
   layer: AsyncDataLayer,
   taskId: string,
   key: string,
-): Promise<void> {
+
+  archivedColumns?: ReadonlySet<string>,): Promise<void> {
   return layer.transactionImmediate(async (tx) => {
-    const state = await getLiveTaskColumn(tx, taskId, layer.projectId);
+    const state = await getLiveTaskColumn(tx, taskId, layer.projectId, archivedColumns);
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+    
+    This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+    "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+    which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+    
+    STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+    lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+    rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+    archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+    the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+    */
     if (state === "archived") throw new Error(`Task ${taskId} is archived — documents are read-only`);
     if (state === null) throw new Error(`Task ${taskId} not found`);
     const existing = await tx
@@ -551,11 +627,25 @@ export async function insertArtifactRow(
   layer: AsyncDataLayer,
   input: ArtifactCreateInput,
   stored: { uri?: string; sizeBytes?: number },
-): Promise<Artifact> {
+
+  archivedColumns?: ReadonlySet<string>,): Promise<Artifact> {
   return layer.transactionImmediate(async (tx) => {
     // Gate: if taskId is set, the parent must be live.
     if (input.taskId) {
-      const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId);
+      const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId, archivedColumns);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+      "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+      which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+      
+      STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+      lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+      rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+      archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+      the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+      */
       if (column === "archived") {
         throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
       }
@@ -605,14 +695,28 @@ export async function updateArtifactRow(
   layer: AsyncDataLayer,
   id: string,
   updates: { title?: string; description?: string; content?: string },
-): Promise<Artifact> {
+
+  archivedColumns?: ReadonlySet<string>,): Promise<Artifact> {
   return layer.transactionImmediate(async (tx) => {
     const existing = await getArtifact(tx, id);
     if (!existing) {
       throw new Error(`Artifact ${id} not found`);
     }
     if (existing.taskId) {
-      const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId);
+      const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId, archivedColumns);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+      "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+      which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+      
+      STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+      lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+      rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+      archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+      the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+      */
       if (column === "archived") {
         throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
       }
@@ -669,8 +773,22 @@ export async function getArtifacts(
   db: AsyncDataLayer["db"] | DbTransaction,
   taskId: string,
   projectId?: string,
-): Promise<Artifact[]> {
-  const column = await getLiveTaskColumn(db, taskId, projectId);
+
+  archivedColumns?: ReadonlySet<string>,): Promise<Artifact[]> {
+  const column = await getLiveTaskColumn(db, taskId, projectId, archivedColumns);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+  
+  This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+  "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+  which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+  
+  STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+  lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+  rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+  archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+  the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+  */
   if (column === null || column === "archived") return [];
 
   const rows = await db

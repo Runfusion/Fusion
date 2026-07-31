@@ -1561,7 +1561,6 @@
         "description": "",
         "error": "",
         "maxConcurrent": "",
-        "maxTriageConcurrent": "",
         "maxWorktrees": "",
         "title": "",
         "runningGlobal": "",
@@ -5994,7 +5993,12 @@
       "reportDiscussionCategorySelect": "Selecciona una categoría de discusión",
       "reportDiscussionCategoryUnavailable": "Las categorías de discusión no están disponibles para el repositorio configurado.",
       "reportDiscussionCategoryEmpty": "No hay categorías de discusión disponibles para el repositorio configurado.",
-      "reportTargetByActionHelp": ""
+      "reportTargetByActionHelp": "",
+      "originWorkflowSelected": "",
+      "taskCreateWorkflow": "",
+      "taskCreateWorkflowHelp": "",
+      "refinementTaskWorkflow": "",
+      "refinementTaskWorkflowHelp": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -6043,8 +6047,16 @@
       "enableProactiveTaskChatHint": "",
       "releaseChannel": "",
       "releaseChannelHelp": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": "",
       "channelStable": "",
-      "channelBeta": ""
+      "channelBeta": "",
+      "agentToolOutputLimit": "",
+      "agentToolOutputLimitHint": "",
+      "noLimitOnAgentToolOutput": "",
+      "noLimitOnAgentToolOutputHint": "",
+      "autoUpdateAndRestart": "",
+      "autoUpdateAndRestartHelp": ""
     },
     "globalModels": {
       "allow": "",
@@ -6718,7 +6730,6 @@
       "maximumConcurrentPlanningAgents": "",
       "maximumStuckDetectorRetriesBeforeATaskIs": "",
       "maxStuckRetries": "",
-      "maxTriageConcurrent": "",
       "numberOfDaysATaskCanStayIn": "",
       "off": "",
       "optionalFileOrDirectoryPathsToIgnoreWhen": "",
@@ -6796,6 +6807,8 @@
       "keepsProgressMovingBySwitchingToFusionApos": "",
       "limitsTotalGitWorktreesIncludingInReviewTasks": "",
       "maxWorktrees": "",
+      "worktreeLimitEnabled": "",
+      "worktreeLimitEnabledHelp": "",
       "offByDefaultOptInWhenEnabledCompleted": "",
       "openApprovals": "Abrir aprobaciones",
       "optionalLeaveBlankToAutoResolveFusionWill": "",
@@ -7778,6 +7791,7 @@
     },
     "move": {
       "backToInProgress": "Volver a En progreso",
+      "backTo": "Volver a {{column}}",
       "cancelMove": "Cancelar movimiento",
       "keepProgress": "Conservar progreso",
       "movedTo": "Movido a {{column}}",
@@ -8532,7 +8546,9 @@
     "awaitingApprovalPlanReviewReplanCapTitle": "",
     "reviewBudgetExhausted": "",
     "awaitingApprovalTitle": "",
-    "statusReplan": "Replanificar"
+    "statusReplan": "Replanificar",
+    "refinesOf": "",
+    "refinesOfTitle": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 
 /**
@@ -149,9 +150,24 @@ function addRepo(
 export async function aggregateGithubIssueAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: GithubIssueAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10:
+  The store, used ONLY to resolve which columns carry the `complete` trait.
+
+  The resolved-issue query filtered on `"column" = 'done'`, an id inside a SQL string that the
+  lifecycle census cannot see. On a renamed board it matches nothing, so the github panel reports
+  zero issues resolved and an empty resolved-issue list while the team closes issues all week — and
+  the close-rate figure derived from it reads 0%.
+
+  Resolved per PROJECT: this aggregates a whole project, so the union of the complete columns across
+  its workflows is the right set and a bound IN list is enough.
+
+  Omitted, the legacy id answers, so an unconverted caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<GithubIssueAnalytics> {
   if ("ping" in dbOrLayer) {
-    return aggregateGithubIssueAnalyticsAsync(dbOrLayer, query);
+    return aggregateGithubIssueAnalyticsAsync(dbOrLayer, query, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -194,7 +210,14 @@ export async function aggregateGithubIssueAnalytics(
 async function aggregateGithubIssueAnalyticsAsync(
   layer: AsyncDataLayer,
   query: GithubIssueAnalyticsQuery,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<GithubIssueAnalytics> {
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
+     into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
+  const completeIn = sql.join(completeLanes.map((lane) => sql`${lane}`), sql`, `);
   const filedRaw = (await layer.db.execute(
     sql`SELECT github_tracking AS "githubTracking" FROM project.tasks
         WHERE github_tracking IS NOT NULL AND github_tracking::text <> '{}'`,
@@ -215,7 +238,7 @@ async function aggregateGithubIssueAnalyticsAsync(
           source_issue_closed_at  AS "sourceIssueClosedAt",
           updated_at              AS "updatedAt"
         FROM project.tasks
-        WHERE source_issue_provider = 'github' AND "column" = 'done'`,
+        WHERE source_issue_provider = 'github' AND "column" IN (${completeIn})`,
   )) as Array<Record<string, unknown>>;
   const fixedRows: FixedIssueRow[] = fixedRaw.map((r) => ({
     id: String(r.id),

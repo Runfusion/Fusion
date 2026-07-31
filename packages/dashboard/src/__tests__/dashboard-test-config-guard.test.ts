@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { globSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -11,6 +12,9 @@ const dashboardRoot = join(__dirname, "..", "..");
 const dashboardPackageJsonPath = join(dashboardRoot, "package.json");
 const vitestConfigPath = join(dashboardRoot, "vitest.config.ts");
 const dashboardQualityScriptPath = join(dashboardRoot, "scripts", "run-quality-tests.mjs");
+const touchGeometrySpec = "src/__tests__/task-modal-touch-resize-browser.test.ts";
+const touchGeometrySpecPath = join(dashboardRoot, touchGeometrySpec);
+const testingGuidePath = join(dashboardRoot, "..", "..", "docs", "testing.md");
 const qualityParityBaselineFileCount = 726;
 
 interface QualityLane {
@@ -54,6 +58,31 @@ function expandProjectFiles(projectName: keyof typeof dashboardQualityProjectGlo
     included.delete(file);
   }
   return included;
+}
+
+function listTouchGeometryProjectsWithDeepEnv(): string[] {
+  const result = spawnSync(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "list",
+      touchGeometrySpec,
+      "--project",
+      "dashboard-browser-touch",
+      "--project",
+      "dashboard-api",
+      "--json",
+    ],
+    {
+      cwd: dashboardRoot,
+      encoding: "utf8",
+      env: { ...process.env, FUSION_DASHBOARD_DEEP: "1" },
+    },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  const rows = JSON.parse(result.stdout) as { file: string; projectName: string }[];
+  return [...new Set(rows.filter((row) => row.file === touchGeometrySpecPath).map((row) => row.projectName))];
 }
 
 describe("dashboard test config guard", () => {
@@ -162,9 +191,12 @@ describe("dashboard test config guard", () => {
   it("keeps orchestrated quality project coverage at the measured baseline", async () => {
     const qualityLanes = await readQualityLanes();
     const laneProjects = new Set(qualityLanes.map(projectNameForLane));
-    const knownProjects = Object.keys(dashboardQualityProjectGlobs);
+    const knownProjects = Object.keys(dashboardQualityProjectGlobs).filter(
+      (projectName) => projectName !== "dashboard-browser-touch",
+    );
 
     expect([...laneProjects].sort()).toEqual([...knownProjects].sort());
+    expect(laneProjects).not.toContain("dashboard-browser-touch");
 
     const files = new Set<string>();
     for (const projectName of laneProjects) {
@@ -176,5 +208,42 @@ describe("dashboard test config guard", () => {
     }
 
     expect(files.size).toBeGreaterThanOrEqual(qualityParityBaselineFileCount);
+  });
+
+  it("keeps Chromium touch geometry as a documented single-collection opt-in lane", () => {
+    const { scripts } = readDashboardPackageJson();
+    const testingGuide = readFileSync(testingGuidePath, "utf8");
+    const specSource = readFileSync(touchGeometrySpecPath, "utf8");
+    const vitestConfig = readFileSync(vitestConfigPath, "utf8");
+    const touchProject = dashboardQualityProjectGlobs["dashboard-browser-touch"];
+
+    // Project contract: the browser-dependent spec must have a dedicated node project.
+    expect(touchProject).toBeDefined();
+    expect(vitestConfig).toContain('name: "dashboard-browser-touch"');
+    expect(expandDashboardGlobs(touchProject.include)).toContain(touchGeometrySpec);
+
+    // Script contract: the underlying command is intentionally distinct from the docs invocation.
+    expect(scripts["test:touch-geometry"]).toContain("--project dashboard-browser-touch");
+    expect(scripts["test:touch-geometry"]).not.toContain("FUSION_DASHBOARD_DEEP");
+
+    // Docs contract: assert operator guidance independently from the package script body.
+    expect(testingGuide).toContain("pnpm --filter @fusion/dashboard test:touch-geometry");
+    expect(testingGuide).toContain("dashboard-browser-touch");
+
+    // Single-collection contract: the broad API backfill must not re-collect this dedicated lane.
+    const collectingProjects = Object.entries(dashboardQualityProjectGlobs)
+      .filter(([projectName]) => projectName !== "dashboard-api-quality-backfill")
+      .filter(([, project]) => expandDashboardGlobs(project.include).has(touchGeometrySpec))
+      .filter(([, project]) => !expandDashboardGlobs(project.exclude).has(touchGeometrySpec))
+      .map(([projectName]) => projectName);
+    expect(collectingProjects).toEqual(["dashboard-browser-touch"]);
+    expect(expandProjectFiles("dashboard-api-quality-backfill")).not.toContain(touchGeometrySpec);
+
+    // Deep-env contract: the deep API escape hatch must still leave one collection owner.
+    expect(listTouchGeometryProjectsWithDeepEnv()).toEqual(["dashboard-browser-touch"]);
+
+    // Port contract: the browser fixture requests an OS-selected port and never names the production port.
+    expect(specSource).toContain("port: 0");
+    expect(specSource).not.toContain("4040");
   });
 });

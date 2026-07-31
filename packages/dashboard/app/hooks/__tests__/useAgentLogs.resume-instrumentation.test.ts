@@ -92,7 +92,16 @@ describe("useAgentLogs resume instrumentation", () => {
       view: "useAgentLogs",
       trigger: "sse-reconnect",
       projectId: "proj-1",
-      replayAttempted: false,
+      /*
+      FNXC:DashboardResume 2026-07-26-10:05:
+      An SSE reconnect after the hidden-tab suspend now REFETCHES the authoritative log page and
+      reconciles it with the buffer (useAgentLogs resyncFromServer), so the resume event honestly
+      reports replayAttempted:true with the reason. It was false only while reconnect silently
+      dropped whatever was emitted during the suspend window. Do not revert to false — that would
+      re-assert the silent-log-gap behavior this fix removed.
+      */
+      replayAttempted: true,
+      reason: "refetch-authoritative-log-page",
       sseChannel: "/api/tasks/FN-123/logs/stream",
       detail: { taskId: "FN-123" },
     }));
@@ -108,7 +117,18 @@ describe("useAgentLogs resume instrumentation", () => {
       });
     });
 
-    expect(result.current.entries.at(-1)?.text).toBe("live-log");
+    /*
+    FNXC:DashboardResume 2026-07-26-10:08:
+    The reconnect resync is async, and a live `agent:log` arriving while it is in flight is PARKED
+    (pendingLiveRef) so the reconcile merges against a stable snapshot, then flushed after the merge.
+    The entry is therefore delivered on a later microtask, not synchronously — await it rather than
+    asserting on the same tick. The assertion itself is unchanged: the live line must still land, and
+    exactly once.
+    */
+    await waitFor(() => {
+      expect(result.current.entries.at(-1)?.text).toBe("live-log");
+    });
+    expect(result.current.entries.filter((entry) => entry.text === "live-log")).toHaveLength(1);
   });
 
   it("emits project-context-change and tears down prior subscription", async () => {

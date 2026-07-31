@@ -15,7 +15,7 @@ export type ModalPresentation = "modal" | "embedded";
  *
  * - `isEmbedded` / `isModal` — the raw mode test.
  * - `scrollLockEnabled` — gate for `useMobileScrollLock`; off when embedded (the host page owns scrolling).
- * - `resizePersistEnabled` — gate for `useModalResizePersist`; off when embedded (the view fills its container).
+ * - `resizePersistEnabled` — gate for modal-only FloatingWindow geometry; off when embedded (the view fills its container).
  * - `escapeEnabled` — gate for Escape-to-close handlers; off when embedded (the dock/router owns lifecycle).
  * - `overlayDismissEnabled` — gate for backdrop click-to-dismiss; off when embedded (no overlay backdrop exists).
  */

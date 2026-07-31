@@ -1,4 +1,5 @@
 import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
+import { isWipColumnRole } from "../utils/columnRoles";
 import { getErrorMessage } from "@fusion/core";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
@@ -16,6 +17,8 @@ import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatComma
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  columnFlags?: Parameters<typeof isWipColumnRole>[0];
   task: Task | TaskDetail;
   projectId?: string;
   active: boolean;
@@ -306,7 +309,7 @@ function buildPlannerQuestionRenderStates(messages: readonly ChatMessage[]): Map
   return states;
 }
 
-export function TaskPlannerChatTab({ task, projectId, active, expanded = false, onExpandedChange, planningModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
+export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expanded = false, onExpandedChange, planningModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
   const { t } = useTranslation("app");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -359,7 +362,13 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
    * disabled with a hint instead of hiding it outright, and dispatch itself
    * is refused with the same hint rather than silently sending plain chat.
    */
-  const agentRunning = task.column === "in-progress";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-dashboard-app):
+  WIP role, resolved. `agentRunning` suppresses the planner composer while an implementation agent
+  holds the card. Keyed on the literal, a renamed wip lane left the composer ENABLED during a run, so
+  planner edits could land against a task already being implemented.
+  */
+  const agentRunning = isWipColumnRole(columnFlags, task.column);
   const filteredCommands = useMemo(() => filterChatCommands(commandFilter, CHAT_COMMANDS), [commandFilter]);
 
   useEffect(() => {

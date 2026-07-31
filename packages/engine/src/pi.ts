@@ -36,6 +36,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
+  clampToolOutputBlocks,
   customProviderRegistryKey,
   getEnabledPiExtensionPaths,
   getFusionAgentDir,
@@ -50,6 +51,7 @@ import {
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
   resolvePiExtensionProjectRoot,
+  resolveToolOutputBudget,
 } from "@fusion/core";
 import type {
   AgentPermissionPolicyActionCategory,
@@ -1035,6 +1037,8 @@ export interface AgentOptions {
   systemPromptLayers?: SystemPromptLayers;
   tools?: "coding" | "readonly";
   customTools?: ToolDefinition[];
+  /** Per-result shared tool-output cap. `null` disables the wrapper; undefined uses the built-in default. */
+  toolOutputMaxChars?: number | null;
   /*
   FNXC:MergeQueue 2026-07-15-11:08:
   Merger sessions must not load host @runfusion/fusion extension tools. Extension fn_task_show boots a second PostgreSQL TaskStore (createTaskStoreForBackend) inside the engine process and can hang indefinitely without a tool timeout, wedging the single-flight merge pump (observed FN-7956).
@@ -1873,6 +1877,61 @@ export function wrapToolsWithBoundary(
   });
 }
 
+/*
+FNXC:ToolOutputBudget 2026-08-06-12:00:
+FN-8614 requires one finite budget for the total model-visible text in every
+engine-injected tool result. Per-tool overrides remain finite positive integers;
+only the operator-level setting can select the explicit unlimited mode.
+
+FNXC:ToolOutputBudget 2026-08-06-16:00:
+FN-8616 makes the shared cap configurable at the session seam. A `null` resolved
+value returns the original tool list, avoiding all clamp/marker rewriting.
+*/
+export const TOOL_OUTPUT_BUDGET_OVERRIDES: Readonly<Record<string, number>> = {};
+
+/**
+ * Enforce the shared per-result text budget without changing result metadata or
+ * non-text content blocks. This is intentionally the outermost pi wrapper.
+ */
+export function wrapToolsWithOutputBudget(
+  tools: ToolDefinition[],
+  options: { overrides?: Readonly<Record<string, number | null | undefined>>; maxChars?: number | null } = {},
+): ToolDefinition[] {
+  if (options.maxChars === null) return tools;
+  return tools.map((tool) => {
+    const originalExecute = tool.execute as any;
+    return {
+      ...tool,
+      execute: async (...args: any[]) => {
+        const result = await originalExecute(...args);
+        if (!result || !Array.isArray(result.content)) return result;
+
+        const textPositions: number[] = [];
+        const texts: (string | undefined)[] = [];
+        result.content.forEach((block: { type?: unknown; text?: unknown }, index: number) => {
+          if (block?.type === "text") {
+            textPositions.push(index);
+            texts.push(typeof block.text === "string" ? block.text : undefined);
+          }
+        });
+        if (textPositions.length === 0) return result;
+
+        const budget = resolveToolOutputBudget(
+          tool.name,
+          options.overrides ?? TOOL_OUTPUT_BUDGET_OVERRIDES,
+          options.maxChars ?? undefined,
+        );
+        const clamped = clampToolOutputBlocks(texts, { maxChars: budget });
+        const content = result.content.map((block: unknown) => block);
+        textPositions.forEach((position, index) => {
+          content[position] = { ...(content[position] as Record<string, unknown>), text: clamped[index] };
+        });
+        return { ...result, content };
+      },
+    };
+  });
+}
+
 export function wrapToolsWithRtkRewrite(
   tools: ToolDefinition[],
   options: RtkRewriteOptions = resolveRtkRewriteOptions(),
@@ -2176,7 +2235,11 @@ function withMcpPromptOptions(promptOptions: unknown, mcpServers: ResolvedMcpSer
 }
 
 export async function createFnAgent(options: AgentOptions): Promise<AgentResult> {
-  piLog.log(`createFnAgent called (tools=${options.tools}, provider=${options.defaultProvider}, model=${options.defaultModelId})`);
+  /*
+  FNXC:EngineDiagnostics 2026-07-26-09:55:
+  createFnAgent is invoked on every agent/session start (executor, triage, chat, heartbeat, etc.). The entry log is steady-state bookkeeping — debug-only (FUSION_DEBUG=pi). Failures and auth issues stay on warn/error.
+  */
+  piLog.debug(`createFnAgent called (tools=${options.tools}, provider=${options.defaultProvider}, model=${options.defaultModelId})`);
   // FNXC:McpConfig 2026-06-25-22:02:
   // The pi session is the final shared forwarding seam for direct createFnAgent lanes. Forward the resolved MCP set only to MCP-capable provider/runtime combinations and keep unsupported lanes content-free by logging just provider/runtime/count metadata.
   const requestedMcpServers = options.mcpServers ?? [];
@@ -2329,7 +2392,11 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   // Resolve skill selection: explicit skillSelection wins over convenience `skills`
   let effectiveSkillSelection: SkillSelectionContext | undefined = options.skillSelection;
   if (!effectiveSkillSelection && options.skills && options.skills.length > 0) {
-    piLog.log(`Using skills from convenience parameter: [${options.skills.join(", ")}]`);
+    /*
+    FNXC:EngineDiagnostics 2026-07-26-08:01:
+    Per-session "Using skills from convenience parameter" and "Requested skill: <name>" lines fire on every agent start and filled the TUI log pane. Keep them on debug (FUSION_DEBUG=pi); missing/not-found and warn/error skill diagnostics stay visible.
+    */
+    piLog.debug(`Using skills from convenience parameter: [${options.skills.join(", ")}]`);
     effectiveSkillSelection = {
       projectRootDir: resolvedProjectRoot,
       requestedSkillNames: options.skills,
@@ -2344,10 +2411,18 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     if (selectionResult.diagnostics.length > 0) {
       const purpose = effectiveSkillSelection.sessionPurpose ?? "skills";
       for (const diag of selectionResult.diagnostics) {
+        // Configured allow-list pattern listings are non-actionable noise; skip entirely.
         if (diag.type === "info" && diag.message.startsWith("Configured skill pattern:")) continue;
         const msg = `[skills] [${purpose}] ${diag.type}: ${diag.message}`;
         if (diag.type === "error") piLog.error(msg);
         else if (diag.type === "warning") piLog.warn(msg);
+        /*
+        FNXC:EngineDiagnostics 2026-07-26-09:40:
+        All type=info skill diagnostics — `Requested skill: <name>` listings and
+        `Requested skill '…' not found…` — go to debug so the TUI is not filled with
+        `[skills] info: Requested skill…` on every session. warn/error stay visible.
+        */
+        else if (diag.type === "info") piLog.debug(msg);
         else piLog.log(msg);
       }
     }
@@ -2387,7 +2462,8 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     const skipReason = isReadonly
       ? "readonly"
       : `sessionPurpose=${options.sessionPurpose ?? "unknown"}`;
-    piLog.log(`${skipReason} session — host extensions (${hostExtensionPaths.length}) skipped`);
+    // FNXC:EngineDiagnostics 2026-07-26-10:20: expected per-purpose setup; not an operator event.
+    piLog.debug(`${skipReason} session — host extensions (${hostExtensionPaths.length}) skipped`);
   }
 
   const resourceLoader = new DefaultResourceLoader({
@@ -2457,7 +2533,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         piLog.warn(`MCP session continuing with unavailable servers: count=${bootstrapFailures.length}`);
       }
     } else if (forwardedMcpServers.length > 0 && isReadonly) {
-      piLog.log(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
+      piLog.debug(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
     }
 
     const mcpReadonlyTools = new Set(mcpToolset?.tools ?? []);
@@ -2502,12 +2578,18 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       toolsWithPermanentGating,
       options.actionGateContext,
     );
-    const customToolList: ToolDefinition[] = wrapToolsWithBoundary(
+    const boundaryWrappedTools = wrapToolsWithBoundary(
       toolsWithActionGate,
       boundaryContext.worktreePath,
       boundaryContext.worktreeProjectRoot,
       normalizedAdditionalSkillPaths,
     );
+    // FNXC:ToolOutputBudget 2026-08-06-16:00:
+    // Keep this outermost so policy-gate and boundary rejection text is bounded too;
+    // a null setting-derived budget intentionally returns the chain unchanged.
+    const customToolList: ToolDefinition[] = wrapToolsWithOutputBudget(boundaryWrappedTools, {
+      maxChars: options.toolOutputMaxChars,
+    });
     // Sort tools alphabetically by name for deterministic ordering.
     // Prompt caching requires the tool list to be byte-identical across
     // sessions — reordering breaks cache prefix matching.
@@ -2545,7 +2627,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     ModelRuntime path already adopted in 0.80.8.
 
     FNXC:ModelCatalog 2026-07-24-12:00:
-    FN-8564 advances the exact matched pair to 0.82.0. Its catalog now exposes only
+    FN-8564 advances the exact matched pair to 0.82.x. Its catalog now exposes only
     provider-verified reasoning levels and adds Kimi/OpenRouter OAuth plus constrained tools;
     retain Fusion's ModelRuntime session construction and supplemental catalog merges rather
     than duplicating upstream provider behavior.
@@ -2680,7 +2762,8 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   let usingFallback = false;
   try {
     sessionResult = await createSessionWithModel(selectedModel);
-    piLog.log(`Session created successfully (model=${selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : "default"})`);
+    // FNXC:EngineDiagnostics 2026-07-26-10:00: every agent session start emitted this at info; steady-state bookkeeping → debug (FUSION_DEBUG=pi).
+    piLog.debug(`Session created successfully (model=${selectedModel ? `${selectedModel.provider}/${selectedModel.id}` : "default"})`);
   } catch (err: any) {
     if (!fallbackModel || !selectedModel || !hasDistinctFallback || !isRetryableModelSelectionError(err?.message || "")) {
       piLog.error(`Session creation failed: ${err.message}`);
@@ -2700,7 +2783,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       }
     }
     await emitFallbackUsed("session-creation", err);
-    piLog.log("Fallback session created successfully");
+    piLog.debug("Fallback session created successfully");
   }
 
   let activeSession = sessionResult.session;

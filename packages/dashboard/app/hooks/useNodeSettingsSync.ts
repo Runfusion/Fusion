@@ -9,6 +9,7 @@ import {
   type NodeSettingsSyncResult,
   type NodeAuthSyncResult,
 } from "../api-node";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 // ── Sync State Utilities ───────────────────────────────────────────────────────
 
@@ -156,8 +157,8 @@ export function useNodeSettingsSync(): UseNodeSettingsSyncResult {
   const initialLoadCompleteRef = useRef(false);
   // Abort controller for cancelling in-flight requests
   const abortRef = useRef<AbortController | null>(null);
-  // Polling interval ref
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Whether the sync-status poll should run at all (turned off once no nodes are tracked).
+  const [pollingEnabled, setPollingEnabled] = useState(true);
 
   /**
    * Fetch sync status for a single node and update state.
@@ -237,39 +238,31 @@ export function useNodeSettingsSync(): UseNodeSettingsSyncResult {
   }, [fetchNodeStatus, t]);
 
   /**
-   * Start polling sync status for all tracked nodes.
-   */
-  const startPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-    intervalRef.current = setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
-  }, [refresh]);
-
-  /**
-   * Stop polling.
+   * Stop polling (used when the last tracked node is removed).
    */
   const stopPolling = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+    setPollingEnabled(false);
   }, []);
 
-  // Initial fetch and polling setup
+  // Initial fetch
   useEffect(() => {
     void refresh();
-    startPolling();
 
     return () => {
-      stopPolling();
       if (abortRef.current) {
         abortRef.current.abort();
       }
     };
-  }, [refresh, startPolling, stopPolling]);
+  }, [refresh]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:06:
+  Node sync-status polling is suspended while the document is hidden, in addition to the existing
+  "no tracked nodes" gate. Background network work keeps the page from ever going idle, which is a primary
+  reason iOS Safari/PWA and Chrome Android discard the dashboard tab and force a cold reload on return.
+  Sync status is re-fetched once on the hidden -> visible edge.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: pollingEnabled });
 
   /**
    * Start tracking a node for sync status polling.

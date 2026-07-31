@@ -1,7 +1,9 @@
 import type { WorkflowDefinition, WorkflowDefinitionKind, WorkflowIr, WorkflowIrNode, WorkflowSettingDefinition, TaskStore } from "@fusion/core";
-import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon } from "@fusion/core";
+import { ColumnTraitValidationError, OccupiedColumnsError, InvalidRehomeTargetError, WorkflowIrError, ColumnAgentBindingError, WorkflowSettingRejectionError, SCHEMA_VERSION, assertColumnTraitsValid, layoutForIr, listTraits, listStepParsers, parseWorkflowIr, resolvePlanningSettingsModel, stripApprovalBypassFlags, resolveWorkflowIrById, resolveEffectiveSettingValues, findOrphanedSettingValues, isBuiltinWorkflowId, getBuiltinWorkflow, BUILTIN_WORKFLOW_SETTINGS, AgentStore, validateColumnAgentBindings, resolveWorkflowOptionalSteps, enumeratePromptBearingWorkflowNodes, normalizeWorkflowIcon, WorkflowSwitchRehomeFailedError } from "@fusion/core";
 import { buildSessionSkillContextSync, createFnAgent as engineCreateFnAgent, validateCodeNodeSources, validateWorkflowIrDryRun } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound, rateLimited } from "../api-error.js";
+// FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
+import { rethrowTaskApiError } from "./task-lookup-error.js";
 import { emitWorkflowSseEvent } from "../sse.js";
 import type { ApiRoutesContext } from "./types.js";
 
@@ -429,9 +431,17 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
-      // U5 (R20): a flag-ON edit removing an occupied column blocks with a typed
-      // error. Surface it as a structured 409 carrying the per-column occupant
-      // counts so the client can prompt for a `rehomeTo` target and retry.
+      /*
+      U5 (R20): an edit removing an occupied column blocks with a typed error.
+      Surface it as a structured 409 carrying the per-column occupant counts so the
+      client can prompt for a `rehomeTo` target and retry.
+
+      FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+      Was "a flag-ON edit". The store-side guard is no longer gated on the retired
+      `workflowColumns` flag, so this 409 — and the editor's re-home prompt behind it
+      — are reachable for the first time. The handler itself is unchanged; it was
+      correct and simply never fired.
+      */
       if (err instanceof OccupiedColumnsError) {
         throw conflict(err.message, { workflowId: err.workflowId, occupancies: err.occupancies });
       }
@@ -637,7 +647,9 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         throw badRequest("workflowId must be a string or null");
       }
       let enabledWorkflowSteps: string[] = [];
-      // U5 (R20) switch reconciliation: when the workflowColumns flag is ON, the
+      // FNXC:WorkflowColumns 2026-07-28-00:00 (U12): the flag gate is gone — this
+      // reconciliation now runs for every project.
+      // U5 (R20) switch reconciliation: the
       // store re-homes the card to the new workflow's entry column (aborting
       // in-flight work first) unless the new workflow defines its current column.
       // The re-home outcome rides on the response so the UI can reflect the move.
@@ -652,6 +664,29 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         }
         if (selectErr instanceof Error && /not found/i.test(selectErr.message)) {
           throw notFound(selectErr.message);
+        }
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+        TRANSLATE the switch re-home failure instead of letting it fall through to a
+        generic 500. Without this the operator sees "something went wrong" with no
+        indication that the switch was refused, why, or whether their card moved.
+
+        `committed` is the field that matters: false means nothing was written and the
+        card is intact (the ordinary case — the destination column is full, caught by
+        the pre-flight before any commit), so 409 "retry after making room". True means
+        the selection committed and the re-home then lost a race, so the card IS torn
+        and the payload says so explicitly along with both columns.
+        */
+        if (selectErr instanceof WorkflowSwitchRehomeFailedError) {
+          throw conflict(selectErr.message, {
+            code: "workflow-switch-rehome-failed",
+            taskId: selectErr.taskId,
+            workflowId: selectErr.workflowId,
+            fromColumn: selectErr.fromColumn,
+            intendedColumn: selectErr.intendedColumn,
+            selectionCommitted: selectErr.committed,
+            ...(selectErr.reason !== undefined ? { reason: selectErr.reason } : {}),
+          });
         }
         throw selectErr;
       }
@@ -687,7 +722,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       res.json({ approved: command });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
-      rethrowAsApiError(err);
+      rethrowTaskApiError(err, req.params.taskId);
     }
   });
 
@@ -740,6 +775,39 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         throw setErr;
       }
       res.json({ workflowId: workflowId ?? null });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+  PUT /api/project/board-selected-workflow — Body: { workflowId: string | null }
+
+  Mirrors the operator's current Board workflow lane into project settings. The Board's
+  own authoritative copy stays in project-scoped localStorage; this mirror exists solely
+  so NON-BROWSER callers (`fn task create`, the `fn_task_create` tool, refinement invoked
+  outside the dashboard) can resolve the "Selected workflow" option, which they cannot
+  read from a browser store.
+  Write-only by design: nothing reads this back into the Board, so a stale or
+  cross-operator value can only affect which workflow a newly created task inherits —
+  never what the operator sees. `null` clears the mirror.
+  Unlike PUT /project/default-workflow this does NOT 404 an unknown id: the lane mirror
+  is a best-effort UI echo, and the consuming resolver already degrades an unresolvable
+  id to "inherit the project default".
+  */
+  router.put("/project/board-selected-workflow", async (req, res) => {
+    try {
+      const { store } = await getProjectContext(req);
+      const workflowId = (req.body ?? {}).workflowId;
+      if (workflowId !== null && typeof workflowId !== "string") {
+        throw badRequest("workflowId must be a string or null");
+      }
+      const trimmed = typeof workflowId === "string" ? workflowId.trim() : "";
+      // null-as-delete: the settings layer treats null as an explicit clear.
+      await store.updateSettings({ boardSelectedWorkflowId: trimmed || null } as never);
+      res.json({ workflowId: trimmed || null });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err);

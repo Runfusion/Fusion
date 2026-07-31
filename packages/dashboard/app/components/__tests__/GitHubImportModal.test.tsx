@@ -4,7 +4,13 @@ import { act, render, screen, fireEvent, waitFor, within } from "@testing-librar
 import { buildIssuePlanningSeed, GitHubImportModal } from "../GitHubImportModal";
 import { buildIssueChatPrefill } from "../ChatView";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
+import {
+  assertModalGeometryRecoveryAndSheetContracts,
+  assertRenderedModalTouchGeometry,
+  expectFloatingWindowStructure,
+} from "./floatingWindowMigration.test-helpers";
 import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
@@ -25,6 +31,8 @@ import {
   fetchGitRemotes,
   createTask,
   translateImportContent,
+  getTranslateErrorMessage,
+  fetchCachedImportTranslation,
   autoTranslateImportIssues,
 } from "../../api";
 import type { Task } from "@fusion/core";
@@ -56,6 +64,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchGitRemotes: vi.fn(),
     createTask: vi.fn(),
     translateImportContent: vi.fn(),
+    fetchCachedImportTranslation: vi.fn(),
     autoTranslateImportIssues: vi.fn(),
   };
 });
@@ -208,6 +217,8 @@ describe("GitHubImportModal", () => {
     vi.mocked(fetchSettings).mockReset();
     vi.mocked(createTask).mockReset();
     vi.mocked(autoTranslateImportIssues).mockReset();
+    vi.mocked(fetchCachedImportTranslation).mockReset();
+    vi.mocked(fetchCachedImportTranslation).mockResolvedValue(null);
     vi.mocked(createTask).mockResolvedValue(mockTask);
     vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true } as never);
     vi.mocked(autoTranslateImportIssues).mockImplementation(async (_owner, _repo, items) => ({
@@ -931,8 +942,60 @@ describe("GitHubImportModal", () => {
   });
 
   it("does not render when isOpen is false", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
     render(<GitHubImportModal isOpen={false} onClose={onClose} onImport={onImport} tasks={[]} />);
     expect(screen.queryByText("Import from GitHub")).toBeNull();
+    expect(setItem).not.toHaveBeenCalledWith("floating-window:github-import", expect.any(String));
+    setItem.mockRestore();
+  });
+
+  it("covers root importer FloatingWindow touch geometry, recovery, and sheet suspension", async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
+    const mountModal = () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      return render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+    };
+    try {
+      const rendered = mountModal();
+      await waitFor(() => expect(rendered.baseElement.querySelector(".github-import-modal__header")).not.toBeNull());
+      expectFloatingWindowStructure("github-import");
+      assertRenderedModalTouchGeometry(
+        "github-import",
+        rendered.baseElement.querySelector(".github-import-modal__header")!,
+      );
+      rendered.unmount();
+
+      assertModalGeometryRecoveryAndSheetContracts("github-import", mountModal);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalHeight });
+    }
+  });
+
+  it("uses the shared FloatingWindow outside-pointer contract only when the preference is enabled", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    const disabled = render(
+      <ModalDismissPreferenceProvider enabled={false}>
+        <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />
+      </ModalDismissPreferenceProvider>,
+    );
+    await waitFor(() => expect(disabled.baseElement.querySelector("[data-testid='floating-window-github-import']")).not.toBeNull());
+    fireEvent.pointerDown(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    disabled.unmount();
+
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    const enabled = render(
+      <ModalDismissPreferenceProvider enabled>
+        <GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />
+      </ModalDismissPreferenceProvider>,
+    );
+    await waitFor(() => expect(enabled.baseElement.querySelector("[data-testid='floating-window-github-import']")).not.toBeNull());
+    fireEvent.pointerDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   // FNXC:EmbeddedPresentation 2026-06-22-12:00:
@@ -976,15 +1039,15 @@ describe("GitHubImportModal", () => {
 
     it("keeps the modal overlay and Escape-to-close in modal mode", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
-      const { container } = render(
+      const { baseElement } = render(
         <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />,
       );
 
       await waitFor(() => {
         expect(screen.getByText("Import from GitHub")).toBeTruthy();
       });
-      expect(container.querySelector(".modal-overlay")).not.toBeNull();
-      expect(container.querySelector(".github-import-modal--embedded")).toBeNull();
+      expect(baseElement.querySelector("[data-testid='floating-window-overlay-github-import']")).not.toBeNull();
+      expect(baseElement.querySelector(".github-import-modal--embedded")).toBeNull();
       fireEvent.keyDown(document, { key: "Escape" });
       expect(onClose).toHaveBeenCalled();
     });
@@ -1092,6 +1155,43 @@ describe("GitHubImportModal", () => {
     expect(within(previewCard).getByText(/Problème d'aperçu d'importation/)).toBeTruthy();
     // Toggling back to the original must revert the bar too, not strand it on the translation.
     expect(titleBar.textContent).toContain("#7 — Problème d'aperçu d'importation");
+  });
+
+  it("hydrates a persisted manual translation on reselect without another Translate click", async () => {
+    const frenchBody = "Cette issue contient assez de texte français pour déclencher la traduction dans le panneau d'importation.";
+    const issues = [
+      { number: 70, title: "Problème traduit", body: frenchBody, html_url: "https://github.com/owner/repo/issues/70", labels: [] },
+      { number: 71, title: "Autre problème", body: frenchBody, html_url: "https://github.com/owner/repo/issues/71", labels: [] },
+    ];
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+    vi.mocked(fetchCachedImportTranslation).mockImplementation(async (fields, _locale, identity) =>
+      identity.issueNumber === 70 ? { title: "Persisted translation", body: fields.body } : null,
+    );
+
+    render(<GitHubImportModal isOpen onClose={onClose} onImport={onImport} tasks={[]} />);
+    await screen.findByText("Problème traduit");
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #70/i }));
+    await waitFor(() => expect(screen.getByText("Persisted translation")).toBeTruthy());
+    expect(translateImportContent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #71/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Select issue #70/i }));
+    await waitFor(() => expect(screen.getByText("Persisted translation")).toBeTruthy());
+    expect(translateImportContent).not.toHaveBeenCalled();
+    expect(fetchCachedImportTranslation).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Problème traduit" }),
+      "en",
+      expect.objectContaining({ provider: "github", issueNumber: 70 }),
+      undefined,
+    );
+  });
+
+  it("maps rate-limit, validation, and service failures to distinct translation banner copy", () => {
+    const withStatus = (message: string, status: number) => Object.assign(new Error(message), { status });
+    expect(getTranslateErrorMessage(withStatus("TRANSLATE_RATE_LIMIT", 429))).toBe("Too many translation requests. Please wait an hour.");
+    expect(getTranslateErrorMessage(withStatus("TRANSLATE_VALIDATION_ERROR", 400))).toBe("Translation request is invalid. Check the selected content and try again.");
+    expect(getTranslateErrorMessage(withStatus("TRANSLATE_SERVICE_ERROR", 503))).toBe("Translation service is temporarily unavailable. Please try again shortly.");
   });
 
   it("does not show translate controls for English content when dashboard language is English", async () => {
@@ -2858,7 +2958,7 @@ describe("GitHubImportModal", () => {
     expect(importSheetRule).toBe(chatSheetRule);
     expect(importSheetRule).toBe(taskSheetRule);
     expect(importSheetRule).toContain("inset: 0 !important;");
-    expect(source).toMatch(/@media \(max-width: 768px\)[\s\S]*\.floating-window--github-import-detail \.floating-window__resize-handle\s*\{\s*display: none;/);
+    expect(source).toMatch(/@media \(max-width: 767\.98px\), \(max-height: 480px\)[\s\S]*\.floating-window--github-import-detail \.floating-window__resize-handle\s*\{\s*display: none;/);
     expect(source).toContain(".floating-window:not(.floating-window--chat):not(.floating-window--github-import-detail)");
   });
 

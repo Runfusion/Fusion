@@ -16,13 +16,8 @@
 //   suite `stepwise-workflow-parity.test.ts`. Keep the two concerns separate.
 // ─────────────────────────────────────────────────────────────────────────────
 import { describe, expect, it, vi } from "vitest";
-import type { TaskDetail, WorkflowIrV2, WorkflowStage } from "@fusion/core";
-import {
-  BUILTIN_CODING_WORKFLOW_IR,
-  buildWorkflowObservation,
-  buildWorkflowObservationFromTask,
-  compareWorkflowRunObservations,
-} from "@fusion/core";
+import type { TaskDetail, WorkflowIrV2 } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
 
 import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
 import type { WorkflowLegacySeams } from "../workflow-node-handlers.js";
@@ -167,9 +162,15 @@ describe("WorkflowGraphExecutor interpreter-parity", () => {
 //
 // The per-column agent feature must be invisible when no column carries a
 // binding: the built-in default workflow synthesizes no `agent` field on any
-// column, and a binding-free run produces observations identical to legacy via
-// the same `compareWorkflowRunObservations` machinery the dual-observe gate uses.
-// This is the byte-identity / parity oracle for the feature being unbound.
+// column, and a binding-free run drives exactly the historical seam sequence.
+//
+// FNXC:WorkflowColumns 2026-07-27-10:15 (U2 / R9):
+// The observation-comparison tail of the second case is DELETED with
+// `workflow-parity.ts`. It built BOTH observations in this file and asserted they
+// agreed, so it could only fail if `compareWorkflowRunObservations` itself were
+// broken — it covered nothing about the executor. The load-bearing assertion,
+// `stages` equalling the run-captured seam sequence, is unchanged and is what
+// actually catches seam drift.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("column-agent feature is invisible when unbound (U7 / R9)", () => {
   it("the default built-in workflow synthesizes NO column agent field on any column", () => {
@@ -182,11 +183,10 @@ describe("column-agent feature is invisible when unbound (U7 / R9)", () => {
     }
   });
 
-  it("a binding-free run yields observations identical to legacy (compareWorkflowRunObservations agrees)", async () => {
-    // Drive the graph executor over the default execute→review→merge sequence and
-    // collect the stage transitions; with zero column bindings, the column-agent
-    // feature contributes nothing, so the interpreter observation must equal the
-    // legacy authoritative observation with no drift.
+  it("a binding-free run drives the historical seam sequence exactly", async () => {
+    // Drive the graph executor over the default planning→execute→review→merge
+    // sequence and collect the seam transitions; with zero column bindings the
+    // column-agent feature must contribute nothing to that sequence.
     const stages: string[] = [];
     const seams: WorkflowLegacySeams = {
       planning: async () => ({ outcome: "success" }),
@@ -217,26 +217,5 @@ describe("column-agent feature is invisible when unbound (U7 / R9)", () => {
     // observation below derives from the run-captured seam sequence, so seam
     // drift fails here instead of being masked by a hard-coded literal.
     expect(stages).toEqual(["planning", "execute", "review", "merge"]);
-
-    // Legacy authoritative observation: a clean run that lands in `done`/merged.
-    const legacyObs = buildWorkflowObservation({
-      stageTransitions: ["triage", "planning", "execute", "review", "merge"],
-      terminalColumn: "done",
-      terminalStatus: "done",
-      reviewVerdict: "approve",
-      mergeOutcome: "merged",
-    });
-    // Interpreter (binding-free) observation assembled from the same run.
-    const interpreterObs = buildWorkflowObservation({
-      stageTransitions: ["triage", ...stages] as WorkflowStage[],
-      terminalColumn: "done",
-      terminalStatus: "done",
-      reviewVerdict: "approve",
-      mergeOutcome: "merged",
-    });
-
-    const report = compareWorkflowRunObservations(legacyObs, interpreterObs);
-    expect(report.agree).toBe(true);
-    expect(report.diffs).toEqual([]);
   });
 });

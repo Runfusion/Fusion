@@ -424,9 +424,12 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         try {
           await scopedStore.deleteTask(normalizedParentId, {
             auditContext: {
+              // FNXC:TaskDeleteAttribution 2026-07-26-14:30: subtask-breakdown parent close is
+              // automation running behind the planning session, not the operator's Delete click.
               agentId: "system",
               runId: `synthetic-planning-delete-${normalizedParentId}-${Date.now()}`,
               sessionId,
+              callerKind: "engine",
             },
           });
           parentTaskClosed = true;

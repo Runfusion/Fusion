@@ -7,13 +7,17 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-mission-store-queries.js";
-import {TaskHasLineageChildrenError, TaskSelfDeleteError} from "./errors.js";
+import {TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {and, eq} from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type {Task, Column, ArchivedTaskEntry, GithubIssueAction} from "../types.js";
+import {buildDeleteCallerAuditFields, type TaskDeleteAuditContext} from "../task-delete-attribution.js";
+import {notifyOperatorOfNonOperatorDelete} from "../task-delete-notice.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../task-priority.js";
 import {generateTaskLineageId} from "../task-lineage.js";
@@ -40,7 +44,31 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       description: task.description,
       priority: normalizeTaskPriority(task.priority),
       column: "archived",
-      preArchiveColumn: task.preArchiveColumn,
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-11:30 (PR #2824's finding, fixed):
+      CAPTURE THE COLUMN THE CARD WAS IN. This field was only ever COPIED — here, back out of the
+      entry on restore, and through serialization — and never SET from anywhere, so it was `undefined`
+      for every archive that has ever happened. `unarchiveTaskImpl` then fell to its `?? "todo"` and
+      the restore destination was decided by a literal instead of by history.
+
+      On the default board `todo` is a declared column, so restores landed in the queue and looked
+      right — which is why this survived three separate fixes to `resolveUnarchiveTargetColumnImpl`,
+      all of which were correcting how it interprets a value that never arrived. On a renamed board
+      `todo` is declared nowhere, so the resolver took its "no usable history" branch and returned the
+      COMPLETE lane: a card archived mid-implementation came back marked finished. Proven end to end
+      in `workflow-unarchive-target-live-e2e.pg.test.ts`.
+
+      `task.column` is the pre-archive column at this point — the entry's own `column` is set to
+      `"archived"` on the line above, so this is the last place the original is still in hand. The
+      `??` keeps an already-captured value, so a re-archive of a restored card does not overwrite the
+      history with an intermediate lane.
+
+      DEFAULT-BOARD BEHAVIOUR CHANGES, deliberately: a card archived from `done` restored to `todo`
+      under the literal and now restores to `done`. Returning finished work to the queue was the
+      fallback showing through, not a rule anyone chose — the resolver's own branches say a card
+      archived from a declared column goes back to it.
+      */
+      preArchiveColumn: task.preArchiveColumn ?? (task.column as ArchivedTaskEntry["preArchiveColumn"]),
       dependencies: task.dependencies,
       steps: task.steps,
       currentStep: task.currentStep,
@@ -103,7 +131,7 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
     };
   }
 
-export async function deleteTaskBackendImpl(store: TaskStore, id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: { agentId: string; runId: string; sessionId?: string; taskId?: string }; },): Promise<Task> {
+export async function deleteTaskBackendImpl(store: TaskStore, id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; },): Promise<Task> {
   /*
   FNXC:TaskDeletion 2026-07-01-00:00:
   Task-bound runtime callers may never soft-delete the task they are executing; this guard is the PostgreSQL-backend mirror of the SQLite-path guard in deleteTaskImpl so direct callers of deleteTaskBackend inherit the same invariant before any mutation or audit.
@@ -115,7 +143,9 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
     // Read the task row (forensic: include soft-deleted).
     const pgRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
     if (!pgRow) {
-      throw new Error(`Task ${id} not found`);
+      // FNXC:TaskLookup404 2026-07-26-12:00: typed miss (message unchanged) so
+      // DELETE /api/tasks/:id answers 404 for an unknown id instead of 500.
+      throw new TaskNotFoundError(id);
     }
     const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
 
@@ -177,12 +207,28 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
           removeLineageReferences: !!options?.removeLineageReferences,
           allowResurrection,
           sessionId: options?.auditContext?.sessionId,
+          // FNXC:TaskDeleteAttribution 2026-07-26-14:30: caller class + calling
+          // task id; `taskId` reached this function but was never persisted.
+          ...buildDeleteCallerAuditFields(options?.auditContext),
         },
       });
     });
 
     // Emit lifecycle event (best-effort, outside the transaction).
     store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
+    /*
+    FNXC:TaskDeleteNotice 2026-07-26-16:10:
+    Operator mailbox notice for a delete the operator did not perform. Deliberately placed here,
+    beside the lifecycle emit and OUTSIDE `transactionImmediate`: a mailbox INSERT that threw inside
+    that callback would roll back the committed soft-delete, the lineage clear, the mission unlink,
+    and the audit row. `task` is still the pre-delete snapshot at this point, so `task.column` is the
+    real previous column. `deleteTaskIfBackendImpl` delegates here, so it is covered too.
+    */
+    await notifyOperatorOfNonOperatorDelete(
+      store,
+      { id: task.id, title: task.title, previousColumn: task.column, previousStatus: task.status ?? null },
+      options?.auditContext,
+    );
     return task;
   }
 
@@ -191,7 +237,7 @@ export async function deleteTaskIfBackendImpl(
   store: TaskStore,
   id: string,
   predicate: (live: Task) => boolean | Promise<boolean>,
-  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: { agentId: string; runId: string; sessionId?: string; taskId?: string } },
+  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
 ): Promise<{ task: Task; deleted: boolean }> {
   if (options?.auditContext?.taskId === id) throw new TaskSelfDeleteError(id);
   return store.withTaskLock(id, async () => {
@@ -221,6 +267,28 @@ export async function deleteTaskIfBackendImpl(
   });
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+The archived lanes for one task, resolved from its own workflow. Shared by the archive and unarchive
+guards below so the two cannot disagree about what "archived" means — one refusing a card the other
+would accept is the half-converted-pair shape.
+
+A workflow expressing NO trait on any column is a v1 upgrade (`synthesizeDefaultColumns` emits
+`traits: []` everywhere) rather than a board without an archive lane, so it keeps the legacy id — as
+does a workflow that cannot be read.
+*/
+async function archivedLanesForTask(store: TaskStore, taskId: string): Promise<ReadonlySet<string>> {
+  const lanes = new Set<string>(["archived"]);
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir && declaresAnyLifecycleTrait(ir)) {
+      for (const id of columnsWithFlag(ir, "archived")) lanes.add(id);
+    }
+  } catch { /* degraded: the legacy id */ }
+  return lanes;
+}
+
 export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean },): Promise<Task> {
     const layer = store.asyncLayer!;
     const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
@@ -231,7 +299,12 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     if (!task) {
       throw new Error(`Task ${id} not found`);
     }
-    if (task.column === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+    Keyed on the literal, a renamed board let an ALREADY-archived card be archived again — a second
+    archive pass over a row the archive already owns.
+    */
+    if ((await archivedLanesForTask(store, id)).has(task.column)) {
       throw new Error(`Cannot archive ${id}: task is already archived`);
     }
 
@@ -330,20 +403,13 @@ export async function listArchivedTasksImpl(store: TaskStore, options?: {
     const offset = Math.max(0, Math.trunc(rawOffset) || 0);
     const slim = options?.slim ?? true;
 
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      // FNXC:MultiProjectIsolation 2026-07-12 (PR #2007 review): the archived
-      // board and its count are scoped to the bound project — the shared
-      // cold-storage table would otherwise surface every project's archived
-      // tasks in every project's dashboard.
-      const total = await getArchivedRowCount(layer.db, layer.projectId);
-      const entries = await listArchivedTaskEntriesPage(layer.db, limit, offset, layer.projectId);
-      const tasks = entries.map((entry) => store.archiveEntryToTask(entry, slim));
-      return { tasks, total, hasMore: offset + tasks.length < total };
-    }
-
-    const total = store.archiveDb.getArchivedRowCount();
-    const entries = store.archiveDb.listPage(limit, offset);
+        const layer = store.asyncLayer!;
+    // FNXC:MultiProjectIsolation 2026-07-12 (PR #2007 review): the archived
+    // board and its count are scoped to the bound project — the shared
+    // cold-storage table would otherwise surface every project's archived
+    // tasks in every project's dashboard.
+    const total = await getArchivedRowCount(layer.db, layer.projectId);
+    const entries = await listArchivedTaskEntriesPage(layer.db, limit, offset, layer.projectId);
     const tasks = entries.map((entry) => store.archiveEntryToTask(entry, slim));
     return { tasks, total, hasMore: offset + tasks.length < total };
 }
@@ -355,134 +421,101 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
      * archive table, restore the task to active storage, and delete the archive
      * entry — all without touching store.db or store.archiveDb (SQLite).
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
+        const layer = store.asyncLayer!;
+    /*
+    FNXC:ArchiveRestore 2026-07-14-18:48:
+    Public getTask deliberately falls back to cold storage when the live row is tombstoned. Unarchive must inspect the live table directly so that fallback cannot masquerade as an already-restored row and leave deleted_at set after deleting the only cold snapshot.
+    */
+    const liveRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+    const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
+    let task: Task;
+    if (entry) {
       /*
-      FNXC:ArchiveRestore 2026-07-14-18:48:
-      Public getTask deliberately falls back to cold storage when the live row is tombstoned. Unarchive must inspect the live table directly so that fallback cannot masquerade as an already-restored row and leave deleted_at set after deleting the only cold snapshot.
+      FNXC:ArchiveRestore 2026-07-14-21:48:
+      A cold snapshot may outlive a missing project.tasks row after cleanup or partial legacy archival. Rebuild that row through the canonical snapshot restoration path before restoreTaskFromArchive consumes the snapshot; an existing live or tombstoned row keeps the established in-place restore path.
       */
-      const liveRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
-      const entry = await findArchivedTaskEntry(layer.db, id, layer.projectId);
-      let task: Task;
-      if (entry) {
-        /*
-        FNXC:ArchiveRestore 2026-07-14-21:48:
-        A cold snapshot may outlive a missing project.tasks row after cleanup or partial legacy archival. Rebuild that row through the canonical snapshot restoration path before restoreTaskFromArchive consumes the snapshot; an existing live or tombstoned row keeps the established in-place restore path.
-        */
-        if (!liveRow) {
-          await store.restoreFromArchive(entry);
-        }
-        await restoreTaskFromArchive(layer, entry);
-        task = await store.getTask(id);
-      } else if (liveRow && liveRow.deletedAt == null) {
-        task = await store.getTask(id);
-      } else {
-        throw new Error(`Cannot unarchive ${id}: task is missing from active storage and not found in archive`);
+      if (!liveRow) {
+        await store.restoreFromArchive(entry);
       }
-
-      if (task.column !== "archived") {
-        throw new Error(`Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`);
-      }
-
-      const preArchiveColumn = task.preArchiveColumn ?? "todo";
-      const toColumn = store.resolveUnarchiveTargetColumn(preArchiveColumn);
-
-      /*
-       * FNXC:SqliteFinalRemoval 2026-06-25:
-       * Directly update the column instead of calling moveTask. The VALID_TRANSITIONS
-       * graph only allows archived→done, but unarchive needs to restore to the
-       * preArchiveColumn (todo/in-progress/etc). The SQLite path bypasses transition
-       * validation by directly setting task.column; the backend path must do the same
-       * via a direct UPDATE. Using moveTask would throw "Invalid transition" for any
-       * target other than "done".
-       */
-      const now = new Date().toISOString();
-      await layer.db
-        .update(schema.project.tasks)
-        .set({
-          column: toColumn,
-          deletedAt: null,
-          columnMovedAt: now,
-          updatedAt: now,
-        })
-        .where(and(
-          eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
-          eq(schema.project.tasks.id, id),
-        ));
-
-      const updatedTask = await store.getTask(id);
-
-      // Log the unarchive action.
-      await store.logEntry(id, "Task unarchived");
-
-      // Remove from archive table.
-      await deleteArchivedTaskEntry(layer.db, id, layer.projectId);
-
-      return updatedTask;
+      await restoreTaskFromArchive(layer, entry);
+      task = await store.getTask(id);
+    } else if (liveRow && liveRow.deletedAt == null) {
+      task = await store.getTask(id);
+    } else {
+      throw new Error(`Cannot unarchive ${id}: task is missing from active storage and not found in archive`);
     }
 
-    const dir = store.taskDir(id);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:50 DELIBERATE-LITERAL: the value is literally "archived" by construction.
 
-    // If the active row is gone, restore from cold archive storage before
-    // taking the task lock. A stale directory may still exist after manual
-    // filesystem edits, so database presence is the source of truth.
-    if (!store.readTaskFromDb(id)) {
-      const entry = await store.findInArchive(id);
-      if (!entry) {
-        throw new Error(
-          `Cannot unarchive ${id}: task is missing from active storage and not found in archive`,
-        );
-      }
-      await store.restoreFromArchive(entry);
+    I converted this and then proved the conversion INERT, which is worth recording so it is not
+    attempted a third time. `task` here comes from the archive entry, and `archiveEntryToTask`
+    (serialization.ts:353) hardcodes `column: "archived"` on every task it reconstructs. So this
+    comparison can only ever see the literal, on every board, renamed or not — resolving lanes here
+    changes no outcome and only makes the guard look converted.
+
+    The board's own archive lane is not involved: a card in cold storage has left the board entirely.
+    If archived rows ever start carrying their originating board's lane id, this becomes a real guard
+    and should be converted then.
+    */
+    if (task.column !== "archived") {
+      throw new Error(`Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`);
     }
 
-    return store.withTaskLock(id, async () => {
-      // Re-read task.json (either existing or freshly restored)
-      const task = await store.readTaskJson(dir);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-12:40 (PR #2824's finding, fixed — read the SNAPSHOT):
+    THE HISTORY LIVES IN COLD STORAGE, NOT ON THE ROW. `preArchiveColumn` has no column in
+    `project.tasks` — it exists on the `Task` type and in the archive entry, and nowhere else. So the
+    in-place restore above cannot carry it, `store.getTask(id)` reads a live row that never had it,
+    and `task.preArchiveColumn` was `undefined` for every unarchive that has ever run. The `?? "todo"`
+    then decided the destination by literal instead of by history.
 
-      // Initialize log array if missing (for legacy tasks)
-      if (!task.log) {
-        task.log = [];
-      }
+    On the default board `todo` is declared, so restores landed in the queue and looked right — which
+    is why this survived three separate fixes to `resolveUnarchiveTargetColumnImpl`, every one of them
+    correcting how it interprets a value that never arrived. On a renamed board `todo` is declared
+    nowhere, so the resolver took its "no usable history" branch and returned the COMPLETE lane: a
+    card archived mid-implementation came back marked finished.
 
-      if (task.column !== "archived") {
-        throw new Error(
-          `Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`,
-        );
-      }
+    `entry` is the snapshot this function already loaded, and it is the only place the original column
+    survives. Preferred over the row, which falls back to it, which falls back to the literal for a
+    row so old it was archived before the column was captured at all.
+    */
+    const preArchiveColumn = entry?.preArchiveColumn ?? task.preArchiveColumn ?? "todo";
+    const toColumn = await store.resolveUnarchiveTargetColumn(preArchiveColumn, id);
 
-      // NOTE: No getTaskMergeBlocker check here — intentionally.
-      // The merge blocker validates in-review → done transitions (ensuring code
-      // has been properly reviewed before merging). An unarchived task was already
-      // archived in its previous lifecycle; this is just a restoration. The transient
-      // field clearing below ensures no stale blocker state leaks through.
-      const preArchiveColumn = task.preArchiveColumn ?? await store.readPreArchiveColumnFromTaskFile(dir);
-      const toColumn = store.resolveUnarchiveTargetColumn(preArchiveColumn);
-      task.column = toColumn;
-      task.preArchiveColumn = undefined;
-      task.columnMovedAt = new Date().toISOString();
-      task.updatedAt = task.columnMovedAt;
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-25:
+     * Directly update the column instead of calling moveTask. The VALID_TRANSITIONS
+     * graph only allows archived→done, but unarchive needs to restore to the
+     * preArchiveColumn (todo/in-progress/etc). The SQLite path bypasses transition
+     * validation by directly setting task.column; the backend path must do the same
+     * via a direct UPDATE. Using moveTask would throw "Invalid transition" for any
+     * target other than "done".
+     */
+    const now = new Date().toISOString();
+    await layer.db
+      .update(schema.project.tasks)
+      .set({
+        column: toColumn,
+        deletedAt: null,
+        columnMovedAt: now,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(schema.project.tasks.projectId, projectPartition(layer.projectId)),
+        eq(schema.project.tasks.id, id),
+      ));
 
-      // Clear transient fields regardless of the restored column. Archived tasks
-      // may have been archived with stale execution state that should not reappear
-      // after unarchiving, especially when active columns are downgraded to todo.
-      store.clearDoneTransientFields(task);
+    const updatedTask = await store.getTask(id);
 
-      task.log.push({
-        timestamp: task.columnMovedAt,
-        action: "Task unarchived",
-      });
+    // Log the unarchive action.
+    await store.logEntry(id, "Task unarchived");
 
-      await store.atomicWriteTaskJson(dir, task);
-      store.archiveDb.delete(id);
+    // Remove from archive table.
+    await deleteArchivedTaskEntry(layer.db, id, layer.projectId);
 
-      // Update cache if watcher is active
-      if (store.isWatching) store.taskCache.set(id, { ...task });
-
-      store.emit("task:moved", { task, from: "archived" as Column, to: toColumn, source: "engine" });
-      return task;
-    });
-  }
+    return updatedTask;
+}
 
 export async function restoreFromArchiveImpl(store: TaskStore, entry: import("../types.js").ArchivedTaskEntry): Promise<Task> {
     const dir = store.taskDir(entry.id);

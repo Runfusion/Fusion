@@ -797,6 +797,10 @@ export interface GlobalSettings {
    *  verbose `detail` payload is omitted to reduce log size/noise. Distinct
    *  from `persistAgentThinkingLog`, which controls `thinking` rows. */
   persistAgentToolOutput?: boolean;
+  /** Per-result engine-injected tool-output budget. Unset/null uses 16,000 characters;
+   * positive integers set a custom cap; 0 disables the shared clamp; invalid values
+   * fall back to the finite default. */
+  agentToolOutputMaxChars?: number | null;
   /** When true, task chat receives engine-authored progress, failure, and rollback updates. Default: false. */
   proactiveTaskChatEnabled?: boolean;
   /** When true, persist `thinking` log entries from agent reasoning deltas for
@@ -1043,6 +1047,43 @@ export interface ProjectSettings {
    * misconfigured id never breaks AI-undo task creation.
    */
   aiUndoTaskWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Workflow applied to tasks opened programmatically by `fn task create` (CLI)
+   * and the `fn_task_create` agent tool. Blank/unset means "Selected workflow":
+   * the operator's current Board workflow lane (`boardSelectedWorkflowId`), and
+   * failing that the project default workflow — i.e. today's behavior. A concrete
+   * id PINS those tasks to that workflow regardless of the board lane.
+   * An explicit `workflow_id` argument on `fn_task_create` still wins over this.
+   * Resolution tolerates a missing/deleted/fragment id by falling back to inherit,
+   * mirroring `aiUndoTaskWorkflowId`, so a misconfigured id never breaks creation.
+   */
+  taskCreateWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Workflow applied to refinement tasks (`TaskStore.refineTask` — the follow-up
+   * card spawned from a done/in-review task plus operator feedback, including the
+   * auto-refinement a comment on a done task triggers). Same semantics as
+   * `taskCreateWorkflowId`: blank/unset = "Selected workflow" (board lane, then
+   * project default), a concrete id pins. Replaces FN-8188's unconditional
+   * "refinements inherit the project default workflow" with an overridable choice.
+   */
+  refinementTaskWorkflowId?: string;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Server-side mirror of the operator's current Board workflow lane, written
+   * best-effort by the dashboard whenever the lane changes. The authoritative,
+   * instant-restore copy stays in project-scoped localStorage
+   * (`boardWorkflowSelection.ts`); this mirror exists ONLY so non-browser callers
+   * — `fn task create` from a terminal, the `fn_task_create` agent tool, the
+   * refinement path invoked from CLI/engine — can honor the "Selected workflow"
+   * option, which they otherwise could not read.
+   * Consequence to know: this is PROJECT-scoped, so two operators on the same
+   * project share one mirrored lane (last switch wins). The Board itself never
+   * reads it back. The all-workflows sentinel is never persisted here.
+   * Not a user-editable Settings field; there is no picker for it.
+   */
+  boardSelectedWorkflowId?: string;
   /** Built-in workflow ids visible/selectable in project workflow pickers.
    *  Undefined preserves the default of showing every built-in workflow. */
   enabledBuiltinWorkflowIds?: string[];
@@ -1071,6 +1112,10 @@ export interface ProjectSettings {
    * Records the last time the engine process proved it was alive so startup recovery can exclude process-down wall-clock time from active task duration without changing firstExecutionAt.
    */
   engineLastActiveAt?: string;
+  /** Per-result engine-injected tool-output budget. Unset/null uses 16,000 characters;
+   * positive integers set a custom cap; 0 disables the shared clamp; invalid values
+   * fall back to the finite default. */
+  agentToolOutputMaxChars?: number | null;
   /** Maximum number of concurrent AI agents across all activity types
    *  (triage specification, task execution, and merge operations). */
   maxConcurrent: number;
@@ -1094,15 +1139,31 @@ export interface ProjectSettings {
    * Max concurrent verification subprocesses (fn_run_verification / merge testCommand builds) across all tasks in this process. Caps stacked monorepo typecheck/build pegging CPU when many tasks are in-progress. Default 1. Raise only on high-core hosts.
    */
   maxConcurrentVerifications?: number;
-  /** Maximum number of concurrent triage/specification agents. When undefined,
-   *  falls back to maxConcurrent. */
-  maxTriageConcurrent?: number;
-  /** System-wide maximum concurrent agents across ALL projects.
-   *  When multiple projects are active, the sum of their in-flight agents
-   *  will not exceed this limit. Applies to triage, execution, and merge.
-   *  Default: 4. When undefined, falls back to CentralCore default (4). */
-  globalMaxConcurrent?: number;
   maxWorktrees: number;
+  /**
+   * FNXC:CapacityModel 2026-07-28-22:15 (PR #2502 review):
+   * Whether Max Worktrees GATES DISPATCH for this project. Default true.
+   *
+   * Renamed from `worktreesEnabled`, which two reviewers read as "run tasks
+   * without worktrees" — it never meant that. Tasks always execute in their own
+   * git worktree; this only decides whether the worktree COUNT is a second limit
+   * alongside the agent count.
+   *
+   * When false the operator asked to "limit via total agents only": `maxWorktrees`
+   * stops gating dispatch entirely — not raised, not skipped by convention, but
+   * structurally absent (`resolveWorktreeCapacityLimit` returns null and no
+   * worktree gate object is constructed, so `bindingGates` can never contain
+   * "maxWorktrees"). See `resolveWorktreeCapacityLimit` in workflow-capacity.ts
+   * for why this is a boolean rather than `maxWorktrees: 0`.
+   *
+   * SCOPE: this is a statement about COUNTING, not about isolation or execution.
+   * Both scheduler dispatch paths still allocate a worktree per task with this
+   * off, and planning still runs in the task's own worktree. It does not make
+   * concurrent agents safe to share one checkout — the non-worktree paths that
+   * exist today are fallbacks to the operator's own tree, one of which caused
+   * FN-8600. Turning this off does not grant shared-checkout concurrency.
+   */
+  worktreeLimitEnabled?: boolean;
   pollIntervalMs: number;
   /** Global multiplier applied to all agent heartbeat intervals.
    *  For example, 0.5 halves the interval (faster checks), 2.0 doubles it (slower checks).
@@ -1742,14 +1803,13 @@ export interface ProjectSettings {
    *  Self-healing rebounds qualifying holders to todo when this threshold is met.
    *  Default: 1800000 (30 minutes). Set to 0 to disable. */
   pausedScopeDecayMs?: number;
-  /** Maximum age in milliseconds a meta-task may remain blocked without its target
-   *  advancing before self-healing auto-archives it as superseded.
-   *  Default: 7200000 (2 hours). Set to 0 to disable. */
-  metaTaskStallAutoCloseMs?: number;
-  /** Grace period in milliseconds used by meta-task auto-archive guards to treat
-   *  recent executor activity as in-flight and skip destructive auto-archive.
-   *  Default: 1800000 (30 minutes). Set to 0 to disable this guard. */
-  metaTaskActiveExecutionGraceMs?: number;
+  /*
+   * FNXC:Settings 2026-07-26-16:45:
+   * `metaTaskStallAutoCloseMs` / `metaTaskActiveExecutionGraceMs` are GONE with the meta-task
+   * auto-archive sweeps they tuned. The sweeps classified meta-tasks by title/description regex and
+   * archived live work bound to the wrong target, so the whole feature was deleted rather than
+   * retuned. Keys left in an existing settings row are inert and simply ignored; do not re-add them.
+   */
   /** Rolling window in milliseconds for board-stall auto-recovery evaluation.
    *  Default: 7200000 (2 hours). */
   boardStallSweepWindowMs?: number;
@@ -1793,19 +1853,14 @@ export interface ProjectSettings {
    *  Default: 24 * 60 * 60_000. */
   backlogPressureAlertCooldownMs?: number;
   /** Enables dependency-blocked todo backlog-health reporting. Default: true. */
-  dependencyBlockedTodoReportEnabled?: boolean;
   /** Blocker age in milliseconds below which dependency-blocked todo groups are fresh.
    *  Default: 30 * 60_000 (30 minutes). */
-  dependencyBlockedTodoFreshAgeMs?: number;
   /** Blocker age in milliseconds at or above which dependency-blocked todo groups are stale.
    *  Default: 4 * 60 * 60_000 (4 hours). */
-  dependencyBlockedTodoStaleAgeMs?: number;
   /** Minimum dependency-blocked todo count required to include a blocker group.
    *  Default: 1. */
-  dependencyBlockedTodoMinCount?: number;
   /** Minimum cooldown in milliseconds between dependency-blocked todo insight emissions.
    *  Default: 6 * 60 * 60_000. */
-  dependencyBlockedTodoReportCooldownMs?: number;
   /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
    *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
    *  Valid range: 600000 (10 minutes) to 2592000000 (30 days).
@@ -1853,14 +1908,6 @@ export interface ProjectSettings {
    *  steps, and sends the task back through the normal todo → in-progress flow. Set
    *  to 0 to disable. Default: 3. */
   maxPostReviewFixes?: number;
-  /** Maximum number of child agents a single parent agent can spawn.
-   *  Limits the fan-out per executor task to prevent resource exhaustion.
-   *  Default: 5. */
-  maxSpawnedAgentsPerParent?: number;
-  /** Maximum total spawned agents across all parent agents in a single executor instance.
-   *  Provides a global safety cap regardless of how many parent agents are running.
-   *  Default: 20. */
-  maxSpawnedAgentsGlobal?: number;
   /** Interval in milliseconds for periodic maintenance (worktree pruning, WAL checkpoint,
    *  orphan cleanup). 0 disables. Default: 900000 (15 min). */
   maintenanceIntervalMs?: number;

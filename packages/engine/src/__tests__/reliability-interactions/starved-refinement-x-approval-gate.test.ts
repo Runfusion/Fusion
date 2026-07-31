@@ -13,7 +13,13 @@ function task(overrides: Partial<Task> & Pick<Task, "id">): Task {
     title: overrides.id,
     description: overrides.id,
     priority: "normal",
-    column: "triage",
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:00:
+    The INTAKE column post-U11 is `todo` (the merged Planning column). `triage` is no longer declared
+    on any workflow, and the starved-refinement sweep filters by ROLE — so a card seeded in `triage`
+    carried no intake role, the filter found no candidates, and the sweep reported 0 escalations.
+    */
+    column: "todo",
     dependencies: [],
     steps: [],
     currentStep: 0,

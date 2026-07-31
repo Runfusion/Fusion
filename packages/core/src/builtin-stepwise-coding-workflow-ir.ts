@@ -60,16 +60,57 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
   name: "builtin-stepwise-coding",
   columns: [
-    { id: "triage", name: "Planning", traits: [{ trait: "intake" }] },
+    /*
+    FNXC:MergedPlanningColumn 2026-07-28-17:20 (U11 / R1, R2):
+    ONE pre-implementation column. Specification, Plan Review and the replan loop all run here, and
+    the card leaves only when the scheduler releases it against implementation capacity — so a card
+    being planned never holds an implementation slot. This is the DEFAULT lineage: `builtin:coding`
+    resolves to the final-review variant, which clones this IR.
+
+    The id stays `todo`; the DISPLAY name becomes "Planning". Deliberate, and the cheaper half of
+    the merge: `todo` was already the hold column, so every trait lookup, task row, stored
+    selection and the 121 `column === "todo"` guards still in the engine keep meaning exactly what
+    they meant, and no stored row needs re-homing. Promoting `triage` instead would have produced
+    the same board while making each of those guards workflow-DEPENDENT — still live for Coding
+    (Ideas), which keeps `todo` per R11, and silently dead for Coding. Harder to detect than dead.
+    `builtin:coding-ideas` already ships this same id-keeping merge.
+
+    `intake` must sit on THIS column rather than a separate one upstream: an intake-only column has
+    no releaser — the capacity sweep only releases from a `hold` column — so a card parked there
+    waits for a human forever. That is what reverted the earlier attempts (see
+    docs/solutions/architecture-patterns/workflow-node-column-placement-and-graph-entry-contract.md).
+
+    NOT applied to `builtin:legacy-coding` (BUILTIN_CODING_WORKFLOW_IR), which keeps the six-column
+    split shape on purpose: a workflow whose stated purpose is preserving the original pipeline
+    must not be silently reshaped, and R11 commits to legacy shapes continuing to work.
+
+    `todo` stays a legal column id for stored rows and user-authored workflows (R11, KTD-8). What
+    is deleted is Todo the STAGE, not the string.
+    */
     {
       id: "todo",
-      name: "Todo",
-      traits: [{ trait: "hold", config: { release: "capacity" } }, { trait: "reset-on-entry" }],
+      name: "Planning",
+      traits: [
+        { trait: "intake" },
+        { trait: "hold", config: { release: "capacity" } },
+        { trait: "reset-on-entry" },
+      ],
     },
     {
       id: "in-progress",
       name: "In progress",
-      traits: [{ trait: "wip" }, { trait: "abort-on-exit" }, { trait: "timing" }],
+      /*
+      FNXC:WorkflowColumns 2026-07-26-18:30:
+      `limitSetting` is now DECLARED rather than inferred. It used to be implicit: a 6-column IR whose
+      ids matched the legacy enum was detected as "the default workflow" and read `maxConcurrent`
+      through a special case. Merging Todo into Planning changes the column set, so the capacity policy
+      has to say what it means — which is what every custom workflow already has to do.
+      */
+      traits: [
+        { trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } },
+        { trait: "abort-on-exit" },
+        { trait: "timing" },
+      ],
     },
     {
       id: "in-review",
@@ -83,11 +124,35 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   // parses into task steps.
   artifacts: [{ key: "PROMPT.md", title: "Plan", producedBy: "planning", role: "step-source" }],
   nodes: [
-    { id: "start", kind: "start", column: "triage" },
-    // Planning seam: produces PROMPT.md (the declared step-source artifact).
-    { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
-    planReviewOptionalGroupNode("in-progress", { requireExternalIntegrationEvidence: true }),
-    planReplanNode("triage"),
+    /*
+    FNXC:MergedPlanningColumn 2026-07-28-17:20 (U11):
+    `start` moves into the merged planning column with the rest of the specification phase. Its
+    column is load-bearing: the graph entry contract resumes a continuation-less run at the first
+    node whose column is not BEHIND the card's, so a `start` left in an undeclared column would be
+    unplaceable.
+    */
+    { id: "start", kind: "start", column: "todo" },
+    /*
+    FNXC:PlanReviewStep 2026-07-26-17:10:
+    PLAN-IN-PLACE: the whole specification phase — `plan`, `plan-review`, `plan-replan` — runs in the
+    planning lane (`todo`), before the card ever takes an implementation slot. The card crosses into
+    `in-progress` exactly once, at `parse`, and the scheduler owns that crossing.
+
+    `todo` is the planning-lane column the card actually rests in: triage writes PROMPT.md and its
+    finalize moves the card `triage -> todo`, then `onSpecifyComplete` seeds a plan-review continuation
+    (only when the plan-review node's column equals the card's column) and the continuation drain
+    resumes the graph AT plan-review. On success the boundary suspends at the `in-progress` crossing
+    with a `capacity` continuation, the hold sweep releases, and the executor resumes at `parse`.
+    `triage` cannot host this: it is an intake column with no releaser, so a card parked there waits
+    for a human.
+
+    This placement depends on the graph ENTRY CONTRACT (`resolveColumnResumeNode`): a run with no
+    continuation resumes at the card's own column, so a card already in `in-progress` re-enters at
+    `parse` instead of replaying the planning prologue and dragging itself backward out of wip.
+    */
+    { id: "plan", kind: "prompt", column: "todo", config: builtinPromptConfig("planning", "Plan") },
+    planReviewOptionalGroupNode("todo", { requireExternalIntegrationEvidence: true }),
+    planReplanNode("todo"),
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {
@@ -192,6 +257,25 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // browser-verification above.
     codeReviewOptionalGroupNode("in-review"),
     codeReviewRemediationNode("in-progress"),
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-11:40 (U8 / R4 — workflow-owned lifecycle):
+    THE PENDING-REVIEW PARK. An implementation pass can stop because a step is blocked on a
+    pending review: the agent cannot continue, and the card belongs in review rather than in an
+    error bucket (`status: failed` on an `in-review` row deadlocks the merge queue). The executor
+    used to perform that transition inline, mid-session, and the graph found out afterwards.
+
+    A `review-handoff` seam (pure lifecycle handoff, no reviewer invocation) whose ONLY edge is to
+    `end` — hand off and STOP, which is what the inline handoff did. Routing to the merge path
+    instead would carry work whose steps are incomplete into merge-gate.
+
+    Inherited by the final-review and Ideas variants, which clone this IR.
+    */
+    {
+      id: "review-pending-handoff",
+      kind: "prompt",
+      column: "in-review",
+      config: builtinPromptConfig("review-handoff", "Park for pending review"),
+    },
     completionSummaryNode("in-review"),
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -245,6 +329,15 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
     { from: "code-review", to: "code-review-remediation", condition: "failure" },
     { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-11:45 (U8 / R4):
+    `outcome:` edges match on the node's VALUE and take priority over the generic failure edge
+    below, so this claims ONLY the pending-review ending. `runForeach` returns a failing
+    instance's value as the foreach node's own, which is what carries `review-pending` from the
+    `step-execute` seam up to this edge.
+    */
+    { from: "steps", to: "review-pending-handoff", condition: "outcome:review-pending" },
+    { from: "review-pending-handoff", to: "end", condition: "success" },
     { from: "steps", to: "end", condition: "failure" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },

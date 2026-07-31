@@ -659,7 +659,7 @@ describe("HeartbeatTriggerScheduler", () => {
 
       expect(store.endHeartbeatRun).not.toHaveBeenCalled();
       expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
-      expect(heartbeatLog.log).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-001 (active run)");
+      expect(heartbeatLog.debug).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-001 (active run)");
     });
 
     it("FN-4119 does not reap task-worker runs during audit", async () => {
@@ -1043,7 +1043,7 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(store.endHeartbeatRun).not.toHaveBeenCalled();
         expect(callback).not.toHaveBeenCalled();
         expect(scheduler.getRegisteredAgents()).not.toContain("agent-long");
-        expect(heartbeatLog.log).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-long (active run)");
+        expect(heartbeatLog.debug).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-long (active run)");
       });
     });
 
@@ -2078,7 +2078,9 @@ describe("HeartbeatTriggerScheduler", () => {
 
       expect(store.endHeartbeatRun).not.toHaveBeenCalled();
       expect(callback).not.toHaveBeenCalled();
-      expect(heartbeatLog.log).toHaveBeenCalledWith("Timer tick skipped for agent-001 (active run)");
+      // Steady-state skip gates are debug-only so the TUI is not flooded per interval.
+      expect(heartbeatLog.debug).toHaveBeenCalledWith("Timer tick skipped for agent-001 (active run)");
+      expect(heartbeatLog.log).not.toHaveBeenCalledWith("Timer tick skipped for agent-001 (active run)");
     });
 
     it.each([
@@ -2113,7 +2115,8 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(store.getActiveHeartbeatRun).not.toHaveBeenCalled();
       expect(store.endHeartbeatRun).not.toHaveBeenCalled();
       expect(callback).not.toHaveBeenCalled();
-      expect(heartbeatLog.log).toHaveBeenCalledWith(expectedLog);
+      expect(heartbeatLog.debug).toHaveBeenCalledWith(expectedLog);
+      expect(heartbeatLog.log).not.toHaveBeenCalledWith(expectedLog);
     });
 
     it("skips timer dispatch when global pause is active", async () => {
@@ -2128,7 +2131,8 @@ describe("HeartbeatTriggerScheduler", () => {
       await vi.advanceTimersByTimeAsync(5000);
 
       expect(callback).not.toHaveBeenCalled();
-      expect(heartbeatLog.log).toHaveBeenCalledWith("Timer tick skipped for agent-001 (global pause active)");
+      expect(heartbeatLog.debug).toHaveBeenCalledWith("Timer tick skipped for agent-001 (global pause active)");
+      expect(heartbeatLog.log).not.toHaveBeenCalledWith("Timer tick skipped for agent-001 (global pause active)");
     });
 
     it("skips timer dispatch when engine pause is active", async () => {

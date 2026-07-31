@@ -360,6 +360,9 @@ describe("useArtifacts", () => {
         "message:received": expect.any(Function),
         "message:sent": expect.any(Function),
       }),
+      // FNXC:ArtifactRegistry 2026-07-26-15:52: the subscription must also carry the sse-bus
+      // missed-event resync (onReconnect); assert it rather than letting the shape drift.
+      onReconnect: expect.any(Function),
     });
 
     unmount();
@@ -387,6 +390,9 @@ describe("useArtifacts", () => {
         "message:received": expect.any(Function),
         "message:sent": expect.any(Function),
       }),
+      // FNXC:ArtifactRegistry 2026-07-26-15:52: the subscription must also carry the sse-bus
+      // missed-event resync (onReconnect); assert it rather than letting the shape drift.
+      onReconnect: expect.any(Function),
     });
   });
 

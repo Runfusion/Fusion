@@ -10,8 +10,10 @@
  */
 
 import { TaskStore } from "../store.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
+import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { toJsonNullable } from "../db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
@@ -24,14 +26,14 @@ import { emitUsageEvent as emitUsageEventAsync, recordPluginActivation as record
 import { enqueueMergeQueue as enqueueMergeQueueAsync, peekMergeQueue as peekMergeQueueAsync, peekMergeQueueHead as peekMergeQueueHeadAsync } from "./async-merge-coordination.js";
 import { clearCompletionHandoffMarker as clearCompletionHandoffMarkerAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync } from "./async-workflow-workitems.js";
 import { extractEffectiveWriteScopeFromPrompt } from "../file-scope-classification.js";
-import { ArtifactRow, CompletionHandoffMarkerRow, MergeQueueRow, TaskDocumentRevisionRow, TaskDocumentRow, WorkflowWorkItemRow } from "./row-types.js";
-import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunAuditEvent, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
-import { type UsageEventInput, emitUsageEvent as emitUsageEventToDb } from "../usage-events.js";
-import { DUAL_ACCEPT_PARITY_MUTATIONS, type WorkflowColumnsGraduationReport, computeWorkflowColumnsGraduationReport } from "../workflow-parity.js";
+import { ArtifactRow, WorkflowWorkItemRow } from "./row-types.js";
+import { AgentLogEntry, Artifact, ArtifactCreateInput, Column, CompletionHandoffMarker, MergeQueueEnqueueOptions, MergeQueueEntry, PluginActivation, PluginActivationInput, RunMutationContext, Task, TaskDocument, TaskDocumentRevision, WorkflowWorkItem, WorkflowWorkItemKind, isColumn } from "../types.js";
+import type { UsageEventInput } from "../usage-events.js";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { storeLog } from "../store.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function listWorkflowWorkItemsForTaskSyncImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[] } = {}): WorkflowWorkItem[] {
     const conditions = ["taskId = ?"];
@@ -52,100 +54,63 @@ export function listWorkflowWorkItemsForTaskSyncImpl(store: TaskStore, taskId: s
 }
 
 export async function clearCompletionHandoffAcceptedMarkerImpl(store: TaskStore, taskId: string): Promise<void> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const existing = await getCompletionHandoffMarkerAsync(layer.db, taskId);
-      if (!existing) return;
-      await clearCompletionHandoffMarkerAsync(layer.db, taskId);
-      void store.recordRunAuditEvent({
-        taskId,
-        agentId: "system",
-        runId: `completion-handoff-clear:${taskId}:${Date.now()}`,
-        domain: "database",
-        mutationType: "task:completion-handoff-cleared",
-        target: taskId,
-        metadata: { taskId, acceptedAt: existing.acceptedAt, source: existing.source },
-      });
-      return;
-    }
-    store.db.transactionImmediate(() => {
-      const existing = store.db.prepare("SELECT * FROM completion_handoff_markers WHERE taskId = ?").get(taskId) as CompletionHandoffMarkerRow | undefined;
-      if (!existing) return;
-      store.db.prepare("DELETE FROM completion_handoff_markers WHERE taskId = ?").run(taskId);
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "task:completion-handoff-cleared",
-        target: taskId,
-        metadata: { taskId, acceptedAt: existing.acceptedAt, source: existing.source },
-      });
+        const layer = store.asyncLayer!;
+    const existing = await getCompletionHandoffMarkerAsync(layer.db, taskId);
+    if (!existing) return;
+    await clearCompletionHandoffMarkerAsync(layer.db, taskId);
+    void store.recordRunAuditEvent({
+      taskId,
+      agentId: "system",
+      runId: `completion-handoff-clear:${taskId}:${Date.now()}`,
+      domain: "database",
+      mutationType: "task:completion-handoff-cleared",
+      target: taskId,
+      metadata: { taskId, acceptedAt: existing.acceptedAt, source: existing.source },
     });
+    return;
 }
 
 export async function getCompletionHandoffAcceptedMarkerImpl(store: TaskStore, taskId: string): Promise<CompletionHandoffMarker | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const marker = await getCompletionHandoffMarkerAsync(layer.db, taskId);
-      return marker as CompletionHandoffMarker | null;
-    }
-    const row = store.db.prepare("SELECT * FROM completion_handoff_markers WHERE taskId = ?").get(taskId) as CompletionHandoffMarkerRow | undefined;
-    return row ? store.rowToCompletionHandoffMarker(row) : null;
+        const layer = store.asyncLayer!;
+    const marker = await getCompletionHandoffMarkerAsync(layer.db, taskId);
+    return marker as CompletionHandoffMarker | null;
 }
 
 export async function recordPluginActivationImpl(store: TaskStore, input: PluginActivationInput): Promise<PluginActivation> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return recordPluginActivationAsync(layer.db, input);
-    }
-    const activatedAt = input.activatedAt ?? new Date().toISOString();
-    const result = store.db.prepare(`
-      INSERT INTO plugin_activations (pluginId, source, pluginVersion, activatedAt)
-      VALUES (?, ?, ?, ?)
-    `).run(input.pluginId, input.source, input.pluginVersion ?? null, activatedAt);
-
-    return {
-      id: Number(result.lastInsertRowid),
-      pluginId: input.pluginId,
-      source: input.source,
-      pluginVersion: input.pluginVersion ?? null,
-      activatedAt,
-    };
-}
-
-export async function computeWorkflowColumnsGraduationReportImpl(store: TaskStore,
-    options: { since?: string; limit?: number } = {},
-  ): Promise<WorkflowColumnsGraduationReport> {
-    const limit = options.limit ?? 1000;
-    const parity = await store.getWorkflowParitySummary(options);
-    const dualAcceptEvents: RunAuditEvent[] = [];
-    for (const mutationType of DUAL_ACCEPT_PARITY_MUTATIONS) {
-      dualAcceptEvents.push(
-        ...await store.getRunAuditEventsAsync({
-          domain: "database",
-          mutationType: mutationType as unknown as RunAuditEvent["mutationType"],
-          startTime: options.since,
-          limit,
-        }),
-      );
-    }
-    return computeWorkflowColumnsGraduationReport({
-      parity,
-      defaultWorkflowIr: BUILTIN_CODING_WORKFLOW_IR,
-      dualAcceptEvents,
-    });
+        const layer = store.asyncLayer!;
+    return recordPluginActivationAsync(layer.db, input);
 }
 
 export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions = {}): Promise<MergeQueueEntry> {
-    // FNXC:RuntimeLifecycleAsync 2026-06-24-11:12:
-    // Backend-mode: delegate to the async merge-coordination helper (async-merge-coordination.ts).
-    // This preserves enqueue semantics (column check, idempotent ON CONFLICT DO NOTHING insert,
-    // mergeQueue:enqueue audit event) against PostgreSQL via Drizzle.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return enqueueMergeQueueAsync(layer, taskId, opts);
-    }
-    // SQLite path: delegate to the sync internal (also used by moveTaskInternal).
-    return store.enqueueMergeQueueSyncInternal(taskId, opts);
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
+    Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite enqueueMergeQueueSyncInternal arm is deleted.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-02:10:
+    Resolve the task's OWN review columns before enqueueing. Without them the in-transaction guard
+    falls back to `new Set(["in-review"])` and throws `MergeQueueInvalidColumnError` for a task
+    resting in a renamed review lane, which breaks the merger and self-healing re-enqueue paths on
+    every custom board. `undefined` on failure is deliberate and matches `moves.ts`: it makes the
+    guard fall back to the legacy id rather than to an empty set that matches nothing.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-15:15 (#2819 review — greptile, "traitless workflows reject re-enqueue"):
+    THREE STATES, NOT TWO. `undefined` (unreadable) was already handled. The missing one is an IR that
+    resolves but carries NO lifecycle trait on any column: `synthesizeDefaultColumns` upgrades a v1
+    graph by emitting the default columns with `traits: []`, so `resolveReviewColumns` returns EMPTY
+    while the board's `in-review` column plainly exists and holds the card. Forwarding that empty set
+    made the guard match nothing and throw `MergeQueueInvalidColumnError` — the very failure this
+    conversion was fixing, moved from custom boards onto every pre-v2 project.
+
+    Only a board that EXPRESSES traits and still has no review lane is answering the question; the
+    other two states take the legacy id.
+    */
+    const reviewIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+    const reviewColumns = reviewIr && declaresAnyLifecycleTrait(reviewIr)
+      ? new Set(resolveReviewColumns(reviewIr))
+      : undefined;
+    return enqueueMergeQueueAsync(store.asyncLayer!, taskId, opts, undefined, reviewColumns);
 }
 
 export function cleanupStaleMergeQueueRowsImpl(store: TaskStore, now: string): void {
@@ -176,47 +141,16 @@ export function cleanupStaleMergeQueueRowsImpl(store: TaskStore, now: string): v
 }
 
 export async function peekMergeQueueImpl(store: TaskStore): Promise<MergeQueueEntry[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return peekMergeQueueAsync(layer);
-    }
-    const rows = store.db.prepare(`
-      SELECT * FROM mergeQueue
-      ORDER BY CASE priority
-                 WHEN 'urgent' THEN 0
-                 WHEN 'high'   THEN 1
-                 WHEN 'normal' THEN 2
-                 WHEN 'low'    THEN 3
-                 ELSE 4
-               END ASC,
-               enqueuedAt ASC
-    `).all() as MergeQueueRow[];
-    return rows.map((row) => store.rowToMergeQueueEntry(row));
+        const layer = store.asyncLayer!;
+    return peekMergeQueueAsync(layer);
 }
 
 export async function peekMergeQueueHeadImpl(store: TaskStore): Promise<{ taskId: string; leasedBy: string | null; column: Column | null } | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const head = await peekMergeQueueHeadAsync(layer);
-      // The async helper returns column as string | null (Drizzle text column);
-      // cast to the Column union for the public API contract.
-      return head ? { ...head, column: head.column as Column | null } : null;
-    }
-    const row = store.db.prepare(`
-      SELECT mq.taskId, mq.leasedBy, t.column
-        FROM mergeQueue mq
-        LEFT JOIN tasks t ON t.id = mq.taskId
-       ORDER BY CASE mq.priority
-                  WHEN 'urgent' THEN 0
-                  WHEN 'high'   THEN 1
-                  WHEN 'normal' THEN 2
-                  WHEN 'low'    THEN 3
-                  ELSE 4
-                END ASC,
-                mq.enqueuedAt ASC
-       LIMIT 1
-    `).get() as { taskId: string; leasedBy: string | null; column: Column | null } | undefined;
-    return row ?? null;
+        const layer = store.asyncLayer!;
+    const head = await peekMergeQueueHeadAsync(layer);
+    // The async helper returns column as string | null (Drizzle text column);
+    // cast to the Column union for the public API contract.
+    return head ? { ...head, column: head.column as Column | null } : null;
 }
 
 export async function parseStepsFromPromptImpl(store: TaskStore, id: string): Promise<import("../types.js").TaskStep[]> {
@@ -335,50 +269,20 @@ export async function syncAgentTaskLinkOnReassignmentImpl(store: TaskStore,
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode agent-task-link sync: update the agents.taskId column via async Drizzle. Only the dedicated taskId column is authoritative in PG (agent.data jsonb is not read for the link), so the SQLite json_set/json_remove on data is not mirrored.
     */
-    if (store.backendMode) {
-      const db = store.asyncLayer!.db;
-      if (previousAgentId) {
-        await db
-          .update(schema.project.agents)
-          .set({ taskId: null, updatedAt })
-          .where(and(eq(schema.project.agents.id, previousAgentId), eq(schema.project.agents.taskId, taskId)));
-      }
-      if (newAgentId) {
-        await db
-          .update(schema.project.agents)
-          .set({ taskId, updatedAt })
-          .where(eq(schema.project.agents.id, newAgentId));
-      }
-      return;
-    }
-
+        const db = store.asyncLayer!.db;
     if (previousAgentId) {
-      store.db.prepare(`
-        UPDATE agents
-        SET
-          taskId = NULL,
-          updatedAt = ?,
-          data = CASE
-            WHEN json_valid(data) THEN json_set(json_remove(data, '$.taskId'), '$.updatedAt', ?)
-            ELSE data
-          END
-        WHERE id = ? AND taskId = ?
-      `).run(updatedAt, updatedAt, previousAgentId, taskId);
+      await db
+        .update(schema.project.agents)
+        .set({ taskId: null, updatedAt })
+        .where(and(eq(schema.project.agents.id, previousAgentId), eq(schema.project.agents.taskId, taskId)));
     }
-
     if (newAgentId) {
-      store.db.prepare(`
-        UPDATE agents
-        SET
-          taskId = ?,
-          updatedAt = ?,
-          data = CASE
-            WHEN json_valid(data) THEN json_set(data, '$.taskId', ?, '$.updatedAt', ?)
-            ELSE data
-          END
-        WHERE id = ?
-      `).run(taskId, updatedAt, taskId, updatedAt, newAgentId);
+      await db
+        .update(schema.project.agents)
+        .set({ taskId, updatedAt })
+        .where(eq(schema.project.agents.id, newAgentId));
     }
+    return;
 }
 
 export async function runGitCommandImpl(store: TaskStore, command: string, timeoutMs = 10_000) {
@@ -391,68 +295,53 @@ export async function runGitCommandImpl(store: TaskStore, command: string, timeo
 
 export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskStore, deletedBranches: string[], ownerTaskId?: string): Promise<string[]> {
     if (deletedBranches.length === 0) return [];
-    if (store.backendMode) {
-      /*
-      FNXC:PostgresBranchCleanup 2026-07-14-17:30:
-      Deleted execution-start branches must be cleared from every other live task in PostgreSQL. Returning an empty safe default leaves durable references to branches that no longer exist and turns later worktree creation into a false hard failure.
-      */
-      const now = new Date().toISOString();
-      const conditions = [
-        isNull(schema.project.tasks.deletedAt),
-        inArray(schema.project.tasks.executionStartBranch, deletedBranches),
-      ];
-      if (ownerTaskId) conditions.push(ne(schema.project.tasks.id, ownerTaskId));
-      const rows = await store.asyncLayer!.db
-        .update(schema.project.tasks)
-        .set({ executionStartBranch: null, updatedAt: now })
-        .where(and(...conditions))
-        .returning({ id: schema.project.tasks.id });
-      const clearedIds = rows.map((row) => row.id);
-      if (store.isWatching) {
-        for (const id of clearedIds) {
-          const cached = store.taskCache.get(id);
-          if (cached) {
-            cached.executionStartBranch = undefined;
-            cached.updatedAt = now;
-          }
-        }
-      }
-      return clearedIds;
-    }
-    const placeholders = deletedBranches.map(() => "?").join(",");
-    const params: string[] = [...deletedBranches];
-    let whereClause = `executionStartBranch IN (${placeholders})`;
-    if (ownerTaskId) {
-      whereClause += ` AND id != ?`;
-      params.push(ownerTaskId);
-    }
-    const rows = store.db
-      .prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND ${whereClause}`)
-      .all(...params) as Array<{ id: string }>;
-
-    if (rows.length === 0) return [];
-    const update = store.db.prepare(
-      `UPDATE tasks SET executionStartBranch = NULL, updatedAt = ? WHERE id = ?`,
-    );
+        /*
+    FNXC:PostgresBranchCleanup 2026-07-14-17:30:
+    Deleted execution-start branches must be cleared from every other live task in PostgreSQL. Returning an empty safe default leaves durable references to branches that no longer exist and turns later worktree creation into a false hard failure.
+    */
     const now = new Date().toISOString();
-    const clearedIds: string[] = [];
-    for (const row of rows) {
-      update.run(now, row.id);
-      clearedIds.push(row.id);
-      if (store.isWatching) {
-        const cached = store.taskCache.get(row.id);
+    const conditions = [
+      isNull(schema.project.tasks.deletedAt),
+      inArray(schema.project.tasks.executionStartBranch, deletedBranches),
+    ];
+    if (ownerTaskId) conditions.push(ne(schema.project.tasks.id, ownerTaskId));
+    const rows = await store.asyncLayer!.db
+      .update(schema.project.tasks)
+      .set({ executionStartBranch: null, updatedAt: now })
+      .where(and(...conditions))
+      .returning({ id: schema.project.tasks.id });
+    const clearedIds = rows.map((row) => row.id);
+    if (store.isWatching) {
+      for (const id of clearedIds) {
+        const cached = store.taskCache.get(id);
         if (cached) {
           cached.executionStartBranch = undefined;
           cached.updatedAt = now;
         }
       }
     }
-    store.db.bumpLastModified();
     return clearedIds;
 }
 
 export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
-    const doneTasks = await store.listTasks({ slim: true, column: "done" });
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    "Archive all done" archived NOTHING on a renamed board.
+
+    `listTasks({ column })` filters in the store, so this read returned an empty array and the button
+    completed successfully having archived zero cards — an operator action that silently does nothing
+    is worse than one that errors, because the board simply looks unchanged.
+
+    Project-level resolution: a read has no task in hand. The legacy id is unioned in, so a board
+    mid-rename still archives rows stored under the old one, and the set is deduped by id because one
+    column can carry both complete and archived.
+    */
+    const completeColumns = await resolveProjectColumnsForRoles(store, ["complete"]);
+    const doneById = new Map<string, Task>();
+    for (const column of completeColumns) {
+      for (const task of await store.listTasks({ slim: true, column })) doneById.set(task.id, task);
+    }
+    const doneTasks = [...doneById.values()];
 
     if (doneTasks.length === 0) {
       return [];
@@ -471,38 +360,180 @@ export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLin
     return archivedTasks;
 }
 
-export function resolveUnarchiveTargetColumnImpl(store: TaskStore, preArchiveColumn: unknown): Column {
-    if (!isColumn(preArchiveColumn) || preArchiveColumn === "archived") {
-      return "done";
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-16:25 (fleet: the UNARCHIVE destination):
+WHERE A RESTORED CARD LANDS is three lifecycle decisions in four lines, and all three were literals:
+  - no usable pre-archive column -> the COMPLETE lane (a restored card with no history is finished work);
+  - it was mid-flight (wip or review) -> the HOLD lane, because its worktree and session are long gone;
+  - otherwise -> back where it was.
+
+On a renamed board the first fell back to `done` (a column that may not exist), the second never matched — so
+a card archived FROM the wip lane was restored straight back INTO it with no worktree, which the scheduler
+then treats as a live holder occupying a slot. That is the worst of the three: it does not just misfile the
+card, it consumes capacity.
+
+ASYNC because the answer needs the workflow. Its one production caller (`archive-lifecycle-2`'s unarchive) is
+already async, and the sync alternative is the PostgreSQL no-op documented in #2703. `taskId` is now required
+so the lanes can be resolved for the card being restored rather than for the board in general.
+*/
+export async function resolveUnarchiveTargetColumnImpl(
+  store: TaskStore,
+  preArchiveColumn: unknown,
+  taskId?: string,
+): Promise<Column> {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-19:10 (PR #2742 review — greptile P1, and this is the THIRD time
+    I have made this exact mistake in one session):
+    `?? legacyId` IS ONLY CORRECT WHEN THE RESOLVER RETURNED NOTHING. My first version wrote
+    `lifecycle?.complete ?? "done"` and `lifecycle?.hold ?? "todo"`, so a workflow that resolves but declares
+    no complete (or no hold) lane got an UNDECLARED column — and `unarchiveTaskImpl` writes this destination
+    DIRECTLY to the row, bypassing moveTask's unknown-column validation. That persists a column the board does
+    not have; the card then renders nowhere and no guard can find it.
+
+    The rule, stated for the third time because I keep needing it: a resolved struct with a MISSING FIELD is an
+    answer — "this board has no such lane" — and `?? legacy` discards exactly that answer. The two cases are:
+      - lifecycle undefined (v1 IR / unresolvable): the legacy ids ARE the answer.
+      - lifecycle resolved, field absent: refuse. Restoring into an invented column is worse than refusing to
+        restore, because the refusal is visible and the invented column is not.
+
+    Earlier occurrences: #2733 (`applyPrMergedTransition`'s move target) and moveToDoneImpl in this same PR.
+    */
+    const lifecycle = taskId ? await resolveTaskLifecycleColumns(store, taskId) : undefined;
+    /* The board's declared ids, for the "is this pre-archive column usable?" test below. */
+    const declaredColumnIds = new Set<string>(
+      taskId && lifecycle
+        ? ((await resolveWorkflowIrForTask(store, taskId).catch(() => undefined)) as { columns?: Array<{ id: string }> } | undefined)
+            ?.columns?.map((column) => column.id) ?? []
+        : [],
+    );
+    const completeColumn = (lifecycle ? lifecycle.complete : "done") as Column | undefined;
+    const holdColumn = (lifecycle ? lifecycle.hold : "todo") as Column | undefined;
+    const wipColumn = lifecycle?.wip ?? "in-progress";
+    const reviewColumn = lifecycle?.review ?? "in-review";
+    const archivedColumn = lifecycle?.archived ?? "archived";
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-19:45 (found by my OWN test, and it is a bigger defect than the
+    one I came here to fix):
+    `isColumn` TESTS THE CLOSED LEGACY ENUM, so on a renamed board it rejects every declared column id — and
+    this branch then treats a perfectly good pre-archive column as "unusable" and restores the card to the
+    COMPLETE lane. Every restore on a renamed board landed in Done, whatever the card was doing when it was
+    archived.
+
+    My lane conversion could not have helped while this stood: I converted the comparisons below and the
+    branch above them still swallowed every renamed id first. That is the half-conversion shape this program
+    keeps finding, in my own work, one line up from the part I was looking at — which is the argument for
+    reading the whole function rather than the sites the census points at.
+
+    `isColumn` is correct for legacy ids and its own doc says workflow-scoped validity belongs to
+    `workflowHasColumn`. Accepting a column the RESOLVED workflow declares, and falling back to the enum when
+    there is no workflow, keeps both boards right.
+    */
+    const declaresPreArchiveColumn = typeof preArchiveColumn === "string"
+      && (lifecycle !== undefined
+        ? declaredColumnIds.has(preArchiveColumn)
+        : isColumn(preArchiveColumn));
+    if (!declaresPreArchiveColumn || preArchiveColumn === archivedColumn || preArchiveColumn === "archived") {
+      if (completeColumn === undefined) {
+        throw new Error(`Cannot resolve an unarchive target${taskId ? ` for ${taskId}` : ""}: its workflow declares no complete column`);
+      }
+      return completeColumn;
     }
-    if (preArchiveColumn === "in-progress" || preArchiveColumn === "in-review") {
-      return "todo";
+    if (preArchiveColumn === wipColumn || preArchiveColumn === reviewColumn) {
+      if (holdColumn === undefined) {
+        throw new Error(`Cannot resolve an unarchive target${taskId ? ` for ${taskId}` : ""}: its workflow declares no hold column`);
+      }
+      return holdColumn;
     }
-    return preArchiveColumn;
+    return preArchiveColumn as Column;
 }
 
 export async function readPreArchiveColumnFromTaskFileImpl(store: TaskStore, dir: string): Promise<Column | undefined> {
     try {
       const raw = await readFile(join(dir, "task.json"), "utf-8");
       const parsed = JSON.parse(raw) as { preArchiveColumn?: unknown };
-      return isColumn(parsed.preArchiveColumn) ? parsed.preArchiveColumn : undefined;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-19:55 (the same `isColumn` defect, one function over):
+      `isColumn` TESTS THE CLOSED LEGACY ENUM, so a renamed board's stored `preArchiveColumn` was DROPPED on
+      read — the restore then saw `undefined` and treated the card as having no usable history. Two legacy-enum
+      gates in one path, both upstream of the lane comparisons I came here to convert.
+
+      A stored pre-archive column is DATA, not a claim: whatever id the row carries is what the card was in when
+      it was archived, and validating it against a closed enum is what loses renamed boards' history. The
+      destination resolver downstream decides whether the id is still usable, and now does so against the
+      workflow's declared columns.
+      */
+      return typeof parsed.preArchiveColumn === "string" && parsed.preArchiveColumn.length > 0
+        ? parsed.preArchiveColumn as Column
+        : undefined;
     } catch {
       return undefined;
     }
 }
 
 export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string): Promise<void> {
-    if (task.column === "done") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-16:10 (fleet: the archive/complete writer):
+    THE GUARD, THE WRITE AND THE EVENT are one decision and now share one snapshot. This function writes
+    `task.column` DIRECTLY (it is the store's own finaliser, not a moveTask caller), so a literal here is not
+    caught by moveTask's unknown-column validation the way every converted call site is — it silently persists
+    a column the board does not declare, and then emits `to: "done"` to every listener.
+
+    That makes this one of the few sites where a literal writes bad state rather than failing to act. On a
+    renamed board: the already-complete short-circuit never fired (so the finaliser re-ran and re-stamped
+    executionCompletedAt), the row was written to `done` instead of the board's completion column, and the
+    event told the GitHub tracking poster and the auto-merge handoff about a column that does not exist.
+
+    A workflow that declares columns but NO complete lane refuses rather than inventing one — the distinction
+    #2733 settled: a missing field on a resolved struct is an answer, and `?? legacy` discards it.
+    */
+    const completeLifecycle = await resolveTaskLifecycleColumns(store, task.id);
+    const completeColumn = completeLifecycle ? completeLifecycle.complete : "done";
+    if (completeColumn === undefined) {
+      throw new Error(`Cannot move ${task.id} to a completion column: its workflow declares none`);
+    }
+    if (task.column === completeColumn) {
       return;
     }
 
     const fromColumn = task.column;
-    const mergeBlocker = getTaskMergeBlocker(task);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:10 (unwired-parameter class, cf. #2803):
+    THE OUTER QUESTION WAS RESOLVED AND THE INNER ONE WAS NOT — in the same function, four lines apart.
+    `completeColumn` above comes from the task's workflow, then this call re-asked with the literal and
+    refused: on a renamed board the completion move threw
+
+        Cannot move FN-1 to done: task is in 'checking', must be in 'in-review'
+
+    for a card sitting correctly in its own review lane. `getTaskMergeBlocker`'s own note calls out this
+    exact half-conversion shape in `moves.ts`; this is the same shape in a second site it did not cover.
+
+    MEMBERSHIP via `resolveReviewColumns` (mergeOrchestration ∪ mergeBlocker ∪ humanReview), so a board
+    splitting those across columns has all of them accepted, unioned with the legacy id because
+    `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:10 (#2820 review — coderabbit, Major):
+    THE LEGACY ID IS A FALLBACK, NOT A MEMBER. My first version pre-seeded `in-review` into the set and
+    unioned the resolved lanes on top. That admits a board which declares `in-review` as its WIP column:
+    a card mid-implementation would pass the merge-identity check and merge prematurely.
+
+    The legacy id is only correct when the board tells us NOTHING — an empty resolved set, or a
+    resolution that threw. A non-empty resolved answer replaces it outright; that is the same
+    "unscoped legacy acceptance" the glasses plugin's own review caught, and I reintroduced it here.
+    */
+    let reviewColumns: ReadonlySet<string> = new Set<string>(["in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id);
+      const resolved = ir ? resolveReviewColumns(ir) : [];
+      if (resolved.length > 0) reviewColumns = new Set(resolved);
+    } catch { /* degraded: the board told us nothing, so the legacy id stands */ }
+    const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns });
     if (mergeBlocker) {
       throw new Error(`Cannot move ${task.id} to done: ${mergeBlocker}`);
     }
 
-    task.column = "done";
+    task.column = completeColumn;
     store.clearDoneTransientFields(task);
     task.columnMovedAt = new Date().toISOString();
     task.updatedAt = task.columnMovedAt;
@@ -515,7 +546,7 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     // Update cache if watcher is active
     if (store.isWatching) store.taskCache.set(task.id, { ...task });
 
-    store.emit("task:moved", { task, from: fromColumn, to: "done" as Column, source: "engine" });
+    store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine" });
 }
 
 export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): boolean {
@@ -585,11 +616,8 @@ export async function getAttachmentImpl(store: TaskStore,
 }
 
 export async function emitUsageEventImpl(store: TaskStore, event: UsageEventInput): Promise<boolean> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return emitUsageEventAsync(layer.db, layer.projectId ?? "", event);
-    }
-    return emitUsageEventToDb(store.db, event);
+        const layer = store.asyncLayer!;
+    return emitUsageEventAsync(layer.db, layer.projectId ?? "", event);
 }
 
 export async function addSteeringCommentImpl(store: TaskStore, id: string, text: string, author: "user" | "agent" = "user", runContext?: RunMutationContext): Promise<Task> {
@@ -625,9 +653,22 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
 }
 
 export async function updateTaskCommentImpl(store: TaskStore, id: string, commentId: string, text: string): Promise<Task> {
-    if (store.backendMode) {
+    {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+      "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+      which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+      
+      STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+      lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+      rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+      archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+      the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+      */
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -659,9 +700,22 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
 }
 
 export async function deleteTaskCommentImpl(store: TaskStore, id: string, commentId: string): Promise<Task> {
-    if (store.backendMode) {
+    {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+      "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+      which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+      
+      STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+      lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+      rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+      archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+      the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+      */
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -741,12 +795,8 @@ export function insertArtifactRowImpl(store: TaskStore, input: ArtifactCreateInp
 }
 
 export async function getArtifactImpl(store: TaskStore, id: string): Promise<Artifact | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getArtifactAsync(layer.db, id);
-    }
-    const row = store.db.prepare("SELECT * FROM artifacts WHERE id = ?").get(id) as ArtifactRow | undefined;
-    return row ? store.rowToArtifact(row) : null;
+        const layer = store.asyncLayer!;
+    return getArtifactAsync(layer.db, id);
 }
 
 /**
@@ -758,91 +808,25 @@ export async function getArtifactImpl(store: TaskStore, id: string): Promise<Art
  * artifact lists live-refresh.
  */
 export async function updateArtifactImpl(store: TaskStore, id: string, updates: { title?: string; description?: string; content?: string }): Promise<Artifact> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const updated = await updateArtifactRowAsync(layer, id, updates);
-      store.emit("artifact:updated", updated);
-      return updated;
-    }
-
-    const existing = await store.getArtifact(id);
-    if (!existing) {
-      throw new Error(`Artifact ${id} not found`);
-    }
-
-    if (existing.taskId && store.isTaskArchived(existing.taskId)) {
-      throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
-    }
-
-    if (updates.content !== undefined && existing.uri) {
-      throw new Error(`Artifact ${id} stores a binary payload; its content is not editable`);
-    }
-
-    const now = new Date().toISOString();
-    store.db.prepare(
-      "UPDATE artifacts SET title = ?, description = ?, content = ?, updatedAt = ? WHERE id = ?",
-    ).run(
-      updates.title !== undefined ? updates.title : existing.title,
-      updates.description !== undefined ? updates.description : existing.description ?? null,
-      updates.content !== undefined ? updates.content : existing.content ?? null,
-      now,
-      id,
-    );
-
-    const updated = await store.getArtifact(id);
-    if (!updated) {
-      throw new Error(`Failed to update artifact ${id}`);
-    }
-
-    store.db.bumpLastModified();
+        const layer = store.asyncLayer!;
+    const updated = await updateArtifactRowAsync(layer, id, updates, await resolveArchivedLanes(store));
     store.emit("artifact:updated", updated);
     return updated;
 }
 
 export async function getArtifactsImpl(store: TaskStore, taskId: string): Promise<Artifact[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getArtifactsAsync(layer.db, taskId, layer.projectId);
-    }
-    if (!store.hasActiveTask(taskId)) {
-      return [];
-    }
-
-    const rows = store.db
-      .prepare("SELECT * FROM artifacts WHERE taskId = ? ORDER BY createdAt DESC")
-      .all(taskId) as unknown as ArtifactRow[];
-    return rows.map((row) => store.rowToArtifact(row));
+        const layer = store.asyncLayer!;
+    return getArtifactsAsync(layer.db, taskId, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Promise<TaskDocument[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return listTaskDocumentsAsync(layer.db, taskId, layer.projectId);
-    }
-    if (!store.hasActiveTask(taskId)) {
-      return [];
-    }
-
-    const rows = store.db
-      .prepare("SELECT * FROM task_documents WHERE taskId = ? ORDER BY key")
-      .all(taskId) as unknown as TaskDocumentRow[];
-    return rows.map((row) => store.rowToTaskDocument(row));
+        const layer = store.asyncLayer!;
+    return listTaskDocumentsAsync(layer.db, taskId, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentImpl(store: TaskStore, taskId: string, key: string): Promise<TaskDocument | null> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId);
-    }
-    if (!store.hasActiveTask(taskId)) {
-      return null;
-    }
-
-    const row = store.db
-      .prepare("SELECT * FROM task_documents WHERE taskId = ? AND key = ?")
-      .get(taskId, key) as unknown as TaskDocumentRow | undefined;
-    if (!row) return null;
-    return store.rowToTaskDocument(row);
+        const layer = store.asyncLayer!;
+    return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentRevisionsImpl(store: TaskStore,
@@ -857,31 +841,11 @@ export async function getTaskDocumentRevisionsImpl(store: TaskStore,
     path orders by revision DESC, so we re-sort by revision descending in JS
     to preserve that ordering exactly, then apply the optional LIMIT.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId);
-      const sorted = [...rows].sort((a, b) => b.revision - a.revision);
-      const mapped = sorted.map((row) => store.rowToTaskDocumentRevision(row));
-      return options?.limit !== undefined ? mapped.slice(0, Math.max(0, options.limit)) : mapped;
-    }
-    if (!store.hasActiveTask(taskId)) {
-      return [];
-    }
-
-    const hasLimit = options?.limit !== undefined;
-    const rows = hasLimit
-      ? (store.db
-          .prepare(
-            "SELECT * FROM task_document_revisions WHERE taskId = ? AND key = ? ORDER BY revision DESC LIMIT ?",
-          )
-          .all(taskId, key, Math.max(0, options.limit ?? 0)) as unknown as TaskDocumentRevisionRow[])
-      : (store.db
-          .prepare(
-            "SELECT * FROM task_document_revisions WHERE taskId = ? AND key = ? ORDER BY revision DESC",
-          )
-          .all(taskId, key) as unknown as TaskDocumentRevisionRow[]);
-
-    return rows.map((row) => store.rowToTaskDocumentRevision(row));
+        const layer = store.asyncLayer!;
+    const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId, await resolveArchivedLanes(store));
+    const sorted = [...rows].sort((a, b) => b.revision - a.revision);
+    const mapped = sorted.map((row) => store.rowToTaskDocumentRevision(row));
+    return options?.limit !== undefined ? mapped.slice(0, Math.max(0, options.limit)) : mapped;
 }
 
 export async function deleteTaskDocumentImpl(store: TaskStore, taskId: string, key: string): Promise<void> {
@@ -893,42 +857,13 @@ export async function deleteTaskDocumentImpl(store: TaskStore, taskId: string, k
     The post-delete task:updated emit mirrors the SQLite path; getTask returns
     only live tasks so a present task implies deletedAt == null.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await deleteTaskDocumentAsync(layer, taskId, key);
-      const task = await store.getTask(taskId);
-      if (task) {
-        store.emit("task:updated", task);
-      }
-      return;
-    }
-    const existing = store.db
-      .prepare("SELECT id FROM task_documents WHERE taskId = ? AND key = ?")
-      .get(taskId, key) as { id: string } | undefined;
-
-    if (!existing) {
-      throw new Error(`Document ${key} not found for task ${taskId}`);
-    }
-
-    store.db.transaction(() => {
-      store.db
-        .prepare("DELETE FROM task_document_revisions WHERE taskId = ? AND key = ?")
-        .run(taskId, key);
-
-      const result = store.db
-        .prepare("DELETE FROM task_documents WHERE taskId = ? AND key = ?")
-        .run(taskId, key) as { changes?: number };
-
-      if ((result.changes ?? 0) === 0) {
-        throw new Error(`Document ${key} not found for task ${taskId}`);
-      }
-    });
-
-    store.db.bumpLastModified();
-    const task = store.readTaskFromDb(taskId, { includeDeleted: true });
-    if (task && task.deletedAt == null) {
+        const layer = store.asyncLayer!;
+    await deleteTaskDocumentAsync(layer, taskId, key, await resolveArchivedLanes(store));
+    const task = await store.getTask(taskId);
+    if (task) {
       store.emit("task:updated", task);
     }
+    return;
 }
 
 export function resolvePrimaryPrInfoImpl(store: TaskStore, prInfos: import("../types.js").PrInfo[]): import("../types.js").PrInfo | undefined {
@@ -1092,11 +1027,7 @@ export async function getAgentLogsImpl(store: TaskStore,
     store.flushAgentLogBuffer();
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-15:45:
     // Backend mode: skip the sync readTaskFromDb deleted-check.
-    if (!store.backendMode) {
-      if (store.readTaskFromDb(taskId, { includeDeleted: true })?.deletedAt) {
-        return [];
-      }
-    }
+    
     const limit = options?.limit !== undefined
       ? (Number.isFinite(options.limit) ? Math.max(0, Math.floor(options.limit)) : 0)
       : undefined;
@@ -1121,10 +1052,6 @@ export async function getAgentLogCountImpl(
     // Backend mode: skip the sync readTaskFromDb check. The agent log file
     // is read from the file system regardless; the deleted-task check is a
     // best-effort optimization that is not critical for the archive path.
-    if (!store.backendMode) {
-      if (store.readTaskFromDb(taskId, { includeDeleted: true })?.deletedAt) {
-        return 0;
-      }
-    }
+    
     return countAgentLogEntries(store.taskDir(taskId), { type: options?.type });
 }

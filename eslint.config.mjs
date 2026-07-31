@@ -69,6 +69,133 @@ const detachedSpawnGuard = {
   },
 };
 
+/*
+FNXC:LintConfig 2026-07-26-21:05:
+Ban React components declared inside another component's render. A component declared in render is a NEW element
+type on every render, so React unmounts and remounts its entire subtree each time the parent updates: focused
+inputs are destroyed mid-typing, expanded/scrolled rows reset, and local state is silently discarded.
+
+This has shipped three times. FN-8606's `ModalShell` made Planning Mode and Settings untypable (every keystroke
+remounted the composer, so only the first character survived), and MailboxModal's `ReplyContextExpandable`
+collapsed already-expanded reply rows whenever any other row was expanded. None of it was caught by review or by
+tests using fireEvent.change, which sets a value without needing the node to stay mounted.
+
+The fix is always the same: hoist the component to module scope and pass what it needs as props, or — when it is
+just markup, not a component — make it a plain render function (`renderModalShell(children)`), whose returned
+element types stay stable. Lowercase render helpers are therefore not reported.
+
+Escape hatch: a preceding `// nested-component-allowlist: <reason>` comment within 3 lines.
+*/
+export const noNestedComponentDefinitions = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "ban React component definitions nested inside another component",
+    },
+    schema: [],
+  },
+  create(context) {
+    const sourceCode = context.sourceCode;
+    const visitorKeys = sourceCode.visitorKeys;
+    const allowlistMarker = "nested-component-allowlist:";
+    const FUNCTION_TYPES = new Set(["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"]);
+    const COMPONENT_WRAPPERS = new Set(["memo", "forwardRef"]);
+    /** Stack of enclosing functions; `rendersJsx` marks the ones that are components. */
+    const functionStack = [];
+
+    function hasAllowlistComment(node) {
+      if (!node.loc) return false;
+      const startLine = node.loc.start.line;
+      const windowStart = Math.max(0, startLine - 3);
+      return sourceCode.lines.slice(windowStart, startLine).some((line) => line.includes(allowlistMarker));
+    }
+
+    /** Walk `node` and its descendants, never descending into nested functions (they own their own JSX). */
+    function walkOwnBody(node, visit) {
+      if (!node || typeof node.type !== "string") return;
+      visit(node);
+      for (const key of visitorKeys[node.type] ?? []) {
+        const value = node[key];
+        for (const child of Array.isArray(value) ? value : [value]) {
+          if (!child || typeof child.type !== "string" || FUNCTION_TYPES.has(child.type)) continue;
+          walkOwnBody(child, visit);
+        }
+      }
+    }
+
+    function containsJsx(node) {
+      let found = false;
+      walkOwnBody(node, (candidate) => {
+        if (candidate.type === "JSXElement" || candidate.type === "JSXFragment") found = true;
+      });
+      return found;
+    }
+
+    function rendersJsx(fnNode) {
+      if (fnNode.type === "ArrowFunctionExpression" && fnNode.body.type !== "BlockStatement") {
+        return containsJsx(fnNode.body);
+      }
+      let found = false;
+      walkOwnBody(fnNode.body, (candidate) => {
+        if (candidate.type === "ReturnStatement" && candidate.argument && containsJsx(candidate.argument)) found = true;
+      });
+      return found;
+    }
+
+    /*
+    A function is component-NAMED when it is bound to a PascalCase name, directly or through memo()/forwardRef().
+    Lowercase bindings are render helpers: they return elements without introducing an element type, so they are
+    safe inside a render and are deliberately not reported.
+    */
+    function componentName(fnNode) {
+      if (fnNode.type === "FunctionDeclaration") {
+        return fnNode.id?.name ?? null;
+      }
+      let current = fnNode;
+      let parent = current.parent;
+      if (parent?.type === "CallExpression" && parent.arguments[0] === current) {
+        const callee = parent.callee;
+        const calleeName = callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier"
+          ? callee.property.name
+          : callee.type === "Identifier" ? callee.name : null;
+        if (!calleeName || !COMPONENT_WRAPPERS.has(calleeName)) return null;
+        current = parent;
+        parent = current.parent;
+      }
+      if (parent?.type === "VariableDeclarator" && parent.init === current && parent.id.type === "Identifier") {
+        return parent.id.name;
+      }
+      return null;
+    }
+
+    function enterFunction(node) {
+      const name = componentName(node);
+      const isComponent = Boolean(name) && /^[A-Z]/.test(name) && rendersJsx(node);
+      if (isComponent && functionStack.some((entry) => entry.isComponent) && !hasAllowlistComment(node)) {
+        context.report({
+          node,
+          message:
+            `Component "${name}" is defined inside another component. React treats it as a new element type on every render, remounting its subtree and destroying focus, scroll, and local state. Hoist it to module scope and pass what it needs as props, or make it a lowercase render function (e.g. render${name}(...)) if it is only markup.`,
+        });
+      }
+      functionStack.push({ isComponent: isComponent || rendersJsx(node) });
+    }
+
+    function exitFunction() {
+      functionStack.pop();
+    }
+
+    return {
+      FunctionDeclaration: enterFunction,
+      "FunctionDeclaration:exit": exitFunction,
+      FunctionExpression: enterFunction,
+      "FunctionExpression:exit": exitFunction,
+      ArrowFunctionExpression: enterFunction,
+      "ArrowFunctionExpression:exit": exitFunction,
+    };
+  },
+};
+
 const noPluginViewReexport = {
   meta: {
     type: "problem",
@@ -604,6 +731,31 @@ export default tseslint.config(
         },
       ],
       "fusion/no-unsafe-detached-spawn": "error",
+    },
+  },
+
+  // ─────────────────────────────────────────────────────────────
+  // REACT SOURCE — no component definitions nested inside a render
+  // (see noNestedComponentDefinitions above for the incident history)
+  // ─────────────────────────────────────────────────────────────
+  {
+    files: [
+      "packages/*/src/**/*.tsx",
+      "packages/dashboard/app/**/*.tsx",
+      "plugins/**/*.tsx",
+    ],
+    ignores: ["**/__tests__/**", "**/*.test.tsx", "**/*.gen.tsx"],
+    plugins: {
+      // Distinct namespace: the `fusion` plugin name is already claimed for these same
+      // files by the detached-spawn block, and flat config forbids redefining it.
+      "fusion-react": {
+        rules: {
+          "no-nested-component-definitions": noNestedComponentDefinitions,
+        },
+      },
+    },
+    rules: {
+      "fusion-react/no-nested-component-definitions": "error",
     },
   },
 

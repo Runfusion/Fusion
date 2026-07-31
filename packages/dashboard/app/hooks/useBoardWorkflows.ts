@@ -4,6 +4,7 @@ import {
   type BoardWorkflowDefinition,
   type BoardWorkflowsPayload,
 } from "../api";
+import { setProjectBoardSelectedWorkflow as defaultPersistBoardWorkflowSelection } from "../api/workflows";
 import { subscribeSse as defaultSubscribeSse } from "../sse-bus";
 import {
   clearBoardWorkflowsCache as defaultClearBoardWorkflowsCache,
@@ -30,16 +31,18 @@ Per-consumer subscription semantics are preserved: each call to this hook instal
 
 export interface UseBoardWorkflowsParams {
   projectId?: string;
-  /**
-   * Gate cache hydration. Board passes `workflowColumnsEnabled === true || settingsLoaded === false`
-   * to avoid flashing the legacy board; Planning has no such gate and leaves this at the default `true`.
-   */
-  shouldHydrateCache?: boolean;
   fetchBoardWorkflows?: typeof defaultFetchBoardWorkflows;
   subscribeSse?: typeof defaultSubscribeSse;
   readBoardWorkflowsCache?: typeof defaultReadBoardWorkflowsCache;
   writeBoardWorkflowsCache?: typeof defaultWriteBoardWorkflowsCache;
   clearBoardWorkflowsCache?: typeof defaultClearBoardWorkflowsCache;
+  /**
+   * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+   * Server-side mirror of the operator's lane, so `fn task create` / `fn_task_create` /
+   * refinement can resolve the "Selected workflow" option of `taskCreateWorkflowId` /
+   * `refinementTaskWorkflowId`. Injectable like the other deps to keep the hook testable.
+   */
+  persistBoardWorkflowSelection?: typeof defaultPersistBoardWorkflowSelection;
 }
 
 export interface UseBoardWorkflowsResult {
@@ -56,8 +59,10 @@ export interface UseBoardWorkflowsResult {
   isAllWorkflowsSelected: boolean;
   setSelectedWorkflowId: Dispatch<SetStateAction<string | null>>;
   /** Force a fresh fetch (used on switcher open, and when the board detects a rendered
-   *  task missing from `taskWorkflowIds`, since task→workflow assignment emits no workflow SSE). */
-  refreshBoardWorkflows: (options?: { forceFresh?: boolean }) => void;
+   *  task missing from `taskWorkflowIds`, since task→workflow assignment emits no workflow SSE).
+   *  Resolves when the fetch has SETTLED — it never rejects, since a failed fetch is
+   *  non-authoritative — so a caller that must not overlap attempts can await it. */
+  refreshBoardWorkflows: (options?: { forceFresh?: boolean }) => Promise<void>;
   /**
    * Raw state setter, exposed so Board can apply optimistic task→workflow assignment.
    * Planning does not use this.
@@ -68,21 +73,23 @@ export interface UseBoardWorkflowsResult {
 export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWorkflowsResult {
   const {
     projectId,
-    shouldHydrateCache = true,
     fetchBoardWorkflows = defaultFetchBoardWorkflows,
     subscribeSse = defaultSubscribeSse,
     readBoardWorkflowsCache = defaultReadBoardWorkflowsCache,
     writeBoardWorkflowsCache = defaultWriteBoardWorkflowsCache,
     clearBoardWorkflowsCache = defaultClearBoardWorkflowsCache,
+    persistBoardWorkflowSelection = defaultPersistBoardWorkflowSelection,
   } = params;
 
   const [boardWorkflowsState, setBoardWorkflowsState] = useState<{ projectId?: string; payload: BoardWorkflowsPayload } | null>(() => {
-    const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
+    const cached = readBoardWorkflowsCache(projectId);
     return cached ? { projectId, payload: cached } : null;
   });
   const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
   const [selectedWorkflowId, setSelectedWorkflowIdState] = useState<string | null>(() => readBoardWorkflowViewSelection(projectId));
   const storedSelectionRef = useRef<string | null>(selectedWorkflowId);
+  /** Lane mirror queued by the user-driven setter; `undefined` = nothing to flush. */
+  const pendingLaneMirrorRef = useRef<string | null | undefined>(undefined);
 
   const setSelectedWorkflowId = useCallback<Dispatch<SetStateAction<string | null>>>((nextSelection) => {
     setSelectedWorkflowIdState((previousSelection) => {
@@ -95,23 +102,62 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
       } else {
         removeBoardWorkflowSelection(projectId);
       }
+      /*
+      FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+      Queue the server-side lane mirror only on this USER-driven setter, not on the
+      stale-selection repair effect below — the mirror should track what the operator chose,
+      not the hook's own bookkeeping. The all-workflows sentinel is a Board-only view, never
+      a real workflow id, so it queues a CLEAR rather than being persisted as an id.
+      Queued, not issued here: React may invoke a state updater more than once for a single
+      change, and firing a request from inside one produced duplicate writes and a render
+      loop. The flush effect below owns the actual call.
+      */
+      pendingLaneMirrorRef.current = resolvedSelection && resolvedSelection !== ALL_WORKFLOWS_BOARD_VIEW_ID
+        ? resolvedSelection
+        : null;
       return resolvedSelection;
     });
   }, [projectId]);
 
+  /*
+  FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+  Flush the queued lane mirror after commit. `undefined` means "nothing queued" — distinct
+  from `null`, which is a real instruction to CLEAR the mirror — so the effect is a no-op on
+  mount and on every render the operator did not drive. Unkeyed on purpose: it must run after
+  whichever commit the setter's update landed in, and the ref latch already bounds it to one
+  request per operator action.
+  The promise is unawaited and its rejection swallowed: localStorage already holds the
+  authoritative selection, so a failed mirror must never revert or block the lane switch.
+  */
+  useEffect(() => {
+    const pending = pendingLaneMirrorRef.current;
+    if (pending === undefined) return;
+    pendingLaneMirrorRef.current = undefined;
+    void persistBoardWorkflowSelection(pending, projectId).catch(() => {});
+  });
+
   // Stale-response guard: a monotonic sequence ref drops out-of-order responses.
   const boardWorkflowsFetchSeqRef = useRef(0);
 
-  // Re-hydrate from the per-project cache on project change (and gate change).
+  // Re-hydrate from the per-project cache on project change.
   useEffect(() => {
-    const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
+    const cached = readBoardWorkflowsCache(projectId);
     const storedSelection = readBoardWorkflowViewSelection(projectId);
     storedSelectionRef.current = storedSelection;
     setSelectedWorkflowIdState(storedSelection);
     setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
-  }, [projectId, shouldHydrateCache, readBoardWorkflowsCache]);
+  }, [projectId, readBoardWorkflowsCache]);
 
-  const refreshBoardWorkflows = useCallback((options?: { forceFresh?: boolean }) => {
+  /*
+  FNXC:WorkflowBoard 2026-07-29-00:00 (PR #2530 review — greptile):
+  RETURNS its settle promise now (additive — existing callers ignore it). The
+  unmapped-workflow repair needs to know when a forced refresh has SETTLED: on a slow
+  request it was starting its second attempt on a fixed 250ms timer while the first was
+  still in flight, so both attempts could be spent before either answer arrived. The
+  promise never rejects — a failed fetch stays non-authoritative — so awaiting it is
+  safe for every caller.
+  */
+  const refreshBoardWorkflows = useCallback((options?: { forceFresh?: boolean }): Promise<void> => {
     const seq = ++boardWorkflowsFetchSeqRef.current;
     if (options?.forceFresh) {
       clearBoardWorkflowsCache(projectId);
@@ -119,7 +165,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     const fetchPromise = options === undefined
       ? fetchBoardWorkflows(projectId)
       : fetchBoardWorkflows(projectId, options);
-    fetchPromise
+    return fetchPromise
       .then((payload) => {
         if (seq === boardWorkflowsFetchSeqRef.current) {
           setBoardWorkflowsState({ projectId, payload });
@@ -140,7 +186,14 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     if (typeof window !== "undefined") window.addEventListener("focus", onVisible);
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const forceRefreshBoardWorkflows = () => refreshBoardWorkflows({ forceFresh: true });
+    /*
+    FNXC:BoardWorkflows 2026-07-26-15:14:
+    The visibilitychange/focus listeners above cover a backgrounded tab, but not an error-driven SSE
+    reconnect while the tab stays visible, during which workflow mutations are dropped. Declare the
+    resync on the subscription itself so recovery does not depend on which of the two paths fired.
+    */
     const unsubscribe = subscribeSse(`/api/events${query}`, {
+      onReconnect: forceRefreshBoardWorkflows,
       events: {
         "workflow:created": forceRefreshBoardWorkflows,
         "workflow:updated": forceRefreshBoardWorkflows,
@@ -163,8 +216,15 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     };
   }, [projectId, refreshBoardWorkflows, subscribeSse]);
 
-  const flagOn = boardWorkflows?.flagEnabled === true;
-  const workflowMode = flagOn && Boolean(boardWorkflows?.workflows.length);
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Workflow mode is now "this project resolved at least one lane", nothing else.
+  The former `flagEnabled === true` conjunct is DELETED: the server hardcodes that
+  field to `true` (`buildBoardWorkflowsPayload`), so it could only ever narrow the
+  result to itself. Reading it kept a retired kill switch alive on the client, one
+  stale payload away from silently reverting every consumer to the legacy board.
+  */
+  const workflowMode = Boolean(boardWorkflows?.workflows.length);
 
   const workflowOptions = useMemo<BoardWorkflowDefinition[]>(() => {
     if (!workflowMode || !boardWorkflows) return [];

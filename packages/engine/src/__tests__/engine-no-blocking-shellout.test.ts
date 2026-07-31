@@ -37,33 +37,33 @@ const allowlist: AllowlistEntry[] = [
   { file: "src/already-merged-detector.ts", line: 223, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/already-merged-detector.ts", line: 270, primitive: "execSync", signature: "branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/already-merged-detector.ts", line: 345, primitive: "execSync", signature: "execSync(`git rev-parse --verify ${shellQuote(treeBranchName)}`, {", reason: SHORT_GIT_PLUMBING },
-  // FNXC:EngineProcessRules 2026-07-26-20:50: re-pin drifted short git-plumbing lines after plan-worktree + branch-reclaim work (self-healing inspect/delete, executor baseCommitSha ancestry).
-  { file: "src/self-healing.ts", line: 4289, primitive: "execSync", signature: "const tipSha = String(execSync(`git rev-parse --verify ${shellQuote(branch)}`, {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/self-healing.ts", line: 4295, primitive: "execSync", signature: "const uniqueCommitCount = Number.parseInt(String(execSync(`git rev-list --count ${shellQuote(branch)} --not ${shellQuote(\"main\")}`, {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/self-healing.ts", line: 4332, primitive: "execSync", signature: "const branchesRaw = String(execSync(\"git branch --list 'fusion/*'\", {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/self-healing.ts", line: 12977, primitive: "execSync", signature: "execSync(`git branch -d ${shellQuote(branch)}`, {", reason: SHORT_GIT_PLUMBING },
+  // FNXC:EngineProcessRules 2026-07-26-14:27: Re-pin all audited shellouts after current main moved source lines without changing the sanctioned short-git-plumbing calls.
+  { file: "src/self-healing.ts", line: 4127, primitive: "execSync", signature: "const tipSha = String(execSync(`git rev-parse --verify ${shellQuote(branch)}`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/self-healing.ts", line: 4133, primitive: "execSync", signature: "const uniqueCommitCount = Number.parseInt(String(execSync(`git rev-list --count ${shellQuote(branch)} --not ${shellQuote(\"main\")}`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/self-healing.ts", line: 4170, primitive: "execSync", signature: "const branchesRaw = String(execSync(\"git branch --list 'fusion/*'\", {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/self-healing.ts", line: 12877, primitive: "execSync", signature: "execSync(`git branch -d ${shellQuote(branch)}`, {", reason: SHORT_GIT_PLUMBING },
   { file: "src/merger-workspace-test-commands.ts", line: 204, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/merger-workspace-test-commands.ts", line: 301, primitive: "execSync", signature: "changedFilesOutput = execSync(", reason: BOUNDED_GIT_DIFF },
   { file: "src/integration-branch.ts", line: 71, primitive: "execSync", signature: "const stdout = execSync(\"git symbolic-ref --short refs/remotes/origin/HEAD\", {", reason: SHORT_GIT_PLUMBING },
   { file: "src/integration-branch.ts", line: 107, primitive: "execSync", signature: "const stdout = execSync(\"git remote\", {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 734, primitive: "execSync", signature: "const output = execSync(command, options);", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 781, primitive: "execSync", signature: "treeSha = execSync(\"git rev-parse HEAD^{tree}\", { cwd: rootDir, stdio: \"pipe\" })", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 1388, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 1600, primitive: "execSync", signature: "beforeRaw = execSync(\"git status -z --porcelain\", { cwd: rootDir, stdio: [\"ignore\", \"pipe\", \"ignore\"] }).toString(\"utf-8\");", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 1612, primitive: "execSync", signature: "afterRaw = execSync(\"git status -z --porcelain\", { cwd: rootDir, stdio: [\"ignore\", \"pipe\", \"ignore\"] }).toString(\"utf-8\");", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 7640, primitive: "execSync", signature: "execSync(`git rev-parse --verify \"${branch}\"`, {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8595, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8608, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8620, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8958, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8978, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 8987, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 9077, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 9652, primitive: "execSync", signature: "const postPushSha = execSync(\"git rev-parse HEAD\", {", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 10211, primitive: "execSync", signature: "const squashIsEmpty = execSync(", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 10245, primitive: "execSync", signature: "const squashIsEmpty = execSync(", reason: SHORT_GIT_PLUMBING },
-  { file: "src/merger.ts", line: 10432, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
-  { file: "src/executor.ts", line: 16585, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${task.baseCommitSha} HEAD`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 739, primitive: "execSync", signature: "const output = execSync(command, options);", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 786, primitive: "execSync", signature: "treeSha = execSync(\"git rev-parse HEAD^{tree}\", { cwd: rootDir, stdio: \"pipe\" })", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 1394, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 1606, primitive: "execSync", signature: "beforeRaw = execSync(\"git status -z --porcelain\", { cwd: rootDir, stdio: [\"ignore\", \"pipe\", \"ignore\"] }).toString(\"utf-8\");", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 1618, primitive: "execSync", signature: "afterRaw = execSync(\"git status -z --porcelain\", { cwd: rootDir, stdio: [\"ignore\", \"pipe\", \"ignore\"] }).toString(\"utf-8\");", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 7646, primitive: "execSync", signature: "execSync(`git rev-parse --verify \"${branch}\"`, {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8601, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8614, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8626, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8964, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8984, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 8993, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 9083, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 9658, primitive: "execSync", signature: "const postPushSha = execSync(\"git rev-parse HEAD\", {", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 10217, primitive: "execSync", signature: "const squashIsEmpty = execSync(", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 10251, primitive: "execSync", signature: "const squashIsEmpty = execSync(", reason: SHORT_GIT_PLUMBING },
+  { file: "src/merger.ts", line: 10438, primitive: "execSync", signature: "execSync(\"git reset --merge\", { cwd: rootDir, stdio: \"pipe\" });", reason: SHORT_GIT_PLUMBING },
+  { file: "src/executor.ts", line: 17198, primitive: "execSync", signature: "execSync(`git merge-base --is-ancestor ${task.baseCommitSha} HEAD`, {", reason: SHORT_GIT_PLUMBING },
 ];
 
 function scanSource(file: string, source: string): ShelloutSite[] {
@@ -104,16 +104,102 @@ function scanEngineSource(): ShelloutSite[] {
   return listProductionSource(root).flatMap((path) => scanSource(relative(process.cwd(), path), readFileSync(path, "utf-8")));
 }
 
-function classifySites(sites: ShelloutSite[]): { unmatched: ShelloutSite[]; stale: AllowlistEntry[] } {
-  const remaining = new Set(allowlist.map((entry) => `${entry.file}:${entry.line}:${entry.primitive}:${entry.signature}`));
+/*
+FNXC:EngineProcessRules 2026-07-30-12:20:
+Identity is file + primitive + SIGNATURE, with a per-key COUNT. The line number is documentation.
+
+The key used to include `entry.line`, so ANY edit above an audited call site broke this guard even
+though the call itself was untouched. That is not a hypothetical: it has now produced three false
+failures and been re-pinned twice by hand, most recently when unrelated fleet conversions shifted
+`executor.ts` and `self-healing.ts` (5 sites drifted at once). A guard that fails on edits it does not
+care about trains people to re-pin it without reading it, which is how a real new shellout would slip
+through in the same commit.
+
+The count preserves what the line number was actually buying: a SECOND identical shellout added to the
+same file is still unmatched, because the allowlist declares how many of that exact call it audits.
+What is deliberately given up is distinguishing "the audited call moved" from "the audited call stayed
+put" — which this guard has no reason to care about.
+*/
+function keyOf(entry: { file: string; primitive: string; signature: string }): string {
+  return `${entry.file}:${entry.primitive}:${entry.signature}`;
+}
+
+function classifySites(
+  sites: ShelloutSite[],
+  entries: AllowlistEntry[] = allowlist,
+): { unmatched: ShelloutSite[]; stale: AllowlistEntry[] } {
+  const budget = new Map<string, number>();
+  for (const entry of entries) budget.set(keyOf(entry), (budget.get(keyOf(entry)) ?? 0) + 1);
+
   const unmatched = sites.filter((site) => {
-    const key = `${site.file}:${site.line}:${site.primitive}:${site.signature}`;
-    if (!remaining.has(key)) return true;
-    remaining.delete(key);
+    const remainingForKey = budget.get(keyOf(site)) ?? 0;
+    if (remainingForKey === 0) return true;
+    budget.set(keyOf(site), remainingForKey - 1);
     return false;
   });
-  return { unmatched, stale: allowlist.filter((entry) => remaining.has(`${entry.file}:${entry.line}:${entry.primitive}:${entry.signature}`)) };
+
+  // Anything still holding budget is an allowlist entry with no matching call site left in source.
+  const stale = entries.filter((entry) => {
+    const left = budget.get(keyOf(entry)) ?? 0;
+    if (left === 0) return false;
+    budget.set(keyOf(entry), left - 1);
+    return true;
+  });
+  return { unmatched, stale };
 }
+
+/*
+FNXC:EngineProcessRules 2026-07-30-13:20 (greptile P2 — the count semantics had no direct coverage):
+The two invariants that replaced line coupling were verified by MUTATION while writing the change,
+which proves nothing once the mutation is reverted. Pinned here directly, so a later edit cannot
+restore line coupling or weaken duplicate detection without a red test.
+*/
+describe("shellout allowlist matching semantics", () => {
+  const AUDITED: AllowlistEntry = {
+    file: "src/example.ts",
+    line: 10,
+    primitive: "execSync",
+    signature: 'execSync("git worktree prune", {',
+    reason: "test fixture",
+  };
+  const siteAt = (line: number): ShelloutSite => ({
+    file: AUDITED.file,
+    line,
+    primitive: AUDITED.primitive,
+    signature: AUDITED.signature,
+  });
+
+  it("accepts an audited call that has MOVED — line drift alone is not a violation", () => {
+    // The false failure this replaced: an edit ABOVE the call site broke the guard three times.
+    const { unmatched, stale } = classifySites([siteAt(9_999)], [AUDITED]);
+
+    expect(unmatched).toEqual([]);
+    expect(stale).toEqual([]);
+  });
+
+  it("rejects a SECOND identical shellout — the count is what line numbers were buying", () => {
+    // One audited entry, two identical calls: the extra one is unmatched even though its
+    // file+primitive+signature match, because the allowlist audits exactly one of them.
+    const { unmatched } = classifySites([siteAt(10), siteAt(40)], [AUDITED]);
+
+    expect(unmatched).toHaveLength(1);
+    expect(unmatched[0]).toMatchObject({ file: AUDITED.file, signature: AUDITED.signature });
+  });
+
+  it("reports an audited entry with no call site left as STALE", () => {
+    const { unmatched, stale } = classifySites([], [AUDITED]);
+
+    expect(unmatched).toEqual([]);
+    expect(stale).toEqual([AUDITED]);
+  });
+
+  it("still distinguishes a DIFFERENT shellout in the same file", () => {
+    const other: ShelloutSite = { ...siteAt(12), signature: 'execSync("git gc --prune=now", {' };
+    const { unmatched } = classifySites([siteAt(10), other], [AUDITED]);
+
+    expect(unmatched).toEqual([other]);
+  });
+});
 
 describe("engine blocking-shellout static guard", () => {
   it("confines every production synchronous shellout to an audited call-site allowlist", () => {

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { NodeMeshState } from "@fusion/core";
 import { fetchMeshState } from "../api";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const POLL_INTERVAL_MS = 10000;
 const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
@@ -20,7 +20,6 @@ export function useMeshState(): UseMeshStateResult {
   const [meshState, setMeshState] = useState<NodeMeshState[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
   const meshStateRef = useRef(meshState);
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -104,19 +103,17 @@ export function useMeshState(): UseMeshStateResult {
     };
   }, [refresh, shouldSuppressVisibilityResumeError, t]);
 
-  useEffect(() => {
-    if (loading) return;
-    intervalRef.current = setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-16:05:
+  This 10s mesh-state poll was NOT visibility-gated: the `visibilitychange` listener above only ADDS a refresh
+  on the visible edge and never cleared the interval, so a backgrounded tab kept fetching mesh state every 10
+  seconds. Background network work is the primary signal iOS Safari / iOS PWA / Chrome Android use to discard
+  a tab, producing the white-splash reload on return.
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [loading, refresh]);
+  `refreshOnVisible: false` because the debounced, instrumented listener above already owns the visible-edge
+  refresh; letting the helper refresh too would fetch twice on one edge.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: !loading, refreshOnVisible: false });
 
   return { meshState, loading, error, refresh };
 }

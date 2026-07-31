@@ -12,8 +12,14 @@ the next graph run retries the move, while a NON-capacity rejection (an invarian
 propagates as a real error. Regression direction matters — a change that makes every rejection park
 would silently swallow invariant violations, so both halves are asserted.
 */
-import { describe, expect, it, vi } from "vitest";
-import { TransitionRejectionError, type WorkflowIr } from "@fusion/core";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import {
+  TransitionRejectionError,
+  getWorkflowEventBus,
+  resetWorkflowEventBusForTesting,
+  type WorkflowIr,
+  type WorkflowLifecycleEvent,
+} from "@fusion/core";
 import { createWorkflowColumnBoundary } from "../workflow-column-boundary.js";
 
 /** Minimal two-column IR: a wip column and a review column, plus the remediation target. */
@@ -113,5 +119,95 @@ describe("workflow column boundary — capacity rejection on the remediation cro
       nodeId: "code-review-remediation",
     }));
     expect(boundary.currentColumn()).toBe("in-progress");
+  });
+});
+
+/*
+FNXC:WorkflowEvents 2026-07-27-17:40 (U3, PR #2467 review):
+ANTI-"BORN DEAD" GUARD. The bus REFUSES a payload that violates the ids-only or
+required-key rules, and refusal is silent by design (the emitter is post-commit;
+throwing there would turn a shape bug into a lifecycle fault). That combination
+means an emitter regression — a dropped `nodeId`, a renamed field, a stray
+`error` — would stop the event firing with NO test failure anywhere, and every
+subscriber built on it would quietly never run.
+
+So the real emitters are asserted end-to-end through the real bus: not "was emit
+called" (a spy would pass on a refused payload) but "did a subscriber actually
+receive it". These tests fail if a future edit makes the boundary's payloads
+invalid.
+*/
+describe("column boundary emits SURVIVE the bus's shape validation (U3)", () => {
+  beforeEach(() => resetWorkflowEventBusForTesting());
+  afterEach(() => getWorkflowEventBus().clear());
+
+  it("NodeEntered is DELIVERED for a column-bearing node", async () => {
+    const received: WorkflowLifecycleEvent[] = [];
+    getWorkflowEventBus().subscribe((event) => { received.push(event); }, { name: "probe" });
+
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-EV-1",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+      moveTask: async () => {},
+    });
+    await boundary.onNodeEntry(remediationNode());
+    await getWorkflowEventBus().drain();
+
+    const entered = received.filter((e) => e.type === "NodeEntered");
+    expect(entered).toHaveLength(1);
+    expect(entered[0]).toMatchObject({
+      type: "NodeEntered",
+      taskId: "FN-EV-1",
+      nodeId: "code-review-remediation",
+      column: "in-progress",
+    });
+  });
+
+  it("NodeEntered is DELIVERED for a COLUMNLESS node, with column omitted", async () => {
+    const received: WorkflowLifecycleEvent[] = [];
+    getWorkflowEventBus().subscribe((event) => { received.push(event); }, { name: "probe" });
+
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-EV-2",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+    });
+    // `end` carries no column — the case the optional `column` field exists for.
+    await boundary.onNodeEntry({ id: "end", kind: "end" } as never);
+    await getWorkflowEventBus().drain();
+
+    const entered = received.filter((e) => e.type === "NodeEntered");
+    expect(entered).toHaveLength(1);
+    expect(entered[0].taskId).toBe("FN-EV-2");
+    expect("column" in entered[0]).toBe(false);
+  });
+
+  it("RunSuspended is DELIVERED when a capacity rejection parks the crossing", async () => {
+    const received: WorkflowLifecycleEvent[] = [];
+    getWorkflowEventBus().subscribe((event) => { received.push(event); }, { name: "probe" });
+
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-EV-3",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+      moveTask: async () => { throw capacityError(); },
+    });
+    const result = await boundary.onNodeEntry(remediationNode());
+    await getWorkflowEventBus().drain();
+
+    expect(result).toMatchObject({ kind: "suspended", reason: "capacity" });
+    const suspended = received.filter((e) => e.type === "RunSuspended");
+    expect(suspended).toHaveLength(1);
+    expect(suspended[0]).toMatchObject({
+      type: "RunSuspended",
+      taskId: "FN-EV-3",
+      nodeId: "code-review-remediation",
+      reason: "capacity",
+      fromColumn: "in-review",
+      toColumn: "in-progress",
+    });
   });
 });

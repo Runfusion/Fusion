@@ -3,6 +3,7 @@ import type { TaskStore, Task } from "@fusion/core";
 import {
   RestartRecoveryCoordinator,
   extractMissingWorktreePathFromSessionStartFailure,
+  isInReviewMissingWorktreeSessionStartFailure,
   isMissingWorktreeSessionStartFailure,
   isMergeActiveMissingWorktreeSessionStartFailure,
   isRecoverableMissingWorktreeReviewFailure,
@@ -25,6 +26,57 @@ function createTask(overrides: Partial<Task>): Task {
     ...overrides,
   } as Task;
 }
+
+/*
+FNXC:MissingWorktreeRetry 2026-07-31-06:10 (PR #2728 review — greptile):
+The classifier hardcoded `in-review`, so on a renamed board a card stranded by an unusable-worktree
+session start was not recognised as retryable — while every guard AROUND it had already been
+converted. A disagreement between neighbouring checks is harder to diagnose than the original inert
+literal, because each one individually looks right.
+
+`reviewColumns` is optional and defaults to the legacy id, so the three existing call sites are
+unchanged until each passes its own resolved set.
+*/
+describe("isInReviewMissingWorktreeSessionStartFailure", () => {
+  /*
+  FNXC:MissingWorktreeRetry 2026-07-30-10:05 (PR #2728, aligned to #2736's signature):
+  The second parameter is the caller's already-RESOLVED answer, not a lane set. Both PRs widened this
+  function and each typechecked on its own branch; whichever merged second would have overwritten the
+  other's signature and broken its call site without git flagging a conflict. This file now matches
+  #2736 exactly, so the second merge is a no-op here.
+
+  Recording why these cases were rewritten rather than left: they were written against the SET form,
+  so after the switch `["signoff"]` was simply a truthy value and two of them passed for the wrong
+  reason. Engine tsconfig excludes `src/__tests__`, so tsc could not see the mismatch — only reading
+  them could.
+  */
+  const stranded = (column: string): Task => ({
+    id: "FN-1",
+    column,
+    error: "Refusing to start coding agent in missing worktree: /repo/.worktrees/FN-1",
+  } as unknown as Task);
+
+  it("recognises a stranded card when the caller resolved the lane as review", () => {
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"), true)).toBe(true);
+  });
+
+  it("refuses when the caller resolved the lane as NOT review, even on the legacy id", () => {
+    /* The resolved answer wins over the literal — otherwise a board that renamed `in-review` to
+       something else, and kept `in-review` as an ordinary column, would retry cards sitting there. */
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("in-review"), false)).toBe(false);
+  });
+
+  it("keeps the legacy id when the caller supplies nothing", () => {
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("in-review"))).toBe(true);
+    expect(isInReviewMissingWorktreeSessionStartFailure(stranded("signoff"))).toBe(false);
+  });
+
+  it("still requires the worktree failure, so resolving the lane did not widen the classifier", () => {
+    const healthy = { id: "FN-2", column: "signoff", error: "something else entirely" } as unknown as Task;
+
+    expect(isInReviewMissingWorktreeSessionStartFailure(healthy, true)).toBe(false);
+  });
+});
 
 describe("RestartRecoveryCoordinator", () => {
   it("classifies missing-worktree session-start failures across all assertValidWorktreeSession variants", () => {
@@ -141,5 +193,77 @@ describe("RestartRecoveryCoordinator", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(executor.resumeOrphaned).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:20:
+
+THE INVARIANT: restart recovery sweeps the board's OWN wip lane.
+
+THE FLAGGED QUERY, NOW CONVERTED. The note this replaces was correct that the `listTasks({ column })`
+QUERY was the live filter and the `.filter` beneath it a redundant re-assertion — so converting the
+predicate alone would have dropped a census count and changed nothing, because the board's wip rows
+were never listed. On a renamed board this recovery did not run at all: an engine restart left
+interrupted tasks stuck with no requeue.
+
+THREE LAYERS, and naming them is the point, because the previous two conversions in this class each
+hid a second one behind the first:
+
+  1. the QUERY — fixed here, project-level (`resolveProjectColumnsForRoles`), since no task is in hand
+     before the read;
+  2. the redundant `.filter` — DELETED rather than converted; re-asserting the column the query just
+     selected on adds nothing, and a second copy of a rule is how a read and its filter drift;
+  3. the move DESTINATION — already resolved via `resolveReboundTargetForTask`; only its comment was
+     stale, still describing the pre-fix state, and is corrected in place.
+
+REVERT PROOF, measured: restore `listTasks({ column: "in-progress" })` and the renamed case requeues
+nothing.
+*/
+describe("restart recovery resolves the board's own wip lane", () => {
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    ],
+  };
+
+  function renamedStore(tasksByColumn: Record<string, unknown[]>) {
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    return {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+      listTasks: vi.fn(async ({ column }: { column: string }) => tasksByColumn[column] ?? []),
+      updateTask: vi.fn().mockResolvedValue({}),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      moveTask: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+  }
+
+  const interrupted = (id: string, column: string) =>
+    createTask({ id, column, status: "failed", error: "Agent finished without calling fn_task_done", steps: [] } as never);
+
+  it("requeues an interrupted task sitting in a RENAMED wip lane", async () => {
+    // Pre-fix: the query asked for "in-progress", got nothing, and the restart recovery no-opped.
+    const store = renamedStore({ building: [interrupted("FN-1", "building")] });
+    const coordinator = new RestartRecoveryCoordinator(store, { resumeOrphaned: vi.fn().mockResolvedValue(undefined) } as never);
+
+    await coordinator.recoverInterruptedRuns();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1", expect.objectContaining({ status: "stuck-killed" }));
+  });
+
+  it("still skips a PAUSED task — the only thing the deleted filter contributed", async () => {
+    // Removing the redundant column re-assertion must not remove the pause guard with it.
+    const paused = { ...interrupted("FN-2", "building"), paused: true };
+    const store = renamedStore({ building: [paused] });
+    const coordinator = new RestartRecoveryCoordinator(store, { resumeOrphaned: vi.fn().mockResolvedValue(undefined) } as never);
+
+    await coordinator.recoverInterruptedRuns();
+
+    expect(store.updateTask).not.toHaveBeenCalled();
   });
 });

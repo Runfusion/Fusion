@@ -118,12 +118,25 @@ export async function findExistingLinearTask(taskStore: { listTasks?: (options?:
   return tasks.find((task) => taskMatchesLinearIssue(task, issue)) ?? null;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:35:
+NO explicit `column`. An imported Linear issue enters INTAKE, and `createTask` resolves which column
+that is from the workflow it selects (`resolvedEntryColumn`); an explicit `column` OVERRIDES that
+resolution, which is exactly how this import kept naming `triage` after the column stopped existing.
+
+`triage` was DELETED by U11 — the default board's lanes are `todo | in-progress | in-review | done |
+archived` — so every Linear import wrote its card into a lane no workflow declares. Nothing rejects
+it and nothing logs it: the route reports success with a task id, and the card is not on the board.
+
+Identical shape and identical fix to the GitLab importer (#2843). Worth stating that this one is the
+reason to distrust "we fixed the import path": the two importers were written from the same template
+and only one of them was found by looking at the forge everybody uses.
+*/
 export function buildLinearTaskCreateInput(issue: LinearIssue): TaskCreateInput {
   const preview = buildLinearImportPreview(issue);
   return {
     title: preview.title,
     description: preview.description,
-    column: "triage",
     sourceIssue: preview.sourceIssue,
     source: {
       sourceType: "api",

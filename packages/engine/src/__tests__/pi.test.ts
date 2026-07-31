@@ -433,6 +433,7 @@ describe("createFnAgent skills parameter", () => {
   });
 
   it("skills auto-derivation logs the convenience parameter", async () => {
+    const piDebugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
     const options: AgentOptions = {
       cwd: "/test/project",
       systemPrompt: "Test",
@@ -441,10 +442,14 @@ describe("createFnAgent skills parameter", () => {
 
     await createFnAgent(options);
 
-    // Verify the log message includes the skill names
-    expect(piLogSpy).toHaveBeenCalledWith(
+    // Steady-state skill-request chatter is debug-gated so it does not fill the TUI.
+    expect(piDebugSpy).toHaveBeenCalledWith(
       expect.stringContaining("Using skills from convenience parameter: [review, fusion]")
     );
+    expect(piLogSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Using skills from convenience parameter: [review, fusion]")
+    );
+    piDebugSpy.mockRestore();
   });
 
   it("resolves project root via resolvePiExtensionProjectRoot for non-worktree paths", async () => {
@@ -468,6 +473,7 @@ describe("createFnAgent skills parameter", () => {
   });
 
   it("skills without corresponding discovered skills produces diagnostics", async () => {
+    const piDebugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
     // Mock to return diagnostics for missing skill
     mockResolveSessionSkills.mockReturnValue({
       allowedSkillPaths: new Set(),
@@ -486,11 +492,15 @@ describe("createFnAgent skills parameter", () => {
 
     await createFnAgent(options);
 
-    // The diagnostics should be logged
+    // type=info skill diagnostics are debug-gated (not info/log)
     expect(mockResolveSessionSkills).toHaveBeenCalled();
-    expect(piLogSpy).toHaveBeenCalledWith(
+    expect(piDebugSpy).toHaveBeenCalledWith(
       expect.stringContaining("info")
     );
+    expect(piLogSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Requested skill")
+    );
+    piDebugSpy.mockRestore();
   });
 });
 
@@ -990,18 +1000,21 @@ describe("session failure diagnostics", () => {
 
 describe("piLog structured diagnostics", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
+  let debugSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     logSpy = vi.spyOn(piLog, "log").mockImplementation(() => {});
+    debugSpy = vi.spyOn(piLog, "debug").mockImplementation(() => {});
     warnSpy = vi.spyOn(piLog, "warn").mockImplementation(() => {});
     errorSpy = vi.spyOn(piLog, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
     logSpy.mockRestore();
+    debugSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
@@ -1014,10 +1027,14 @@ describe("piLog structured diagnostics", () => {
       defaultModelId: "test-model",
     });
 
-    const hasModelLog = logSpy.mock.calls.some(([message]) =>
+    // FNXC:EngineDiagnostics 2026-07-26-10:00: session-created bookkeeping is debug-gated.
+    const hasModelLog = debugSpy.mock.calls.some(([message]) =>
       String(message).includes("Session created successfully (model=test/test-model)"),
     );
     expect(hasModelLog).toBe(true);
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Session created successfully"),
+    );
   });
 
   it("fires fallback hook on session-creation fallback", async () => {
@@ -1397,7 +1414,8 @@ describe("piLog structured diagnostics", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       "Primary model failed (429 Too Many Requests), trying fallback",
     );
-    expect(logSpy).toHaveBeenCalledWith("Fallback session created successfully");
+    expect(debugSpy).toHaveBeenCalledWith("Fallback session created successfully");
+    expect(logSpy).not.toHaveBeenCalledWith("Fallback session created successfully");
   });
 
   it("logs error when session creation fails with non-retryable error", async () => {

@@ -47,6 +47,8 @@ vi.mock("lucide-react", () => ({
   ArrowUp: ({ style, ...props }: React.SVGProps<SVGSVGElement>) => <svg data-testid="priority-icon-high" className="lucide-arrow-up" style={style} {...props} />,
   TriangleAlert: ({ style, ...props }: React.SVGProps<SVGSVGElement>) => <svg data-testid="priority-icon-urgent" className="lucide-triangle-alert" style={style} {...props} />,
   ArrowUpRight: () => null,
+  // FNXC:RefinementTitle 2026-07-26-20:10: icon on the "Refines <id>" provenance chip.
+  Sparkles: () => null,
   // FN-7592: the overseer badge now renders an icon child instead of a text label,
   // so tests must see a real SVG (like Zap) rather than a no-op render.
   Eye: () => <svg data-testid="icon-eye" />,
@@ -153,6 +155,47 @@ function seedAgentsCache(projectId: string, agents: Array<{ id: string; name: st
     })),
     { maxBytes: 500_000 },
   );
+}
+
+/*
+FNXC:TaskCardParity 2026-07-31-00:25:
+READ DECLARED CSS FROM THE CSSOM — `getComputedStyle` cannot be trusted for tokenized values here.
+
+jsdom does not substitute `var()`. Worse, WHAT it does instead changed under us: on jsdom 27 an
+unresolvable shorthand echoed its raw text (`padding` read back as
+"var(--space-xs) var(--space-sm)"), and on jsdom 29 (bumped in 4819c2634) the same declaration
+computes to "0", while single-value longhands like `gap` still echo. Tests that asserted the echoed
+string were pinning a jsdom implementation detail, so the upgrade turned them red with the CSS
+completely unchanged.
+
+This reads the DECLARED value off the mounted stylesheet's CSSOM and resolves a single `var()`
+against `:root`, which is stable across jsdom versions and is what the assertions actually meant.
+The CSSOM is used rather than a regex over the CSS text on purpose: a hand-rolled matcher over
+grouped selectors silently matches the wrong rule and still reports success.
+
+Later rules win, matching the cascade for equal specificity.
+*/
+function declaredStyle(selector: string, property: string): string {
+  let declaration: string | undefined;
+  for (const sheet of Array.from(document.styleSheets)) {
+    for (const rule of Array.from(sheet.cssRules ?? [])) {
+      if (!(rule instanceof CSSStyleRule)) continue;
+      if (!rule.selectorText.split(",").some((part) => part.trim() === selector)) continue;
+      const value = rule.style.getPropertyValue(property).trim();
+      if (value) declaration = value;
+    }
+  }
+  expect(declaration, `no ${property} declaration found for ${selector}`).toBeDefined();
+  return declaration!;
+}
+
+/** Resolves a bare `var(--token)` against `:root`; any other value is returned unchanged. */
+function resolveCssToken(value: string): string {
+  const token = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value.trim());
+  if (!token) return value.trim();
+  const resolved = getComputedStyle(document.documentElement).getPropertyValue(token[1]).trim();
+  expect(resolved, `token ${token[1]} resolved to nothing`).not.toBe("");
+  return resolved;
 }
 
 function mountCssForBadgeTests() {
@@ -797,6 +840,63 @@ describe("TaskCard", () => {
       await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
       fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
       expect(screen.queryByRole("menuitem", { name: "Enable GitHub tracking" })).not.toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (fleet phase — evidence for the 39 converted guards):
+  TaskCard asked "is this card terminal / mid-flight / in review?" by comparing `task.column` to a
+  literal THIRTY-NINE times, while `taskColumnFlags` was already threaded in and already consumed by
+  `canEdit` and `isTaskAgentActive`. The failure mode is a card rendering as live work by one question
+  and terminal by the next on the same board.
+
+  These two cases pin the property in BOTH directions, because only one of them can be reached by
+  renaming alone:
+    - traits say mid-flight, column NAMED `done`  -> must NOT offer Archive (the old code did)
+    - traits say complete, column named `shipped` -> MUST offer Archive (the old code did not)
+
+  Archive is the assertion target because `isCompleteColumn` gates it directly and it is a real
+  operator affordance rather than a style detail.
+
+  REVERT CHECK, measured. Restoring `task.column === "done"` on the archive-action guard makes the
+  first case fail (Archive appears on a mid-flight card) and the second fail (Archive missing on the
+  renamed complete lane). Both were run.
+  */
+  it("does not offer Archive on a card whose traits say mid-flight, however its column is spelled", () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done" as any })}
+          taskColumnFlags={{ countsTowardWip: true } as any}
+          onOpenDetail={noop}
+          addToast={noop}
+          onArchiveTask={vi.fn()}
+        />,
+      );
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.queryByRole("menuitem", { name: "Archive" })).not.toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  it("offers Archive on a RENAMED complete column, which the id comparison could not see", () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "shipped" as any })}
+          taskColumnFlags={{ complete: true } as any}
+          onOpenDetail={noop}
+          addToast={noop}
+          onArchiveTask={vi.fn()}
+        />,
+      );
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
     } finally {
       cleanupGeometry();
     }
@@ -2335,7 +2435,7 @@ describe("TaskCard", () => {
       />,
     );
 
-    const badge = screen.getByText("planning");
+    const badge = screen.getByText("Planning");
     expect(badge).toHaveClass("card-status-badge");
     expect(container.querySelector(".card-header-badges")).toContainElement(badge);
   });
@@ -2348,7 +2448,7 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(screen.getByText("planning")).toBeDefined();
+    expect(screen.getByText("Planning")).toBeDefined();
 
     rerender(
       <TaskCard
@@ -2423,11 +2523,15 @@ describe("TaskCard", () => {
     const badge = container.querySelector('[data-testid="card-reviewing-FN-7831"]');
     expect(Boolean(badge)).toBe(shouldRender);
     if (shouldRender) {
-      expect(badge).toHaveTextContent("Reviewing");
-      // FNXC:StatusBadge 2026-07-19-04:30: U12 — the status badge prefers the running
-      // workflow step's IR-declared name ("Plan Review") over the raw engine token
-      // ("planning"); this expectation tracks that intentional cutover behavior.
-      expect(screen.getByText("Plan Review")).toBeDefined();
+      expect(badge).toHaveTextContent("Plan Review");
+      /*
+      FNXC:StatusBadge 2026-07-26-14:05:
+      Exactly ONE badge names the gate. U12 let the status badge borrow the running step's IR name,
+      which now collides with the gate badge's own "Plan Review" copy, so the override yields and the
+      status badge states the card's status instead — as "Planning", not the raw engine token.
+      */
+      expect(screen.getAllByText("Plan Review")).toHaveLength(1);
+      expect(screen.getByText("Planning")).toBeDefined();
     }
   });
 
@@ -2599,7 +2703,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector('[data-testid="card-ready-FN-READY-REVIEW"]')).toBeNull();
-    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Reviewing");
+    expect(container.querySelector('[data-testid="card-reviewing-FN-READY-REVIEW"]')).toHaveTextContent("Plan Review");
   });
 
   it("does not render Ready while Plan Review is running even when the queue gate hides Reviewing", () => {
@@ -2717,6 +2821,73 @@ describe("TaskCard", () => {
         expect(badge(container), column).toBeNull();
         unmount();
       }
+    });
+
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+    Original symptom: this badge claimed a card was waiting for a PLANNING slot when the engine was
+    never going to plan it. The step count is TaskCard's own proxy for "unplanned", while every engine
+    lane decides from PROMPT.md seed-ness, so the two disagreed in both directions. The server now
+    ships that answer as `awaitingPlanning` (same `isTaskAwaitingPlanning` predicate as triage's
+    todo-discovery) and it OUTRANKS the step count.
+
+    Surface enumeration — every combination of (flag present/absent) x (steps present/absent):
+     - flag false + no steps -> Ready (the reported repro: real spec that parsed to zero steps).
+     - flag true + steps -> Queued to plan (the reverse mislabel: re-seeded card with stale steps).
+     - flag absent -> step-count fallback preserved in both directions (SSE payloads, older server).
+     - exactly one of the two badges renders in every case, since both derive from one value.
+    */
+    describe("server awaitingPlanning outranks the step count", () => {
+      const readyBadge = (container: HTMLElement) =>
+        container.querySelector('[data-testid="card-ready-FN-QUEUED-PLAN"]');
+
+      it("renders Ready for a stepless card the server says is already planned", () => {
+        const { container } = render(
+          <TaskCard
+            task={queuedToPlanTask({ steps: [] as Task["steps"], awaitingPlanning: false })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+
+        expect(badge(container)).toBeNull();
+        expect(readyBadge(container)).toHaveTextContent("Ready");
+      });
+
+      it("renders Queued to plan for a card with stale steps the server says is unplanned", () => {
+        const { container } = render(
+          <TaskCard
+            task={queuedToPlanTask({
+              steps: [{ name: "stale step", status: "pending" }] as Task["steps"],
+              awaitingPlanning: true,
+            })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+
+        expect(badge(container)).toHaveTextContent("Queued to plan");
+        expect(readyBadge(container)).toBeNull();
+      });
+
+      it("falls back to the step count in both directions when the field is absent", () => {
+        const stepless = render(
+          <TaskCard task={queuedToPlanTask({ steps: [] as Task["steps"] })} onOpenDetail={noop} addToast={noop} />,
+        );
+        expect(badge(stepless.container)).toHaveTextContent("Queued to plan");
+        expect(readyBadge(stepless.container)).toBeNull();
+        stepless.unmount();
+
+        const withSteps = render(
+          <TaskCard
+            task={queuedToPlanTask({ steps: [{ name: "Step 1", status: "pending" }] as Task["steps"] })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />,
+        );
+        expect(badge(withSteps.container)).toBeNull();
+        expect(readyBadge(withSteps.container)).toHaveTextContent("Ready");
+      });
     });
   });
 
@@ -2913,7 +3084,15 @@ describe("TaskCard", () => {
     expect(badge.getAttribute("title")).toContain("Auto-merge retries exhausted");
   });
 
-  it("renders merge-blocker in-review stall badge without retry counter", () => {
+  /*
+  FNXC:InReviewStallBadge 2026-07-26-18:12:
+  Inverted from "renders merge-blocker badge": the merge-blocker code is now badge-suppressed
+  (operator request — a pre-merge blocker is the ordinary in-review resting state, so badging it
+  marked routine cards abnormal). The card must show NO stall badge for this code, in any merge
+  status — the previous carve-out only suppressed it while isActiveMergeStatus(status) held, so
+  "failed" here is the case that used to badge and must now stay silent.
+  */
+  it("suppresses the in-review stall badge for the merge-blocker code", () => {
     render(
       <TaskCard
         task={makeTask({
@@ -2931,7 +3110,10 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("Merge blocked")).toBeDefined();
+    expect(screen.queryByText("Merge blocked")).toBeNull();
+    expect(document.querySelector('[data-stall-code="merge-blocker"]')).toBeNull();
+    // The suppression must not leave an empty badge shell behind.
+    expect(document.querySelector(".card-status-badge.in-review-stall")).toBeNull();
     expect(screen.queryByText(/\/3/)).toBeNull();
   });
 
@@ -5762,12 +5944,55 @@ describe("TaskCard", () => {
       expect(githubStyles.padding).toBe(timeStyles.padding);
       expect(githubStyles.fontSize).toBe(timeStyles.fontSize);
       expect(githubStyles.lineHeight).toBe(timeStyles.lineHeight);
-      const githubBorderTopWidth = githubStyles.borderTopWidth || "1px";
-      const timeBorderTopWidth = timeStyles.borderTopWidth || "1px";
-      const githubBorderBottomWidth = githubStyles.borderBottomWidth || "1px";
-      const timeBorderBottomWidth = timeStyles.borderBottomWidth || "1px";
-      expect(githubBorderTopWidth).toBe(timeBorderTopWidth);
-      expect(githubBorderBottomWidth).toBe(timeBorderBottomWidth);
+      /*
+      FNXC:TaskCardParity 2026-07-31-00:10:
+      BORDER WIDTH IS READ FROM THE CSSOM, because computed style cannot answer it in jsdom.
+
+      The chips are in real parity: the GitHub badge declares `border: 1px solid transparent`, the
+      timer chip declares `border: var(--btn-border-width) solid transparent`, and
+      `--btn-border-width` is `1px` (styles.css:183). jsdom does not substitute `var()`, so the
+      shorthand fails to parse and `borderTopWidth` comes back as the initial value `medium` —
+      producing `expected '1px' to be 'medium'` for a card whose geometry never drifted.
+
+      Computed style cannot be repaired here: the width is not merely unsubstituted, it is
+      DISCARDED, leaving no token to resolve. (The old `|| "1px"` fallbacks never fired either —
+      `medium` is a non-empty string, so it was the fallback that never ran, not the value that was
+      missing.)
+
+      So parity is asserted against the DECLARED rules via the CSSOM the mounted stylesheet already
+      exposes, with tokens resolved from `:root`. Using the CSSOM rather than a regex over the CSS
+      text on purpose: a hand-rolled matcher over grouped selectors is the kind of cheap check that
+      silently matches the wrong rule and still reports success.
+
+      A real divergence — one chip moving to 2px, or a token change touching only one of them —
+      still fails, which is the FN-4511 invariant. Everything jsdom CAN resolve (padding, font-size,
+      line-height, gap) stays asserted against computed style above.
+      */
+      const declaredBorderWidth = (selector: string): string =>
+        resolveCssToken(declaredStyle(selector, "border").split(/\s+/)[0]);
+      expect(declaredBorderWidth(".card-time-indicator")).toBe(declaredBorderWidth(".card-github-badge"));
+
+      /*
+      FNXC:TaskCardParity 2026-07-31-01:05 (PR #2782 review — greptile P2):
+      PARITY MUST SURVIVE A THEME, which the assertion above cannot see on its own.
+
+      It resolves --btn-border-width from `:root`, and the fixture deliberately does not mount
+      theme-data.css — so it only ever tested the default 1px. greptile pointed out that themes
+      override the token, and the concern was real: `factory` and `factory-mono` set
+      --btn-border-width: 2px, so the tokenized timer chip grew to 2px while this badge stayed
+      hardcoded at 1px. A live geometry break on two shipped themes, invisible to the test.
+
+      Fixed at the source — .card-github-badge now uses the token (styles.css), per the standing
+      rule against hardcoded pixels in component CSS. This case is the proof: override the token the
+      way a theme does, and BOTH chips must move together. It fails if either one is re-literalized.
+      */
+      document.documentElement.style.setProperty("--btn-border-width", "2px");
+      try {
+        expect(declaredBorderWidth(".card-github-badge")).toBe("2px");
+        expect(declaredBorderWidth(".card-time-indicator")).toBe("2px");
+      } finally {
+        document.documentElement.style.removeProperty("--btn-border-width");
+      }
       expect(githubStyles.gap).toBe(timeStyles.gap);
 
       if (githubBadge.offsetHeight > 0 || timeIndicator.offsetHeight > 0) {
@@ -5782,8 +6007,24 @@ describe("TaskCard", () => {
   });
 
   it("FN-4511 preserves transparent border slot on .card-github-badge", () => {
+    /*
+    FNXC:TaskCardParity 2026-07-31-01:20 (PR #2782 review — greptile P2):
+    THE SLOT IS THE INVARIANT, not the literal width.
+
+    This required `border: 1px solid transparent` verbatim. The badge now declares
+    `var(--btn-border-width)` so it tracks the sibling footer chips under a theme — the `factory`
+    and `factory-mono` themes set that token to 2px, and while this badge was pinned to a hardcoded
+    1px it visibly fell out of alignment with the timer chip on both.
+
+    What the test is NAMED for still holds and is still asserted: a transparent border slot is
+    reserved, so hover/focus states can colour it without shifting layout. The width is allowed to
+    be the token or a literal length; anything else — no border, or a non-transparent colour — still
+    fails.
+    */
     const css = loadAllAppCssBaseOnly();
-    expect(css).toMatch(/\.card-github-badge\s*\{[^}]*border:\s*1px\s+solid\s+transparent;[^}]*\}/);
+    expect(css).toMatch(
+      /\.card-github-badge\s*\{[^}]*border:\s*(?:var\(--btn-border-width\)|[\d.]+px)\s+solid\s+transparent;[^}]*\}/,
+    );
   });
 
   it.each([
@@ -6894,6 +7135,67 @@ describe("TaskCard near-duplicate chip", () => {
   });
 });
 
+/*
+FNXC:RefinementTitle 2026-07-26-20:10:
+A refinement card is titled by the operator's feedback now, so the title no longer says the card
+is a refinement. The "Refines <id>" chip is what carries that, and this covers the affordance's
+surfaces: present for a `task_refine` task with a parent, absent for an ordinary task (with no
+empty chip shell left behind), and absent when the parent is unresolvable — a chip whose only
+content is the parent id must not render without one.
+*/
+describe("TaskCard refines chip", () => {
+  it("renders the refines chip for a refinement task", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_refine", sourceParentTaskId: "FN-1234" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Refines FN-1234")).toBeInTheDocument();
+  });
+
+  it("renders no refines chip and no empty shell for an ordinary task", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "cli", sourceParentTaskId: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText(/Refines /)).toBeNull();
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
+  });
+
+  it("renders no refines chip when the refinement has no resolvable parent", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_refine", sourceParentTaskId: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
+  });
+
+  // A non-refinement that merely carries a parent id (duplicates, agent-created follow-ups)
+  // must not be mislabeled as a refinement.
+  it("does not render the refines chip for a non-refinement task that has a parent", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceType: "task_duplicate", sourceParentTaskId: "FN-1234" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(document.querySelector(".card-refine-chip")).toBeNull();
+  });
+});
+
 /**
  * FNXC:TaskRevert 2026-07-04-00:00:
  * FN-7555 forward affordance coverage. Mirrors the near-duplicate chip test shape
@@ -7382,9 +7684,14 @@ describe("TaskCard mission badge", () => {
       expect(promoteButton).toHaveClass("card-promote-action");
       expect(promoteButton.textContent).toContain("Promote");
 
-      const styles = getComputedStyle(promoteButton);
-      expect(styles.gap).toBe("var(--space-xs)");
-      expect(styles.padding).toBe("var(--space-xs) var(--space-sm)");
+      /*
+      Asserted against the DECLARED rule, not `getComputedStyle`. The computed reading of `padding`
+      here was "var(--space-xs) var(--space-sm)" under jsdom 27 and became "0" under jsdom 29 with
+      the CSS untouched — see the note on `declaredStyle`. The intent is that the promote action
+      uses the standard chip spacing tokens, which is what these now check.
+      */
+      expect(declaredStyle(".card-promote-action", "gap")).toBe("var(--space-xs)");
+      expect(declaredStyle(".card-promote-action", "padding")).toBe("var(--space-xs) var(--space-sm)");
     } finally {
       style.remove();
     }
@@ -7856,7 +8163,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={vi.fn()}
@@ -7880,7 +8187,14 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     expect(screen.queryByTestId("card-start-FN-001")).toBeNull();
   });
 
-  it("omits the Start button for the triage column even when intake is flagged", () => {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  Retitled and re-fixtured. The rule was never about the id `triage` — it was "an intake
+  lane that AUTO-triages needs no Start button, because the engine picks the card up on
+  its own". That is now expressed by the absence of `manualIntake` rather than by naming
+  a column, which is what makes it survive U11 deleting `triage`.
+  */
+  it("omits the Start button for an AUTO-triaging intake column", () => {
     render(
       <TaskCard
         task={makeTask({ column: "triage" })}
@@ -7898,7 +8212,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -7921,7 +8235,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         taskMoveColumns={taskMoveColumns}
         onOpenDetail={noop}
         addToast={addToast}
@@ -7939,7 +8253,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={noop}
         onMoveTask={onMoveTask}
@@ -7961,7 +8275,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -7993,7 +8307,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8013,7 +8327,7 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     render(
       <TaskCard
         task={makeTask({ column: "ideas" as any })}
-        taskColumnFlags={{ intake: true }}
+        taskColumnFlags={{ intake: true, manualIntake: true }}
         onOpenDetail={noop}
         addToast={addToast}
         onMoveTask={onMoveTask}
@@ -8023,5 +8337,72 @@ describe("TaskCard Start affordance (FN-7596)", () => {
     fireEvent.click(screen.getByTestId("card-start-FN-001"));
 
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("move blocked", "error"));
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-00:15 (U12 — the affordance this file never covered):
+THE EDIT BUTTON ON A RENAMED BOARD.
+
+TaskDetailModal resolved field editability from column traits in U10/R8. TaskCard implemented the
+same affordance with a hardcoded `{triage, todo}` id set and NO trait path, even though
+`taskColumnFlags` was already in scope — so on a board whose pre-implementation column is renamed,
+the title was editable in the detail modal and the pencil was absent from the card.
+
+VERIFIED UNCOVERED rather than assumed: mutating `canEdit` back to the hardcoded set left
+`app/components/__tests__/TaskCard*` at exactly the same failure count as the unmutated run, so
+nothing caught it. These four assert the real `aria-label`, and that mutation now fails with
+"Unable to find an accessible element ... name 'Edit task'".
+*/
+describe("TaskCard field editability resolves column traits (U12 — R8)", () => {
+  const EDIT_LABEL = { name: "Edit task" };
+
+  it("renders the edit button for a RENAMED pre-implementation column", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ intake: true, hold: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    // Fails with the hardcoded id set: `backlog` is not in it.
+    expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
+  });
+
+  it("does NOT render it for a resolved mid-flight column", () => {
+    // The narrowing guard: without it the case above passes for a card that always shows the pencil,
+    // letting an operator rewrite a description while a session executes against it.
+    render(
+      <TaskCard
+        task={makeTask({ column: "building" as any })}
+        taskColumnFlags={{ countsTowardWip: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+  });
+
+  it("vetoes editing when a hold column ALSO carries a review trait", () => {
+    // A legal shape a plain `intake || hold` check gets wrong.
+    render(
+      <TaskCard
+        task={makeTask({ column: "backlog" as any })}
+        taskColumnFlags={{ hold: true, mergeBlocker: true }}
+        onUpdateTask={noop}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(screen.queryByRole("button", EDIT_LABEL)).not.toBeInTheDocument();
+  });
+
+  it("still renders it for a legacy `todo` card with no flags resolved", () => {
+    // The pre-load window, and what every board did before the conversion.
+    render(<TaskCard task={makeTask({ column: "todo" as any })} onUpdateTask={noop} onOpenDetail={noop} addToast={noop} />);
+    expect(screen.getByRole("button", EDIT_LABEL)).toBeInTheDocument();
   });
 });

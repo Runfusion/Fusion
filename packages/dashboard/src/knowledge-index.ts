@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-knowledge-index");
 /**
  * Persistent knowledge index (U14).
  *
@@ -254,7 +257,7 @@ export async function refreshKnowledgeForTask(
     if (!layer) throw new Error("Knowledge refresh requires the project PostgreSQL AsyncDataLayer");
     return (await upsertKnowledgePageAsync(layer, input)).page;
   } catch (err) {
-    console.warn(`[knowledge-index] refresh skipped for task ${taskId}:`, err);
+    severityAuditLog.warn(`[knowledge-index] refresh skipped for task ${taskId}:`, err);
     return null;
   }
 }

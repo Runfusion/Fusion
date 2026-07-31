@@ -22,6 +22,7 @@ import {
   type DevServerState,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
+import { useVisibilityAwarePoll } from "./visibilitySuspension";
 
 const MAX_LOG_LINES = 500;
 const POLL_INTERVAL_MS = 3000;
@@ -414,20 +415,15 @@ export function useDevServer(projectId?: string): UseDevServerReturn {
     };
   }, [projectId, refresh, subscriptionSessionId]);
 
-  // Polling while server is running
-  useEffect(() => {
-    if (session?.status !== "running" && session?.status !== "starting") {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [refresh, session?.status]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:26:
+  Polling while the dev server runs is additionally gated on document visibility: a backgrounded mobile tab
+  that keeps issuing 3s status fetches is discarded by the OS, producing the white-splash reload on return.
+  Dev-server status is display-only, so suspending it while hidden loses nothing; the visible transition
+  refreshes once so the panel is current the moment the operator looks at it.
+  */
+  const devServerPollEnabled = session?.status === "running" || session?.status === "starting";
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: devServerPollEnabled });
 
   const startServer = useCallback(async (command: string, cwd?: string) => {
     contextVersionRef.current += 1;

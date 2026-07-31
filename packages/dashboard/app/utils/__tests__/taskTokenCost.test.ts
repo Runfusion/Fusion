@@ -46,6 +46,17 @@ describe("taskTokenCost", () => {
     expect(formatCost(totalCostForRows(rows).usd, totalCostForRows(rows).unavailable)).toBe("—");
   });
 
+  it("keeps mixed priced and unpriced per-model usage unavailable", () => {
+    const total = taskTotalCost(task(usage({
+      perModel: [
+        { modelProvider: "openai", modelId: "gpt-5-mini", inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000 },
+        { modelProvider: "unknown", modelId: "no-price", inputTokens: 1, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1 },
+      ],
+    })));
+
+    expect(formatCost(total.usd, total.unavailable)).toBe("—");
+  });
+
   it("does not fabricate cost for zero usage", () => {
     const zeroTask = task(usage({ modelProvider: "unknown", modelId: "no-price" }));
     const total = taskTotalCost(zeroTask);

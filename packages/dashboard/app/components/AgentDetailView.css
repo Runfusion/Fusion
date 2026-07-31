@@ -16,23 +16,13 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   width: 100%;
-  min-width: calc(var(--space-xl) * 20);
-  max-width: calc(100vw - var(--space-2xl) - var(--space-xs) * 2);
-  min-height: calc(var(--space-xl) * 13 + var(--space-sm));
-  max-height: calc(100dvh - var(--space-2xl) - var(--space-xs) * 2);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  resize: both;
   box-shadow: var(--shadow-lg);
-}
-
-/* Initial size — applied only when no persisted size has been restored. */
-.agent-detail-modal:not([style*="width"]) {
-  width: min(calc(var(--space-xl) * 37 + var(--space-md)), calc(100vw - var(--space-2xl) - var(--space-xs) * 2));
-}
-.agent-detail-modal:not([style*="height"]) {
-  height: min(85vh, calc(100dvh - var(--space-2xl) - var(--space-xs) * 2));
 }
 
 .agent-detail-inline-shell {
@@ -639,6 +629,18 @@ FNXC:AgentDetailView 2026-06-26-01:00:
 .logs-count {
   font-size: var(--space-md);
   color: var(--text-muted);
+}
+
+/*
+FNXC:AgentLogHistory 2026-07-26-13:46:
+Wrapper for the log window's "Load older" affordance. Sits ABOVE the viewer because a log tail reads
+bottom-up: older entries are reached by walking upward, so the control belongs at the top edge of the
+rendered window. Reuses the shared `.btn .btn-secondary .btn-sm` primitive — no forked variant.
+*/
+.log-window-loader {
+  display: flex;
+  justify-content: center;
+  padding-bottom: var(--space-sm);
 }
 
 .streaming-indicator {
@@ -1772,27 +1774,34 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
     max-width: 100%;
   }
 
-  .agent-detail-overlay {
-    padding: 0;
-    align-items: stretch;
-  }
+  /*
+  FNXC:ModalTouchGeometry 2026-08-13-12:20:
+  The 768px boundary is tablet-class when FloatingWindow enables touch geometry.
+  Keep its inner modal panel container-sized there; only true phones take over the viewport.
+  */
+  @media (max-width: 767.98px) {
+    .agent-detail-overlay {
+      padding: 0;
+      align-items: stretch;
+    }
 
-  .agent-detail-modal {
-    /* Reset the desktop min-width: 480px / min-height: 320px — otherwise the
-       fullscreen mobile sheet can still overflow narrow viewports. The
-       !important width/height overrides also beat any persisted desktop size. */
-    min-width: 0 !important;
-    min-height: 0 !important;
-    width: 100vw !important;
-    height: 100dvh !important;
-    max-width: 100vw !important;
-    max-height: 100dvh;
-    margin: 0;
-    border-radius: 0;
-    border: none;
-    /* Disable user resize on mobile — modal is fullscreen. The !important on
-       width/height above also overrides any persisted desktop dimensions. */
-    resize: none;
+    .agent-detail-modal {
+      /* Reset the desktop min-width: 480px / min-height: 320px — otherwise the
+         fullscreen mobile sheet can still overflow narrow viewports. The
+         !important width/height overrides also beat any persisted desktop size. */
+      min-width: 0 !important;
+      min-height: 0 !important;
+      width: 100vw !important;
+      height: 100dvh !important;
+      max-width: 100vw !important;
+      max-height: 100dvh;
+      margin: 0;
+      border-radius: 0;
+      border: none;
+      /* Disable user resize on mobile — modal is fullscreen. The !important on
+         width/height above also overrides any persisted desktop dimensions. */
+      resize: none;
+    }
   }
 
   /*

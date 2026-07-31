@@ -1,11 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { createPortal } from "react-dom";
 import { fetchAgents } from "../api";
 import type { Agent } from "@fusion/core";
 import { AgentAvatar } from "./AgentAvatar";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { nextFloatingZ } from "./floatingWindowStack";
+import { FloatingWindow } from "./FloatingWindow";
 import "./CreateRoomModal.css";
 
 export interface RoomDraft {
@@ -52,15 +51,10 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
   const nameInputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   /*
-  FNXC:ChatRoomModal 2026-07-17-15:56:
-  Create Room is a blocking dialog launched from Quick Chat's non-blocking FloatingWindow. Because
-  both surfaces portal to body, claim a fresh shared top-layer z-index on every open so the dialog
-  stays above its parent on desktop and the mobile full-screen Chat sheet, including after reopen.
+  FNXC:ModalTouchGeometry 2026-07-26-19:25:
+  Create Room is a blocking child of Quick Chat. The shared utility layer now claims its fresh
+  portal z-index on every mount, keeping this dialog above Chat without a bespoke overlay counter.
   */
-  const [overlayZ, setOverlayZ] = useState<number | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (isOpen) setOverlayZ(nextFloatingZ());
-  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -89,6 +83,11 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
     return () => window.cancelAnimationFrame(frame);
   }, [isOpen]);
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-19:25:
+  FloatingWindow owns the modal focus boundary but not Escape dismissal. Retain this dialog's
+  existing Escape and explicit prior-focus restoration behavior while moving its presentation.
+  */
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -150,9 +149,31 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
     }
   };
 
-  return createPortal(
-    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && onClose()} style={overlayZ ? { zIndex: overlayZ } : undefined}>
-      <div className="modal modal-lg create-room-modal" role="dialog" aria-modal="true" aria-label={t("createRoom.title", "Create room")} onClick={(event) => event.stopPropagation()}>
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-19:25:
+  This former portal dialog uses the shared FloatingWindow for clamped, persisted desktop and
+  tablet-touch geometry. It explicitly opts into outside pointer-down because its former backdrop
+  closed the dialog; FloatingWindow defaults that behavior off for durable utility windows.
+  */
+  return (
+    <FloatingWindow
+      windowKey="create-room"
+      title={t("createRoom.title", "Create room")}
+      ariaLabel={t("createRoom.title", "Create room")}
+      onClose={onClose}
+      modal
+      hideHeader
+      dragHandleSelector=".modal-header"
+      className="floating-window--create-room"
+      defaultSize={{ width: 640, height: 640 }}
+      minSize={{ width: 360, height: 400 }}
+      persistGeometryKey="floating-window:create-room"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      closeOnOutsidePointerDown
+      layer="utility"
+    >
+      <div className="modal create-room-modal">
         <div className="modal-header">
           <h3>{t("createRoom.title", "Create room")}</h3>
           <button type="button" className="modal-close" aria-label={t("actions.close", "Close")} onClick={onClose}>×</button>
@@ -205,6 +226,11 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
           </div>
         )}
 
+        {/*
+        FNXC:ModalTouchGeometry 2026-07-26-19:25:
+        The picker, not FloatingWindow's body, remains the nested scroll owner so long member
+        lists preserve their independent scroll behavior inside the movable dialog.
+        */}
         <div className="create-room-modal-member-list" data-testid="create-room-member-list">
           {loadingAgents ? (
             <div className="create-room-modal-empty"><LoadingSpinner label={t("createRoom.loadingAgents", "Loading agents...")} /></div>
@@ -241,7 +267,6 @@ export function CreateRoomModal({ isOpen, onClose, onCreate, projectId, existing
           </button>
         </div>
       </div>
-    </div>,
-    document.body,
+    </FloatingWindow>
   );
 }

@@ -151,3 +151,59 @@ describe("getTaskAgeStalenessSignal", () => {
     expect(signal?.level).toBe("critical");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-08:25 (fleet phase — evidence for the lane gate):
+Age-staleness applies ONLY to the mid-flight and review lanes; a card in a hold or terminal lane is
+waiting or finished, not stale. Both lanes were named by id, so on a renamed board this returned
+`undefined` for EVERY card and the stale-card warning never appeared anywhere on the board.
+
+`lifecycle` is optional and every case above omits it, so they all keep asserting the legacy ids —
+which is why none of them could have caught this.
+
+REVERT CHECK, measured: restoring the `in-progress`/`in-review` literals makes the renamed-lane case
+fail (`expected undefined to be defined`), and restoring the threshold selector's literal makes the
+threshold case fail — it picks the review threshold for a card in the renamed WIP lane.
+*/
+describe("age staleness resolves its lanes by ROLE", () => {
+  const RENAMED = { wip: "building", review: "checking" };
+  const STALE_MOVED_AT = new Date(NOW - 72 * 60 * 60 * 1000).toISOString();
+
+  it("produces a signal for a card in a RENAMED wip lane", () => {
+    const signal = getTaskAgeStalenessSignal(
+      { ...baseTask, column: "building" as never, columnMovedAt: STALE_MOVED_AT },
+      { now: NOW, lifecycle: RENAMED },
+    );
+    expect(signal).toBeDefined();
+  });
+
+  it("produces a signal for a card in a RENAMED review lane", () => {
+    const signal = getTaskAgeStalenessSignal(
+      { ...baseTask, column: "checking" as never, columnMovedAt: STALE_MOVED_AT },
+      { now: NOW, lifecycle: RENAMED },
+    );
+    expect(signal).toBeDefined();
+  });
+
+  it("still returns nothing for a hold lane on that renamed board", () => {
+    // Non-vacuous: the gate must still EXCLUDE lanes that play neither role.
+    expect(getTaskAgeStalenessSignal(
+      { ...baseTask, column: "backlog" as never, columnMovedAt: STALE_MOVED_AT },
+      { now: NOW, lifecycle: RENAMED },
+    )).toBeUndefined();
+  });
+
+  it("selects the WIP threshold, not the review one, for a renamed wip lane", () => {
+    /*
+    The two threshold selectors are a separate literal from the gate above: converting only the gate
+    would admit the card and then measure it against the REVIEW threshold, which is the wrong number
+    and silently so.
+    */
+    const wipSignal = getTaskAgeStalenessSignal(
+      { ...baseTask, column: "building" as never, columnMovedAt: STALE_MOVED_AT },
+      { now: NOW, lifecycle: RENAMED, thresholds: { inProgressWarningMs: 1, inProgressCriticalMs: 2, inReviewWarningMs: 999 * 60 * 60 * 1000, inReviewCriticalMs: 999 * 60 * 60 * 1000 } },
+    );
+    // With a 1ms wip warning and a ~999h review warning, only the wip threshold can produce critical.
+    expect(wipSignal?.level).toBe("critical");
+  });
+});

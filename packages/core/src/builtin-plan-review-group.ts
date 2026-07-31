@@ -38,9 +38,23 @@ Be specific: cite the plan section or file path for every finding and explain th
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
+/*
+FNXC:PlanReviewStep 2026-07-27-06:10:
+Plan Review is a PLANNING-lane gate and runs in the column the card actually rests in after
+specification: `todo`. Not `triage` — that is the intake lane, and an intake column has no releaser
+(the capacity sweep only releases from a `hold` column), so a card parked there waits for a human.
+Two reasons the column is load-bearing rather than cosmetic: the plan-in-place chain only seeds a
+plan-review continuation when the node's column EQUALS the card's column
+(`seedPreReleasePlanReviewContinuation`), and a card whose plan is still under review must not hold
+a wip slot.
+
+`column` is optional: linear built-ins (`builtin-workflows.ts`) resolve node columns by inheritance,
+so those call sites omit it and `assignLinearNodeColumns` places the group in whatever planning
+column the preceding node established — `todo` in practice, the same lane by a different route.
+*/
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(
-  column: string,
+  column?: string,
   options: { defaultOn?: boolean; maxRevisions?: number | "unbounded"; requireExternalIntegrationEvidence?: boolean } = {},
 ): WorkflowIrNode {
   const promptConfig: Record<string, unknown> = {
@@ -61,7 +75,7 @@ export function planReviewOptionalGroupNode(
   return {
     id: PLAN_REVIEW_GROUP_ID,
     kind: "optional-group",
-    column,
+    ...(column ? { column } : {}),
     config: {
       name: PLAN_REVIEW_NAME,
       defaultOn: options.defaultOn ?? true,

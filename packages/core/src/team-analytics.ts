@@ -1,3 +1,5 @@
+import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -13,6 +15,18 @@ export interface TeamAnalyticsQuery {
   now?: number;
   /** User-managed pricing overrides that take precedence over the built-in baseline. */
   pricingOverrides?: ModelPricingOverrides;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
+  Resolved trait flags per column NAME, so the wip/review tallies below come from the board's own
+  lanes. Omitted, core's role helpers fall back to the legacy ids — that degraded mode lives in
+  `column-roles.ts` and is tested there, so this file carries no hand-written fallback.
+
+  The failure this fixes is a SILENT ZERO. On a renamed board neither literal matched any row, so the
+  analytics surface reported `tasksInProgress: 0` and `tasksInReview: 0` beside token and cost totals
+  that were entirely correct. Plausible-looking numbers are worse than missing ones: a zero next to a
+  populated cost column reads as "nobody is working", not as "this metric is broken".
+  */
+  columnFlagsByName?: ReadonlyMap<string, ColumnRoleTraitFlags>;
 }
 
 export interface TeamMetricTotals {
@@ -202,6 +216,25 @@ function makeSummary(agentId: string, agent?: AgentRow): TeamAgentSummary {
 export async function aggregateTeamAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: TeamAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:10:
+  The store, used ONLY to resolve which columns carry the complete / wip / human-review traits.
+
+  These queries filtered on `"column" = 'done'` and `IN ('in-progress','in-review')`. Those ids are
+  invisible to the lifecycle census, which parses TypeScript comparisons and not SQL strings, so the
+  conversion sweep that fixed this file's TS guards left the queries alone. On a board whose lanes are
+  renamed, every one of them counts ZERO: completed-task totals, per-agent throughput and the
+  in-flight breakdown all read as an idle project, with no error anywhere.
+
+  Resolved PER PROJECT rather than per task, which is what makes a bound array enough here: analytics
+  aggregates a whole project, so the union of a role's columns across its workflows is the right set.
+  (The merge-queue cleanup needed the superset-then-decide-in-JS shape instead, because its lanes are
+  genuinely per task and SQL cannot know a task's workflow.)
+
+  Omitted, the legacy ids answer — the same degraded contract the role helpers use, so an unconverted
+  caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<TeamAnalytics> {
   // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
   // Backend (PostgreSQL) path. Fetch agents + the four task-derived row sets
@@ -209,7 +242,7 @@ export async function aggregateTeamAnalytics(
   // connection has no `project` on search_path), then run the identical pure
   // per-agent aggregation as the sync branch via buildTeamAnalytics.
   if ("ping" in dbOrLayer) {
-    return aggregateTeamAnalyticsAsync(dbOrLayer, query);
+    return aggregateTeamAnalyticsAsync(dbOrLayer, query, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -282,7 +315,51 @@ export async function aggregateTeamAnalytics(
 async function aggregateTeamAnalyticsAsync(
   layer: AsyncDataLayer,
   query: TeamAnalyticsQuery,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<TeamAnalytics> {
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-30-20:10 (#2864 review — greptile P1, "project-wide lane
+  union misclassifies tasks"): ACCEPTED IMPRECISION, RECORDED RATHER THAN LEFT SILENT.
+
+  These are PROJECT-scoped unions — every column any workflow declares for the role. On a project
+  where two workflows reuse one column id with DIFFERENT traits (`done` as complete in one, an
+  ordinary lane in another), a task from the second is counted by the first's semantics and the
+  totals inflate.
+
+  WHY THE UNION STAYS. The rule this program applies is that a union is safe where over-inclusion is
+  invisible — a query, a candidate set something else narrows — and unsafe where it drives an ACTION.
+  Nothing is routed or notified here, so no card is mishandled; the cost is a number an operator
+  reads. That is real, and it is still the better trade: per-task resolution means one workflow read
+  per task and moving the aggregation out of PostgreSQL into JS, turning an indexed
+  `COUNT ... WHERE column IN (...)` into an N-read loop on an analytics endpoint. The board-load path
+  reverted exactly that change once for exactly that reason.
+
+  SCOPE OF THE DEFECT, because "analytics are wrong on renamed boards" would be the wrong reading: the
+  union is EXACT for any project running a single workflow, and degrades only where two workflows
+  disagree about the same column id.
+
+  THE REAL FIX is making a task's resolved lane roles QUERYABLE — a column or joinable projection
+  maintained beside the task row — so the aggregate filters on the role instead of an id set assembled
+  in application code. That closes this class everywhere at once and is a schema change with an owner,
+  not a batch conversion.
+
+  Bound as arrays, never interpolated: these ids come from workflow definitions, which are
+  operator-authored data. `= ANY($n)` keeps them parameters rather than SQL text.
+  */
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  const activeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["countsTowardWip", "humanReview"])]
+    : ["in-progress", "in-review"];
+  /*
+  Built as an IN list of individual parameters rather than `= ANY(${array})`: drizzle expands a JS
+  array in a template into a comma-separated tuple, so ANY received `(($1,$2,$3))` and PostgreSQL
+  rejected it with "op ANY/ALL (array) requires array on right side". Each id stays a bound
+  parameter either way — these come from operator-authored workflow definitions and are never
+  interpolated as SQL text.
+  */
+  const inList = (lanes: readonly string[]) => sql.join(lanes.map((lane) => sql`${lane}`), sql`, `);
   const agents = (await layer.db.execute(
     sql`SELECT id, name, role, state FROM project.agents ORDER BY id`,
   )) as unknown as AgentRow[];
@@ -322,14 +399,14 @@ async function aggregateTeamAnalyticsAsync(
   const completedRows = (await layer.db.execute(
     sql`SELECT assigned_agent_id AS "agentId", count(*)::int AS count
         FROM project.tasks
-        WHERE assigned_agent_id IS NOT NULL AND "column" = 'done' AND column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        WHERE assigned_agent_id IS NOT NULL AND "column" IN (${inList(completeLanes)}) AND column_moved_at IS NOT NULL ${compFrom} ${compTo}
         GROUP BY assigned_agent_id`,
   )) as unknown as CountByAgentRow[];
 
   const currentRows = (await layer.db.execute(
     sql`SELECT assigned_agent_id AS "agentId", "column" AS "columnName", count(*)::int AS count
         FROM project.tasks
-        WHERE assigned_agent_id IS NOT NULL AND "column" IN ('in-progress', 'in-review')
+        WHERE assigned_agent_id IS NOT NULL AND "column" IN (${inList(activeLanes)})
         GROUP BY assigned_agent_id, "column"`,
   )) as unknown as Array<CountByAgentRow & { columnName: string }>;
 
@@ -401,8 +478,9 @@ function buildTeamAnalytics(
 
   for (const row of currentRows) {
     const summary = ensureSummary(row.agentId);
-    if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
-    if (row.columnName === "in-review") summary.tasksInReview = row.count;
+    const columnFlags = query.columnFlagsByName?.get(row.columnName);
+    if (isWipColumnRole(columnFlags, row.columnName)) summary.tasksInProgress = row.count;
+    if (isReviewColumnRole(columnFlags, row.columnName)) summary.tasksInReview = row.count;
   }
 
   for (const row of fileRows) {

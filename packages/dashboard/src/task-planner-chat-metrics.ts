@@ -344,7 +344,11 @@ function buildWorkflowStepTimings(results: WorkflowStepResult[] | undefined, now
   });
 }
 
-function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMetricsPayload["timing"] {
+function buildTimingMetrics(
+  task: MetricsTask,
+  nowMs: number,
+  options: { wipColumns?: ReadonlySet<string> } = {},
+): TaskPlannerChatMetricsPayload["timing"] {
   const malformedTimestamps: string[] = [];
   const executionStartedMs = parseTimestampToMs(task.executionStartedAt, malformedTimestamps);
   const executionCompletedMs = parseTimestampToMs(task.executionCompletedAt, malformedTimestamps);
@@ -360,7 +364,23 @@ function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMe
     ? null
     : Math.max(0, (executionCompletedMs ?? nowMs) - firstExecutionMs);
   const cumulativeActiveMs = optionalFiniteNumber(task.cumulativeActiveMs);
-  const activeRuntimeMs = task.column === "in-progress" && executionStartedMs != null
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-16:10 (batch-dashboard-src):
+  "Is this card still accruing active runtime?" is the WIP role, not the id `in-progress`.
+
+  Keyed on the literal, the live tail — the wall-clock since `executionStartedAt` — was omitted for
+  every card on a board whose execution lane is renamed, so the planner's own metrics tool reported
+  a running task's active time frozen at whatever the last completed segment left in
+  `cumulativeActiveMs`. The number looked plausible, which is why nothing surfaced it.
+
+  `wipColumns` is REQUIRED to be supplied by the production caller to mean anything: an optional
+  parameter nobody fills reads as converted, passes its test by injection, and leaves the literal
+  live. `chat.ts` resolves it from the task's own workflow via `wipColumnsForTask`. It stays optional
+  in the signature only so the pure formatter is callable without a store, and that path degrades to
+  the legacy id — the documented no-metadata answer, not a floor.
+  */
+  const wipColumns = options.wipColumns ?? new Set(["in-progress"]);
+  const activeRuntimeMs = wipColumns.has(task.column) && executionStartedMs != null
     ? (cumulativeActiveMs ?? 0) + Math.max(0, nowMs - executionStartedMs)
     : cumulativeActiveMs;
 
@@ -427,7 +447,12 @@ function buildTimingMetrics(task: MetricsTask, nowMs: number): TaskPlannerChatMe
  */
 export function formatTaskPlannerChatMetrics(
   task: MetricsTask,
-  options: { pricingOverrides?: ModelPricingOverrides; nowMs?: number } = {},
+  options: {
+    pricingOverrides?: ModelPricingOverrides;
+    nowMs?: number;
+    /** The task's own WIP lanes, resolved by the caller. See the note at `activeRuntimeMs`. */
+    wipColumns?: ReadonlySet<string>;
+  } = {},
 ): TaskPlannerChatMetricsResult {
   const nowMs = options.nowMs ?? Date.now();
   const metrics: TaskPlannerChatMetricsPayload = {
@@ -436,7 +461,7 @@ export function formatTaskPlannerChatMetrics(
     column: task.column,
     status: task.status,
     tokens: buildTokenMetrics(task, options.pricingOverrides, nowMs),
-    timing: buildTimingMetrics(task, nowMs),
+    timing: buildTimingMetrics(task, nowMs, { wipColumns: options.wipColumns }),
   };
 
   const tokenSummary = metrics.tokens.available

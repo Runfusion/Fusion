@@ -26,6 +26,9 @@ Never copy worktree files into the reported checkout, rebuild an unmerged branch
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->
 Use **Search settings** at the top of Settings to find the section that contains a setting by name or keyword. The same search works in the Settings modal and embedded Settings page, filters both the desktop section list and mobile section picker, and only searches sections currently visible for enabled feature flags.
 
+<!-- FNXC:UiMetadataApi 2026-07-14-00:00: External dashboard integrations need the same view and Settings-section registry that the UI renders, exposed without duplicating labels or search terms. -->
+Plugin and command-palette authors can discover the dashboard's registered view ids through `GET /api/views` and selectable Settings sections through `GET /api/settings/sections`. These authenticated, read-only endpoints return static metadata; see the [Plugin Authoring Guide](./PLUGIN_AUTHORING.md#ui-metadata-endpoints) for response fields and examples.
+
 <!-- FNXC:Settings 2026-07-09-12:00: FN-7751 keeps FN-7713's collapsed mobile search row but moves the toggle inline beside the section dropdown so mobile Settings exposes one compact section/search control row; desktop/tablet keep the row always visible with no toggle. -->
 On mobile, the search row starts collapsed behind a compact toggle icon beside the **Settings Section** dropdown to save vertical space; tap it to reveal the search input and tap again to hide it. An in-progress search query is preserved across collapse/expand. Desktop and tablet always show the search row with no toggle.
 
@@ -86,10 +89,45 @@ Press `Escape` to close the current/topmost dashboard popup. Popped-out task win
 <!-- FNXC:ModalGeometryPersistenceDocs 2026-07-16-00:40: Full-screen mobile FloatingWindow sheets must preserve, rather than overwrite, the movable desktop geometry record so a later desktop reopen restores the user's chosen location and size. -->
 Movable dashboard pop-outs remember their last desktop location and size, while centered resizable dialogs remember their size. When a pop-out becomes a full-screen sheet at mobile widths (or, for Artifact Gallery, its short-height sheet breakpoint), it leaves that desktop record untouched; reopening it on desktop restores the prior floating geometry.
 
-<!-- FNXC:TaskModalResizeDocs 2026-08-07-00:00: Known touch tablets at the 768px CSS boundary use the shared physical-screen-aware viewport classification, so documentation must distinguish their resize contract from true phones that share the CSS media query. -->
+<!-- FNXC:TaskModalResizeDocs 2026-07-26-15:55: Known touch tablets at the 768px CSS boundary use the shared physical-screen-aware viewport classification, so documentation must distinguish their resize contract from true phones that share the CSS media query. Tablet target expansion is hit-area-only and must never add a visible panel inset. -->
+### Dashboard modal inventory
+
+The grep-backed [dashboard modal inventory](./dashboard-modal-inventory.md) is the canonical migration plan for every dashboard modal surface, including explicit static-dialog opt-outs.
+
 ### Task modal resizing on tablets
 
-Task Detail and New Task remain resizable on known touch tablets, including a 768px-wide tablet viewport. Task Detail exposes its accessible bottom-right resize grip; New Task keeps its draggable header and edge/corner resize controls. Their geometry stays within the viewport and is restored from browser storage on later tablet or desktop opens. True phones and narrow folded panes remain full-screen sheets without active resize controls so keyboard and safe-area behavior is unchanged.
+Task Detail and New Task remain resizable on known touch tablets, including a 768px-wide tablet viewport. Task Detail exposes its accessible bottom-right resize grip; New Task keeps its draggable header and edge/corner resize controls. On that tablet-touch surface, the painted control remains compact but its explicit resize hit target is at least 44px, sits outside the panel content, and owns touch gestures with pointer capture. The touch target is hit-area-only: task-modal headers and bodies retain desktop density without a visible tablet padding band. Their geometry stays within the viewport and is restored from browser storage on later tablet or desktop opens. True phones, narrow folded panes, and desktop coarse-pointer devices do not receive the enlarged target: phones remain full-screen sheets and desktop preserves cursor-sized resize chrome.
+
+<!-- FNXC:ModalTouchGeometryDocs 2026-07-26-15:55: FloatingWindow is shared by task and utility surfaces. Task-detail density overrides are class-scoped and a classless browser fixture control proves the generic 44px geometry remains unchanged. -->
+### Shared floating-window touch contract
+
+Use `FloatingWindow` for a moveable and resizable dashboard surface rather than adding per-modal pointer code. On known tablet touch viewports it uses `isTabletTouchViewport`, applies `data-resize-hit-target="true"` to the drag handle and all eight edge/corner handles, and expands only their hit areas to the shared 44px target without thickening painted borders or covering content/footer controls. Task-detail uses an out-of-flow drag target so its hit area does not add painted header padding; this density adjustment is scoped to task modals, while a classless browser-fixture control verifies that generic FloatingWindow geometry stays unchanged. Never gate these controls on bare `(pointer: coarse)`: desktop hybrids keep desktop geometry. Phone full-screen sheets are strictly **below 768px** (`max-width: 767.98px`); a 768px viewport is tablet-class, so JS geometry and CSS must preserve active targets there.
+
+<!-- FNXC:ModalTouchGeometryDocs 2026-07-26-13:50: Core/workflow modal migrations use stable window keys so one shared primitive owns drag, resize, clamping, stacking, and persisted geometry. -->
+
+Core/workflow FloatingWindow modals use `persistGeometryKey="floating-window:<windowKey>"`: `automation` (Scheduled Tasks), `settings`, `git-manager`, `planning-mode`, `changes-diff`, `model-onboarding`, `activity-log`, `scripts`, `add-node`, `connect-node`, `node-detail`, `workflow-add-step`, `group-task`, and `create-room`. Create Room uses `floating-window:create-room`; its member picker remains a nested scroll container within the shared window body. The former size-only `fusion:settings-modal-size`, `fusion:git-modal-size`, `fusion:planning-modal-size`, `fusion:changes-diff-modal-size`, and `fusion:model-onboarding-modal-size` keys are superseded by their matching complete geometry records. All of these windows suspend reading and writing geometry on phone and short (`max-height: 480px`) sheet viewports, so a desktop position never leaks into the sheet and a sheet never overwrites the desktop choice.
+
+<!-- FNXC:ModalTouchGeometryDocs 2026-07-26-16:35: FN-8607 requires every non-trivial modal to share the FloatingWindow contract so tablet touch users receive one consistent move/resize implementation. -->
+
+All non-trivial modals must use `FloatingWindow` with `hideHeader`, a modal-owned `dragHandleSelector`, a class name, sensible `defaultSize`/`minSize`, a stable `persistGeometryKey`, `suspendGeometryPersistenceOnMobile`, and `suspendGeometryPersistenceOnShortViewport`. Desktop drag and eight-direction resize remain active; only known tablet touch viewports (768px–1024px) enlarge active targets to at least 44px. Exactly 768px is tablet-class and persists geometry; 767px and below are full-screen sheets. A viewport at `max-height: 480px` is also a full-screen sheet regardless of width and never reads or writes geometry.
+
+`closeOnOutsidePointerDown` defaults to **off**. A modal that previously dismissed on its backdrop must pass it explicitly, while first-run/blocking flows must omit it. The `FloatingWindow` panel is the sole `role="dialog"`/`aria-modal` owner; hosted content must not nest a second dialog. Its backdrop remains a real opt-in outside-pointer dismissal target, while nested dialogs and body-portaled menus are safe surfaces. Preserve the existing focus, Escape, ARIA, close guard, and scroll-container behavior when hosting content. `AgentListModal`, `AgentImportModal`, `AgentGenerationModal`, `AgentOnboardingModal`, `ExperimentalAgentOnboardingModal`, `SetupWizardModal`, `NativeShellOnboardingModal`, `DockerNodeOnboardingModal`, `MailboxModal`, `MilestoneSliceInterviewModal`, and `SubtaskBreakdownModal` use this contract. `modalFloatingWindowContract.test.tsx` and `migratedModalFixtures.tsx` ratchet their host, geometry, and dismissal configuration.
+
+Static opt-outs are only brief single-decision alerts without reflowable content or long dwell time: `DuplicateWarningModal`, `AgentErrorDetailsModal`, `ModelSelectionModal`, `ReportModal`, `ResearchTaskActionModal`, `SettingsSyncConflictModal`, and `StashConflictModal`. Their focused acknowledgement or urgent-conflict semantics do not benefit from persistent movable geometry; additions require a documented inventory justification.
+
+<!-- FNXC:ModalTouchGeometryDocs 2026-07-26-19:25: FN-8621 closes the complex-modal batch by making FloatingWindow the canonical non-trivial modal host while publishing the narrow embedded and docked presentations that legitimately retain their owners. -->
+### Supported presentation exceptions
+
+Every non-trivial dashboard modal is hosted by `FloatingWindow`. It uses the physical-screen-aware `isTabletTouchViewport` contract: phones are **≤767.98px**, tablet-class touch is **≥768px plus touch**, and delegated drag plus all resize hit areas carry `data-resize-hit-target="true"` with an effective target of at least **44px**. This is hit-area-only and never a bare `(pointer: coarse)` rule. `closeOnOutsidePointerDown` defaults **off**; only a surface whose pre-migration backdrop dismissed the dialog may opt in explicitly, preserving its dismissal contract.
+
+These are supported presentation exceptions, not silently unmigrated dialogs:
+
+- `TerminalModal` stays docked in docked mode, including its dock-height control; only floating mode is a `FloatingWindow` with project-scoped geometry.
+- `AgentDetailView` stays embedded for inline presentation, while its modal presentation uses `FloatingWindow`; the inline branch owns no floating geometry.
+- `GitHubImportModal` stays embedded when `useEmbeddedPresentation` resolves embedded presentation. Its `resizePersistEnabled` modal-only gate keeps container-filling imports free of floating chrome; modal presentation uses `FloatingWindow`.
+- `RightDockExpandModal` preserves dock-origin content behavior (`surface: "expand"`) while its expanded shell is a `FloatingWindow`.
+
+A new embedded/docked exception is legitimate only when an owning container must retain its layout, lifecycle, and content origin; it must have an explicit presentation gate and an inventory justification. Brief static opt-outs remain limited to the focused, one-decision dialogs listed above and require the same documented justification.
 
 ## Mobile/PWA app icons
 
@@ -367,7 +405,7 @@ Use Import Tasks on desktop/tablet:
 3. Stay on **Issues** or switch to **Pull Requests**, then optionally enter issue label filters before loading results.
    Expected outcome: the list pane shows matching open issues or pull requests and marks entries that already exist on the board. Use **Hide imported** beside the imported count to remove those unavailable rows from the current Issues, Pull Requests, or GitLab list; turning it off restores the greyed **Imported** rows. After a successful GitHub or GitLab import, the source row is marked **Imported** and made unavailable immediately, without waiting for the board list to refresh.
 4. Select an issue or pull request row.
-   Expected outcome: the full-width candidate list stays visible while its title, source link, body, labels or PR metadata, and import controls open in a draggable and resizable detail window. On mobile, that detail is a full-screen sheet. When selected title/body content is in another language, the detail offers **Translate**, **Show original** / **Show translation**, and **Dismiss**; translation is display-only. Issue forms are evaluated from their user-provided answers rather than template headings, labels, placeholders, and checkboxes, so foreign-language form content receives the same translation offer. With GitHub import auto-translate enabled, every reachable page of open GitHub issues is translated as you page through the fetched list (up to the 300-issue fetch cap per one-hour translate budget); repeat views use the translation cache. While a page is translating, the issues list shows a **Translating…** status indicator and surfaces any translation failure without blocking import or browsing. Pull request and GitLab lists retain the per-selection translation flow. A pull request preview also shows its checks; use **Refresh checks** to fetch current GitHub check status and comments without reopening the detail. Each failed check has a **Create fix task** action that creates a new task prefilled with the repository, PR, branches, check status, and check-details link.
+   Expected outcome: the full-width candidate list stays visible while its title, source link, body, labels or PR metadata, and import controls open in a draggable and resizable detail window. On mobile, that detail is a full-screen sheet. When selected title/body content is in another language, the detail offers **Translate**, **Show original** / **Show translation**, and **Dismiss**; translation is display-only. Issue forms are evaluated from their user-provided answers rather than template headings, labels, placeholders, and checkboxes, so foreign-language form content receives the same translation offer. With GitHub import auto-translate enabled, every reachable page of open GitHub issues is translated as you page through the fetched list (up to the 300-issue fetch cap per one-hour translate budget); repeat views use the translation cache. While a page is translating, the issues list shows a **Translating…** status indicator and surfaces any translation failure without blocking import or browsing. Manual **Translate** uses the dedicated translation budget and configured translation model lane, not the refine/draft helper budget. Its result is cached durably by provider, repository, item, locale, and source content: it reappears automatically on reselect, reopen, and reload without another model request, remains available to the import path, and is discarded when content changes or the item closes. Pull request and GitLab lists retain the per-selection translation flow. A pull request preview also shows its checks; use **Refresh checks** to fetch current GitHub check status and comments without reopening the detail. Each failed check has a **Create fix task** action that creates a new task prefilled with the repository, PR, branches, check status, and check-details link.
 <!--
 FNXC:GitHubImportDocs 2026-07-17-12:00:
 Import Tasks documentation distinguishes Add comment (an upstream GitHub mutation) from Import as task
@@ -2293,3 +2331,48 @@ Dictation inserts a live partial transcript at the current caret (or replaces th
 ### Conversation tags
 
 Direct conversations can be organized with reusable tags. Open a conversation's **More** menu to create a tag or toggle its assignments; a conversation can have multiple tags. Use the tag selector beside conversation search to filter pinned and recent conversations without affecting text search. Tags are project-scoped, and deleting a tag only removes its assignments—it never deletes conversations or messages. Chat Rooms do not use conversation tags.
+
+### Tablet touch modal resize
+
+Task Detail and New Task retain their desktop resize chrome, but tablet-class touch viewports expose a 44px `data-resize-hit-target` around resize controls. The target is enabled only by the shared tablet-touch viewport classifier; true-phone sheets and desktop coarse-pointer devices do not expose it.
+
+## Floating modal contract
+
+All non-trivial, reflowable dashboard dialogs use `FloatingWindow`; do not create a second drag,
+resize, or viewport-classification implementation. A migration uses the dialog's existing header as
+its drag handle and supplies `hideHeader`, `dragHandleSelector`, `className`, `defaultSize`,
+`minSize`, `persistGeometryKey`, `suspendGeometryPersistenceOnMobile`, and
+`suspendGeometryPersistenceOnShortViewport`. Former blocking dialogs also pass `modal`: it enables
+the shared backdrop, `aria-modal` dialog semantics, and keyboard focus boundary while preserving
+shared touch geometry. The variant class must be included in the shared sheet reset: suspension of
+geometry and removal of handles are insufficient unless the host and its content fill the phone or
+short-viewport sheet. `closeOnOutsidePointerDown` defaults to **off**; a dialog that previously
+closed from its backdrop must opt in explicitly, and blocking first-run flows must omit it.
+
+| Viewport | Drag and resize | Persistence |
+| --- | --- | --- |
+| Desktop (including coarse-pointer desktop), ≥1025px | Active desktop mouse drag and eight-direction resize; targets are unchanged | Persisted |
+| Touch tablet, 768–1024px | Active touch drag and resize with ≥44px `data-resize-hit-target` controls | Persisted |
+| True phone, ≤767px | Full-screen sheet; no active geometry affordance | Suspended |
+| Any viewport ≤480px tall | Full-screen sheet; this overrides the width row | Suspended |
+
+Exactly **768px** is touch-tablet when the shared `isTabletTouchViewport` classifier identifies a
+touch tablet; **767px** starts the true-phone sheet range. Do not use bare `@media (pointer:
+coarse)`: desktop coarse-pointer hardware retains normal desktop controls, while only the shared
+classifier activates enlarged tablet targets. Preserve focus, Escape, ARIA labels, existing scroll
+containers, and each dialog's dismissal/confirmation behavior when moving its content to the host.
+
+`AgentListModal`, `AgentImportModal`, `AgentGenerationModal`, `AgentOnboardingModal`,
+`ExperimentalAgentOnboardingModal`, `SetupWizardModal`, `NativeShellOnboardingModal`,
+`DockerNodeOnboardingModal`, `MailboxModal`, `MilestoneSliceInterviewModal`, and
+`SubtaskBreakdownModal` use this contract. Outside dismissal is explicit for Agent List/Import/
+Generation, Docker onboarding (guarded while submitting), Mailbox, Milestone/Slice Interview, and
+Subtask Breakdown; the four onboarding flows remain blocking.
+
+Only transient, single-decision confirm/alert dialogs with no reflowable content or long dwell time
+may remain static. The inventory opt-outs are `AgentErrorDetailsModal` (brief acknowledgement),
+`ModelSelectionModal` (compact focused choice), `ReportModal` (brief reporting action),
+`ResearchTaskActionModal` (bounded confirmation), `SettingsSyncConflictModal` (urgent conflict
+choice), and `StashConflictModal` (urgent bounded recovery). The executable inventory is guarded by
+`modalFloatingWindowContract.test.tsx`; `migratedModalFixtures.tsx` keeps every hosted surface in
+per-modal geometry coverage.

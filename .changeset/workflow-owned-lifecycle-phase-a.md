@@ -1,0 +1,7 @@
+---
+"@runfusion/fusion": patch
+---
+
+summary: Internal groundwork for workflow-owned lifecycle; no operator-visible behavior change.
+category: internal
+dev: Phase A of the workflow-owned-lifecycle program. U1 adds `resolveLifecycleColumns(ir)` / `resolveTaskLifecycleColumns(store, taskId, cache?)` in `@fusion/core` — the trait-driven seam later phases convert ~207 hardcoded column literals onto. U2 deletes `workflow-columns-settings.ts` (`isWorkflowColumnsEnabled` returned a literal `true`; its six flag-OFF branches were unreachable) and `workflow-parity.ts` with its two dead TaskStore methods (`getWorkflowParitySummary`, `computeWorkflowColumnsGraduationReport`); both files plus seven symbols are added to the `legacy-tombstones` ratchet. The board-workflows response keeps `flagEnabled: true` on the wire for shipped clients. U3 adds the post-commit lifecycle event bus (`getWorkflowEventBus`, `emitWorkflowLifecycleEvent`, ids/outcomes-only payloads enforced at the emit boundary) emitting `TaskTransitioned` from the single post-commit point in `moveTaskInternalImpl` and `NodeEntered`/`RunSuspended` from the graph column boundary, plus `registerWorkflowEventSubscribers` in `@fusion/engine` (empty by design). Durable follow-on work stays in the transactional outbox — a `workflow_work_items` row written inside the transition transaction — with at-least-once delivery proven against real PostgreSQL; subscribers carry only losable reactions.

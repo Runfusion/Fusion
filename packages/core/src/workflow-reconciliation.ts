@@ -101,6 +101,85 @@ export function resolveSwitchReconciliation(
   };
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2513 review):
+A workflow SWITCH commits the new selection first, then re-homes the card. When the
+destination rejects the move (capacity), `rehomeOccupant` swallows the error — so the
+selection said one thing and the card's column said another, and nothing reported it.
+A torn write with no alarm is the one outcome that must not survive.
+
+The state is RECOVERABLE and deliberately left in place rather than rolled back: the
+selection is committed and the card sits in a column the new workflow does not
+declare, which is exactly what the R7 startup sweep `reconcileUndeclaredTaskColumns`
+repairs. What was missing is the alarm, so this error IS the alarm — it names the
+task, both columns, and the underlying rejection so an operator can retry or make
+room instead of discovering it later from a card in a lane that cannot be drawn.
+*/
+export class WorkflowSwitchRehomeFailedError extends Error {
+  readonly taskId: string;
+  readonly workflowId: string;
+  readonly fromColumn: string;
+  readonly intendedColumn: string;
+  readonly reason?: string;
+  /** True when the workflow selection was already COMMITTED — i.e. the card is torn
+   *  and needs recovery. False when the switch was rejected before any write, which
+   *  leaves the card fully consistent and is the ordinary case. */
+  readonly committed: boolean;
+  constructor(args: {
+    taskId: string;
+    workflowId: string;
+    fromColumn: string;
+    intendedColumn: string;
+    reason?: string;
+    committed: boolean;
+  }) {
+    super(
+      args.committed
+        ? `Task '${args.taskId}' was switched to workflow '${args.workflowId}', but re-homing it ` +
+            `from '${args.fromColumn}' to '${args.intendedColumn}' was rejected` +
+            `${args.reason ? `: ${args.reason}` : ""}. The workflow selection IS COMMITTED and the ` +
+            `card remains in '${args.fromColumn}', which that workflow does not declare — the card ` +
+            `is inconsistent. Make room in '${args.intendedColumn}' and move the card there, or ` +
+            `switch the task back; startup reconciliation will otherwise re-home it.`
+        : `Cannot switch task '${args.taskId}' to workflow '${args.workflowId}': it would have to ` +
+            `move from '${args.fromColumn}' to '${args.intendedColumn}'` +
+            `${args.reason ? `, but ${args.reason}` : ", but that move was rejected"}. Nothing was ` +
+            `changed — the task keeps its current workflow and column. Make room in ` +
+            `'${args.intendedColumn}' and retry.`,
+    );
+    this.name = "WorkflowSwitchRehomeFailedError";
+    this.taskId = args.taskId;
+    this.workflowId = args.workflowId;
+    this.fromColumn = args.fromColumn;
+    this.intendedColumn = args.intendedColumn;
+    this.committed = args.committed;
+    if (args.reason !== undefined) this.reason = args.reason;
+  }
+}
+
+/**
+ * Decide what a completed workflow switch should REPORT, given the column the task
+ * actually has afterwards (`undefined` when the row could not be read).
+ *
+ * FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+ * Extracted as a pure seam because the case that matters is not reachable through
+ * the public call. `selectTaskWorkflow` rejects a soft-deleted task up front with
+ * `TaskDeletedError`, so "the task is soft-deleted BETWEEN the first read and the
+ * final one" is a genuine race that cannot be driven from outside — and it is the
+ * case where the previous fallback fabricated a live column for a row that is gone.
+ * Racing a lifecycle read against a soft-delete is a documented hazard here (the
+ * soft-delete verification matrix; FN-8004). Testing the decision directly is honest;
+ * asserting it from reading the code is not.
+ */
+export function buildSwitchReconciliation(
+  fromColumn: string,
+  actualColumn: string | undefined,
+): { preserved: boolean; fromColumn: string; toColumn: string } | undefined {
+  // Absent is absent — never synthesize a column from the stale pre-switch read.
+  if (actualColumn === undefined) return undefined;
+  return { preserved: actualColumn === fromColumn, fromColumn, toColumn: actualColumn };
+}
+
 // ── (b) Workflow edit removing an occupied column ────────────────────────────
 
 /** Per-column occupant count for a blocked edit/delete. */

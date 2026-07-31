@@ -2150,7 +2150,7 @@ describe("POST /tasks/:id/spec/revise", () => {
 
   it("requests spec revision and moves task from todo to triage", async () => {
     const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-revise-"));
     const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
     mkdirSync(taskDir, { recursive: true });
@@ -2176,7 +2176,16 @@ describe("POST /tasks/:id/spec/revise", () => {
         "AI spec revision requested",
         "Please add more details about error handling"
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-03-01:10 (red on main — `triage` no longer exists):
+      A CARD AT INTAKE IS RESET IN PLACE, not moved. #2515 merged Todo into Planning keeping the id `todo`, so
+      the default lineage's intake column IS `todo` — and the respecify route's own comment says a task already
+      sitting at intake skips the transition check and `moveTask` entirely, resetting for replanning where it is.
+
+      This case asserted `moveTask(id, "triage")`. Both halves were stale: the column is gone, and there is no
+      move at all for a card that is already where respecify sends it.
+      */
+      expect(store.moveTask).not.toHaveBeenCalled();
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
     } finally {
@@ -2186,7 +2195,7 @@ describe("POST /tasks/:id/spec/revise", () => {
 
   it("requests spec revision and moves task from in-progress to triage", async () => {
     const inProgressTask = { ...FAKE_TASK_DETAIL, column: "in-progress" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inProgressTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2201,12 +2210,12 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("allows spec revision for task already in triage", async () => {
-    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "needs-replan" as const };
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "needs-replan" as const };
     const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-revise-triage-"));
     const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
     mkdirSync(taskDir, { recursive: true });
@@ -2243,7 +2252,7 @@ describe("POST /tasks/:id/spec/revise", () => {
 
   it("allows spec revision when task is in in-review (in-review can transition to triage)", async () => {
     const inReviewTask = { ...FAKE_TASK_DETAIL, column: "in-review" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2257,13 +2266,13 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
   });
 
   it("allows spec revision when task is in done (done can transition to triage)", async () => {
     const doneTask = { ...FAKE_TASK_DETAIL, column: "done" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2277,7 +2286,7 @@ describe("POST /tasks/:id/spec/revise", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   it("returns 400 when feedback is missing", async () => {
@@ -2338,7 +2347,7 @@ describe("POST /tasks/:id/spec/revise", () => {
 
   it("queues multiple revision requests as multiple log entries", async () => {
     const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2392,7 +2401,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
 
   it("rebuilds spec and moves task from todo to triage", async () => {
     const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-"));
     const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
     mkdirSync(taskDir, { recursive: true });
@@ -2411,7 +2420,12 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "FN-001",
         "Specification rebuild requested by user"
       );
-      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-03-01:40: the resolved rebuild target for the default lineage IS
+      `todo` (no `triage` since #2515), and the route only moves when `task.column !== replanColumn` — so a card
+      already in `todo` is rebuilt IN PLACE. Two stale things in one assertion: the column, and the move itself.
+      */
+      expect(store.moveTask).not.toHaveBeenCalled();
       expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
       expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
@@ -2422,7 +2436,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
 
   it("rebuilds spec and moves task from in-progress to triage", async () => {
     const inProgressTask = { ...FAKE_TASK_DETAIL, column: "in-progress" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inProgressTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2431,14 +2445,14 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
   });
 
   it("rebuilds spec and moves task from done to triage", async () => {
     const doneTask = { ...FAKE_TASK_DETAIL, column: "done" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(doneTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2447,13 +2461,13 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
   });
 
   it("allows rebuild for task already in triage", async () => {
-    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "needs-replan" as const };
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "needs-replan" as const };
     const tempRoot = mkdtempSync(join(tmpdir(), "kb-spec-rebuild-triage-"));
     const taskDir = join(tempRoot, ".fusion", "tasks", "FN-001");
     mkdirSync(taskDir, { recursive: true });
@@ -2485,7 +2499,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
 
   it("allows spec rebuild when task is in in-review (in-review can transition to triage)", async () => {
     const inReviewTask = { ...FAKE_TASK_DETAIL, column: "in-review" as const };
-    const movedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
     (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2493,7 +2507,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
     expect(res.status).toBe(200);
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { moveSource: "user", recoveryRehome: true });
     expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "needs-replan" });
   });
@@ -2528,6 +2542,10 @@ describe("POST /tasks/:id/spec/rebuild", () => {
       const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/spec/rebuild");
 
       expect(res.status).toBe(200);
+      /* This workflow declares NEITHER `triage` NOR `todo` (only `publish`), so the route's documented last
+         resort applies and the target stays the legacy `triage` — recovery-rehomed because a plain move would
+         reject an undeclared target. My blanket `triage` -> `todo` sweep over this file had broken exactly this
+         case, which is the one that proves the fallback still exists. */
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "triage", { moveSource: "user", recoveryRehome: true });
       expect((store as unknown as { clearWorkflowRunStepInstancesAsync: ReturnType<typeof vi.fn> }).clearWorkflowRunStepInstancesAsync).toHaveBeenCalledWith("FN-001");
       expect(existsSync(join(taskDir, "PROMPT.md"))).toBe(false);
@@ -2626,7 +2644,7 @@ describe("POST /tasks/:id/approve-plan", () => {
   }
 
   it("approves plan and moves task from triage to todo", async () => {
-    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
+    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
     const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
@@ -2643,19 +2661,24 @@ describe("POST /tasks/:id/approve-plan", () => {
     expect(res.body.status).toBeUndefined();
   });
 
-  it("returns 400 when task is not in triage column", async () => {
-    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
+  it("returns 400 when the task is not at the workflow's intake column", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-03-01:50 (red on main): the guard is "is the card at the workflow's
+    INTAKE column", and on the default lineage intake IS `todo` — so a `todo` fixture is now the VALID case and
+    proves nothing. The rejection needs a column that is genuinely not intake.
+    */
+    const nonIntakeTask = { ...FAKE_TASK_DETAIL, column: "in-progress" as const, status: "awaiting-approval" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(nonIntakeTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("triage");
+    expect(res.body.error).toContain("todo");
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("returns 400 when task does not have awaiting-approval status", async () => {
-    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "planning" as const };
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "planning" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
@@ -2691,7 +2714,7 @@ describe("POST /tasks/:id/approve-plan", () => {
   it("approves a task carrying the legacy release-authorization hold", async () => {
     const releaseHoldTask = {
       ...FAKE_TASK_DETAIL,
-      column: "triage" as const,
+      column: "todo" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: "release-authorization" as const,
     };
@@ -2711,7 +2734,7 @@ describe("POST /tasks/:id/approve-plan", () => {
   it("still approves a manual-approval hold with awaitingApprovalReason unset", async () => {
     const awaitingTask = {
       ...FAKE_TASK_DETAIL,
-      column: "triage" as const,
+      column: "todo" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: undefined,
     };
@@ -2745,7 +2768,7 @@ describe("POST /tasks/:id/approve-plan", () => {
         logEntry: vi.fn().mockResolvedValue(undefined),
         getRootDir: vi.fn().mockReturnValue(root),
       });
-      const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
+      const awaitingTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
       const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
       (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
       (localStore.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
@@ -2788,8 +2811,8 @@ describe("POST /tasks/:id/reject-plan", () => {
   }
 
   it("rejects plan and clears status for regeneration", async () => {
-    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
+    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: undefined };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
@@ -2801,22 +2824,29 @@ describe("POST /tasks/:id/reject-plan", () => {
     // FN-7569: reject-plan clears any previously-recorded approval fingerprint so a
     // regenerated plan is always treated as new and requires fresh manual approval.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined, approvedPlanFingerprint: null });
-    expect(res.body.column).toBe("triage");
+    /* The rejected card stays where it was — the workflow's intake column, `todo` on the default lineage since
+       #2515 removed `triage`. Reject clears status for regeneration; it does not move the card. */
+    expect(res.body.column).toBe("todo");
   });
 
-  it("returns 400 when task is not in triage column", async () => {
-    const todoTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(todoTask);
+  it("returns 400 when the task is not at the workflow's intake column", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-03-01:50 (red on main): the guard is "is the card at the workflow's
+    INTAKE column", and on the default lineage intake IS `todo` — so a `todo` fixture is now the VALID case and
+    proves nothing. The rejection needs a column that is genuinely not intake.
+    */
+    const nonIntakeTask = { ...FAKE_TASK_DETAIL, column: "in-progress" as const, status: "awaiting-approval" as const };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(nonIntakeTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("triage");
+    expect(res.body.error).toContain("todo");
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 
   it("returns 400 when task does not have awaiting-approval status", async () => {
-    const triageTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "planning" as const };
+    const triageTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "planning" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(triageTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
@@ -2851,11 +2881,11 @@ describe("POST /tasks/:id/reject-plan", () => {
   it("rejects a task carrying the legacy release-authorization hold", async () => {
     const releaseHoldTask = {
       ...FAKE_TASK_DETAIL,
-      column: "triage" as const,
+      column: "todo" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: "release-authorization" as const,
     };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: undefined };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(releaseHoldTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
 
@@ -2870,11 +2900,11 @@ describe("POST /tasks/:id/reject-plan", () => {
   it("still rejects a manual-approval hold with awaitingApprovalReason unset", async () => {
     const awaitingTask = {
       ...FAKE_TASK_DETAIL,
-      column: "triage" as const,
+      column: "todo" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: undefined,
     };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: undefined };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
@@ -2893,11 +2923,11 @@ describe("POST /tasks/:id/reject-plan", () => {
   it("clears an existing approvedPlanFingerprint on reject", async () => {
     const awaitingTask = {
       ...FAKE_TASK_DETAIL,
-      column: "triage" as const,
+      column: "todo" as const,
       status: "awaiting-approval" as const,
       approvedPlanFingerprint: "deadbeef",
     };
-    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined, approvedPlanFingerprint: undefined };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: undefined, approvedPlanFingerprint: undefined };
 
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);

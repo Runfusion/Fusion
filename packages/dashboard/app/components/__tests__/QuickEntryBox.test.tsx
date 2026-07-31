@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
+import { expectStableTyping } from "./typingStability.test-helpers";
 import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
@@ -568,6 +569,19 @@ describe("QuickEntryBox", () => {
     restoreQuickEntryTestGlobals();
 
     expectQuickEntryTestGlobalsRestored();
+  });
+
+
+  /*
+  FNXC:TypingStability 2026-07-26-22:15:
+  Per-character typing guard for the board's primary composer. FN-8606 shipped an untypable Planning
+  Mode and Settings because field coverage uses fireEvent.change, which sets a value in one shot and
+  never needs the node to stay mounted. This asserts node identity, accumulated value, and focus.
+  */
+  it("keeps the composer mounted and focused while typing", async () => {
+    renderQuickEntryBox({});
+    const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+    await expectStableTyping(textarea, "ship it", () => screen.getByTestId("quick-entry-input"));
   });
 
   it("renders textarea with placeholder", () => {

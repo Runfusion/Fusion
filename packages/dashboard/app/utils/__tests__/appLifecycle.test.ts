@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AiSessionSummary } from "../../api";
 import {
@@ -6,6 +6,7 @@ import {
   shouldShowSessionInBanner,
   isSessionNeedingInputForBanner,
   resolveDesktopShellRedirectTarget,
+  executeCliSessionBannerAction,
 } from "../appLifecycle";
 
 function makeSession(overrides: Partial<AiSessionSummary> & Pick<AiSessionSummary, "id">): AiSessionSummary {
@@ -217,5 +218,60 @@ describe("resolveDesktopShellRedirectTarget", () => {
         "http://127.0.0.1:50123/",
       ),
     ).toBeNull();
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+
+THE INVARIANT: the CLI-session banner's Cancel returns the card to ITS OWN hold lane.
+
+CENSUS-INVISIBLE IN TWO WAYS AT ONCE — the literal lived in a call argument AND in the dep's TYPE
+(`moveTask: (id: string, column: "todo")`), so the signature itself prevented any caller from passing
+anything else. No scan for comparisons could reach either.
+
+Post-U12 the rejection in `moves.ts` is live: a move to a column the workflow does not declare throws
+"Unknown column for this workflow" unless the caller sets `recoveryRehome`, which this is not. So on a
+renamed board **Cancel threw instead of cancelling** — an operator-facing button that fails.
+
+WIRED, NOT OPTIONAL. `App.tsx` supplies `resolveCancelColumn` from the board-workflow metadata it
+already holds. An optional parameter no caller fills is the inert shape this program has found five
+times; adding a sixth to fix a broken button would have been worse than leaving it.
+
+REVERT PROOF, measured: restore the hardcoded `"todo"` and the renamed case moves to `todo` instead of
+the board's own hold lane.
+*/
+describe("CLI banner cancel resolves the board's own hold lane", () => {
+  const baseDeps = () => ({
+    retryTask: vi.fn().mockResolvedValue(undefined),
+    moveTask: vi.fn().mockResolvedValue(undefined),
+    openAuthenticationSettings: vi.fn(),
+    addToast: vi.fn(),
+  });
+
+  it("moves to the RENAMED hold lane when the caller resolves one", async () => {
+    const deps = { ...baseDeps(), resolveCancelColumn: () => "backlog" };
+
+    await executeCliSessionBannerAction({ id: "FN-1" } as never, "cancel", deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
+  });
+
+  it("keeps the legacy destination when metadata has not resolved", async () => {
+    // Board-workflow metadata is absent on first paint and for remote projects; the documented
+    // fallback must stay exactly today's behaviour rather than refusing to cancel.
+    const deps = { ...baseDeps(), resolveCancelColumn: () => undefined };
+
+    await executeCliSessionBannerAction({ id: "FN-2" } as never, "cancel", deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-2", "todo");
+  });
+
+  it("keeps the legacy destination when no resolver is supplied at all", async () => {
+    const deps = baseDeps();
+
+    await executeCliSessionBannerAction({ id: "FN-3" } as never, "cancel", deps as never);
+
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-3", "todo");
   });
 });

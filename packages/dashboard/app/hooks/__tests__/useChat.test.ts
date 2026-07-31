@@ -296,7 +296,11 @@ describe("useChat", () => {
     localStorage.setItem(
       chatSessionsCacheKey(projectId),
       JSON.stringify({
-        savedAt: Date.now() - 120_000,
+        // FNXC:MobileTabDiscard 2026-07-26-12:10: this case needs an envelope that is genuinely PAST
+        // the hydration TTL so nothing hydrates and the in-memory session list stays empty. Derive the
+        // age from SWR_TASKS_MAX_AGE_MS instead of a literal so raising the TTL (12h, to survive a
+        // mobile tab discard) cannot silently turn this into the "cached sessions hydrate" case.
+        savedAt: Date.now() - (swrCacheModule.SWR_TASKS_MAX_AGE_MS + 120_000),
         data: [makeSession({ id: "session-stale", agentId: "agent-001" })],
       }),
     );
@@ -2220,7 +2224,16 @@ describe("useChat", () => {
     });
   });
 
-  it("fetches session on visible return only when no live stream and swallows reconnect failures", async () => {
+  /*
+  FNXC:ChatStreaming 2026-07-26-21:05:
+  This test used to assert that an attached stream suppressed the visible-return session probe
+  ENTIRELY ("only when no live stream"). That assertion encoded the latch bug: `streamRef` is cleared
+  only by the stream's own terminal callbacks, so a transport killed during a background suspend left
+  a dead stream marked live and every later resume/reconnect was a no-op against a frozen transcript.
+  The probe now always runs; what an attached, still-generating stream buys is that NOTHING is torn
+  down or reloaded behind it. Failures are still swallowed (no toast) — with a bounded retry now.
+  */
+  it("probes the session on visible return and leaves a still-generating stream attached, swallowing reconnect failures", async () => {
     const session = {
       ...makeSession({ id: "session-001", agentId: "agent-001" }),
       isGenerating: false,
@@ -2255,13 +2268,25 @@ describe("useChat", () => {
     });
 
     mockFetchChatSession.mockClear();
+    mockFetchChatSession.mockResolvedValue({
+      session: { ...session, isGenerating: true, inFlightGeneration: null },
+    });
+    const attachCallsBeforeResume = mockAttachChatStream.mock.calls.length;
+    const messageLoadsBeforeResume = mockFetchChatMessages.mock.calls.length;
+
     act(() => {
       result.current.sendMessage("Hello");
       setDocumentVisibilityState("hidden");
       setDocumentVisibilityState("visible");
     });
 
-    expect(mockFetchChatSession).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockFetchChatSession).toHaveBeenCalledWith("session-001", undefined);
+    });
+    // A stream the server confirms is still generating keeps ownership of the transcript.
+    expect(mockAttachChatStream.mock.calls.length).toBe(attachCallsBeforeResume);
+    expect(mockFetchChatMessages.mock.calls.length).toBe(messageLoadsBeforeResume);
+    expect(addToast).not.toHaveBeenCalled();
   });
 
   it("still shows toast for non-suspension errors regardless of visibility", async () => {

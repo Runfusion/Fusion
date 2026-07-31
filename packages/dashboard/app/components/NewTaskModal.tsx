@@ -1,5 +1,5 @@
 import "./NewTaskModal.css";
-import { useState, useCallback, useEffect, useRef, type CSSProperties, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_TASK_PRIORITY, type Task, type TaskPriority } from "@fusion/core";
@@ -30,7 +30,7 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
-import { nextFloatingZ, currentFloatingZ } from "./floatingWindowStack";
+import { FloatingWindow } from "./FloatingWindow";
 
 type NewTaskCreateInput = Omit<CreateTaskInput, "branchSelection"> & {
   branchSelection?: {
@@ -54,100 +54,15 @@ interface NewTaskModalProps {
 }
 
 /*
-FNXC:NewTask 2026-06-22-20:30:
-The New Task dialog is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window matching the right-dock pop-out (RightDockExpandModal). The overlay is transparent and `pointer-events: none` so the app behind stays usable and behind-clicks pass through — there is therefore NO overlay click-to-dismiss; the header close (X) and Cancel button are the only dismissals (plus Escape). The panel is `position: fixed; pointer-events: auto`, dragged by its header and resized from corner/edge handles, with rAF-batched position/size state and a single teardown ref invoked on pointerup/pointercancel AND on unmount so no document/element listeners or pending rAF leak. Size/position persist to localStorage. On mobile we keep the full-screen sheet behavior (no floating) so the keyboard-aware layout still works.
+FNXC:ModalTouchGeometry 2026-07-27-18:00:
+FN-8620 replaces New Task's bespoke pointer geometry with FloatingWindow. The single shared
+geometry key intentionally supersedes the former size/position pair; old values reset once.
 */
-const NEW_TASK_MODAL_SIZE_STORAGE_KEY = "fusion:new-task-modal-size";
-const NEW_TASK_MODAL_POSITION_STORAGE_KEY = "fusion:new-task-modal-position";
-
 const NEW_TASK_DEFAULT_WIDTH = 720;
 const NEW_TASK_DEFAULT_HEIGHT = 640;
 const NEW_TASK_MIN_WIDTH = 420;
 const NEW_TASK_MIN_HEIGHT = 360;
-const NEW_TASK_VIEWPORT_PADDING = 16;
-/*
-FNXC:TaskModalResize 2026-07-24-19:00:
-Keyboard resizing follows the existing viewport padding quantum, so focusable edge controls produce predictable, touch-safe geometry changes without a second sizing scale.
-*/
-const NEW_TASK_KEYBOARD_RESIZE_STEP = NEW_TASK_VIEWPORT_PADDING;
 
-interface FloatSize {
-  width: number;
-  height: number;
-}
-
-interface FloatPosition {
-  x: number;
-  y: number;
-}
-
-function clampFloatSize(size: FloatSize): FloatSize {
-  if (typeof window === "undefined") return size;
-  return {
-    width: Math.min(Math.max(size.width, NEW_TASK_MIN_WIDTH), Math.max(NEW_TASK_MIN_WIDTH, window.innerWidth - NEW_TASK_VIEWPORT_PADDING * 2)),
-    height: Math.min(Math.max(size.height, NEW_TASK_MIN_HEIGHT), Math.max(NEW_TASK_MIN_HEIGHT, window.innerHeight - NEW_TASK_VIEWPORT_PADDING * 2)),
-  };
-}
-
-function clampFloatPosition(position: FloatPosition, size: FloatSize): FloatPosition {
-  if (typeof window === "undefined") return position;
-  return {
-    x: Math.min(Math.max(position.x, NEW_TASK_VIEWPORT_PADDING), Math.max(NEW_TASK_VIEWPORT_PADDING, window.innerWidth - size.width - NEW_TASK_VIEWPORT_PADDING)),
-    y: Math.min(Math.max(position.y, NEW_TASK_VIEWPORT_PADDING), Math.max(NEW_TASK_VIEWPORT_PADDING, window.innerHeight - size.height - NEW_TASK_VIEWPORT_PADDING)),
-  };
-}
-
-function readFloatSize(): FloatSize {
-  if (typeof window === "undefined") return { width: NEW_TASK_DEFAULT_WIDTH, height: NEW_TASK_DEFAULT_HEIGHT };
-  try {
-    const raw = window.localStorage.getItem(NEW_TASK_MODAL_SIZE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<FloatSize>;
-      if (typeof parsed.width === "number" && typeof parsed.height === "number") {
-        return clampFloatSize({ width: parsed.width, height: parsed.height });
-      }
-    }
-  } catch {
-    // ignore corrupted persisted size
-  }
-  return clampFloatSize({ width: NEW_TASK_DEFAULT_WIDTH, height: NEW_TASK_DEFAULT_HEIGHT });
-}
-
-function writeFloatSize(size: FloatSize): FloatSize {
-  const clamped = clampFloatSize(size);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(NEW_TASK_MODAL_SIZE_STORAGE_KEY, JSON.stringify(clamped));
-  }
-  return clamped;
-}
-
-function readFloatPosition(size: FloatSize): FloatPosition {
-  if (typeof window === "undefined") return { x: NEW_TASK_VIEWPORT_PADDING, y: NEW_TASK_VIEWPORT_PADDING };
-  try {
-    const raw = window.localStorage.getItem(NEW_TASK_MODAL_POSITION_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<FloatPosition>;
-      if (typeof parsed.x === "number" && typeof parsed.y === "number") {
-        return clampFloatPosition({ x: parsed.x, y: parsed.y }, size);
-      }
-    }
-  } catch {
-    // ignore corrupted persisted position
-  }
-  // Default: roughly centered.
-  return clampFloatPosition({ x: (window.innerWidth - size.width) / 2, y: (window.innerHeight - size.height) / 2 }, size);
-}
-
-function writeFloatPosition(position: FloatPosition, size: FloatSize): FloatPosition {
-  const clamped = clampFloatPosition(position, size);
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(NEW_TASK_MODAL_POSITION_STORAGE_KEY, JSON.stringify(clamped));
-  }
-  return clamped;
-}
-
-type FloatResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
-const NEW_TASK_RESIZE_DIRECTIONS: FloatResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 /*
 FNXC:GitHubImport 2026-07-16-15:20:
 Reference picker must surface all of a normal repo's open issues/PRs, not just the first 30.
@@ -426,177 +341,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [description, setDescription] = useState("");
   const githubGeneratedDescriptionRef = useRef("");
   const wasOpenRef = useRef(false);
+  const floatingFormRef = useRef<HTMLDivElement>(null);
 
   /*
-  FNXC:NewTask 2026-06-22-20:30:
-  Floating window position/size state (desktop only). Mobile keeps the full-screen sheet, so we only apply the floating panel style and drag/resize handlers when not mobile. A single active-drag teardown (drag OR resize) lives in dragTeardownRef; pointerup/pointercancel AND the unmount effect run it so an interrupted drag never leaks element pointer listeners or a pending rAF.
+  FNXC:ModalTouchGeometry 2026-07-27-18:00:
+  Phones and short viewports retain the keyboard-aware full-screen sheet. Desktop and tablet
+  presentations delegate drag, resize, clamping, persistence, and stacking to FloatingWindow.
   */
   const isFloating = viewportMode !== "mobile";
-  const [size, setSizeState] = useState<FloatSize>(() => readFloatSize());
-  const [position, setPositionState] = useState<FloatPosition>(() => readFloatPosition(readFloatSize()));
-  const dragTeardownRef = useRef<(() => void) | null>(null);
-  // FNXC:FloatingWindow 2026-06-22-21:30: Floating (desktop) New Task dialog shares the SINGLE cross-type floating z-index stack (floatingWindowStack). Mounting claims the front; tapping the panel (pointerdown/focus capture) raises it above every other floating modal regardless of type. Mobile keeps the full-screen sheet so this z-index is harmless there.
-  const [zIndex, setZIndex] = useState<number>(() => nextFloatingZ());
-  const bringToFront = useCallback(() => {
-    setZIndex((current) => (current >= currentFloatingZ() ? current : nextFloatingZ()));
-  }, []);
-
-  const persistSize = useCallback((next: FloatSize) => {
-    setSizeState(writeFloatSize(next));
-  }, []);
-
-  const persistPosition = useCallback((next: FloatPosition, withSize: FloatSize) => {
-    setPositionState(writeFloatPosition(next, withSize));
-  }, []);
-
-  // FNXC:NewTask 2026-06-22-20:30: Header drag. setPointerCapture redirects the pointer stream to the captured header element, so element-scoped pointermove/up listeners receive the full drag even off the header; moves are rAF-batched; the panel is clamped on-screen. Close button clicks are excluded so dragging never swallows close.
-  const handleFloatingDragPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
-    event.preventDefault();
-    const captureTarget = event.currentTarget;
-    const pointerId = event.pointerId;
-    captureTarget.setPointerCapture?.(pointerId);
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startPosition = position;
-    const currentSize = size;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-
-    let latest = startPosition;
-    let frame = 0;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      latest = { x: startPosition.x + moveEvent.clientX - startX, y: startPosition.y + moveEvent.clientY - startY };
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setPositionState(clampFloatPosition(latest, currentSize));
-      });
-    };
-    const detachListeners = () => {
-      captureTarget.releasePointerCapture?.(pointerId);
-      captureTarget.removeEventListener("pointermove", handlePointerMove);
-      captureTarget.removeEventListener("pointerup", handlePointerUp);
-      captureTarget.removeEventListener("pointercancel", handlePointerUp);
-    };
-    function handlePointerUp() {
-      if (frame) cancelAnimationFrame(frame);
-      persistPosition(latest, currentSize);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    }
-
-    dragTeardownRef.current = () => {
-      if (frame) cancelAnimationFrame(frame);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    };
-
-    captureTarget.addEventListener("pointermove", handlePointerMove);
-    captureTarget.addEventListener("pointerup", handlePointerUp);
-    captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [persistPosition, position, size]);
-
-  // FNXC:NewTask 2026-06-22-20:30: Corner/edge resize, rAF-batched. West/north handles also shift the panel origin so the opposite edge stays pinned. Same teardown discipline as the drag.
-  const handleFloatingResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>, direction: FloatResizeDirection) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const captureTarget = event.currentTarget;
-    const pointerId = event.pointerId;
-    captureTarget.setPointerCapture?.(pointerId);
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startSize = size;
-    const startPosition = position;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.userSelect = "none";
-
-    let latestSize = startSize;
-    let latestPosition = startPosition;
-    let frame = 0;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      const nextSize = clampFloatSize({
-        width: startSize.width + (direction.includes("e") ? dx : direction.includes("w") ? -dx : 0),
-        height: startSize.height + (direction.includes("s") ? dy : direction.includes("n") ? -dy : 0),
-      });
-      const nextPosition = {
-        x: startPosition.x + (direction.includes("w") ? startSize.width - nextSize.width : 0),
-        y: startPosition.y + (direction.includes("n") ? startSize.height - nextSize.height : 0),
-      };
-      latestSize = nextSize;
-      latestPosition = nextPosition;
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        setSizeState(latestSize);
-        setPositionState(clampFloatPosition(latestPosition, latestSize));
-      });
-    };
-    const detachListeners = () => {
-      captureTarget.releasePointerCapture?.(pointerId);
-      captureTarget.removeEventListener("pointermove", handlePointerMove);
-      captureTarget.removeEventListener("pointerup", handlePointerUp);
-      captureTarget.removeEventListener("pointercancel", handlePointerUp);
-    };
-    function handlePointerUp() {
-      if (frame) cancelAnimationFrame(frame);
-      persistSize(latestSize);
-      persistPosition(latestPosition, latestSize);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    }
-
-    dragTeardownRef.current = () => {
-      if (frame) cancelAnimationFrame(frame);
-      document.body.style.userSelect = previousUserSelect;
-      detachListeners();
-      dragTeardownRef.current = null;
-    };
-
-    captureTarget.addEventListener("pointermove", handlePointerMove);
-    captureTarget.addEventListener("pointerup", handlePointerUp);
-    captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [persistPosition, persistSize, position, size]);
-
-  /*
-  FNXC:TaskModalResize 2026-07-24-19:00:
-  Tablet resize handles must be keyboard-operable as well as touch-operable. Each focused edge
-  adjusts the dimensions it owns, clamps and persists exactly like a completed pointer resize,
-  and exposes the resulting geometry through its ARIA separator value.
-  */
-  const handleFloatingResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>, direction: FloatResizeDirection) => {
-    let widthDelta = 0;
-    let heightDelta = 0;
-    const step = NEW_TASK_KEYBOARD_RESIZE_STEP;
-
-    if (event.key === "ArrowRight") widthDelta = direction.includes("e") ? step : direction.includes("w") ? -step : 0;
-    if (event.key === "ArrowLeft") widthDelta = direction.includes("w") ? step : direction.includes("e") ? -step : 0;
-    if (event.key === "ArrowDown") heightDelta = direction.includes("s") ? step : direction.includes("n") ? -step : 0;
-    if (event.key === "ArrowUp") heightDelta = direction.includes("n") ? step : direction.includes("s") ? -step : 0;
-    if (widthDelta === 0 && heightDelta === 0) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    const nextSize = clampFloatSize({ width: size.width + widthDelta, height: size.height + heightDelta });
-    const nextPosition = clampFloatPosition({
-      x: position.x + (direction.includes("w") ? size.width - nextSize.width : 0),
-      y: position.y + (direction.includes("n") ? size.height - nextSize.height : 0),
-    }, nextSize);
-    persistSize(nextSize);
-    persistPosition(nextPosition, nextSize);
-  }, [persistPosition, persistSize, position, size]);
-
-  // FNXC:NewTask 2026-06-22-20:30: Run any active drag/resize teardown on unmount so element pointer listeners + a pending rAF never outlive the modal.
-  useEffect(() => () => dragTeardownRef.current?.(), []);
 
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [branchMode, setBranchMode] = useState<BranchSelectionMode>("project-default");
@@ -1040,6 +792,58 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     }
   }, [handleClose]);
 
+  /*
+  FNXC:ModalTouchGeometry 2026-07-27-18:20:
+  FloatingWindow owns the desktop host, so New Task must route document Escape through its
+  existing discard-aware close path rather than bypassing the FN-8563 abandon-changes confirmation.
+  */
+  useEffect(() => {
+    if (!isOpen || !isFloating) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      handleClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [handleClose, isFloating, isOpen]);
+
+  /*
+  FNXC:ModalTouchGeometry 2026-07-26-18:01:
+  New Task keeps its keyboard focus boundary without opting into FloatingWindow's blocking
+  backdrop. Desktop clicks must pass through the transparent overlay, while Tab remains inside
+  the composer and every close route continues through the discard-aware handler. A blocking
+  duplicate-warning child temporarily owns Tab so its Cancel/Create controls remain reachable.
+  */
+  useEffect(() => {
+    if (!isOpen || !isFloating) return;
+    const form = floatingFormRef.current;
+    if (!form) return;
+    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      // A duplicate warning is a blocking child dialog and owns keyboard traversal while open.
+      if (document.querySelector(".duplicate-warning-modal")) return;
+      const focusable = Array.from(form.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute("hidden"));
+      if (focusable.length === 0) return;
+      const index = focusable.indexOf(document.activeElement as HTMLElement);
+      if (event.shiftKey && (index <= 0 || !form.contains(document.activeElement))) {
+        event.preventDefault();
+        focusable.at(-1)?.focus();
+      } else if (!event.shiftKey && (index === focusable.length - 1 || !form.contains(document.activeElement))) {
+        event.preventDefault();
+        focusable[0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      priorFocus?.focus();
+    };
+  }, [isFloating, isOpen]);
+
   // Compute selected agent label for display
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
@@ -1187,151 +991,151 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
 
   if (!isOpen) return null;
 
-  // FNXC:NewTask 2026-06-22-20:30: Desktop = floating fixed panel positioned by state-driven left/top/width/height. Mobile keeps the keyboard-aware full-screen sheet (no floating). The transparent click-through overlay never dismisses on click; the header X / Cancel / Escape are the only dismissals.
-  const panelStyle: CSSProperties = isFloating
-    ? { left: `${position.x}px`, top: `${position.y}px`, width: `${size.width}px`, height: `${size.height}px`, zIndex }
-    : keyboardStyle;
+  /*
+  FNXC:ModalTouchGeometry 2026-07-27-18:00:
+  Close routes remain handleClose so Escape, the header X, and Cancel all preserve the
+  abandon-changes confirmation. FloatingWindow intentionally keeps outside dismissal disabled.
+  */
+  const duplicateWarning = duplicateMatches ? (
+    <DuplicateWarningModal
+      matches={duplicateMatches}
+      onOpen={handleDuplicateOpen}
+      onProceed={handleDuplicateProceed}
+      onCancel={handleDuplicateCancel}
+    />
+  ) : null;
 
-  // FNXC:FloatingWindow 2026-06-22-22:30: Portaled to document.body so the floating New Task dialog shares the ONE root stacking context with the other floating modals; the shared cross-type z stack only orders correctly at the document root. Mobile sheet is position:fixed, unaffected.
-  return createPortal(
-    <>
+  const taskFormContents = (
+    <div ref={floatingFormRef}>
       <div
-        className="modal-overlay open new-task-modal-overlay"
-        onKeyDown={handleKeyDown}
-        role="dialog"
-        aria-modal="false"
-        aria-label={t("newTaskModal.title", "New Task")}
-        data-testid="new-task-modal-overlay"
-        /* FNXC:FloatingWindow 2026-06-22-23:00: In floating mode the z-index lives on the fixed overlay (it owns the stacking context); a panel z is trapped and loses to page stacking contexts like the right dock. Mobile keeps its CSS z. */
-        style={isFloating ? { zIndex } : undefined}
+        className="modal-header new-task-modal__header--draggable"
+        data-testid="new-task-drag-handle"
       >
-        <div
-          className={`modal modal-lg new-task-modal${viewportMode === "tablet" ? " task-modal--tablet" : ""}${isFloating ? " new-task-modal--floating" : ""}`}
-          style={panelStyle}
-          onPointerDownCapture={isFloating ? bringToFront : undefined}
-          onFocusCapture={isFloating ? bringToFront : undefined}
-        >
-          {isFloating && NEW_TASK_RESIZE_DIRECTIONS.map((direction) => (
-            <div
-              key={direction}
-              className={`new-task-resize-handle new-task-resize-handle--${direction}`}
-              data-testid={`new-task-resize-${direction}`}
-              role="separator"
-              aria-orientation={direction === "n" || direction === "s" ? "horizontal" : "vertical"}
-              aria-valuemin={direction === "n" || direction === "s" ? NEW_TASK_MIN_HEIGHT : NEW_TASK_MIN_WIDTH}
-              aria-valuemax={direction === "n" || direction === "s" ? Math.max(NEW_TASK_MIN_HEIGHT, window.innerHeight - NEW_TASK_VIEWPORT_PADDING * 2) : Math.max(NEW_TASK_MIN_WIDTH, window.innerWidth - NEW_TASK_VIEWPORT_PADDING * 2)}
-              aria-valuenow={direction === "n" || direction === "s" ? size.height : size.width}
-              aria-valuetext={`${t("newTaskModal.resize", "Resize new task window")}: ${size.width} by ${size.height}`}
-              aria-label={t("newTaskModal.resize", "Resize new task window")}
-              tabIndex={0}
-              onPointerDown={(event) => handleFloatingResizePointerDown(event, direction)}
-              onKeyDown={(event) => handleFloatingResizeKeyDown(event, direction)}
-            />
-          ))}
-          <div
-            className={`modal-header${isFloating ? " new-task-modal__header--draggable" : ""}`}
-            data-testid="new-task-drag-handle"
-            onPointerDown={isFloating ? handleFloatingDragPointerDown : undefined}
-          >
-          <h3>{t("newTaskModal.title", "New Task")}</h3>
-          <button className="modal-close" onClick={handleClose} disabled={isSubmitting} aria-label={t("actions.close", "Close")}>
-            &times;
-          </button>
+      <h3>{t("newTaskModal.title", "New Task")}</h3>
+      <button className="modal-close" onClick={handleClose} disabled={isSubmitting} aria-label={t("actions.close", "Close")}>
+        &times;
+      </button>
         </div>
 
         <div className="modal-body">
-          {!setupReadinessLoading && visibleSetupHasWarnings && (
-            <SetupWarningBanner
-              hasAiProvider={hasAiProvider}
-              hasGithub={hasGithub}
-              showGithubWarning={false}
-            />
-          )}
+      {!setupReadinessLoading && visibleSetupHasWarnings && (
+        <SetupWarningBanner
+          hasAiProvider={hasAiProvider}
+          hasGithub={hasGithub}
+          showGithubWarning={false}
+        />
+      )}
 
-          <TaskForm
-            mode="create"
-            description={description}
-            onDescriptionChange={setDescription}
-            dependencies={dependencies}
-            onDependenciesChange={setDependencies}
-            executorModel={executorModel}
-            onExecutorModelChange={handleExecutorModelChange}
-            validatorModel={validatorModel}
-            onValidatorModelChange={handleValidatorModelChange}
-            presetMode={presetMode}
-            onPresetModeChange={setPresetMode}
-            selectedPresetId={selectedPresetId}
-            onSelectedPresetIdChange={setSelectedPresetId}
-            selectedWorkflowId={selectedWorkflowId}
-            onWorkflowIdChange={setSelectedWorkflowId}
-            enabledWorkflowSteps={enabledWorkflowSteps}
-            onEnabledWorkflowStepsChange={handleEnabledWorkflowStepsChange}
-            pendingImages={pendingImages}
-            onImagesChange={setPendingImages}
-            tasks={tasks}
-            projectId={projectId}
-            disabled={isSubmitting}
-            addToast={addToast}
-            isActive={isOpen}
-            onClose={handleAiAssistClose}
-            onPlanningMode={onPlanningMode}
-            onSubtaskBreakdown={onSubtaskBreakdown}
-            planningModel={planningModel}
-            onPlanningModelChange={setPlanningModel}
-            thinkingLevel={thinkingLevel}
-            plannerOversightLevel={plannerOversightLevel}
-            onPlannerOversightLevelChange={setPlannerOversightLevel}
-            onThinkingLevelChange={setThinkingLevel}
-            reviewLevel={reviewLevel}
-            onReviewLevelChange={setReviewLevel}
-            autoMerge={autoMerge}
-            onAutoMergeChange={setAutoMerge}
-            priority={priority}
-            onPriorityChange={setPriority}
-            branch={branch}
-            onBranchChange={setBranch}
-            branchMode={branchMode}
-            onBranchModeChange={setBranchMode}
-            baseBranch={baseBranch}
-            onBaseBranchChange={setBaseBranch}
-            nodeId={nodeId}
-            onNodeIdChange={setNodeId}
-            nodeOptions={nodes}
-            executionMode={executionMode}
-            onExecutionModeChange={setExecutionMode}
-            githubTrackingEnabled={githubTrackingEnabled}
-            onGithubTrackingEnabledChange={handleGithubTrackingEnabledChange}
-            githubRepoOverride={githubRepoOverride}
-            onGithubRepoOverrideChange={setGithubRepoOverride}
-            onCreateSubmit={handleSubmit}
-            createSubmitLabel={isSubmitting ? t("newTaskModal.creating", "Creating...") : t("newTaskModal.createTask", "Create Task")}
-            createSubmitDisabled={!description.trim() || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection}
-            renderBelowPrimary={quickFields}
-            hideDependencies={true}
-            autoExpandMoreOptionsOnSelection={false}
-          />
+      <TaskForm
+        mode="create"
+        description={description}
+        onDescriptionChange={setDescription}
+        dependencies={dependencies}
+        onDependenciesChange={setDependencies}
+        executorModel={executorModel}
+        onExecutorModelChange={handleExecutorModelChange}
+        validatorModel={validatorModel}
+        onValidatorModelChange={handleValidatorModelChange}
+        presetMode={presetMode}
+        onPresetModeChange={setPresetMode}
+        selectedPresetId={selectedPresetId}
+        onSelectedPresetIdChange={setSelectedPresetId}
+        selectedWorkflowId={selectedWorkflowId}
+        onWorkflowIdChange={setSelectedWorkflowId}
+        enabledWorkflowSteps={enabledWorkflowSteps}
+        onEnabledWorkflowStepsChange={handleEnabledWorkflowStepsChange}
+        pendingImages={pendingImages}
+        onImagesChange={setPendingImages}
+        tasks={tasks}
+        projectId={projectId}
+        disabled={isSubmitting}
+        addToast={addToast}
+        isActive={isOpen}
+        onClose={handleAiAssistClose}
+        onPlanningMode={onPlanningMode}
+        onSubtaskBreakdown={onSubtaskBreakdown}
+        planningModel={planningModel}
+        onPlanningModelChange={setPlanningModel}
+        thinkingLevel={thinkingLevel}
+        plannerOversightLevel={plannerOversightLevel}
+        onPlannerOversightLevelChange={setPlannerOversightLevel}
+        onThinkingLevelChange={setThinkingLevel}
+        reviewLevel={reviewLevel}
+        onReviewLevelChange={setReviewLevel}
+        autoMerge={autoMerge}
+        onAutoMergeChange={setAutoMerge}
+        priority={priority}
+        onPriorityChange={setPriority}
+        branch={branch}
+        onBranchChange={setBranch}
+        branchMode={branchMode}
+        onBranchModeChange={setBranchMode}
+        baseBranch={baseBranch}
+        onBaseBranchChange={setBaseBranch}
+        nodeId={nodeId}
+        onNodeIdChange={setNodeId}
+        nodeOptions={nodes}
+        executionMode={executionMode}
+        onExecutionModeChange={setExecutionMode}
+        githubTrackingEnabled={githubTrackingEnabled}
+        onGithubTrackingEnabledChange={handleGithubTrackingEnabledChange}
+        githubRepoOverride={githubRepoOverride}
+        onGithubRepoOverrideChange={setGithubRepoOverride}
+        onCreateSubmit={handleSubmit}
+        createSubmitLabel={isSubmitting ? t("newTaskModal.creating", "Creating...") : t("newTaskModal.createTask", "Create Task")}
+        createSubmitDisabled={!description.trim() || isSubmitting || githubRepoOverrideInvalid || hasInvalidBranchSelection}
+        renderBelowPrimary={quickFields}
+        hideDependencies={true}
+        autoExpandMoreOptionsOnSelection={false}
+      />
 
         </div>
 
         {hasInvalidBranchSelection && (
-          <div className="form-error new-task-branch-error">{t("newTaskModal.branchRequired", "Branch name is required for this branch strategy.")}</div>
+      <div className="form-error new-task-branch-error">{t("newTaskModal.branchRequired", "Branch name is required for this branch strategy.")}</div>
         )}
 
-          <div className="modal-actions">
-            <button className="btn btn-sm" onClick={handleClose} disabled={isSubmitting}>
-              {t("actions.cancel", "Cancel")}
-            </button>
-          </div>
+      <div className="modal-actions">
+        <button className="btn btn-sm" onClick={handleClose} disabled={isSubmitting}>
+          {t("actions.cancel", "Cancel")}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (isFloating) {
+    return (
+      <>
+        <FloatingWindow
+          title={t("newTaskModal.title", "New Task")}
+          onClose={handleClose}
+          windowKey="new-task"
+          defaultSize={{ width: NEW_TASK_DEFAULT_WIDTH, height: NEW_TASK_DEFAULT_HEIGHT }}
+          minSize={{ width: NEW_TASK_MIN_WIDTH, height: NEW_TASK_MIN_HEIGHT }}
+          hideHeader
+          dragHandleSelector=".new-task-modal__header--draggable"
+          persistGeometryKey="fusion:new-task-modal-geometry"
+          suspendGeometryPersistenceOnMobile
+          suspendGeometryPersistenceOnShortViewport
+          ariaLabel={t("newTaskModal.title", "New Task")}
+          className={`modal modal-lg new-task-modal new-task-modal--floating${viewportMode === "tablet" ? " task-modal--tablet" : ""}`}
+          testId="new-task-modal-overlay"
+        >
+          {taskFormContents}
+        </FloatingWindow>
+        {duplicateWarning}
+      </>
+    );
+  }
+
+  return createPortal(
+    <>
+      <div className="modal-overlay open new-task-modal-overlay" onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label={t("newTaskModal.title", "New Task")} data-testid="new-task-modal-overlay" style={keyboardStyle}>
+        <div className="modal modal-lg new-task-modal" style={keyboardStyle}>
+          {taskFormContents}
         </div>
       </div>
-      {duplicateMatches && (
-        <DuplicateWarningModal
-          matches={duplicateMatches}
-          onOpen={handleDuplicateOpen}
-          onProceed={handleDuplicateProceed}
-          onCancel={handleDuplicateCancel}
-        />
-      )}
+      {duplicateWarning}
     </>,
     document.body,
   );

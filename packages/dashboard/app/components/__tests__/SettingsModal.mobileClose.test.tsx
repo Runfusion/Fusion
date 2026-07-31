@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { SettingsModal } from "../SettingsModal";
+import { assertModalGeometryRecoveryAndSheetContracts } from "./floatingWindowMigration.test-helpers";
 
 /*
 FNXC:Settings 2026-07-07-00:00:
@@ -37,8 +38,9 @@ vi.mock("../../api", async (importOriginal) => {
 
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
-  isFullScreenSheetViewport: () => false,
-  isShortViewport: () => false,
+  isFullScreenSheetViewport: () => window.matchMedia("(max-width: 767.98px)").matches,
+  isShortViewport: () => window.matchMedia("(max-height: 480px)").matches,
+  isTabletTouchViewport: () => false,
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
@@ -104,7 +106,7 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
 
   it("renders exactly one modal-close button in the standalone modal presentation and does not add the mobile-embedded control", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
-    const { container } = renderModal({ presentation: "modal" });
+    const { baseElement } = renderModal({ presentation: "modal" });
     await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
 
     /*
@@ -113,9 +115,9 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     Both may be named "Close"; the invariant is a single header modal-close and no
     mobile-embedded close control (that only appears when presentation is embedded).
     */
-    expect(container.querySelectorAll(".modal-close")).toHaveLength(1);
-    expect(container.querySelector(".settings-embedded-mobile-close")).toBeNull();
-    expect(container.querySelector(".modal-close")?.getAttribute("aria-label")).toMatch(/close/i);
+    expect(baseElement.querySelectorAll(".modal-close")).toHaveLength(1);
+    expect(baseElement.querySelector(".settings-embedded-mobile-close")).toBeNull();
+    expect(baseElement.querySelector(".modal-close")?.getAttribute("aria-label")).toMatch(/close/i);
   });
 
   it("keeps the task-definition input-language toggle reachable in Project Models on mobile", async () => {
@@ -140,5 +142,16 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     expect(closeButton).toBeInTheDocument();
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SettingsModal floating geometry", () => {
+  it("renders the production settings modal in its shared floating window", async () => {
+    localStorage.clear();
+    renderModal({ presentation: "modal" });
+    await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+    expect(screen.getByTestId("floating-window-settings")).toBeInTheDocument();
+    expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
+    assertModalGeometryRecoveryAndSheetContracts("settings", () => renderModal({ presentation: "modal" }));
   });
 });

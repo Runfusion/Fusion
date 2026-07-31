@@ -64,6 +64,15 @@ vi.mock("../SubtaskBreakdownModal", () => ({
   },
 }));
 
+/*
+FNXC:Terminal 2026-07-26-19:50:
+This mock is VESTIGIAL: AppModals does not render TerminalModal — App.tsx does, gated on
+`modalManager.terminalOpen`. It is kept only to keep the heavy xterm module out of this file's graph if
+an import path ever reaches it. It is deliberately NOT a shallow `isOpen ? <div/> : null` stand-in,
+because that shape is what made App's terminal mount/unmount invariant unverifiable (see the lifecycle
+recorder in App.test.tsx). The guard below fails if the terminal ever moves into AppModals, so this mock
+cannot silently become the thing that hides the invariant a second time.
+*/
 vi.mock("../TerminalModal", () => ({
   TerminalModal: () => null,
 }));
@@ -658,5 +667,18 @@ describe("AppModals", () => {
       */
       expect(mockModalManager.openDetailTask).toHaveBeenCalledWith({ id: "FN-2", title: "Nested" }, undefined, undefined);
     });
+  });
+});
+
+describe("AppModals does not own the terminal", () => {
+  it("never renders TerminalModal (its mount lifecycle is App's, and is asserted there)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = readFileSync(resolve(fileURLToPath(import.meta.url), "../../AppModals.tsx"), "utf8");
+    expect(
+      source.includes("TerminalModal"),
+      "TerminalModal moved into AppModals. Its mount/unmount invariant (a mounted-but-closed terminal holds a PTY WebSocket and a 45s heartbeat) is currently asserted against App.tsx in App.test.tsx, and the `() => null` mock in this file would hide it here. Move the lifecycle recorder over before landing this.",
+    ).toBe(false);
   });
 });

@@ -8,6 +8,13 @@ import {
   readAttachmentContents,
   computeUserCommentFingerprint,
 } from "../triage.js";
+import {
+  AgentSemaphore,
+  clearPreHeldExecutorSlotsForTests,
+  hasPreHeldExecutorSlot,
+  projectAdmissionCoordinator,
+  registerPreHeldExecutorSlot,
+} from "../concurrency.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile, rm, mkdtemp } from "node:fs/promises";
@@ -1744,7 +1751,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1782,7 +1788,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1820,7 +1825,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1840,7 +1844,7 @@ Planner rewrote mission without the raw request.
 
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
+    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling the planning lane purely from semaphore.availableCount.
     */
     it("leaves global concurrency room for live in-progress agents when admitting planners", async () => {
       const tasks: Task[] = [
@@ -1860,7 +1864,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 4,
-          maxTriageConcurrent: 4,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1904,7 +1907,6 @@ Planner rewrote mission without the raw request.
         getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1943,10 +1945,22 @@ Planner rewrote mission without the raw request.
 
   /*
   FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
-  FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked (never auto-dispatched via `eligibleTriageTasks`, which only matches `column === "triage"`), while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
+  FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked, while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
+
+  FNXC:ManualIntakeAdmission 2026-07-30-04:45 — READ THIS BEFORE TRUSTING THE FIRST CASE BELOW:
+  the parked-ideas case passes here for a reason unrelated to the rule. Its store has NO workflow
+  readers, so lifecycle resolution falls back to `triage`/`todo` and an `ideas` card matches neither
+  admission branch. The mechanism this comment used to name — "only matches column === triage" — was
+  removed when discovery started resolving intake BY TRAIT, at which point `ideas` BECAME the resolved
+  intake column and parked ideas were auto-planned. This test kept passing throughout.
+
+  The real guard, with a store that resolves the workflow, is
+  `manual-intake-admission.test.ts`. This case is kept as the legacy-store shape (which is also a
+  real configuration) rather than deleted, but it is not the FN-7596 guard and must not be relied on
+  as one.
   */
   describe("Coding (Ideas) manual-intake discovery (FN-7596)", () => {
-    it("excludes a parked ideas-column task from the poll's specify-dispatch set", async () => {
+    it("excludes a parked ideas-column task when the workflow cannot be resolved (legacy-store shape, NOT the FN-7596 guard)", async () => {
       const tasks: Task[] = [
         createTriageTask({ id: "FN-IDEAS-PARKED", column: "ideas" as any, priority: "urgent" }),
       ];
@@ -1955,7 +1969,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1994,7 +2007,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([promotedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2037,7 +2049,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([plannedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2087,7 +2098,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([replanTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2137,7 +2147,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([refineTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -6763,6 +6772,120 @@ describe("evictStaleProcessing", () => {
     expect(processor.getProcessingTaskIds().has("FN-1312")).toBe(true);
   });
 
+  /*
+  FNXC:ConcurrencyAdmission 2026-07-26-14:20:
+  Original symptom: a Todo card sat on the "Queued to plan" badge indefinitely with free
+  concurrency slots, and NEITHER diagnostic explained it — no "Plan throttled by …" log line and no
+  `task:plan-admission-throttled` run-audit row — because the card was still eligible (so the
+  throttle branch never ran) while `admitOldest`'s refresh filtered it out on a stale
+  `coordinatorAdmittedTaskIds` entry left behind by a hung planner promise that eviction reclaimed.
+
+  Invariant under test (not just the reported repro): eviction releases EVERY admission-side claim
+  the evicted planner held — the coordinator admitted marker AND an untransferred pre-held host slot
+  — and does so on the real production candidate source, while a RETAINED (still-live) stale task
+  keeps both claims so eviction can never strip a running planner's capacity.
+  */
+  describe("releases admission claims on eviction", () => {
+    const EVICT_ROOT = "/tmp/root-admission-claims";
+
+    /** The production candidate closure the coordinator actually calls (triage.ts constructor). */
+    function providerRefresh(processor: TriageProcessor): () => Promise<Array<{ taskId: string }>> {
+      const provider = (projectAdmissionCoordinator as any).providers.get(EVICT_ROOT)?.get(`specify:${EVICT_ROOT}`);
+      expect(provider).toBeDefined();
+      return provider.refresh;
+    }
+
+    function triageCard(id: string): Task {
+      return {
+        id,
+        title: "Hung planner",
+        description: "Test",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as Task;
+    }
+
+    afterEach(() => {
+      clearPreHeldExecutorSlotsForTests();
+    });
+
+    it("re-offers the evicted card to admission instead of hiding it forever", async () => {
+      const store = createMockStore({ listTasks: vi.fn().mockResolvedValue([triageCard("FN-HUNG")]) });
+      const processor = new TriageProcessor(store, EVICT_ROOT);
+      (processor as any).running = true;
+      const refresh = providerRefresh(processor);
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      // Exactly the state a coordinator handoff leaves behind: admitted marker + processing claim,
+      // with a promise that never settles so specifyTask's finally never runs.
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+
+      // While the claim is live the card must NOT be re-offered (no concurrent planner).
+      expect(await refresh()).toEqual([]);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-HUNG")).toBe(false);
+      expect((await refresh()).map((candidate) => candidate.taskId)).toEqual(["FN-HUNG"]);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("returns an untransferred pre-held host slot to the semaphore", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-HUNG");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-HUNG");
+      (processor as any).processing.add("FN-HUNG");
+      (processor as any).processingSince.set("FN-HUNG", Date.now());
+      expect(semaphore.activeCount).toBe(1);
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set(["FN-HUNG"]));
+
+      expect(hasPreHeldExecutorSlot("FN-HUNG")).toBe(false);
+      expect(semaphore.activeCount).toBe(0);
+
+      (processor as any).unregisterAdmissionProvider?.();
+    });
+
+    it("keeps both claims for a retained task whose planning session is still live", () => {
+      const store = createMockStore();
+      const semaphore = new AgentSemaphore(2);
+      const processor = new TriageProcessor(store, EVICT_ROOT, { semaphore });
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(semaphore.tryAcquire()).toBe(true);
+      registerPreHeldExecutorSlot("FN-LIVE");
+      (processor as any).coordinatorAdmittedTaskIds.add("FN-LIVE");
+      (processor as any).processing.add("FN-LIVE");
+      (processor as any).processingSince.set("FN-LIVE", Date.now());
+      (processor as any).activeSessions.set("FN-LIVE", { dispose: vi.fn() });
+
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+      expect(processor.evictStaleProcessing()).toEqual(new Set());
+
+      expect((processor as any).coordinatorAdmittedTaskIds.has("FN-LIVE")).toBe(true);
+      expect(hasPreHeldExecutorSlot("FN-LIVE")).toBe(true);
+      expect(semaphore.activeCount).toBe(1);
+
+      (processor as any).unregisterAdmissionProvider?.();
+      semaphore.release();
+    });
+  });
+
   it("includes finalizing and subagent tasks in getProcessingTaskIds even when not in processing", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store, "/tmp/root");
@@ -7051,5 +7174,179 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
     // Done results surface in output with the (done): column label
     expect(text).toContain("FN-DONE");
     expect(text).toContain("(done):");
+  });
+});
+
+/*
+FNXC:TriageStalePlanning 2026-07-26-17:30:
+Regression for the FN-8596 strand: a plan-review REVISE routed to `plan-replan`, triage claimed the
+card with `status:"planning"` and ran the revision, and the session died after writing the revised
+PROMPT.md but before finalizing. The card sat in `triage` with `status:"planning"` and no workflow
+continuation — invisible to rediscovery (it looks claimed) and unrecoverable until an engine
+restart, because the only sweep that clears that status ran at startup.
+
+These cases pin the periodic sweep AND its guards. The guards are the risky half: a sweep that
+clears too eagerly would yank the status out from under a healthy planner and let a second planner
+claim the same card, so "in-process planner" and "recently touched" are asserted as protected.
+*/
+describe("TriageProcessor.sweepStalePlanningStatuses", () => {
+  const NOW = Date.parse("2026-07-26T14:30:00.000Z");
+  const STALE = "2026-07-26T13:53:00.000Z";  // ~37m old, past the 20m floor
+  const FRESH = "2026-07-26T14:29:00.000Z";  // 1m old
+
+  function sweep(store: ReturnType<typeof createMockStore>, tasks: Task[], processing: string[] = []) {
+    const processor = new TriageProcessor(store as never, "/tmp/root");
+    for (const id of processing) (processor as unknown as { processing: Set<string> }).processing.add(id);
+    return (processor as unknown as {
+      sweepStalePlanningStatuses(t: Task[], n: number): Promise<void>;
+    }).sweepStalePlanningStatuses(tasks, NOW);
+  }
+
+  it("clears a stale planning status so triage can re-pick the card", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-8596", status: "planning", updatedAt: STALE })]);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-8596", { status: null });
+  });
+
+  it("does not touch a card whose planner is live in this process", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-LIVE", status: "planning", updatedAt: STALE })], ["FN-LIVE"]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("does not touch a recently-touched card (may be another node's live planner)", async () => {
+    const store = createMockStore();
+    await sweep(store, [createTriageTask({ id: "FN-FRESH", status: "planning", updatedAt: FRESH })]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("never disturbs an operator park", async () => {
+    const store = createMockStore();
+    await sweep(store, [
+      createTriageTask({ id: "FN-PAUSED", status: "planning", updatedAt: STALE, userPaused: true } as Partial<Task>),
+    ]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("ignores cards outside the planning columns and non-planning statuses", async () => {
+    const store = createMockStore();
+    await sweep(store, [
+      createTriageTask({ id: "FN-INPROG", column: "in-progress", status: "planning", updatedAt: STALE }),
+      createTriageTask({ id: "FN-OTHER", status: "needs-replan", updatedAt: STALE }),
+    ]);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});
+
+/*
+FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:40 (the test PR #2593's review asked for):
+
+WHY THIS TOOK THREE ATTEMPTS TO WRITE HONESTLY. The guard under test is the ORPHAN arm of
+`inPlannerColumn` — `task.column === "triage" && !declaresLegacyTriage`. On a bare mock store the arm
+is NEVER REACHED: `resolvePlannerLanes` reads `resolveTaskWorkflowIrSync`, which a bare mock does not
+define, so it returns LEGACY_PLANNER_LANES (`intake: "triage"`) and a `triage` card matches the FIRST
+arm. Every earlier fixture I wrote passed through that short-circuit and proved nothing.
+
+So all three cases below stub `resolveTaskWorkflowIrSync` with the MERGED DEFAULT shape, which is what
+production resolves: `intake` and `hold` both `todo`. That makes the first arm fail for a `triage` card
+and leaves the orphan arm as the only thing deciding the outcome.
+
+The three cases differ ONLY in the workflow readers, so the outcome difference can have no other cause.
+Case B is the positive control: without it, "returns false" is unfalsifiable — every case would pass if
+the arm were dead.
+*/
+describe("recoverApprovedTask — the orphan-`triage` arm, with the intake short-circuit disabled", () => {
+  const MERGED_DEFAULT = {
+    version: "v2", id: "builtin:coding", nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never;
+  const customIr = (id: string, withTriage: boolean) => ({
+    version: "v2", id, nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      ...(withTriage ? [{ id: "triage", name: "Code review", traits: [{ trait: "review" }] }] : []),
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never);
+
+  const PLAN = "## Objective\nDo the thing.\n\n## Steps\n1. Step one\n";
+  let root = "";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "fusion-orphan-triage-"));
+    await mkdir(join(root, ".fusion", "tasks", "FN-ORPHAN"), { recursive: true });
+    await writeFile(join(root, ".fusion", "tasks", "FN-ORPHAN", "PROMPT.md"), PLAN);
+  });
+  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  /** Identical in every case except the workflow readers passed in. */
+  const run = async (workflowReaders: Partial<TaskStore>): Promise<boolean> => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10000,
+        groupOverlappingFiles: false, autoMerge: true, requirePlanApproval: true,
+      } as Settings),
+      // Production resolves the MERGED default here, so `lanes.intake` is `todo`, not `triage`.
+      resolveTaskWorkflowIrSync: vi.fn(() => MERGED_DEFAULT),
+      ...workflowReaders,
+    } as Partial<TaskStore>);
+    return new TriageProcessor(store, root).recoverApprovedTask({
+      id: "FN-ORPHAN",
+      description: "Orphaned triage row",
+      column: "triage",
+      status: "planning",
+      approvedPlanFingerprint: computePlanApprovalFingerprint(PLAN),
+      dependencies: [], steps: [], currentStep: 0,
+      log: [{ timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" }],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as never);
+  };
+
+  it("B (POSITIVE CONTROL) recovers the orphan when the workflow RESOLVES and declares no `triage`", async () => {
+    // Proves the arm is reachable and returns true. Without this the two false cases below are
+    // unfalsifiable.
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:no-triage", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:no-triage", false) })),
+    } as Partial<TaskStore>)).toBe(true);
+  });
+
+  it("A (BEHAVIOR PIN — does NOT discriminate) declines when the workflow cannot be resolved", async () => {
+    /*
+    HONEST LABEL, from the mutation run. I wrote this as THE regression case and it is not: reverting
+    to the pre-fix sync read leaves it GREEN. It returns false in both worlds, so something other
+    than `declaresLegacyTriage` decides it — most likely a later gate that needs the selection this
+    case deliberately withholds. Kept as a fail-closed behavior pin, explicitly NOT as proof of the
+    fix; case C below is what actually discriminates.
+
+    Left in with the wrong-looking result documented rather than deleted, because a future edit that
+    makes this case flip would be informative — it would mean the orphan arm had become reachable
+    here, which is a real change in the guard's scope.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: undefined,
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+    } as Partial<TaskStore>)).toBe(false);
+  });
+
+  it("C (THE REGRESSION) declines when the workflow DECLARES `triage` as a non-intake lane", async () => {
+    /*
+    THE DISCRIMINATOR, confirmed by mutation: reverting `recoverApprovedTask` to the pre-fix
+    `resolveTaskWorkflowIrSync` read makes THIS case fail (and only this one, of the three). The sync
+    reader ignores the selection and hands back the default IR, which declares no `triage`, so the
+    orphan arm fires and the card is finalized out of a custom workflow's CODE REVIEW column —
+    bypassing that column's transition. This is the greptile P1 case, and it is the one that proves
+    the provenance fix does work.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:triage-review", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:triage-review", true) })),
+    } as Partial<TaskStore>)).toBe(false);
   });
 });

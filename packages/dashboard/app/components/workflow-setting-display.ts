@@ -109,9 +109,9 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     label: "Code Review revision cap",
     /*
      * FNXC:WorkflowRevisionBudget 2026-06-30-19:47:
-     * Built-in workflow values are editable even when definitions are read-only, so this label is the operator-facing cap for Code Review remediation without requiring a workflow duplicate.
+     * Built-in workflow values are editable even when definitions are read-only, so this label is the operator-facing override for Code Review remediation without requiring a workflow duplicate. Empty values preserve each workflow's authored node cap.
      */
-    description: "Leave empty for unbounded automatic Code Review remediation; set 0 to disable automatic revision.",
+    description: "Leave empty to use this workflow's authored Code Review default; set 0 to disable automatic revision.",
   },
   planReviewReplanCap: {
     group: "review",

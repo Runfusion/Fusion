@@ -28,6 +28,7 @@ import { ReliabilityView } from "../ReliabilityView";
 import { NodesView } from "../NodesView";
 import type { ToastType } from "../../hooks/useToast";
 import type { TaskView } from "../../hooks/useViewState";
+import { useVisibilityAwarePoll } from "../../hooks/visibilitySuspension";
 import { SdlcFunnel } from "./SdlcFunnel";
 import { inferProviderIconKey } from "../../utils/providerIconKey";
 import { Bar, type BarDatum } from "./charts/Bar";
@@ -100,7 +101,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     ...(nodesEnabled ? [{ id: "nodes" as const, label: t("commandCenter.tabs.nodes", "Nodes") }] : []),
     { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
     /*
-    FNXC:Navigation 2026-08-01-00:00:
+    FNXC:Navigation 2026-07-19-00:00:
     FN-8352 removes Ideation from Command Center because its experimental
     top-level navigation view is now the single canonical host.
     */
@@ -174,15 +175,28 @@ function OverviewTab({
   const [codebaseMetrics, setCodebaseMetrics] = useState<CodebaseMetrics | null>(null);
   const [verificationRequests, setVerificationRequests] = useState<TaskVerificationRequest[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => void api<{ requests: TaskVerificationRequest[] }>(withProjectId("/command-center/verification-requests", projectId))
-      .then((response) => { if (!cancelled) setVerificationRequests(response.requests); })
-      .catch(() => { if (!cancelled) setVerificationRequests([]); });
-    refresh();
-    const timer = window.setInterval(refresh, OVERVIEW_TOKEN_REFRESH_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
+  const verificationRequestsVersionRef = useRef(0);
+  const refreshVerificationRequests = useCallback(() => {
+    const versionAtStart = verificationRequestsVersionRef.current;
+    const isStale = () => verificationRequestsVersionRef.current !== versionAtStart;
+    void api<{ requests: TaskVerificationRequest[] }>(withProjectId("/command-center/verification-requests", projectId))
+      .then((response) => { if (!isStale()) setVerificationRequests(response.requests); })
+      .catch(() => { if (!isStale()) setVerificationRequests([]); });
   }, [projectId]);
+
+  useEffect(() => {
+    refreshVerificationRequests();
+    return () => { verificationRequestsVersionRef.current += 1; };
+  }, [refreshVerificationRequests]);
+
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:32:
+  Verification-request polling is suspended while the document is hidden. The Overview surface kept this
+  request in flight every refresh cycle in the background, and continuous background network work is a
+  primary reason iOS Safari/PWA and Chrome Android discard the tab, producing the white-splash reload
+  operators saw on return. One refresh fires on the hidden -> visible edge.
+  */
+  useVisibilityAwarePoll(refreshVerificationRequests, OVERVIEW_TOKEN_REFRESH_MS);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,7 +218,7 @@ function OverviewTab({
   const agentRunsTotal = activity.data?.agentRuns?.total ?? 0;
   const tasksDone = activity.data?.funnel?.doneInRange ?? 0;
   /*
-  FNXC:LiveActivity 2026-08-03-00:00:
+  FNXC:LiveActivity 2026-07-20-00:00:
   FN-8429 requires the Overview's live metrics to share Mission Control's
   SSE-plus-poll snapshot and in-progress aliases. Date-range analytics remain
   historical; they must not overwrite current board work with funnel entries.

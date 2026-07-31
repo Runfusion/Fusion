@@ -14,6 +14,7 @@ const mockFiles initializes and throws TDZ "Cannot access before initialization"
 const { mockPiLog, mockFiles, mockDirs, mockDirCounter } = vi.hoisted(() => ({
   mockPiLog: {
     log: vi.fn(),
+    debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
@@ -755,10 +756,12 @@ describe("createSkillsOverrideFromSelection", () => {
 
       override(base);
 
-      expect(mockPiLog.log).toHaveBeenCalled();
-      const lastCall = mockPiLog.log.mock.calls[mockPiLog.log.mock.calls.length - 1][0] as string;
+      // type=info skill diagnostics (not-found / listings) are debug-gated for the TUI.
+      expect(mockPiLog.debug).toHaveBeenCalled();
+      const lastCall = mockPiLog.debug.mock.calls[mockPiLog.debug.mock.calls.length - 1][0] as string;
       expect(lastCall).toContain("[skills]");
       expect(lastCall).toContain("nonexistent");
+      expect(mockPiLog.log).not.toHaveBeenCalledWith(expect.stringContaining("nonexistent"));
     });
 
     it("includes sessionPurpose in structured logger messages when provided", () => {
@@ -783,7 +786,7 @@ describe("createSkillsOverrideFromSelection", () => {
 
       override(base);
 
-      const lastCall = mockPiLog.log.mock.calls[mockPiLog.log.mock.calls.length - 1][0] as string;
+      const lastCall = mockPiLog.debug.mock.calls[mockPiLog.debug.mock.calls.length - 1][0] as string;
       expect(lastCall).toContain("[reviewer]");
       expect(lastCall).toContain("missing-skill");
     });
@@ -944,9 +947,9 @@ describe("createSkillsOverrideFromSelection", () => {
       );
       expect(missingInfo).toBeDefined();
 
-      // Verify structured logger info output
-      expect(mockPiLog.log).toHaveBeenCalled();
-      const loggedMessages = mockPiLog.log.mock.calls.map(c => c[0] as string);
+      // type=info skill diagnostics go through debug (not log)
+      expect(mockPiLog.debug).toHaveBeenCalled();
+      const loggedMessages = mockPiLog.debug.mock.calls.map(c => c[0] as string);
       const hasExecutorPrefix = loggedMessages.some(m => m.includes("[executor]") && m.includes("missing-skill"));
       expect(hasExecutorPrefix).toBe(true);
     });
@@ -1049,7 +1052,8 @@ describe("createSkillsOverrideFromSelection", () => {
 
       override({ skills: [], diagnostics: [] });
 
-      expect(mockPiLog.log).toHaveBeenCalled();
+      expect(mockPiLog.debug).toHaveBeenCalled();
+      expect(mockPiLog.log).not.toHaveBeenCalledWith(expect.stringContaining("[skills]"));
       expect(consoleErrorSpy).not.toHaveBeenCalled();
       expect(consoleWarnSpy).not.toHaveBeenCalled();
       expect(consoleLogSpy).not.toHaveBeenCalled();

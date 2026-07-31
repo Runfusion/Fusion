@@ -103,9 +103,15 @@ export class DefaultPiRuntime implements AgentRuntime {
   async createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult> {
     // FNXC:McpConfig 2026-06-25-22:04:
     // DefaultPiRuntime is the typed bridge from shared AgentRuntimeOptions into createFnAgent. Normalize the legacy stdio ACP shape here so all lanes can pass the FN-7022 three-transport shape without breaking older Route A callers.
+    /*
+    FNXC:ToolOutputBudget 2026-08-06-16:30:
+    Forward the resolved session budget explicitly across the default-pi bridge. A project setting of 0 becomes null before this point and must reach createFnAgent so the pi wrapper skips clamping just like plugin runtimes.
+    */
+    const { toolOutputMaxChars, mcpServers, ...agentOptions } = options;
     return createFnAgent({
-      ...options,
-      mcpServers: normalizeAgentRuntimeMcpServers(options.mcpServers),
+      ...agentOptions,
+      toolOutputMaxChars,
+      mcpServers: normalizeAgentRuntimeMcpServers(mcpServers),
     });
   }
 
@@ -282,9 +288,13 @@ function isAgentRuntime(obj: unknown): obj is AgentRuntime {
 export async function resolveRuntime(context: RuntimeResolutionContext): Promise<ResolvedRuntime> {
   const { sessionPurpose, runtimeHint, pluginRunner } = context;
 
+  /*
+  FNXC:EngineDiagnostics 2026-07-26-10:20:
+  Every session start (executor/triage/merger/heartbeat/…) logs a purpose-prefixed runtime pick line. That is steady-state routing bookkeeping, not an operator event — debug-only (FUSION_DEBUG=runtime). Fallback warnings and resolve errors stay warn/error.
+  */
   // Case 1: No runtime hint provided — use default pi runtime
   if (!runtimeHint || runtimeHint.trim() === "") {
-    runtimeLog.log(`[${sessionPurpose}] No runtime hint configured, using default pi runtime`);
+    runtimeLog.debug(`[${sessionPurpose}] No runtime hint configured, using default pi runtime`);
     return {
       runtime: getDefaultPiRuntime(),
       wasConfigured: false,
@@ -297,7 +307,7 @@ export async function resolveRuntime(context: RuntimeResolutionContext): Promise
 
   // Check if the hint is explicitly "pi" — use default runtime
   if (runtimeId === "pi" || runtimeId === "default") {
-    runtimeLog.log(`[${sessionPurpose}] Runtime hint is "pi/default", using default pi runtime`);
+    runtimeLog.debug(`[${sessionPurpose}] Runtime hint is "pi/default", using default pi runtime`);
     return {
       runtime: getDefaultPiRuntime(),
       wasConfigured: true,
@@ -311,7 +321,7 @@ export async function resolveRuntime(context: RuntimeResolutionContext): Promise
     const resolved = await resolvePluginRuntime(pluginRunner, runtimeId);
 
     if (resolved.ok) {
-      runtimeLog.log(`[${sessionPurpose}] Using configured plugin runtime "${runtimeId}" from "${resolved.pluginId}"`);
+      runtimeLog.debug(`[${sessionPurpose}] Using configured plugin runtime "${runtimeId}" from "${resolved.pluginId}"`);
       return {
         runtime: resolved.runtime,
         wasConfigured: true,

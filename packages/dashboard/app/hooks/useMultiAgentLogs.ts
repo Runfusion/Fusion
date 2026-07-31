@@ -2,23 +2,26 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { AgentLogEntry } from "@fusion/core";
 import { fetchAgentLogsWithMeta } from "../api";
 import { subscribeSse } from "../sse-bus";
+import {
+  appendLiveEntry,
+  appendWithoutDuplicates,
+  capLogEntries,
+  countLeadingGapMarkers,
+  isLogGapMarker,
+  reconcileReconnectedEntries,
+} from "./logStreamReconcile";
 
-export const MAX_LOG_ENTRIES = 500;
+/*
+FNXC:AgentLogResync 2026-07-26-16:35:
+Buffer bounding, gap marking, and reconnect reconciliation are imported from ./logStreamReconcile,
+the single implementation shared with useAgentLogs. Both hooks tail the same live-only
+`/api/tasks/:id/logs/stream`; a hand-copied reconcile is exactly how the silent suspend-gap defect
+survived a second round, so this hook must never grow a private variant.
+Re-exported because existing call sites and tests import MAX_LOG_ENTRIES from this module.
+*/
+export { MAX_LOG_ENTRIES } from "./logStreamReconcile";
+
 const INITIAL_LOAD_LIMIT = 100;
-
-/**
- * Cap the total number of log entries to `MAX_LOG_ENTRIES`.
- *
- * This is a **whole-list cap** — it limits how many entries are kept
- * in memory, not the content of any individual entry. Tool-oriented
- * `detail` payloads may still be clipped server-side to keep the live
- * dashboard responsive when agents emit very large command results.
- */
-function capLogEntries(entries: AgentLogEntry[]): AgentLogEntry[] {
-  return entries.length > MAX_LOG_ENTRIES
-    ? entries.slice(-MAX_LOG_ENTRIES)
-    : entries;
-}
 
 export interface TaskLogState {
   entries: AgentLogEntry[];
@@ -55,6 +58,11 @@ interface InitState {
  *
  * When task IDs are added or removed, connections are opened/closed accordingly.
  * When the component unmounts, all EventSources are closed to prevent memory leaks.
+ *
+ * **Reconnect semantics**: the stream replays nothing on open, so every reconnect (SSE error,
+ * heartbeat timeout, or the hidden-tab suspend/resume) refetches that task's authoritative newest
+ * page and reconciles it with the buffer. Where reconciliation cannot be proven, a gap marker is
+ * rendered (`isLogGapMarker`) rather than implying continuity.
  */
 export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogStateMap {
   // Store state per task
@@ -66,6 +74,23 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
   const cancelledRef = useRef<Record<string, boolean>>({});
   const pendingLiveEntriesRef = useRef<Record<string, AgentLogEntry[]>>({});
   const loadingMoreRef = useRef<Record<string, boolean>>({});
+  /*
+  FNXC:AgentLogResync 2026-07-26-16:40:
+  Reconnect bookkeeping, per task. `resyncInFlightRef` collapses a burst of reconnects into one
+  refetch; `resyncPendingRef` parks live events that race that refetch so the merge sees a stable
+  buffer snapshot and cannot duplicate (event present in both the page and the stream) or swallow
+  (event applied to a buffer the merge then overwrites) a line.
+  */
+  const resyncInFlightRef = useRef<Record<string, boolean>>({});
+  const resyncPendingRef = useRef<Record<string, AgentLogEntry[]>>({});
+  /*
+  FNXC:AgentLogPaging 2026-07-26-16:44:
+  "The live tail dropped older entries" flag, per task. It forces `hasMore` on so the reader always
+  has a way back to the truncated history, and is sticky ONLY until an authoritative fetch reports
+  `hasMore:false` — that response proves the buffer reaches entry 0, so a permanently-true flag would
+  leave a "load older" control that fetches past the end and never changes anything.
+  */
+  const trimmedLiveTailRef = useRef<Record<string, boolean>>({});
 
   // Track project context version to detect stale events after project switches.
   // Incremented whenever projectId changes, invalidating any in-flight SSE handlers.
@@ -90,6 +115,9 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
     cancelledRef.current = {};
     pendingLiveEntriesRef.current = {};
     loadingMoreRef.current = {};
+    resyncInFlightRef.current = {};
+    resyncPendingRef.current = {};
+    trimmedLiveTailRef.current = {};
 
     // Clear all state immediately to prevent stale data visibility
     setStateMap({});
@@ -102,6 +130,8 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         const current = prev[taskId];
         if (!current) return prev;
         pendingLiveEntriesRef.current[taskId] = [];
+        resyncPendingRef.current[taskId] = [];
+        trimmedLiveTailRef.current[taskId] = false;
         return {
           ...prev,
           [taskId]: { ...current, entries: [] },
@@ -114,10 +144,17 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
   const createLoadMoreFn = useCallback((taskId: string, currentEntries: AgentLogEntry[]) => {
     return async () => {
       if (loadingMoreRef.current[taskId]) return;
-      if (!projectContextVersionRef.current) return;
 
       const contextVersionAtStart = projectContextVersionRef.current;
       loadingMoreRef.current[taskId] = true;
+
+      /*
+      FNXC:AgentLogPaging 2026-07-26-16:50:
+      The server offset counts back from the newest entry, so it must be the number of REAL entries
+      held. A synthetic gap marker is client-only and would shift the whole page by one, re-fetching
+      an entry the reader already has and leaving a one-entry hole below it.
+      */
+      const offset = currentEntries.length - countLeadingGapMarkers(currentEntries);
 
       // Update loading state
       setStateMap((prev) => {
@@ -129,7 +166,7 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       try {
         const result = await fetchAgentLogsWithMeta(taskId, projectId, {
           limit: INITIAL_LOAD_LIMIT,
-          offset: currentEntries.length,
+          offset,
         });
 
         // Reject stale response
@@ -138,16 +175,29 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
           return;
         }
 
-        // Prepend older entries to the existing list
+        /*
+        FNXC:AgentLogPaging 2026-07-26-16:52:
+        Older entries are PREPENDED — they belong below what the reader already holds, and the
+        previous append-to-the-end version rendered them as if the agent had just emitted them.
+        The result is deliberately NOT re-capped: capLogEntries keeps the NEWEST N, so capping here
+        would discard the very page the reader just asked for. Paging is an explicit expansion of the
+        buffer; the ring ceiling only governs unattended live growth.
+        A gap marker at the head is retired once real data closes the hole (page returned entries) or
+        the server proves nothing older exists (`hasMore:false`).
+        */
+        const retireGapMarker = result.entries.length > 0 || !result.hasMore;
+        if (!result.hasMore) trimmedLiveTailRef.current[taskId] = false;
         setStateMap((prev) => {
           const current = prev[taskId];
           if (!current) return prev;
-          const combined = [...current.entries, ...result.entries];
+          const base = retireGapMarker
+            ? current.entries.filter((entry) => !isLogGapMarker(entry))
+            : current.entries;
           return {
             ...prev,
             [taskId]: {
               ...current,
-              entries: capLogEntries(combined),
+              entries: [...result.entries, ...base],
               hasMore: result.hasMore,
               total: result.total,
               loadingMore: false,
@@ -214,6 +264,9 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         delete cancelled[taskId];
         delete pendingLiveEntriesRef.current[taskId];
         delete loadingMoreRef.current[taskId];
+        delete resyncInFlightRef.current[taskId];
+        delete resyncPendingRef.current[taskId];
+        delete trimmedLiveTailRef.current[taskId];
         removedTaskIds.push(taskId);
       }
     }
@@ -246,6 +299,9 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         initializing.delete(taskId);
         delete pendingLiveEntriesRef.current[taskId];
         delete loadingMoreRef.current[taskId];
+        delete resyncInFlightRef.current[taskId];
+        delete resyncPendingRef.current[taskId];
+        delete trimmedLiveTailRef.current[taskId];
       }
     }
 
@@ -257,20 +313,107 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       initializing.add(taskId);
       cancelled[taskId] = false;
       pendingLiveEntriesRef.current[taskId] = [];
+      resyncPendingRef.current[taskId] = [];
+      resyncInFlightRef.current[taskId] = false;
+      trimmedLiveTailRef.current[taskId] = false;
 
       // Build SSE URL with optional projectId for multi-project support
       const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+
+      const isStale = () =>
+        cancelled[taskId] || projectContextVersionRef.current !== contextVersionAtStart;
+
+      /*
+      FNXC:AgentLogResync 2026-07-26-16:58:
+      Missed-event recovery. The per-task log stream replays nothing on connect, so any SSE gap (error
+      reconnect, or the mobile hidden-tab suspend) drops every entry emitted while the socket was down
+      and used to leave a silent hole in a transcript that still rendered as contiguous.
+
+      On reopen, refetch the authoritative newest page and RECONCILE it with the buffer instead of
+      replacing the buffer outright: replacing threw away paged-back history and could still hide a
+      gap larger than one page behind a seamless-looking list. reconcileReconnectedEntries splices
+      when the two windows provably overlap and otherwise resyncs behind a VISIBLE gap marker, so the
+      UI never implies continuity it cannot guarantee.
+      A trim during the merge means older entries are still server-side, which forces `hasMore` on.
+      If the refetch itself fails the buffer is left alone and the parked live events are flushed — a
+      degraded live tail beats dropping lines on the floor.
+      */
+      const resyncTaskLogs = () => {
+        if (isStale() || resyncInFlightRef.current[taskId]) return;
+        resyncInFlightRef.current[taskId] = true;
+        resyncPendingRef.current[taskId] = [];
+        let reconciled = false;
+        void fetchAgentLogsWithMeta(taskId, projectId, { limit: INITIAL_LOAD_LIMIT })
+          .then((result) => {
+            if (isStale()) return;
+            const pending = resyncPendingRef.current[taskId] ?? [];
+            resyncPendingRef.current[taskId] = [];
+            reconciled = true;
+            setStateMap((prev) => {
+              const current = prev[taskId];
+              if (!current) return prev;
+              const outcome = reconcileReconnectedEntries(current.entries, result.entries, pending, taskId);
+              // Idempotent ref write: React may double-invoke this updater in StrictMode.
+              if (outcome.trimmed) trimmedLiveTailRef.current[taskId] = true;
+              return {
+                ...prev,
+                [taskId]: {
+                  ...current,
+                  entries: outcome.entries,
+                  hasMore: result.hasMore,
+                  total: result.total,
+                },
+              };
+            });
+            // An offset-0 page reporting hasMore:false means the whole log fits in the page just
+            // merged, so nothing older is left behind.
+            if (!result.hasMore) trimmedLiveTailRef.current[taskId] = false;
+          })
+          .catch(() => {
+            // Keep the current entries on failure; the next reopen retries.
+          })
+          .finally(() => {
+            resyncInFlightRef.current[taskId] = false;
+            if (!reconciled && !isStale()) {
+              const pending = resyncPendingRef.current[taskId] ?? [];
+              resyncPendingRef.current[taskId] = [];
+              if (pending.length > 0) {
+                setStateMap((prev) => {
+                  const current = prev[taskId];
+                  if (!current) return prev;
+                  return {
+                    ...prev,
+                    [taskId]: { ...current, entries: appendWithoutDuplicates(current.entries, pending) },
+                  };
+                });
+              }
+            }
+          });
+      };
+
       subs[taskId] = subscribeSse(
         `/api/tasks/${taskId}/logs/stream${query}`,
         {
+          onReconnect: resyncTaskLogs,
           events: {
             "agent:log": (e) => {
-              if (cancelled[taskId] ||
-                  projectContextVersionRef.current !== contextVersionAtStart) {
-                return;
-              }
+              if (isStale()) return;
               try {
                 const entry: AgentLogEntry = JSON.parse(e.data);
+                /*
+                FNXC:AgentLogResync 2026-07-26-17:02:
+                While a reconnect refetch is in flight the buffer must not move: park the event and
+                let the reconciliation append it after the authoritative page (deduped). `total` is
+                left alone here because the resync sets the authoritative count.
+                */
+                if (resyncInFlightRef.current[taskId]) {
+                  resyncPendingRef.current[taskId] = capLogEntries([
+                    ...(resyncPendingRef.current[taskId] ?? []),
+                    entry,
+                  ]);
+                  return;
+                }
+
                 pendingLiveEntriesRef.current[taskId] = capLogEntries([
                   ...(pendingLiveEntriesRef.current[taskId] ?? []),
                   entry,
@@ -279,11 +422,14 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
                 setStateMap((prev) => {
                   const current = prev[taskId];
                   if (!current) return prev;
+                  const appended = appendLiveEntry(current.entries, entry);
+                  // Idempotent ref write: React may double-invoke this updater in StrictMode.
+                  if (appended.trimmed) trimmedLiveTailRef.current[taskId] = true;
                   return {
                     ...prev,
                     [taskId]: {
                       ...current,
-                      entries: capLogEntries([...current.entries, entry]),
+                      entries: appended.entries,
                       total: current.total !== null ? current.total + 1 : null,
                     },
                   };
@@ -300,12 +446,10 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       void fetchAgentLogsWithMeta(taskId, projectId, { limit: INITIAL_LOAD_LIMIT })
         .then((result) => {
           // Reject stale response from previous context
-          if (cancelled[taskId] ||
-              projectContextVersionRef.current !== contextVersionAtStart) {
-            return;
-          }
+          if (isStale()) return;
 
           const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
+          if (!result.hasMore) trimmedLiveTailRef.current[taskId] = false;
           setStateMap((prev) => ({
             ...prev,
             [taskId]: {
@@ -319,10 +463,7 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
         })
         .catch(() => {
           // Reject stale error from previous context
-          if (cancelled[taskId] ||
-              projectContextVersionRef.current !== contextVersionAtStart) {
-            return;
-          }
+          if (isStale()) return;
 
           const pendingLive = pendingLiveEntriesRef.current[taskId] ?? [];
           setStateMap((prev) => ({
@@ -380,6 +521,9 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       cancelledRef.current = {};
       pendingLiveEntriesRef.current = {};
       loadingMoreRef.current = {};
+      resyncInFlightRef.current = {};
+      resyncPendingRef.current = {};
+      trimmedLiveTailRef.current = {};
     };
   }, []);
 
@@ -392,7 +536,17 @@ export function useMultiAgentLogs(taskIds: string[], projectId?: string): LogSta
       entries,
       loading: state?.loading ?? true,
       loadingMore: state?.loadingMore ?? false,
-      hasMore: state?.hasMore ?? false,
+      /*
+      FNXC:AgentLogPaging 2026-07-26-17:08:
+      A trimmed live tail, or a reconnect gap marker at the head, means older entries are still on
+      the server, so the "load older" affordance must stay reachable even when the last fetch said
+      otherwise. Both signals are retired by the response that proves the buffer reaches entry 0, so
+      `hasMore` is true iff older entries actually remain.
+      */
+      hasMore:
+        (state?.hasMore ?? false)
+        || Boolean(trimmedLiveTailRef.current[taskId])
+        || countLeadingGapMarkers(entries) > 0,
       total: state?.total ?? null,
       clear: createClearFn(taskId),
       loadMore: createLoadMoreFn(taskId, entries),

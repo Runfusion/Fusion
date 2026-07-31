@@ -1,7 +1,10 @@
 import { useTranslation } from "react-i18next";
+import { isCompleteColumnRole } from "../utils/columnRoles";
 import type { Task } from "@fusion/core";
 
 interface MergeDetailsProps {
+  /** Resolved column flags for this task, from the tab that renders it. */
+  columnFlags?: Parameters<typeof isCompleteColumnRole>[0];
   task: Task;
 }
 
@@ -10,9 +13,14 @@ function shortSha(sha?: string, t?: (key: string, defaultValue: string) => strin
   return sha.slice(0, 7);
 }
 
-export function MergeDetails({ task }: MergeDetailsProps) {
+export function MergeDetails({ task, columnFlags }: MergeDetailsProps) {
   const { t } = useTranslation("app");
-  if (task.column !== "done" || !task.mergeDetails) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (batch-dashboard-app):
+  COMPLETE role, resolved. This panel shows the merge commit for finished work; keyed on the literal
+  it rendered NOTHING on a renamed board, so an operator could not see what had actually landed.
+  */
+  if (!isCompleteColumnRole(columnFlags, task.column) || !task.mergeDetails) {
     return null;
   }
 

@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-insights-routes");
 /**
  * Insights REST API Routes
  *
@@ -310,7 +313,7 @@ export function createInsightsRouter(store: TaskStore, options?: ServerOptions):
       graceMs: ORPHAN_GRACE_MS,
       source: "startup",
     }).catch((error) => {
-      console.warn("[insight-sweeper] startup sweep failed", error);
+      severityAuditLog.warn("[insight-sweeper] startup sweep failed", error);
     });
 
     const { dispose: disposeSweeper } = startInsightRunSweeper({
@@ -566,7 +569,7 @@ export function createInsightsRouter(store: TaskStore, options?: ServerOptions):
           source: "drive_by",
         });
       } catch (error) {
-        console.warn("[insight-sweeper] drive-by sweep failed", error);
+        severityAuditLog.warn("[insight-sweeper] drive-by sweep failed", error);
       }
 
       const runs = await store.listRuns(options);
@@ -593,7 +596,7 @@ export function createInsightsRouter(store: TaskStore, options?: ServerOptions):
           source: "drive_by",
         });
       } catch (error) {
-        console.warn("[insight-sweeper] drive-by sweep failed", error);
+        severityAuditLog.warn("[insight-sweeper] drive-by sweep failed", error);
       }
 
       const run = await store.getRun(id);

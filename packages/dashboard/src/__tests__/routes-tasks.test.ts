@@ -2915,7 +2915,19 @@ describe("POST /tasks/:id/pr/address-feedback", () => {
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/pr/address-feedback", "{}", { "Content-Type": "application/json" });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("in-review or in-progress");
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-03-03:00 (red on main from my own #2723):
+    THE MESSAGE NOW NAMES THE BOARD'S RESOLVED COLUMNS. #2723 changed this 400 from
+    "PR feedback can only be addressed for in-review or in-progress tasks" to
+    "... for tasks in '<review>' or '<wip>'" — because telling an operator their card must be `in-review` on a
+    board with no such column sends them looking for something that was deleted.
+
+    The assertion checked the OLD prose. Asserting the resolved column NAMES instead of the sentence keeps the
+    case pinned to what matters (the refusal identifies the lanes the operator can actually use) and stops it
+    breaking again the next time the wording is improved.
+    */
+    expect(res.body.error).toContain("in-review");
+    expect(res.body.error).toContain("in-progress");
     expect(store.addSteeringComment).not.toHaveBeenCalled();
     expect(store.logEntry).not.toHaveBeenCalled();
   });

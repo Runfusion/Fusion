@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Need history to diff against the PR base for the path gate below.
           fetch-depth: 0

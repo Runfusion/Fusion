@@ -289,17 +289,19 @@ describe("ai-session-diagnostics", () => {
       // Reset to null - should restore default console behavior
       setDiagnosticsSink(null);
 
-      // After reset to null, logs should go to console (not to captured array)
-      const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      /* After reset to null, logs go to the console again — on `console.error`, because the default sink now
+         emits through core's `createLogger` and everything but `warn` is stderr (see the note below on the
+         severity marker). Spying on `console.log` asserted the pre-logger channel. */
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const diagnostics = createSessionDiagnostics("test");
       diagnostics.info("Test after reset");
 
       // The captured array should be unchanged (default sink is used)
       expect(captured).toHaveLength(0);
       // Console should have been called with the default sink
-      expect(consoleLogSpy).toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalled();
 
-      consoleLogSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
     });
 
     it("resetting to undefined sets the default sink", () => {
@@ -517,22 +519,36 @@ describe("ai-session-diagnostics", () => {
 
   describe("default sink behavior", () => {
     it("logs info to console.log with prefix", () => {
-      const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    /*
+    FNXC:DashboardTestMocks 2026-08-03-04:40 (red on main — the sink moved to createLogger, the test did not):
+    `defaultSink` now emits through core's `createLogger(scope)` rather than calling `console.log/warn/error`
+    directly, and that logger has TWO deliberate differences these cases predate:
+
+      1. it prefixes a SEVERITY MARKER (`\u0000fnlvl=<level>\u0000`) so the TUI and the log panes can classify a
+         line without parsing it;
+      2. `log()` goes to `console.error`, not `console.log` — everything but `warn` is stderr, which is what keeps
+         stdio-transport surfaces (MCP) from having their protocol stream polluted by diagnostics.
+
+    So asserting `console.log` with a bare `"[planning]"` prefix describes a shape that no longer ships. Asserting
+    the CHANNEL and the marker-prefixed message keeps these cases pinned to the contract that matters — a
+    classifiable line on the right stream — instead of to the pre-logger call site.
+    */
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       resetDiagnosticsSink(); // Ensure default sink is active
 
       const diagnostics = createSessionDiagnostics("planning");
       diagnostics.info("Test message");
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        "[planning]",
-        "Test message",
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[planning] Test message"),
         expect.objectContaining({ _emittedAt: expect.any(String) })
       );
+      expect(consoleErrorSpy.mock.calls[0]?.[0]).toContain("fnlvl=info");
 
-      consoleLogSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
     });
 
-    it("logs warn to console.warn with prefix", () => {
+    it("logs warn to console.warn with a severity-marked prefix", () => {
       const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       resetDiagnosticsSink();
 
@@ -540,15 +556,15 @@ describe("ai-session-diagnostics", () => {
       diagnostics.warn("Warning message");
 
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        "[planning]",
-        "Warning message",
+        expect.stringContaining("[planning] Warning message"),
         expect.objectContaining({ _emittedAt: expect.any(String) })
       );
+      expect(consoleWarnSpy.mock.calls[0]?.[0]).toContain("fnlvl=warn");
 
       consoleWarnSpy.mockRestore();
     });
 
-    it("logs error to console.error with prefix", () => {
+    it("logs error to console.error with a severity-marked prefix", () => {
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       resetDiagnosticsSink();
 
@@ -556,10 +572,10 @@ describe("ai-session-diagnostics", () => {
       diagnostics.error("Error message");
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "[planning]",
-        "Error message",
+        expect.stringContaining("[planning] Error message"),
         expect.objectContaining({ _emittedAt: expect.any(String) })
       );
+      expect(consoleErrorSpy.mock.calls[0]?.[0]).toContain("fnlvl=error");
 
       consoleErrorSpy.mockRestore();
     });

@@ -11,6 +11,7 @@ export type ViewportMode = "mobile" | "tablet" | "desktop";
 export const MOBILE_MEDIA_QUERY = "(max-width: 768px), (max-height: 480px)";
 
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
+const FULL_SCREEN_SHEET_WIDTH_MEDIA_QUERY = "(max-width: 767.98px)";
 const MOBILE_HEIGHT_MEDIA_QUERY = "(max-height: 480px)";
 
 /*
@@ -31,9 +32,13 @@ FNXC:ModalGeometryPersistence 2026-07-15-19:30:
 Full-screen FloatingWindow sheets use only the CSS width breakpoint. This deliberately diverges from
 `isMobileViewport()`: its short landscape-phone clause still renders movable windows, whose desktop
 geometry must continue to restore and persist.
+
+FNXC:ModalTouchGeometry 2026-07-26-12:19:
+The sheet boundary is strictly below 768px so JS geometry persistence agrees with FloatingWindow CSS:
+a 768px known tablet touch viewport is movable/resizable, never a phone sheet.
 */
 export function isFullScreenSheetViewport(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(MOBILE_WIDTH_MEDIA_QUERY).matches;
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(FULL_SCREEN_SHEET_WIDTH_MEDIA_QUERY).matches;
 }
 
 /** Returns whether the CSS short-viewport breakpoint is active. */
@@ -132,6 +137,19 @@ export function getViewportMode(): ViewportMode {
   if (window.matchMedia("(min-width: 769px) and (max-width: 1024px)").matches ||
     (isTabletBoundary && isTabletClassTouchScreen())) return "tablet";
   return "desktop";
+}
+
+/**
+ * Whether a viewport is the tablet-only touch-resize surface.
+ *
+ * FNXC:TaskModalResize 2026-07-26-10:40:
+ * Tablet resize controls need a finger-sized target, but `(pointer: coarse)` alone
+ * would also enlarge controls on desktop hybrids and true phones. Compose the existing
+ * physical-screen-aware tablet classifier with touch capability instead; phones retain
+ * full-screen sheets and desktop coarse-pointer devices retain mouse-sized chrome.
+ */
+export function isTabletTouchViewport(mode = getViewportMode()): boolean {
+  return mode === "tablet" && hasTouchScreen() && !isPhoneClassScreen();
 }
 
 export function useViewportMode(): ViewportMode {

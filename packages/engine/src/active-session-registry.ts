@@ -20,7 +20,20 @@ phase) and the land lease (merge phase) never overlap in time on the same path, 
 keeping them distinct kinds (each released in its own `finally`) means a stale
 entry of one kind can never be mistaken for a live hold of the other.
 */
-export type ActiveSessionKind = "executor" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land";
+/*
+FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
+"planning" exists because FNXC:NodeWorktreeIsolation 2026-07-25-22:10 moved the triage/planning
+session out of the shared checkout and into the TASK's own worktree, but planning never registered
+that path here. Every liveness guard keyed on this registry — above all the FN-4819 skip in
+`SelfHealingManager`'s self-owned-branch reclaim sweep (`isPathActive(task.worktree)`) — was
+therefore blind to a live planner. Observed failure (FN-8600, 2026-07-26): the sweep saw a
+zero-commit `fusion/fn-8600` whose tip trivially equals the integration ref, classified it
+`tip-already-merged`, ran `git worktree remove --force` against the worktree a planning session was
+running in, and escalated the resulting failure to `branch-conflict-unrecoverable` — parking a
+healthy card `paused` with no operator action. A planner holding a worktree is a live session and
+must be as visible as an executor or merger.
+*/
+export type ActiveSessionKind = "executor" | "planning" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land";
 
 export interface ActiveSessionRegistration {
   taskId: string;

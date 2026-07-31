@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { GridlockDetector } from "../gridlock-detector.js";
 import type { GridlockEvent } from "../gridlock-detector.js";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 
 function createTask(id: string, overrides: Partial<Task> = {}): Task {
   return {
@@ -74,6 +75,74 @@ describe("GridlockDetector", () => {
     expect(event?.reasons).toEqual({ "FN-1": "dependency", "FN-2": "dependency" });
     expect(event?.blockingTaskIds).toEqual(["FN-10", "FN-11"]);
     expect(onGridlock).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:05 (batch-engine tail):
+  The dependency-satisfaction gate resolved by ROLE. Every other case in this file omits a workflow, so
+  `resolveWorkflowIrForTask` degrades to the built-in coding IR and they all assert the LEGACY answer —
+  they pass before and after this conversion, and would pass for a broken one too.
+
+  A FALSE ALARM is the failure being fixed: on a renamed board no dependency ever satisfied the three
+  literal comparisons, so the detector reported dependency gridlock for tasks that are not blocked and
+  `notifyGridlock` paged the operator about it.
+
+  REVERT CHECK, measured: with `dep.column !== "done" && dep.column !== "in-review" && dep.column !==
+  "archived"` restored, this fails — a gridlock event is raised naming FN-1 blocked by FN-10.
+  */
+  it("does not report dependency gridlock when the blocker sits in a RENAMED complete lane", async () => {
+    const ir = lifecycleIr(RENAMED_VOCAB, "gridlock-lifecycle");
+    store = {
+      listTasks: vi.fn(async () => tasks),
+      getSettings: vi.fn(async () => settings),
+      parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? []),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "gridlock-lifecycle", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "gridlock-lifecycle", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "gridlock-lifecycle" ? { ir } : undefined)),
+    } as unknown as TaskStore;
+    detector = new GridlockDetector(store, { onGridlock, onGridlockCleared });
+
+    tasks = [
+      // Schedulable: sits in the renamed HOLD lane, blocked by a card that has SHIPPED.
+      createTask("FN-1", { column: RENAMED_VOCAB.hold, dependencies: ["FN-10"] }),
+      createTask("FN-10", { column: RENAMED_VOCAB.complete }),
+      // Keeps the ACTIVE set non-empty; an empty one is its own early return and would
+      // make this pass without the dependency gate ever being consulted.
+      createTask("FN-9", { column: RENAMED_VOCAB.wip }),
+    ];
+
+    const event = await detector.detectGridlock();
+
+    expect(event).toBeNull();
+    expect(onGridlock).not.toHaveBeenCalled();
+  });
+
+  it("still reports dependency gridlock when the blocker is mid-flight on a RENAMED board", async () => {
+    /*
+    Non-vacuous companion: without it, a gate that treated EVERY dependency as satisfied would pass the
+    case above. Same renamed board, same shape — only the blocker's lane changes.
+    */
+    const ir = lifecycleIr(RENAMED_VOCAB, "gridlock-lifecycle");
+    store = {
+      listTasks: vi.fn(async () => tasks),
+      getSettings: vi.fn(async () => settings),
+      parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? []),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "gridlock-lifecycle", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "gridlock-lifecycle", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "gridlock-lifecycle" ? { ir } : undefined)),
+    } as unknown as TaskStore;
+    detector = new GridlockDetector(store, { onGridlock, onGridlockCleared });
+
+    tasks = [
+      createTask("FN-1", { column: RENAMED_VOCAB.hold, dependencies: ["FN-10"] }),
+      createTask("FN-10", { column: RENAMED_VOCAB.wip }),
+      createTask("FN-9", { column: RENAMED_VOCAB.wip }),
+    ];
+
+    const event = await detector.detectGridlock();
+
+    expect(event?.blockedTaskIds).toEqual(["FN-1"]);
+    expect(event?.reasons).toEqual({ "FN-1": "dependency" });
   });
 
   it("detects gridlock when all todo tasks are blocked by file overlap", async () => {

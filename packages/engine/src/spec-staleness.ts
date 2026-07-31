@@ -39,6 +39,25 @@ export interface SpecStalenessResult {
 /**
  * Input options for spec staleness evaluation.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:35 (U11):
+The DEDICATED planner columns — a lane that is ONLY for planning, never also the
+hold lane.
+
+The distinction is load-bearing and I got it wrong first: I defaulted this to the
+`triage`/`todo` PAIR, which broke the pre-existing U11 proof in
+`spec-staleness.test.ts`. That test says exactly why — "same column, different
+status, opposite correct answer". On a MERGED lineage `todo` is both the planner
+and the hold lane, so the planner distinction is carried by STATUS
+(`planning`/`needs-replan`), not by the column, and treating the merged column as a
+planner lane makes a parked card with preserved progress stop skipping staleness.
+
+So the default is the single dedicated legacy id, byte-identical to the literal
+this replaced, and a renamed workflow passes its own DEDICATED planner column (or
+nothing, if it merged).
+*/
+export const LEGACY_DEDICATED_PLANNER_COLUMNS: readonly string[] = ["triage"];
+
 export interface EvaluateSpecStalenessOptions {
   /** Merged project settings containing staleness configuration. */
   settings: Settings;
@@ -55,6 +74,8 @@ export interface EvaluateSpecStalenessOptions {
    * because the original PROMPT.md mtime exceeded the staleness threshold.
    */
   task?: Pick<Task, "id" | "column" | "status" | "currentStep" | "steps" | "pausedReason">;
+  /** The task's resolved DEDICATED planner column(s); omitted keeps the legacy id. */
+  plannerColumns?: readonly string[];
 }
 
 /**
@@ -91,8 +112,18 @@ export interface EvaluateSpecStalenessOptions {
  */
 export function shouldSkipSpecStalenessForPreservedProgress(
   task: EvaluateSpecStalenessOptions["task"] | undefined,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (U11):
+  The task's resolved planner lanes. Returning `false` for a planner-lane card is
+  what KEEPS staleness evaluation ON for it; miss the lane and the guard falls
+  through to the preserved-progress branch below, so a card with progress skips
+  staleness and keeps a spec that should have been re-validated.
+
+  Defaults to the legacy pair, so an unconverted caller is byte-identical.
+  */
+  plannerColumns: readonly string[] = LEGACY_DEDICATED_PLANNER_COLUMNS,
 ): boolean {
-  if (!task || task.column === "triage" || task.status === "needs-replan" || task.status === "planning") {
+  if (!task || plannerColumns.includes(task.column) || task.status === "needs-replan" || task.status === "planning") {
     return false;
   }
   if ((task.currentStep ?? 0) > 0) {
@@ -117,7 +148,7 @@ export async function evaluateSpecStaleness(
     };
   }
 
-  if (shouldSkipSpecStalenessForPreservedProgress(task)) {
+  if (shouldSkipSpecStalenessForPreservedProgress(task, options.plannerColumns ?? LEGACY_DEDICATED_PLANNER_COLUMNS)) {
     return {
       isStale: false,
       ageMs: undefined,

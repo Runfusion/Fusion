@@ -7,18 +7,17 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
-import type {Task, TaskDetail, Column, TaskLogEntry, RunMutationContext} from "../types.js";
+import type {Task, TaskDetail, TaskLogEntry, RunMutationContext} from "../types.js";
 import {findWorkflowColumn} from "../plugin-gate-verdict.js";
 import {getTraitRegistry} from "../trait-registry.js";
 import {makeTransitionPending} from "../transition-types.js";
-import {writeTransitionPending} from "../transition-pending.js";
 import {writeTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
-import {toJson, fromJson} from "../db.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
 import { getLiveTaskColumn } from "./async-comments-attachments.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -55,11 +54,8 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     const writeMarker = async (remainingHookIds: string[]): Promise<void> => {
       try {
         const marker = makeTransitionPending(toColumn, remainingHookIds, startedAt);
-        if (store.backendMode) {
-          await writeTransitionPendingAsync(store.asyncLayer!.db, taskId, marker);
-        } else {
-          writeTransitionPending(store.db, taskId, marker);
-        }
+                await writeTransitionPendingAsync(store.asyncLayer!.db, taskId, marker);
+
       } catch {
         // Marker bookkeeping is best-effort; proceed to run the hooks regardless.
       }
@@ -70,15 +66,10 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
     // runs inside `withTaskLock`, so `getTask` (which re-acquires the lock)
     // would deadlock. `readTaskFromDb` is the in-lock-safe read (backend mode:
     // raw readTaskRow + row conversion, same non-locking property).
-    let taskDetail: TaskDetail | undefined;
-    if (store.backendMode) {
-      const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
-      taskDetail = pgRow
-        ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
-        : undefined;
-    } else {
-      taskDetail = store.readTaskFromDb(taskId, { includeDeleted: false }) as unknown as TaskDetail | undefined;
-    }
+    const pgRow = await readTaskRow(store.asyncLayer!, taskId, { includeDeleted: false });
+    const taskDetail: TaskDetail | undefined = pgRow
+      ? (store.rowToTask(store.pgRowToTaskRow(pgRow)) as unknown as TaskDetail)
+      : undefined;
 
     const remaining = ["default-workflow:postCommit", ...hookIds];
     for (const { traitId, hookKind } of pending) {
@@ -131,14 +122,30 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
-        if (store.backendMode) {
+        {
           const layer = store.asyncLayer!;
-          const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+          const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 DELIBERATE-LITERAL (audited — SENTINEL, do NOT convert):
+
+          MARKED 2026-07-31: the reasoning below was written and the MARKER was not, so the census kept
+          counting this line as owed work. A comment that explains why a site is correct does not reach
+          the instrument — only the marker string does — so the audit was invisible to the one reader
+          that acts on it, and the next person down the backlog would have re-derived it.
+          `getLiveTaskColumn` MANUFACTURES the string "archived" for an archived-or-soft-deleted
+          parent; it does not return the board's archived lane. So this compares against that
+          function's return vocabulary, not against a column id, and converting it to
+          `isArchivedColumnRole` would keep passing on the built-in board and start FAILING on a
+          renamed one — a soft-deleted task's log would become writable.
+
+          The convertible site is `getLiveTaskColumn`'s own `row.column === "archived"` test, and it
+          is deferred with its cost stated: that helper takes a `db` handle with no task, no workflow
+          and no lane vocabulary, so resolving there threads a lane set through a low-level query on a
+          hot path. The same distinction governs the eight downstream comparisons in
+          `async-comments-attachments.ts`, which are sentinels for the same reason.
+          */
           if (state === "archived") throw new Error(`Task ${id} is archived — logging is read-only`);
           if (state === null) throw new Error(`Task ${id} not found`);
-        }
-        if (store.isTaskArchived(id)) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
         }
 
         const dir = store.taskDir(id);
@@ -181,68 +188,40 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       // and write back only the log + updatedAt columns. This avoids the
       // sync this.db.prepare() path which throws "SQLite Database is not
       // available in backend mode" (discovered by sqlite-final-removal session 3).
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
-        if (!pgRow) {
-          throw new Error(`Task ${id} not found`);
-        }
-        if (pgRow.column === "archived" || pgRow.deletedAt != null) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
-        }
-        // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
-        const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
-        existingLog.push(entry);
-        const _entryLimit = getTaskActivityLogEntryLimit();
-        if (existingLog.length > _entryLimit) {
-          existingLog.splice(0, existingLog.length - _entryLimit);
-        }
-        const updatedAt = new Date().toISOString();
-        await updateTaskColumns(layer, id, { log: existingLog, updatedAt });
-
-        // Re-read the task for event emission (full row → Task).
-        const updatedRow = await readTaskRow(layer, id, { includeDeleted: false });
-        if (updatedRow) {
-          const current = store.rowToTask(store.pgRowToTaskRow(updatedRow));
-          await store.writeTaskJsonFile(store.taskDir(id), current);
-          if (store.isWatching) {
-            store.taskCache.set(id, { ...current });
-          }
-          store.emitTaskLifecycleEventSafely("task:updated", [current]);
-          return current;
-        }
-        const emittedTask = ({ id, log: existingLog, updatedAt } as unknown) as Task;
-        store.emitTaskLifecycleEventSafely("task:updated", [emittedTask]);
-        return emittedTask;
-      }
-
-      const row = store.db.prepare(`SELECT log, "column" FROM tasks WHERE id = ? AND ${TaskStore.ACTIVE_TASKS_WHERE}`).get(id) as
-        | { log: string | null; column: Column }
-        | undefined;
-      if (!row) {
-        if (store.isTaskArchived(id)) {
-          throw new Error(`Task ${id} is archived — logging is read-only`);
-        }
+            const layer = store.asyncLayer!;
+      const pgRow = await readTaskRow(layer, id, { includeDeleted: true });
+      if (!pgRow) {
         throw new Error(`Task ${id} not found`);
       }
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — REAL, deferred with the cost stated):
+      Unlike the sentinel above, this reads the task ROW, so `pgRow.column` is a real board lane and a
+      renamed archived column is not recognised — a card the board shows as archived keeps accepting
+      log writes. `deletedAt` covers the soft-delete half, which is why the gap is narrow rather than
+      absent, and why it has stayed invisible: the common path is soft-delete.
 
-      if (row.column === "archived") {
+      Not converted here because the fix is the same one `getLiveTaskColumn` needs — a resolved
+      archived-lane set threaded into a low-level, project-scoped read — and doing it in one of the
+      two places would leave the pair disagreeing about what "archived" means. Recorded so the census
+      keeps pointing at it with the reason attached.
+      */
+      if (pgRow.column === "archived" || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
       }
-
-      const log = fromJson<TaskLogEntry[]>(row.log) || [];
-      log.push(entry);
+      // PG jsonb columns arrive already-parsed; convert to the TaskLogEntry[] shape.
+      const existingLog = Array.isArray(pgRow.log) ? (pgRow.log as TaskLogEntry[]) : [];
+      existingLog.push(entry);
       const _entryLimit = getTaskActivityLogEntryLimit();
-      if (log.length > _entryLimit) {
-        log.splice(0, log.length - _entryLimit);
+      if (existingLog.length > _entryLimit) {
+        existingLog.splice(0, existingLog.length - _entryLimit);
       }
       const updatedAt = new Date().toISOString();
+      await updateTaskColumns(layer, id, { log: existingLog, updatedAt });
 
-      store.db.prepare("UPDATE tasks SET log = ?, updatedAt = ? WHERE id = ?").run(toJson(log), updatedAt, id);
-      store.db.bumpLastModified();
-
-      const current = store.readTaskFromDb(id);
-      if (current) {
+      // Re-read the task for event emission (full row → Task).
+      const updatedRow = await readTaskRow(layer, id, { includeDeleted: false });
+      if (updatedRow) {
+        const current = store.rowToTask(store.pgRowToTaskRow(updatedRow));
         await store.writeTaskJsonFile(store.taskDir(id), current);
         if (store.isWatching) {
           store.taskCache.set(id, { ...current });
@@ -250,9 +229,8 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
         store.emitTaskLifecycleEventSafely("task:updated", [current]);
         return current;
       }
-
-      const emittedTask = ({ id, log, updatedAt } as unknown) as Task;
+      const emittedTask = ({ id, log: existingLog, updatedAt } as unknown) as Task;
       store.emitTaskLifecycleEventSafely("task:updated", [emittedTask]);
       return emittedTask;
-    });
+});
   }

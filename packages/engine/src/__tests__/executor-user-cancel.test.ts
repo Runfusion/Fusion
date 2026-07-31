@@ -238,8 +238,25 @@ describe("TaskExecutor user cancel handling", () => {
     // Resolve abort. Dispose + execute should follow in order.
     resolveAbort!();
     await (executor as any).pendingTaskDisposals.get("FN-RACE");
-    await Promise.resolve();
-    await Promise.resolve();
+    /*
+    FNXC:EngineTests 2026-07-31-05:40:
+    WAIT FOR THE OUTCOME, do not count turns.
+
+    This drained exactly two microtask turns and then asserted the order. #2783's task-move-disposer
+    refactor added await hops to the re-dispatch path, so `execute` had not been recorded yet and
+    `indexOf` returned -1 — reported as "expected -1 to be greater than 2", which reads like the
+    re-dispatch was DROPPED rather than merely later. It was not: measured, the order is still
+    ["abort-started","abort-resolved","dispose","execute"], reached well within the same tick budget
+    once drained properly, and unchanged after a real timer.
+
+    A fixed turn count encodes today's await depth into the test, so any added await on the product
+    path fails it for a reason that has nothing to do with the invariant. `vi.waitFor` on the actual
+    outcome is depth-independent. The ORDER assertion below is untouched and is still the point: if
+    the re-dispatch genuinely stopped happening, waitFor times out and this fails.
+    */
+    await vi.waitFor(() => {
+      expect(callOrder).toContain("execute");
+    });
 
     expect(callOrder.indexOf("execute")).toBeGreaterThan(callOrder.indexOf("dispose"));
     executeSpy.mockRestore();

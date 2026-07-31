@@ -51,10 +51,12 @@ const RAW_BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR: WorkflowIr = (() => 
     throw new Error("stepwise final-review built-in requires a plan node");
   }
   if (!ir.nodes.some((node) => node.id === "plan-review")) {
-    ir.nodes.splice(planIndex + 1, 0, planReviewOptionalGroupNode("in-progress"));
+    // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — Plan Review joins `plan` in the planning
+    // lane. See the placement note in builtin-stepwise-coding-workflow-ir.ts.
+    ir.nodes.splice(planIndex + 1, 0, planReviewOptionalGroupNode("todo"));
   }
   if (!ir.nodes.some((node) => node.id === "plan-replan")) {
-    ir.nodes.splice(planIndex + 2, 0, planReplanNode("triage"));
+    ir.nodes.splice(planIndex + 2, 0, planReplanNode("todo"));
   }
 
   template.nodes = template.nodes.filter((node) => node.id !== "step-review");

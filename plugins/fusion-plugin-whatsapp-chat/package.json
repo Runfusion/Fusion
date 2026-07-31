@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/whatsapp-chat",
-  "version": "0.1.51-beta.3",
+  "version": "0.1.51-beta.5",
   "type": "module",
   "description": "WhatsApp Web (Baileys) chat bridge for Fusion agents",
   "keywords": [
@@ -32,6 +32,6 @@
     "@fusion/core": "workspace:*",
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

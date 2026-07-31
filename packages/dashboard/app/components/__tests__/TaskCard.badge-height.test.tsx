@@ -148,12 +148,13 @@ describe("TaskCard badge heights (FN-4369)", () => {
       ".card-execution-mode-badge",
       ".card-pr-node-badge",
       ".card-mission-badge",
-      ".card-size-badge",
       ".card-oversight-badge",
     ].map((selector) => container.querySelector(selector));
+    const sizeBadge = container.querySelector(".card-size-badge");
 
     expect(baseline).toBeTruthy();
     chips.forEach((chip) => expect(chip).toBeTruthy());
+    expect(sizeBadge).toBeTruthy();
 
     const baselineStyles = getComputedStyle(baseline!);
     for (const chip of chips) {
@@ -166,6 +167,16 @@ describe("TaskCard badge heights (FN-4369)", () => {
       expect(styles.lineHeight).toBe(baselineStyles.lineHeight);
       expect(styles.minHeight).toBe(baselineStyles.minHeight);
     }
+
+    const sizeStyles = getComputedStyle(sizeBadge!);
+    expect(sizeStyles.height).toBe("var(--card-chip-height)");
+    expect(sizeStyles.minHeight).toBe("var(--card-chip-height)");
+    expect(sizeStyles.maxHeight).toBe("var(--card-chip-height)");
+    expect(sizeStyles.paddingTop).toBe(baselineStyles.paddingTop);
+    expect(sizeStyles.paddingBottom).toBe(baselineStyles.paddingBottom);
+    expect(sizeStyles.borderTopWidth).toBe(baselineStyles.borderTopWidth);
+    expect(sizeStyles.borderBottomWidth).toBe(baselineStyles.borderBottomWidth);
+    expect(sizeStyles.lineHeight).toBe(baselineStyles.lineHeight);
 
     cleanupCss();
   });

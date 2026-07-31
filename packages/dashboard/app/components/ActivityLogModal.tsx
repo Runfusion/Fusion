@@ -13,6 +13,7 @@ import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmb
 import type { Task, ProjectInfo } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { FloatingWindow } from "./FloatingWindow";
 
 interface ActivityLogModalProps {
   isOpen: boolean;
@@ -477,16 +478,27 @@ export function ActivityLogModal({
   }
 
   return (
-    <div
-      className="modal-overlay open"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      role="dialog"
-      aria-modal="true"
-      data-testid="activity-log-modal-overlay"
+    /*
+    FNXC:ModalTouchGeometry 2026-07-26-13:20:
+    Activity Log keeps its embedded return above this branch. The modal branch delegates backdrop
+    dismissal, drag, resize, clamping, and persistence to the shared FloatingWindow contract.
+    */
+    <FloatingWindow
+      windowKey="activity-log"
+      title={t("activityLog.title", "Activity Log")}
+      ariaLabel={`${t("activityLog.title", "Activity Log")} dialog`}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".activity-log-header"
+      className="floating-window--activity-log"
+      defaultSize={{ width: 720, height: 560 }}
+      minSize={{ width: 360, height: 280 }}
+      persistGeometryKey="floating-window:activity-log"
+      suspendGeometryPersistenceOnMobile
+      suspendGeometryPersistenceOnShortViewport
+      closeOnOutsidePointerDown
     >
       {body}
-    </div>
+    </FloatingWindow>
   );
 }

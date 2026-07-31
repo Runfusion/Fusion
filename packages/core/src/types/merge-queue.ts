@@ -105,6 +105,20 @@ export interface WorkflowWorkItemTransitionPatch {
   lastError?: string | null;
   blockedReason?: string | null;
   now?: string;
+  /*
+  FNXC:WorkflowWorkItemCas 2026-07-27-22:10 (U7, PR #2491 review — greptile P1):
+  Compare-and-set guard. When set, the transition is applied ONLY if the row's
+  state read INSIDE the transaction still equals this value; otherwise it is a
+  no-op that returns the current row unchanged (no write, no run-audit row).
+
+  Why this exists: a caller that decided from a due-poll SNAPSHOT and then writes
+  unconditionally can clobber a newer state another node reached in between —
+  resetting a `running` claim back to `runnable` (double-claim) is the concrete
+  case. The terminal-state check below already refuses cancelled/succeeded/failed,
+  so `running` was the unguarded gap. Callers that legitimately force a state
+  (the executor's own lifecycle writes) simply omit this and behave as before.
+  */
+  expectedState?: WorkflowWorkItemState;
 }
 
 export interface WorkflowWorkItemDueFilter {
@@ -157,6 +171,17 @@ export interface MergeQueueAcquireOptions {
   /** If provided, the lease attempt targets this specific task first.
    *  The task must be unexpired/available; otherwise falls back to normal queue-head selection. */
   targetTaskId?: string;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+  Resolves a task's review lanes for the stale-row sweep that runs at the start of lease acquisition.
+  That sweep deletes rows whose task has left review, and its predicate is evaluated by PostgreSQL —
+  which cannot know a workflow. Without this the SQL literal deleted every queued row on a renamed
+  board, so the queue filled and emptied and nothing merged.
+
+  Optional so a caller with only a data layer keeps today's behaviour; `TaskStore.acquireMergeQueueLease`
+  supplies it, which is the path production uses.
+  */
+  resolveReviewColumnsFor?: (taskId: string) => Promise<ReadonlySet<string>>;
 }
 
 export type MergeQueueReleaseOutcome =

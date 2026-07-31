@@ -83,7 +83,8 @@ describe("FN-4296: self-healing agent link drift", () => {
     const agents = [makeAgent("agent-backend", "FN-7001", "running")];
     const queuedTask = {
       id: "FN-7001",
-      column: "triage",
+      // FNXC:WorkflowResolvedColumns 2026-07-30-17:40: the intake column post-U11 is `todo`.
+      column: "todo",
       status: "queued",
       overlapBlockedBy: "FN-6827",
     } as Task;

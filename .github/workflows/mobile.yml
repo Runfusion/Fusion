@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -20,7 +20,7 @@ jobs:
         run: pnpm --filter @fusion/dashboard build
 
       - name: Upload dashboard dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dashboard-dist-client
           path: packages/dashboard/dist/client
@@ -33,13 +33,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Cache iOS DerivedData
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/Library/Developer/Xcode/DerivedData
           key: ${{ runner.os }}-derived-data-${{ hashFiles('packages/mobile/**', 'pnpm-lock.yaml') }}
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload iOS artifact
         if: steps.ios-check.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-ios-ipa
           path: ${{ runner.temp }}/ios-artifacts/fusion-ios.ipa
@@ -106,7 +106,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -120,7 +120,7 @@ jobs:
           java-version: "21"
 
       - name: Cache Android Gradle caches
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.gradle/caches
           key: ${{ runner.os }}-gradle-${{ hashFiles('packages/mobile/android/**/*.gradle*', 'packages/mobile/android/**/gradle-wrapper.properties') }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Upload Android artifact
         if: steps.android-check.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-android-apk
           path: packages/mobile/android/app/build/outputs/apk/debug/*.apk
