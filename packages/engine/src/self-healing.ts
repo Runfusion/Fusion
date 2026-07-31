@@ -5039,7 +5039,31 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (the GUARD class, same failure as a dead query):
+      The read above is already lane-independent — it asks for the whole board — so the census scores
+      only the filter. That makes this LOOK like a cheap guard conversion when it is exactly the dead
+      sweep shape: on a renamed board the filter drops every row and the rebind repairs nothing.
+
+      Resolved per card against its OWN workflow, with the project union as the fallback when a card's
+      workflow cannot be read (#2891's shape) so a card is never dropped by a resolution failure.
+      */
+      const rebindReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const rebindLanes = new Map<string, ReadonlySet<string>>();
+      for (const task of allTasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+          rebindLanes.set(
+            task.id,
+            source === "default"
+              ? rebindReviewColumns
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          rebindLanes.set(task.id, rebindReviewColumns);
+        }
+      }
+      const tasks = allTasks.filter((task) => (rebindLanes.get(task.id) ?? rebindReviewColumns).has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,

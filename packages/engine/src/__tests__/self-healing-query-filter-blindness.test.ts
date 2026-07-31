@@ -2166,4 +2166,55 @@ describe("the already-merged hard blocker judges the card's OWN review lanes", (
 
     expect(blocker).toContain(`must be in '${RENAMED_VOCAB.review}'`);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:35 (the GUARD class — same failure as a dead query):
+  `reconcileInReviewBranchRebind` repairs a review card whose `fusion/<id>` branch binding was lost.
+  Its READ is already lane-independent — it asks for the whole board — so the census scores only the
+  filter beneath it, which made this look like a cheap guard conversion. It is not: on a renamed board
+  the filter drops every row and the rebind repairs nothing, exactly like a dead query.
+
+  The observable is `result.outcomes`, which records one entry per surviving candidate. The fixture is
+  a WORKSPACE task so the sweep short-circuits at the workspace guard before any git probe — the lane
+  filter is upstream of that, so the entry only appears if the card survived it.
+
+  REVERT CHECK, measured: with the filter back on `task.column === "in-review"`, this fails — the
+  renamed card is dropped and `outcomes` is empty.
+  */
+  it("reaches a review card on a RENAMED lane for branch rebind", async () => {
+    const card = {
+      ...shippedCard(),
+      id: "FN-REBIND",
+      column: RENAMED_VOCAB.review,
+      workspaceWorktrees: { "repo-a": { worktreePath: "/tmp/ws/repo-a" } },
+      workspaceRepos: [{ path: "repo-a" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+
+    const result = await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileInReviewBranchRebind();
+
+    expect(result.outcomes).toContainEqual(
+      expect.objectContaining({ taskId: "FN-REBIND", reason: "workspace-task" }),
+    );
+  });
+
+  it("does not consider a card outside the review lanes for rebind", async () => {
+    /*
+    Non-vacuous companion: the same card in the wip lane is still executing, and its branch binding is
+    expected to be in flux — rebinding there would fight the executor.
+    */
+    const card = {
+      ...shippedCard(),
+      id: "FN-REBIND",
+      column: RENAMED_VOCAB.wip,
+      workspaceWorktrees: { "repo-a": { worktreePath: "/tmp/ws/repo-a" } },
+      workspaceRepos: [{ path: "repo-a" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+
+    const result = await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileInReviewBranchRebind();
+
+    expect(result.outcomes).toEqual([]);
+  });
+
 });
