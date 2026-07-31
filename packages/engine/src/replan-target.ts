@@ -234,14 +234,32 @@ export function hasAdvancedPastPlanning(
   steps must keep reading as advanced or `hasAdvancedPastPlanning(t) ||
   releasedToTodo` stops distinguishing anything.
   */
-  roles: { mergedPlanningColumn?: string } = { mergedPlanningColumn: "todo" },
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-11:45 (fleet — the four forward arms below):
+  `lanes` carries the task's RESOLVED forward roles so the advancement test is a role question.
+
+  CALLER-RESOLVED, deliberately. The sync twin `resolvePlannerLanes` reads
+  `store.resolveTaskWorkflowIrSync`, which returns the DEFAULT workflow IR for every task under
+  PostgreSQL — converting through it would score as progress while answering about a board the card
+  is not on. The only caller is already `async`, so it resolves with
+  `resolvePlannerLanesForTaskAsync` and passes the answer in.
+
+  The default is `LEGACY_PLANNER_LANES`, which populates all four roles, so a caller that passes
+  nothing is byte-identical to the four literals this replaces. A workflow that declares columns but
+  no archive lane leaves that arm undefined and it cannot match — the board has no such lane.
+  */
+  roles: { mergedPlanningColumn?: string; lanes?: PlannerLanes; archivedColumn?: string } = { mergedPlanningColumn: "todo" },
 ): boolean {
-  if (
-    task.column === "in-progress"
-    || task.column === "in-review"
-    || task.column === "done"
-    || task.column === "archived"
-  ) {
+  const lanes = roles.lanes ?? LEGACY_PLANNER_LANES;
+  /*
+  `archivedColumn` is a SEPARATE argument rather than a fifth `PlannerLanes` role, and that is a
+  deliberate scope choice. Adding the field surfaced a real divergence between the sync and async
+  planner-lane twins — the shared `_workflow-vocabulary-fixture` models no archive lane, so the two
+  disagree there — and that fixture backs 37 test files. The divergence is worth its own change;
+  it is not this conversion's to force. Absent, the legacy id keeps the previous answer.
+  */
+  const advanced = [lanes.wip, lanes.review, lanes.complete, roles.archivedColumn ?? (roles.lanes ? undefined : "archived")];
+  if (advanced.some((column) => column !== undefined && column === task.column)) {
     return true;
   }
   /*

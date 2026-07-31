@@ -120,7 +120,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanes } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -1448,8 +1448,29 @@ export class TriageProcessor {
       freshTask.status === "planning"
       || freshTask.status === "needs-replan"
       || freshTask.status === "plan-review-unavailable";
-    const releasedToTodo = freshTask.column === resolvePlannerLanes(this.store, freshTask.id).hold && !planningStageStatus;
-    if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-11:50 (fleet — replan-target cluster):
+    RESOLVED ONCE, ASYNCHRONOUSLY, and fed to every lane question in this block.
+
+    The previous line called `resolvePlannerLanes`, the SYNC twin, which reads
+    `store.resolveTaskWorkflowIrSync` — and that returns the DEFAULT workflow IR for every task under
+    PostgreSQL. So `releasedToTodo` compared against `todo` on every board regardless of vocabulary:
+    a conversion in shape only. This method is already `async`, so the async resolver applies with no
+    restructuring, and the same answer supplies `hasAdvancedPastPlanning`'s planner, merged-planning
+    and forward-lane arguments rather than letting each fall back to its legacy default.
+    */
+    const plannerLanes = await resolvePlannerLanesForTaskAsync(this.store, freshTask.id);
+    const releasedToTodo = freshTask.column === plannerLanes.hold && !planningStageStatus;
+    if (
+      hasAdvancedPastPlanning(freshTask, plannerLanes.intake, {
+        mergedPlanningColumn: plannerLanes.hold,
+        lanes: plannerLanes,
+        archivedColumn: resolveLifecycleColumns(
+          await resolveWorkflowIrForTask(this.store, freshTask.id),
+        )?.archived,
+      })
+      || releasedToTodo
+    ) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
         `${task.id} killed by stuck detector after planning handoff completed (column=${freshTask.column}, status=${freshTask.status ?? "null"}) — preserving released state (${context})`,
