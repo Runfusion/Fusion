@@ -46,12 +46,18 @@ const PRETEST_CHECKS = [
     "no",
     "hup.mjs",
   ].join(""),
+  "scripts/check-no-cwd-relative-dashboard-test-reads.mjs",
   [
     "scripts/check-no-",
     "kill-",
     "4040.mjs",
   ].join(""),
   "scripts/check-no-getdatabase.mjs",
+  /* FNXC:TestInfrastructure 2026-07-31-19:15: added when the assertion below went red on `main`.
+     Both validators are real scripts, both run in `package.json`'s pretest chain, and
+     `PRETEST_STATIC_CHECK_SCRIPTS` already picked them up — verify:fast was RIGHT and this mirror was
+     stale. Kept in production order, since the assertion is a deepEqual and order is part of it. */
+  "scripts/check-capacity-pool-id.mjs",
   "scripts/check-no-node-only-core-imports-in-dashboard.mjs",
   "scripts/check-pi-versions-pinned.mjs",
   "scripts/check-no-test-timeout-appeasement.mjs",
