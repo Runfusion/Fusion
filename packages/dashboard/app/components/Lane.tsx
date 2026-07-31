@@ -104,7 +104,27 @@ function LaneComponent(props: LaneProps) {
       (grouped[task.column] ??= []).push(task);
     }
     for (const col of workflow.columns) {
-      grouped[col.id] = sortTasksForDisplayColumn(grouped[col.id] ?? [], task_legacyKey(col.id));
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (the two callers taskSorting.ts names as unconverted):
+      `sortTasksForDisplayColumn` defaults its four role questions to the LEGACY ids, and its own header
+      says the callers that do not resolve flags — Lane and ListView — keep today's behaviour. Today's
+      behaviour on a renamed board is: the hold lane loses its priority-then-FIFO queue order, the
+      complete lane loses completion-date sorting, and merging cards stop floating to the top of review.
+      Nothing fails; the cards are just in the wrong order.
+
+      Board.tsx already resolves exactly this from `column.flags`; mirrored here rather than answered a
+      second way. `doneSortMode` stays defaulted because this lane has no operator setting for it.
+      */
+      const isDoneLikeColumn = col.flags.complete === true && col.flags.archived !== true;
+      grouped[col.id] = sortTasksForDisplayColumn(
+        grouped[col.id] ?? [],
+        task_legacyKey(col.id),
+        undefined,
+        col.flags.archived === true,
+        col.flags.hold === true,
+        isDoneLikeColumn,
+        col.flags.mergeBlocker === true || col.flags.humanReview === true,
+      );
     }
     return grouped;
   }, [tasks, workflow.columns]);

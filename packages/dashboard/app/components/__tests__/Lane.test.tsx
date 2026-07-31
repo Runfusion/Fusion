@@ -206,3 +206,69 @@ describe("Lane", () => {
     expect(screen.queryByTestId("column-inline-feedback")).toBeNull();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-08:30:
+Lane sorted every column with `sortTasksForDisplayColumn`'s LEGACY defaults, which taskSorting.ts's
+own header calls out: the callers that do not resolve flags keep today's behaviour. Today's behaviour
+on a renamed board is the wrong ORDER — the hold lane loses priority-then-FIFO, so a card an operator
+marked urgent no longer shows up next. Nothing throws; the queue is just wrong.
+
+The board below is the built-in vocabulary renamed and nothing else, which is why every case above
+still passes: `todo` satisfies the legacy default.
+*/
+const RENAMED_WORKFLOW: BoardWorkflowDefinition = {
+  id: "custom:renamed",
+  name: "Renamed",
+  columns: [
+    { id: "drafting", name: "Drafting", flags: { hold: true } },
+    { id: "building", name: "Building", flags: { countsTowardWip: true } },
+    { id: "checking", name: "Checking", flags: { humanReview: true } },
+    { id: "shipped", name: "Shipped", flags: { complete: true } },
+  ],
+};
+
+describe("Lane on a RENAMED board", () => {
+  /* Each case picks inputs where the ROLE order and the generic fallback order DISAGREE. My first
+     draft asserted urgent-first, which the generic sort also produces — it passed with the fix
+     reverted and proved nothing. */
+  function renderedIds() {
+    return screen.getAllByTestId(/^task-FN-/).map((node) => node.getAttribute("data-id"));
+  }
+
+  it("orders the hold lane by created-at, not task id", () => {
+    /* Equal priority: hold order is FIFO by createdAt, the generic fallback is task-id ascending. */
+    const tasks = [
+      mkTask({ id: "FN-1", column: "drafting", priority: "normal", createdAt: "2024-03-01T00:00:00.000Z" }),
+      mkTask({ id: "FN-9", column: "drafting", priority: "normal", createdAt: "2024-01-01T00:00:00.000Z" }),
+    ];
+
+    render(<Lane {...baseProps()} workflow={RENAMED_WORKFLOW} tasks={tasks} />);
+
+    expect(renderedIds()).toEqual(["FN-9", "FN-1"]);
+  });
+
+  it("orders the complete lane newest-first by completion time", () => {
+    /* Complete sorts by columnMovedAt DESC; the generic fallback would put FN-1 first on id. */
+    const tasks = [
+      mkTask({ id: "FN-1", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T00:00:00.000Z" }),
+      mkTask({ id: "FN-9", column: "shipped", priority: "normal", columnMovedAt: "2024-03-01T00:00:00.000Z" }),
+    ];
+
+    render(<Lane {...baseProps()} workflow={RENAMED_WORKFLOW} tasks={tasks} />);
+
+    expect(renderedIds()).toEqual(["FN-9", "FN-1"]);
+  });
+
+  it("floats a merging card to the top of the review lane", () => {
+    /* The "what is merging right now" ordering; the generic fallback ignores status entirely. */
+    const tasks = [
+      mkTask({ id: "FN-1", column: "checking", priority: "normal" }),
+      mkTask({ id: "FN-9", column: "checking", priority: "normal", status: "merging" }),
+    ];
+
+    render(<Lane {...baseProps()} workflow={RENAMED_WORKFLOW} tasks={tasks} />);
+
+    expect(renderedIds()).toEqual(["FN-9", "FN-1"]);
+  });
+});

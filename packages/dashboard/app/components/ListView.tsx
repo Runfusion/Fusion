@@ -1166,7 +1166,18 @@ export function ListView({
     for (const column of listColumns) {
       const columnId = column.id;
       if (!sortField) {
-        groups[columnId] = sortTasksForDisplayColumn(groups[columnId], columnId as Column);
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-08:22: same conversion as Lane.tsx — the sort's four
+           role questions default to legacy ids, so a renamed board sorted every lane generically. */
+        const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
+        groups[columnId] = sortTasksForDisplayColumn(
+          groups[columnId],
+          columnId as Column,
+          undefined,
+          column.flags.archived === true,
+          column.flags.hold === true,
+          isDoneLikeColumn,
+          column.flags.mergeBlocker === true || column.flags.humanReview === true,
+        );
         continue;
       }
 
