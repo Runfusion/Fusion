@@ -168,16 +168,34 @@ a plausible "the census cannot see this" theory; each was measured.
 **Membership tests with inline literals** — `["done","archived"].includes(task.column)`. The census
 counts binary comparisons only, so this shape would be invisible. **Zero sites.** Nobody writes it.
 
-**Named legacy-id collections** — `const X = ["done","archived"]` then `X.has(col)`. **48 declarations**
-measured 2026-07-30, 49 on 2026-07-31;
-and the raw count is misleading: on inspection they are all either
+**Named legacy-id collections** — ~~clean~~ **THIS ENTRY WAS WRONG, and it hid two real defects.**
 
-- the intentional fallback vocabulary the role helpers degrade to (`LEGACY_TERMINAL_COLUMNS`,
-  `LEGACY_PLANNING_COLUMNS`, `LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS`), or
-- the builtin workflow's own column list (`DEFAULT_WORKFLOW_COLUMN_IDS`, `COLUMNS`), or
-- **already-converted** seams that seed the legacy pair as a floor and then UNION the resolved lanes
-  — `symbol-locks.ts` `terminalLanesFor` and `branch-group-ops.ts` `satisfiedColumns` both do exactly
-  this, with the reasoning recorded at the site.
+It counted DECLARATIONS (48 on 2026-07-30, 49 on 2026-07-31) and concluded the population was benign
+because each declaration is a fallback vocabulary, a builtin column list, or an already-converted
+seam. All true of the declarations, and the declaration is not where the defect lives.
+
+**Measure the USE, not the declaration: a collection used as a MEMBERSHIP GATE against a column.**
+Nine of those exist (2026-07-31), and two were live defects that this entry had explicitly told the
+next reader not to re-probe:
+
+- `TIME_INDICATOR_COLUMNS.has(task.column)` in `TaskCard` — the elapsed-time indicator never rendered
+  on a renamed board, and the fix for the *subscription* one seam earlier did not make it visible;
+- `PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)` in `useTasks` — the planning border and pulsing
+  badge never appeared, because the stamp every consumer filters was never written.
+
+The other seven are genuinely fine, and the reasons are worth keeping because they are the shapes to
+recognise: the no-flags fallback INSIDE a role helper (`columnRoles.ts`, `useSessionFiles.ts`), a
+seam that seeds the legacy pair and then UNIONs resolved lanes (`branch-group-ops.ts`), a marked
+`DELIBERATE-LITERAL` fallback chain (`DocumentsView.tsx`), and a plugin with no trait source at all
+(same class as the dependency-graph gap).
+
+The tell separating the two groups is one question: **does a flags path exist in this file at all?**
+Both defects had none — the gate was the only decision, with nothing to degrade from.
+
+A "do not re-probe" note that is wrong is worse than no note, because it converts one person's
+incomplete measurement into everybody's blind spot. That is the same failure this document already
+records for `sortTasksForDisplayColumn`, one level up: there an annotation told readers to skip a
+ROW, here it told them to skip a POPULATION.
 
 **`switch (task.column)` with legacy `case` labels** — a `SwitchStatement` is not a `BinaryExpression`,
 so the comparison walk cannot see it. **Zero sites**, measured 2026-07-30. The codebase dispatches on
