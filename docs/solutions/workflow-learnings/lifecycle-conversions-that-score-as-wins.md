@@ -293,10 +293,23 @@ Found: the blocker fan-out map (empty trait index, permanent), the card's live e
 
 **Two properties decide severity, and both are checkable by reading the dependency list:**
 
-1. **Does any dependency refresh quickly?** A live clock, `allTasks`, a task identity — any of these
-   rebuilds the closure on the next update, so the wrong answer is a bounded window rather than
-   permanent. The near-duplicate chip keys on `allTasks` and self-heals on the next task refresh; the
-   time indicator keys on `task.column`, which never changes, so it never recovers.
+1. **Does any dependency refresh quickly?** `allTasks` or a task identity rebuilds the closure on the
+   next update, so the wrong answer is a bounded window rather than permanent. The near-duplicate
+   chip keys on `allTasks` and self-heals on the next task refresh; the time indicator keys on
+   `task.column`, which never changes, so it never recovers.
+
+   **A CLOCK-SHAPED DEPENDENCY IS NOT AUTOMATICALLY A FAST ONE — read its cadence, not its name.**
+   I classified `lifecycleDates` as bounded on the strength of a `lifecycleNowMs` dependency and
+   deferred it. That value is driven by a LOCAL-MIDNIGHT boundary timer, one tick per card per day,
+   so a finished card shows no completion date for up to twenty-four hours. The operator found it
+   after I had written it off. `nowMs`, `Ticker` and `lastFetchTimeMs` span a live 30-second ticker,
+   a per-fetch stamp and a daily boundary; sorting them by name puts a day-long defect in the same
+   bucket as a 30-second one.
+
+   The interaction is worth keeping too: a card in a completion lane does not subscribe to the shared
+   live ticker at all (that is what the ticker's own eligibility check is for), so the "fast"
+   dependency that would have rescued it is the one thing it never receives. Ask which dependencies
+   refresh FOR THIS POPULATION, not which ones exist in the list.
 2. **Is the value covered TRANSITIVELY?** A dependency that itself lists the flags gets a new
    identity when they arrive, which propagates. `TaskCard`'s context-menu memo omits all three role
    flags and is nonetheless correct, because it depends on `taskActionMenuModel.actions` and that
