@@ -5,7 +5,6 @@
     "packages/engine/src/auto-merge-finalization.ts": 1,
     "packages/engine/src/project-engine.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
-    "packages/engine/src/self-healing.ts": 2,
-    "packages/cli/src/commands/task-lifecycle.ts": 1
+    "packages/engine/src/self-healing.ts": 2
   }
 }

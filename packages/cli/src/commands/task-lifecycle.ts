@@ -35,7 +35,7 @@ import {
   WorkspaceTaskMergeError,
 } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
-import { resolveWorkflowIrForTask, resolveCompleteColumn } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (census-invisible moveTask destinations):
@@ -778,7 +778,10 @@ export type ProcessPullRequestResult = "waiting" | "merged" | "skipped";
  * Type for the task merge blocker function from @fusion/core.
  * Accepts a task object and returns a reason string if blocked, or undefined if not blocked.
  */
-type TaskMergeBlockerFn = (task: TaskDetail) => string | undefined;
+type TaskMergeBlockerFn = (
+  task: TaskDetail,
+  options?: { reviewColumns?: ReadonlySet<string> },
+) => string | undefined;
 
 /**
  * Process a single task through the PR merge workflow.
@@ -809,7 +812,33 @@ export async function processPullRequestMergeTask(
   pool?: WorktreePool,
 ): Promise<ProcessPullRequestResult> {
   const task = await store.getTask(taskId);
-  if (getTaskMergeBlocker(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
+  Hand the merge blocker THIS task's merge lane, or PR merges never run on a renamed board.
+
+  `getTaskMergeBlocker` was called with the task alone, so its `options.reviewColumns` was undefined
+  and its identity check fell back to `task.column === "in-review"`. On a board whose merge lane is
+  named anything else it returned `task is in 'checking', must be in 'in-review'` — truthy — and this
+  function returned "skipped". Silently, forever: nothing logs, nothing fails, the PR simply never
+  merges. The same class as #2963/#2964, on a third entry point (`daemon.ts`, `serve.ts` and
+  `dashboard.ts` all drain PR merges through here).
+
+  NARROW resolution, not `resolveReviewColumns`. That helper is the BROAD set and its own note says a
+  caller that admits on it and then MOVES the card will act on cards the engine does not consider in
+  review — and this function merges and moves to the complete lane. `resolveMergeOrchestrationColumn`
+  is the single lane the engine acts on, matching how `moves.ts` wires the same call.
+
+  `resolveWorkflowIrForTask` substitutes the default IR rather than throwing, so on a default board
+  this resolves `in-review` and behaviour is byte-identical; an unresolvable lane passes no option at
+  all and keeps the documented legacy literal.
+  */
+  const mergeLane = resolveMergeOrchestrationColumn(await resolveWorkflowIrForTask(store, taskId));
+  /* The option is always PASSED and conditionally VALUED, rather than the whole argument being
+     conditional: `getTaskMergeBlocker` treats an undefined `reviewColumns` exactly as it treats
+     absent options, so the two are identical at runtime — but only this shape is visible to
+     `scripts/lib/lane-wiring-census.mjs`, which matches an object-literal argument and cannot see a
+     ternary. Wiring the gate cannot check is how this defect survived in the first place. */
+  if (getTaskMergeBlocker(task, { reviewColumns: mergeLane ? new Set([mergeLane]) : undefined })) {
     return "skipped";
   }
 
