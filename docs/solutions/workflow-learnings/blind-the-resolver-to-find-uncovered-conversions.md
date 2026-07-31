@@ -124,7 +124,9 @@ case; it is the second time today it changed a conclusion.
 
 So: **an UNCOVERED verdict is a claim about the whole tree and needs the whole tree's tests**, and a
 COVERED verdict needs a baseline to subtract. Before believing either, confirm (a) the blind actually
-modified the file — `git diff --stat`, not the tool's exit code, (b) the run included every test file
+modified the TARGET file — `git diff --stat -- <path/to/target>`, not a bare `git diff --stat` and not
+the tool's exit code, since an unscoped diff reports any unrelated edit in the tree as though it were
+the blind's work, (b) the run included every test file
 that imports the module, including nested `__tests__` directories, and (c) the failures you are
 crediting do not also fail without the blind. A tool that can no-op must say what it changed and fail loudly when it
 cannot; the same standard this program applies to product guards applies to the audit's own
@@ -209,8 +211,11 @@ ones above, where a harness runs the code but cannot see the difference: **no am
 helps when the entry point is never called.** Check that something exercises the code at all before
 concluding a green blind means anything.
 
-`packages/core` is now fully blinded too — **14 sites, 9 already covered, 5 uncovered, all 5
+`packages/core` is now fully blinded too — **15 sites, 9 already covered, 6 uncovered, all 6
 pinned**:
+
+<!-- The `branch-and-pr-entities.ts` row carries TWO sites (`:445` and `:484`); counting the rows
+rather than the sites is what made this read 14/5. -->
 
 | site | verdict |
 |---|---|
