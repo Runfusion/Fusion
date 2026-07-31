@@ -961,7 +961,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
 
       if (movedToTriage) {
-        /* FNXC:WorkflowEvents 2026-08-01-05:10 (fleet — the last two emitters):
+        /* FNXC:WorkflowEvents 2026-07-31-23:10 (fleet — the last two emitters):
            #3109 attached lanes at moves.ts and #3120 at the archive/completion emits. This one and
            `update-task-deps.ts` were still sending `lanes: undefined`, and a listener reads absence as
            "unknown" and falls back to `resolveTaskParkedColumnsSync` — the DEFAULT board under
