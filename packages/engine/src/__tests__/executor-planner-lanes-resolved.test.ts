@@ -24,11 +24,11 @@ sends them to a column that board does not declare — strictly worse than refus
 the refusal was at least visible.
 */
 import { describe, expect, it, vi } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, toTaskMoveLanes } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore } from "./executor-test-helpers.js";
-import type { WorkflowIr } from "@fusion/core";
+import type { WorkflowIr, TaskMoveLanes } from "@fusion/core";
 
 /** Standard traits, non-default names, intake and hold SEPARATE (pre-U11 shape renamed). */
 const RENAMED_SPLIT_IR = {
@@ -202,34 +202,18 @@ describe("stranded-completed recovery promotes through the task's OWN planner la
   });
 });
 
-describe("planner-column classification for the planning-evacuation branch", () => {
-  it("recognises both renamed planner lanes and nothing else", () => {
-    const h = harness(RENAMED_SPLIT_IR, "backlog", true);
-    const isPlanner = (column: string) =>
-      (h.executor as unknown as { isPlannerColumnFor: (id: string, c: string) => boolean })
-        .isPlannerColumnFor("FN-STRANDED", column);
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+The `planner-column classification` describe that stood here is DELETED with its subject.
 
-    expect(isPlanner("backlog")).toBe(true);
-    expect(isPlanner("queued")).toBe(true);
-    expect(isPlanner("building")).toBe(false);
-    expect(isPlanner("checking")).toBe(false);
-    // The default lineage's names are NOT planner lanes on this board — the point of the
-    // conversion is that the answer follows the workflow, in both directions.
-    expect(isPlanner("todo")).toBe(false);
-    expect(isPlanner("triage")).toBe(false);
-  });
+`isPlannerColumnFor` was a private method with no production caller — `tsc` reported it unused, and
+these two tests were the only things reaching it, through an `as unknown as { … }` cast that is
+exactly what let it look alive. A test whose subject cannot be reached from any code path pins
+nothing; keeping it would have meant maintaining assertions about a method the executor never calls.
 
-  it("falls back to the legacy pair when the workflow cannot be resolved", () => {
-    const h = harness(undefined, "todo");
-    const isPlanner = (column: string) =>
-      (h.executor as unknown as { isPlannerColumnFor: (id: string, c: string) => boolean })
-        .isPlannerColumnFor("FN-STRANDED", column);
-
-    expect(isPlanner("todo")).toBe(true);
-    expect(isPlanner("triage")).toBe(true);
-    expect(isPlanner("in-progress")).toBe(false);
-  });
-});
+Its planning-evacuation doc comment described the branch below, which calls
+`isBackwardMoveOutOfPlanning` and never called this.
+*/
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-30-17:05 (PR #2628 review — greptile P1 x2):
@@ -262,19 +246,33 @@ const NO_WIP_IR = {
   ],
 } as unknown as WorkflowIr;
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (LANES NOW COME FROM THE EMITTER):
+`isBackwardMoveOutOfPlanning` no longer resolves its own lanes — it receives the `TaskMoveLanes` the
+`task:moved` emitter already resolved asynchronously. So the harness's IR is converted here with
+`toTaskMoveLanes`, which is the SAME function `moves.ts` calls to build the payload.
+
+That makes these tests stronger than they were, not merely adapted. Previously they reached the
+predicate through the store-backed SYNC resolver, which in production returns the DEFAULT board for
+every task — so the renamed-lane assertions passed in the harness while the real code path could
+never see a renamed lane. Driving the actual payload shape removes that gap between what the test
+exercises and what runs.
+
+`undefined` lanes model the emitter failing to resolve, which is when the legacy ids answer.
+*/
 describe("a forward move off a renamed planner lane is not an evacuation", () => {
-  const isBackward = (h: ReturnType<typeof harness>, from: string, to: string) =>
-    (h.executor as unknown as { isBackwardMoveOutOfPlanning: (id: string, f: string, t: string) => boolean })
-      .isBackwardMoveOutOfPlanning("FN-STRANDED", from, to);
+  const isBackward = (h: ReturnType<typeof harness>, from: string, to: string, ir?: WorkflowIr) =>
+    (h.executor as unknown as { isBackwardMoveOutOfPlanning: (f: string, t: string, l: TaskMoveLanes | undefined) => boolean })
+      .isBackwardMoveOutOfPlanning(from, to, ir ? toTaskMoveLanes(ir) : undefined);
 
   it("does NOT evacuate a card advancing into the renamed wip/review/complete lanes", () => {
     // Pre-fix each of these returned true, so the executor aborted live planning work and
     // deleted the pre-execution worktree of a card that was merely advancing.
     const h = harness(RENAMED_SPLIT_IR, "backlog", true);
 
-    expect(isBackward(h, "backlog", "building")).toBe(false);
-    expect(isBackward(h, "queued", "checking")).toBe(false);
-    expect(isBackward(h, "queued", "shipped")).toBe(false);
+    expect(isBackward(h, "backlog", "building", RENAMED_SPLIT_IR)).toBe(false);
+    expect(isBackward(h, "queued", "checking", RENAMED_SPLIT_IR)).toBe(false);
+    expect(isBackward(h, "queued", "shipped", RENAMED_SPLIT_IR)).toBe(false);
   });
 
   it("DOES evacuate a card withdrawn to a non-lifecycle column", () => {
@@ -282,7 +280,7 @@ describe("a forward move off a renamed planner lane is not an evacuation", () =>
     // (the reported symptom was todo -> Ideas).
     const h = harness(RENAMED_SPLIT_IR, "backlog", true);
 
-    expect(isBackward(h, "backlog", "ideas")).toBe(true);
+    expect(isBackward(h, "backlog", "ideas", RENAMED_SPLIT_IR)).toBe(true);
   });
 
   it("keeps the legacy answer when the workflow has no column vocabulary", () => {
@@ -297,7 +295,7 @@ describe("a forward move off a renamed planner lane is not an evacuation", () =>
   it("never fires for a card that was not in a planner lane", () => {
     const h = harness(RENAMED_SPLIT_IR, "building", true);
 
-    expect(isBackward(h, "building", "ideas")).toBe(false);
+    expect(isBackward(h, "building", "ideas", RENAMED_SPLIT_IR)).toBe(false);
   });
 });
 
