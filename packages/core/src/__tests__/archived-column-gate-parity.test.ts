@@ -56,7 +56,14 @@ import { describe, expect, it } from "vitest";
  */
 const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/agent-store.ts": 1,
-  "packages/core/src/async-mission-store-queries.ts": 2,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:00: 2 -> 1. #2925 converted one of the two comparisons
+  in this file to resolve through `terminalColumns?.archived`, falling back to the literal only when
+  no set is supplied. The remaining 1 is that fallback, which is why the count drops rather than
+  going to zero. Behaviour unchanged for an unconverted caller; this is the inventory following a
+  real conversion, not a silenced assertion.
+  */
+  "packages/core/src/async-mission-store-queries.ts": 1,
   "packages/core/src/eval-signal-collector.ts": 1,
   "packages/core/src/live-agent-count.ts": 1,
   "packages/core/src/mission-store.ts": 1,
