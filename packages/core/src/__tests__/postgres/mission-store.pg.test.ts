@@ -514,6 +514,60 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
+  THE ARCHIVED HALF OF THE SAME PAIR. The case above pins the `complete` resolver; the `archived`
+  one is declared on the very next line and nothing reached it — blinding it back to `["archived"]`
+  left the whole 16-file lane-detector set green while blinding its neighbour failed immediately.
+
+  Terminal evidence is "done OR supported archived state", so an archived card is equally valid
+  repair evidence. On a board whose archive lane is `vaulted`, the archived half could not see it and
+  the method threw `TASK_NOT_TERMINAL` for a card that was genuinely filed away — the same refusal
+  the case above fixed, reached through the other door.
+
+  Being adjacent to a covered resolver is not coverage; this is the third such split found in core.
+  */
+  it("accepts an ARCHIVED card whose board calls the archive lane something else", async () => {
+    const m = missions();
+    const store = h.store();
+    await store.createWorkflowDefinition({
+      name: "Renamed archive",
+      ir: {
+        version: "v2",
+        name: "Renamed archive",
+        columns: [
+          { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+          { id: "vaulted", name: "Vaulted", traits: [{ trait: "archived" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          { id: "end", kind: "end", column: "done" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      } as never,
+    });
+    const mission = await m.createMission({ title: "Renamed-archive repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Delivered" });
+    const task = await store.createTask({ description: "filed away", column: "done" });
+    /*
+    A REAL archive, then the lane rename. The `archived` verdict requires all three of
+    `deletedAt !== null`, an archive-snapshot row, and `isArchived(column)` — a live card merely
+    sitting in an archive-trait column is `invalid-deleted`, not `archived`, so seeding one would
+    fail for a reason that has nothing to do with the lane read under test. Archiving first and
+    then renaming the recorded lane isolates exactly the third condition.
+    */
+    await store.archiveTask(task.id, { cleanup: false });
+    await h.adminDb().execute(sql`UPDATE project.tasks SET "column" = 'vaulted' WHERE id = ${task.id}`);
+    store.taskCache.delete(task.id);
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
+  });
+
   it("atomically reconciles live done evidence and remains idempotent", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Parked repair" });
