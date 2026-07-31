@@ -762,7 +762,27 @@ export class TriageProcessor {
       than invent a column). Undefined here means the board declares no execution lane, so there is
       no advance-into-execution to exclude and the comparison is correctly false.
       */
-      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === disposeLanes.wip) return;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-01-03:10 (RESTORED — #3114 converted the arm #3108 had just
+      flagged, and nothing failed):
+
+      #3108 flagged this exact line and said why in terms that were correct: "This guard LOOKS
+      two-thirds converted ... the obvious next move is to convert the third with the same helper.
+      That would be wrong twice over." #3114 then made that change (`"in-progress"` ->
+      `disposeLanes.wip`), the census fell 45 -> 44, and no behaviour moved on any board.
+
+      `resolvePlannerLanes` resolves through `resolveTaskWorkflowIrSync`, which cannot answer for a
+      custom workflow for TWO independent reasons (`sync-workflow-ir-second-blocker.test.ts`): the sync
+      selection reader returns `undefined` unconditionally under PostgreSQL, and the custom-workflow IR
+      read goes through `store.db`, whose implementation is an unconditional throw. So all three arms
+      are legacy ids in effect; the third being spelled as a lane read makes the line LOOK converted
+      while `disposeLanes.wip` is `"in-progress"` on every board.
+
+      The literal is restored because it is honest: it stays counted, and the census keeps pointing
+      here. Convert all three together when this listener can await, or when the emitter carries the
+      lanes on the event (see the `task:moved` payload work).
+      */
+      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {
         this.disposeSubagentsForTask(task.id, `task moved to ${task.column}`);
       }
