@@ -180,7 +180,6 @@
   "packages/engine/src/__tests__/review-handoff-lane.test.ts": 1,
   "packages/engine/src/__tests__/scheduler-fanout-escalation-lanes.test.ts": 2,
   "packages/engine/src/__tests__/scheduler-load-lane-union.test.ts": 2,
-  "packages/engine/src/__tests__/scheduler-paused-dispatch-refusal.test.ts": 3,
   "packages/engine/src/__tests__/self-blocked-dependency-deadlock.pg.test.ts": 1,
   "packages/engine/src/__tests__/self-healing-db-corruption.test.ts": 1,
   "packages/engine/src/__tests__/stale-task-reporter.test.ts": 1,
