@@ -20,6 +20,7 @@ import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipT
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
+import type { TaskMoveLanes } from "@fusion/core";
 import { moveTaskToReplanColumn, resolvePlannerLanes, resolvePlannerLanesForTaskAsync, resolveReplanTargetColumn } from "./replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflow-graph-task-runner.js";
@@ -3038,6 +3039,15 @@ export class TaskExecutor {
    * only on the default lineage, so on a renamed board a withdrawn card kept its reviewer
    * streaming and its pre-execution worktree on disk.
    */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-08-01-03:10 (fleet — NO PRODUCTION CALLER, deliberately left):
+  This has no call site outside `executor-planner-lanes-resolved.test.ts`. Its two guards are inert for
+  the same reason as its sibling below, but converting an uncalled helper only moves a number: there is
+  no behaviour to fix and no payload to thread, because nothing emits into it.
+
+  Left as-is and still counted rather than converted or deleted — deleting it is a judgement about
+  whether the test is guarding a planned caller, which is not mine to make from here.
+  */
   private isPlannerColumnFor(taskId: string, column: string): boolean {
     const lanes = resolvePlannerLanes(this.store, taskId);
     return column === lanes.hold || column === lanes.intake;
@@ -3062,8 +3072,34 @@ export class TaskExecutor {
    * has no column vocabulary at all, `resolvePlannerLanes` returns the legacy names and this
    * reads exactly as it did before.
    */
-  private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string): boolean {
-    const lanes = resolvePlannerLanes(this.store, taskId);
+  private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, payloadLanes: TaskMoveLanes | undefined): boolean {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-08-01-03:10 (fleet):
+    PREFER the lanes the emitter resolved. `resolvePlannerLanes` is the sync path, which answers with
+    the DEFAULT board in production — so every comparison below was inert, and the FNXC note above
+    describes damage (evacuating a card that was merely advancing) that the inert path was silently
+    NOT doing. Converting it therefore switches this branch on for the first time on renamed boards.
+
+    The payload arrives on `task:moved` (#3109), so this needs no await and no sync resolver: the one
+    caller is the evacuation branch of that handler.
+
+    THE SYNC RESOLVER STAYS AS THE FALLBACK, and I tried removing it first. Falling back to the legacy
+    literals instead looks cleaner and drops these guards off the inert ratchet — but it makes the
+    NO-PAYLOAD path strictly worse, because a sync resolve is at least best-effort where a literal is
+    nothing. `executor-planner-lanes-resolved.test.ts` proves it: two renamed-board cases go red.
+
+    So this conversion does NOT clear the ratchet entry, and that is the honest outcome rather than a
+    number chased. The live path (the `task:moved` evacuation branch) is now correct; the fallback is
+    unchanged from today, and the ratchet is right that it is still inert.
+    */
+    const resolved = resolvePlannerLanes(this.store, taskId);
+    const lanes = {
+      hold: payloadLanes?.hold ?? resolved.hold,
+      intake: payloadLanes?.intake ?? resolved.intake,
+      wip: payloadLanes?.wip ?? resolved.wip,
+      review: payloadLanes?.review ?? resolved.review,
+      complete: payloadLanes?.complete ?? resolved.complete,
+    };
     if (from !== lanes.hold && from !== lanes.intake) return false;
     const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter(
       (column): column is string => typeof column === "string",
@@ -3707,7 +3743,7 @@ export class TaskExecutor {
             }
           }),
         );
-      } else if (this.isBackwardMoveOutOfPlanning(task.id, from, to)) {
+      } else if (this.isBackwardMoveOutOfPlanning(task.id, from, to, lanes)) {
         /*
         FNXC:PlanningEvacuation 2026-07-25-23:00:
         A card pulled BACKWARD out of a planner lane (the reported case: todo → Ideas) must stop all
