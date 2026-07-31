@@ -1,6 +1,6 @@
 ---
 category: workflow-learnings
-module: packages/engine/src/self-healing.ts
+module: packages/engine
 tags: [lifecycle-columns, testing, coverage, resolved-lanes, ratchets]
 problem_type: process-learning
 applies_when: deciding whether a lane conversion is actually protected by a test
@@ -71,9 +71,53 @@ and identical rows come back. **A fake that ignores its own filter cannot see a 
 is exactly the bug these resolvers exist to fix. Use the column-honouring store in
 `packages/engine/src/__tests__/self-healing-query-filter-blindness.test.ts`.
 
+**5. The resolver must be able to answer differently in the harness.**
+`resolveProjectColumnsForRoles` returns the **legacy ids and nothing else** when the store has no
+`listWorkflowDefinitions` — an intentional degrade in `project-lane-vocabulary.ts` so an unreadable
+workflow list cannot fail a sweep. A harness that omits that method makes the resolved set and the
+literal set *equal by construction*, so the conversion is unobservable no matter how good the
+assertion is. This is not a test bug; it is correct production behaviour that erases the difference
+the test is trying to measure. Both the `scheduler.ts` and `triage.ts` conversions were unpinned for
+this reason alone.
+
 Fixtures also encode contracts invisible from the resolver: action sites that deliberately skip a
 card whose board cannot be read, buckets with their own pause-reason predicates, gates that resolve
 the *blocker's* workflow rather than the card's. All were discovered by a test failing first.
+
+## The audit's dominant failure mode is test SELECTION, not blinding
+
+Every wrong reading this method has produced came from running the wrong tests, never from the blind
+itself. Three in one session, each of which reads exactly like coverage:
+
+| what I ran | why it lied |
+|---|---|
+| `vitest run src/__tests__ -t "executor"` | `-t` filters test **names**, not files. Reported two `executor.ts` resolvers uncovered; both are covered. |
+| `blind3.py <file> <var>` with an unmapped role | the script exited non-zero **silently**, `&&` skipped the check, `;` let vitest run against **unmodified source**. Reported 375/375 green "under blinding" with nothing blinded. |
+| `vitest run src/__tests__/notification` | missed `src/notification/__tests__/` entirely — a nested `__tests__` the glob never reached. Reported covered code as uncovered. |
+
+So: **an UNCOVERED verdict is a claim about the whole tree and needs the whole tree's tests.** Before
+believing one, confirm (a) the blind actually modified the file — `git diff --stat`, not the tool's
+exit code, and (b) the run included every test file that imports the module, including nested
+`__tests__` directories. A tool that can no-op must say what it changed and fail loudly when it
+cannot; the same standard this program applies to product guards applies to the audit's own
+instruments.
+
+## Seed-then-union sites need the right blind
+
+```ts
+const sweepColumns = [...new Set(["triage", "todo", ...projectPlannerColumns])];
+```
+
+Blinding the resolver to its legacy ids here is a no-op **on a default board** — the seed already
+contains them. It is *not* a no-op on a renamed board, where the resolver is the only contributor of
+the renamed lane. The rule is narrower than "seed-then-union hides everything": **it hides a defect
+only while every lane you assert on is already in the seed.** Blinding to the *empty* set is the
+stricter choice, because it also models a resolver that returns nothing at all.
+
+Related: expand roles to legacy ids **per role**, from `LEGACY_COLUMN_IDS_BY_ROLE`, not from a
+hand-written whole-list table. `intake` maps to `["todo","triage"]`, not `["triage"]`; a blind that
+drops `todo` is *stricter* than the real legacy set, and a stricter blind manufactures failures that
+read as coverage the site does not have.
 
 ## Two shapes a ratchet cannot distinguish
 
@@ -87,6 +131,22 @@ Found an hour apart, in sibling sweeps:
 A ratchet counting call sites scores the first as debt and the second as done. Both are wrong. Only
 reading the site tells you which you have, which is why that distinction belongs in a comment at the
 site and not in a baseline number.
+
+## What has and has not been audited
+
+Measured 2026-07-31: **116 non-test `resolveProjectColumnsForRoles` call sites** across 30 files —
+`core` 17 files, `engine` 10, `dashboard` 2, `cli` 1.
+
+Audited so far, all in `engine`: `self-healing.ts` (64 resolvers mapped, 21 pinned, 1 recorded as
+inert by construction), `executor.ts` (2, both covered), `scheduler.ts` (1, was uncovered, now
+pinned), `triage.ts` (1, was uncovered, now pinned), `restart-recovery-coordinator.ts` (covered),
+`notification/notification-service.ts` (covered). Known uncovered and left: `evaluator.ts`'s archived
+read — no test file imports that module at all; it is a thin pass-through into
+`collectDeterministicSignals`, which is testable directly.
+
+**`packages/core`'s 17 files are entirely unaudited** — including `store.ts`'s wip read behind the
+engine-downtime timing shift and the archived reads in `task-store/reads.ts`. Nothing is known about
+whether they are pinned; that is a gap in the audit, not a clean bill.
 
 ## When you cannot pin it, say so at the site
 
