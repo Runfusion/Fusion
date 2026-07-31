@@ -9796,13 +9796,26 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const now = Date.now();
+        /* Resolved once per sweep; also feeds the workspace-owner check below. */
+        const preExecLiveColumns = await resolveProjectColumnsForRoles(
+          this.store,
+          ["intake", "hold", "countsTowardWip", ...REVIEW_ROLES, "complete"],
+        );
       const parked = await this.store.listTasks({ slim: true });
       const candidates = parked.filter((task) => {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
         if (task.firstExecutionAt || task.executionStartedAt) return false;
         // Columns where a card is active or queued to become active.
-        if (task.column === "todo" || task.column === "in-progress" || task.column === "in-review" || task.column === "done") return false;
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-31-06:45:
+          RESOLVED membership for "active or queued to become active" — intake, hold, wip, review and
+          complete. The literal list was todo/in-progress/in-review/done, i.e. every lane except
+          archived, so on a renamed board it matched nothing and this sweep considered LIVE cards'
+          worktrees reclaimable. Taking a worktree from a queued card is the failure this guard exists
+          to prevent, which is why it is converted rather than left.
+          */
+          if (preExecLiveColumns.has(task.column)) return false;
         /*
         WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
         needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
