@@ -1,6 +1,4 @@
-import fs from "node:fs";
 import { loadAllAppCss } from "../../test/cssFixture";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 
@@ -31,6 +29,21 @@ function getMainMobileBlock(css: string): string {
   const block = getMediaBlocks(css, /@media[^{]*\(max-width:\s*768px\)[^{]*\{/g);
   expect(block).toContain(".modal-overlay");
   expect(block).toContain(".detail-tabs");
+  return block;
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-30-19:20:
+FloatingWindow's phone breakpoint is NOT the 768px one `getMainMobileBlock` aggregates.
+
+It is `(max-width: 767.98px), (max-height: 480px)` — the project's documented mobile query, whose
+`max-height` clause catches landscape phones that exceed 768px wide. Reusing the 768px helper here
+silently returns styles.css's block, which contains none of these selectors; the anti-vacuity
+assertion in the caller is what caught that during authoring.
+*/
+function getFloatingWindowMobileBlock(css: string): string {
+  const block = getMediaBlocks(css, /@media[^{]*\(max-width:\s*767\.98px\)[^{]*\{/g);
+  expect(block).toContain(".floating-window");
   return block;
 }
 
@@ -67,35 +80,57 @@ function getLastRuleBlock(css: string, selector: string): string {
   return block!;
 }
 
-function extractVhHeight(rule: string): number {
-  const heightMatch = rule.match(/height:\s*(\d+)vh;/);
-  expect(heightMatch).toBeTruthy();
-  return Number(heightMatch![1]);
-}
-
 describe("core modals mobile css coverage", () => {
-  it("TaskDetailModal: keeps desktop, tablet, mobile, and embedded height invariants", () => {
+  /*
+  FNXC:ModalTouchGeometry 2026-07-30-19:05:
+  TASK DETAIL NO LONGER SIZES ITSELF — the invariant moved layers, it did not disappear.
+
+  This case pinned `.modal.task-detail-modal` at `height: 85vh` (desktop), `92vh` (tablet) and
+  `100dvh` (mobile), with `resize: both` / `resize: none`. FN-8619 migrated Task Detail onto
+  `FloatingWindow`, so the panel is now `width: 100%; height: 100%` and fills a host sized by
+  geometry. The desktop and tablet `vh` heights are `defaultSize` in TSX, not CSS, so asserting them
+  against a stylesheet can only ever fail.
+
+  The MOBILE invariant is the one that still matters and is still CSS, so it is asserted at its new
+  home: `.floating-window--task-detail` inside FloatingWindow.css's mobile block takes over the
+  viewport and hides the resize handle. That is the same guarantee the old `100dvh` / `resize: none`
+  assertions made — a phone gets a full-screen sheet, not a draggable window.
+
+  Deliberately NOT re-pinning the desktop/tablet numbers via `defaultSize`: those are ordinary
+  layout defaults a designer may retune, and a test that fails on a 640→680 width change is noise.
+  The full-screen-on-mobile rule is a real contract; 85vh on a desktop is a preference.
+
+  Note the media query is `(max-width: 767.98px), (max-height: 480px)` — landscape phones exceed
+  768px wide, so the height clause is load-bearing and asserted with it.
+  */
+  it("TaskDetailModal: takes over the viewport on mobile instead of sizing itself", () => {
     const css = loadAllAppCss();
     const tabletBlock = getTabletBlock(css);
-    const mobileBlock = getMainMobileBlock(css);
 
+    /* The panel defers sizing to its FloatingWindow host. */
     const baseRule = getFirstRuleBlock(css, ".modal.task-detail-modal");
-    expect(baseRule).toContain("height: 85vh;");
-    expect(baseRule).toContain("max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);");
-    expect(baseRule).toContain("resize: both;");
+    expect(baseRule).toContain("width: 100%;");
+    expect(baseRule).toContain("height: 100%;");
 
-    const tabletRule = getLastRuleBlock(tabletBlock, ".modal.task-detail-modal");
-    expect(tabletRule).toContain("height: 92vh;");
-    expect(extractVhHeight(tabletRule)).toBeGreaterThan(extractVhHeight(baseRule));
-    expect(tabletRule).toContain("width: 98vw;");
-    expect(tabletRule).toContain("max-width: 98vw;");
-    expect(tabletBlock).toContain("--overlay-padding-top: 6vh;");
-    expect(tabletRule).toContain("max-height: calc(100dvh - var(--overlay-padding-top, 6vh) - var(--space-md));");
+    /* ANTI-VACUITY: prove the mobile block was found and really is the phone breakpoint,
+       so a renamed/removed query fails loudly instead of matching an empty string. */
+    const floatingMobileBlock = getFloatingWindowMobileBlock(css);
+    expect(floatingMobileBlock).toContain("max-height: 480px");
+    expect(floatingMobileBlock).toContain(".floating-window--task-detail");
 
-    const mobileRule = getLastRuleBlock(mobileBlock, ".modal.task-detail-modal");
-    expect(mobileRule).toContain("height: 100dvh;");
-    expect(mobileRule).toContain("max-height: 100dvh;");
-    expect(mobileRule).toContain("resize: none;");
+    const mobileRule = getLastRuleBlock(floatingMobileBlock, ".floating-window--task-detail");
+    /*
+    MATCHED AT DECLARATION BOUNDARIES, not by substring. `toContain("height: 100dvh")` is satisfied
+    by the `max-height: 100dvh` line, so it stays green even if `height` itself is changed — caught
+    by mutation: rewriting `height` to `90dvh` left the old assertions passing. Anchoring on `{`/`;`
+    forces each declaration to be checked on its own.
+    */
+    expect(mobileRule).toMatch(/[{;]\s*height:\s*100dvh/);
+    expect(mobileRule).toMatch(/[{;]\s*max-height:\s*100dvh/);
+    expect(mobileRule).toMatch(/[{;]\s*width:\s*100vw/);
+    expect(mobileRule).toMatch(/[{;]\s*max-width:\s*100vw/);
+    /* The resize affordance must be gone on touch, not merely inert. */
+    expect(floatingMobileBlock).toContain(".floating-window--task-detail .floating-window__resize-handle");
 
     const embeddedRule = getRuleBlocks(css, ".task-detail-content--embedded")
       .find((rule) => rule.includes("height: 100%;"));
