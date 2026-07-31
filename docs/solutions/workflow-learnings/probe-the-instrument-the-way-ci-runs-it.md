@@ -71,6 +71,36 @@ When instruments in one program disagree about their own domain, every different
 unreadable until someone notices. Align the scopes, or the next person spends a day attributing a
 discrepancy to the thing being measured instead of to the measuring.
 
+## Read the reported COUNT, not the exit code
+
+There is a second probing technique that sidesteps §1 entirely, and it is strictly more informative.
+
+Instead of asking "did the tool exit non-zero", parse the tool's own **per-file count** out of its
+output:
+
+```bash
+node scripts/check-move-target-literals.mjs 2>&1 | grep -a "my-probe-tmp" \
+  | grep -aoE "^ +[0-9]+" | tr -d ' '
+```
+
+Two properties matter:
+
+- **Immune to the report-only trap.** A report-only run still prints the count. The number moves from
+  0 to 1 whether or not `--strict` was passed, so a missing flag cannot fake a pass.
+- **It measures WHICH SHAPES, not just whether something fired.** An exit code is one bit for the whole
+  run. Auditing a detector means asking "of these five spellings, which are seen?" — and five separate
+  binary runs cannot distinguish *partial* detection from a probe file that failed to compile. The
+  count answers per form, in one run: the move-target audit read `direct 1 / backtick 1 / ternary 0 /
+  const 0`, which named the gap immediately.
+
+The two techniques answer different questions and both are worth keeping. Use `pnpm check:*` to ask
+**"can this ratchet fail?"** — the §1 question, and the one to ask first. Use per-file counts to ask
+**"what can it see?"** — the shape-coverage question, where an exit code is too coarse.
+
+One caveat that applies to both: confirm the probe file is actually being scanned, by watching the
+tool's *scanned-file* total move. A probe that never compiled and a probe the tool never discovered
+both report zero hits, and neither is a finding.
+
 ## What to actually do
 
 - Before trusting a ratchet's number, run it once with a deliberate violation and confirm it goes red.
