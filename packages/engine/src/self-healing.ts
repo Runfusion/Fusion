@@ -8467,12 +8467,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         for (const task of await this.store.listTasks({ column, slim: false })) stallCandidatesById.set(task.id, task);
       }
       const tasks = [...stallCandidatesById.values()];
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-16:20 (RESTORED — #2951 landed the read without this):
+      Per-card review lanes for the classifier below. #2951 converted the READ to the project's review
+      columns, and its bulk conflict resolution dropped this map and the `reviewColumns` argument with
+      it — leaving the textbook missed pair: a widened read hands every renamed-board card to a
+      classifier that still judges by the literal `in-review`, so the sweep resolves lanes and then
+      surfaces nothing.
+
+      The test that proved the wiring was dropped in the same resolution, which is why nothing failed.
+      A deleted test cannot fail. Restored together.
+      */
+      const stallLanes = new Map<string, ReadonlySet<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          stallLanes.set(
+            entry.id,
+            source === "default"
+              ? stallReviewColumns
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          stallLanes.set(entry.id, stallReviewColumns);
+        }
+      }
       let surfaced = 0;
 
       for (const task of tasks) {
         if (task.deletedAt) continue;
         if (!allowsAutoMergeProcessing(task, settings)) continue;
         const signal = getInReviewStallReason(task, {
+          reviewColumns: stallLanes.get(task.id) ?? stallReviewColumns,
           now: cycleStartMs,
           activeMergeTaskId,
           executingTaskIds,

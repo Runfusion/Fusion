@@ -2205,4 +2205,66 @@ describe("the already-merged hard blocker judges the card's OWN review lanes", (
 
     expect(blocker).toContain(`must be in '${RENAMED_VOCAB.review}'`);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-16:25 (RESTORED alongside the wiring it proves):
+  `surfaceInReviewStalls` tells an operator a card is stalled in review. #2951 converted its READ to the
+  project's review columns but its bulk conflict resolution dropped the per-card `reviewColumns`
+  argument — and dropped THIS TEST in the same pass, which is why the regression landed silently. A
+  deleted test cannot fail, so the gate stayed green over a sweep that resolves lanes and then surfaces
+  nothing on a renamed board.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored               -> fails, the card is never listed
+    - `reviewColumns` dropped at the call -> fails, the classifier judges the renamed lane by the
+      literal and returns no signal
+  */
+  it("surfaces a stalled card on a RENAMED review lane", async () => {
+    const stalled = {
+      ...shippedCard(),
+      id: "FN-STALLED",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      error: "merge failed: conflict",
+      mergeRetries: 99,
+      mergeDetails: {},
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stalled]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+
+    /* The sweep surfaces by LOGGING and only writes for specific terminal codes, so its own count is
+       the observable — asserting a write would pin a different branch than the lane read. */
+    const surfaced = await new SelfHealingManager(store, { rootDir: "/repo" }).surfaceInReviewStalls();
+
+    expect(surfaced).toBeGreaterThan(0);
+  });
+
+  it("does not surface a stall for a card outside the review lanes", async () => {
+    /*
+    Non-vacuous companion: the same failed card in the WIP lane has not reached review, so reporting a
+    stall there would invent one.
+    */
+    const stalled = {
+      ...shippedCard(),
+      id: "FN-STALLED",
+      column: RENAMED_VOCAB.wip,
+      status: "failed",
+      error: "merge failed: conflict",
+      mergeRetries: 99,
+      mergeDetails: {},
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stalled]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+
+    const surfaced = await new SelfHealingManager(store, { rootDir: "/repo" }).surfaceInReviewStalls();
+
+    expect(surfaced).toBe(0);
+  });
+
 });
