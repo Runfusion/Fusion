@@ -1066,6 +1066,21 @@ export async function cleanupArchivedTasksImpl(store: TaskStore): Promise<string
     quarantine partition.
     */
     const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59 DELIBERATE-LITERAL — STATE MARKER, DO NOT RESOLVE:
+    `"archived"` here is the marker `archiveTask` WROTE, not a board lane. This sweep enumerates rows
+    Fusion itself archived and then REMOVES THEIR DIRECTORIES (`rm` below). Widening it to the
+    resolved archived-lane set would feed cards merely RESTING in a board's archived-trait lane into
+    a filesystem delete — live work, destroyed.
+
+    Marked at the site because the classification previously lived only in
+    `archived-column-gate-parity.test.ts`, and a coordinated three-encoding conversion edits THIS
+    file. A converter working file-by-file would see the same `eq(column, "archived")` shape as the
+    six LANE sites and have nothing here telling them apart.
+
+    The sibling STATE site is `async-self-healing.ts`'s soft-deleted column-drift query; the LANE/
+    STATE split for all eight Drizzle sites is recorded in that parity test.
+    */
     const archivedRows = await layer.db
       .select()
       .from(schema.project.tasks)

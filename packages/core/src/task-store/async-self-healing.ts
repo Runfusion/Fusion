@@ -55,6 +55,17 @@ interface SoftDeletedColumnDriftCandidate {
 export async function listSoftDeletedColumnDriftCandidates(
   db: AsyncDataLayer["db"],
 ): Promise<SoftDeletedColumnDriftCandidate[]> {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59 DELIBERATE-LITERAL — STATE MARKER, DO NOT RESOLVE:
+  `"archived"` is the marker a soft-deleted row is SUPPOSED to carry, and this query finds rows whose
+  column DRIFTED away from it. Resolving it to the board's archived-lane set would classify a
+  soft-deleted row sitting in a renamed archive lane as drift and "repair" a row that is already
+  correct.
+
+  Marked at the site for the same reason as `task-mutation-ops.ts`'s cleanup sweep: the LANE/STATE
+  classification lived only in `archived-column-gate-parity.test.ts`, and a coordinated conversion
+  edits this file. The shape here is indistinguishable from the six LANE sites without it.
+  */
   const rows = await db
     .select({ id: schema.project.tasks.id, column: schema.project.tasks.column })
     .from(schema.project.tasks)
