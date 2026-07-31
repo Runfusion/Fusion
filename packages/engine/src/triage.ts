@@ -806,7 +806,7 @@ export class TriageProcessor {
       file's census entry pointing at work that is still outstanding.
 
       THE SPECIFICATION IS ABOVE. Whoever supplies a lane answer that is not sync-resolved should make
-      this line read `disposeLanes.wip` and delete this note.
+      this line read `disposeLanes.wip` and delete this note. LEFT COUNTED until then.
       */
       if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {

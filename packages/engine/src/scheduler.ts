@@ -1230,8 +1230,31 @@ export class Scheduler {
       it. Both live in a synchronous `task:updated` listener, so the async resolver is unavailable
       without reordering this handler against every other subscriber.
 
-      Unblocking needs a sync-capable workflow-selection reader — one change that un-inerts every
-      sync-path conversion in this file at once.
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE REASON CHANGED — #3128 made async resolution
+      available here, so "it would be inert" is no longer why these two stay):
+      #3128 converted the rest of this listener by deferring the resolve into `void (async () => ...)`
+      blocks, which reach the ASYNC resolver and are genuinely correct. So the sync-resolver argument
+      above no longer explains these two. The real reason is the one #3128's own note states, three
+      branches down:
+
+        "The `planningTaskIds.delete` stays SYNCHRONOUS — it is the edge-trigger bookkeeping, and
+         deferring it would let a second update re-enter this branch."
+
+      Both remaining literals are that case:
+        - `failedTaskIds.add` below is edge-trigger bookkeeping raced against `moveTask` clearing the
+          failure metadata — the comment on it says so. Deferring the add can miss that window.
+        - the PR-monitoring guard further down gates `prMonitor.getTrackedPrs()` /
+          `startMonitoring()`, where `tracked.has(task.id)` IS the re-entrance guard. Move the lane
+          answer behind an await and two updates for the same task can both pass that check before
+          either starts, double-starting a monitor.
+
+      LEFT COUNTED, both of them: an unconverted literal is visible to the census, and marking these
+      exempt would assert the code is fine when it is blocked.
+
+      So these are not waiting on a resolver. They are waiting on somewhere to put the answer that is
+      not behind an await — the emitter-carried `lanes` that #3109 added to `task:moved` would do it,
+      and extending that to `task:updated` is measured as expensive rather than impossible
+      (`sync-workflow-ir-second-blocker.test.ts`: 26 emit sites against 7, on the hottest write path).
       */
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
@@ -1318,8 +1341,11 @@ export class Scheduler {
       }
 
       if (!this.options.prMonitor) return;
-      /* FNXC:WorkflowResolvedColumns 2026-07-31-23:58: the second of the two honest literals — see
-         the note on the mission-failure guard above for why converting it here would be inert. */
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: the second of the two honest literals. NOT
+         because a conversion would be inert — #3128 made the async resolver reachable in this
+         listener — but because `tracked.has(task.id)` below is a re-entrance guard, and moving this
+         answer behind an await lets two updates for the same task both pass it and double-start a
+         monitor. LEFT COUNTED. See the fuller note on the mission-failure guard above. */
       if (task.column !== "in-review") return;
       if (!task.prInfo) return;
 
