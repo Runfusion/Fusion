@@ -133,7 +133,7 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     ).toBe(true);
   });
 
-  it("AUDIT — the call-site split for both measured seams is 2-of-6 and 4-of-4", async () => {
+  it("AUDIT — the call-site split for both measured seams is 4-of-6 and 4-of-4", async () => {
     /*
     NOT driven: reaching all six sites needs the heartbeat and self-healing harnesses. Asserted
     against source text and labelled as such rather than dressed up as an end-to-end result.
@@ -141,6 +141,45 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     An alarm in BOTH directions. A new unconverted caller pushes the count up and fails; converting
     an existing one pushes it down and also fails, which is deliberate — that is the moment someone
     should read the three cases above and update this number on purpose.
+
+    FNXC:WorkflowResolvedColumns 2026-07-31-22:55 (the alarm fired DOWNWARD — re-recorded 2 -> 4, and
+    the count is now split by RESOLUTION PATH, which is the part that nearly got laundered):
+
+    Two more sites started passing `parkedColumns`, so the shape count rose to 4. Re-recording it at 4
+    and stopping would have been wrong. Walking all six before touching the number:
+
+        agent-heartbeat.ts:1267   no parkedColumns                                 UNCONVERTED
+        agent-heartbeat.ts:3796   no parkedColumns                                 UNCONVERTED
+        self-healing.ts:13184     await resolveProjectColumnsForRoles  (:13170)     async-resolved
+        self-healing.ts:13294     await resolveProjectColumnsForRoles  (:13293)     async-resolved
+        task-agent-sync.ts:243    await resolveLinkSyncColumnRoles     (:225)       async-resolved
+        scheduler.ts:1798         resolveTaskParkedColumnsSync         (:1797)      SYNC — INERT
+
+    Three of the four resolve through an awaited resolver that reads the task's real selection. One
+    does not. `scheduler.ts:1798` resolves through
+    `resolveTaskParkedColumnsSync`, which reaches `getTaskWorkflowSelectionImpl` — `undefined` for
+    every task under PostgreSQL — so the resolver takes its `!workflowId` branch and returns the
+    DEFAULT builtin IR. It does not get `undefined` and fall through to a legacy arm; it gets a REAL
+    IR resolving REAL traits, the default board's, with full confidence. That site answers
+    `hold`/`intake` as `todo`/`triage` on every board, exactly as the literal did. Driven proof:
+    `workflow-scheduler-sync-role-conversion-inert-live-e2e.pg.test.ts`.
+
+    A SECOND kind of inertness sits at `self-healing.ts:13184` and is deliberately NOT asserted below:
+    that sweep's gate is `hasFreshRun || hasActiveExecution`, which never reads
+    `shouldPreserveParkedLink`, so its correctly-resolved set decides nothing today. Its own FNXC note
+    says so and explains why it is kept anyway. Recorded here as prose because resolution path is
+    mechanically checkable and "the gate never reads the answer" is not — asserting the second on a
+    string match would produce a number nobody could maintain.
+
+    So a bare `parkedConverted.length === 4` would have recorded this seam as two-thirds converted
+    while a quarter of that progress cannot change behaviour on any board. That is the inert
+    conversion class — and it would have been recorded by the very audit written to catch it, which is
+    why the split below asserts the RESOLUTION PATH and not just the presence of the key.
+
+    The sync-resolved site is asserted BY NAME. It is a real defect, not a deferral, but converting
+    `scheduler.ts` is not this file's job and guessing at a fix in a file another worker owns would be
+    worse than naming it. If someone repoints it at the async resolver this case fails, and the fix is
+    to move that entry from the inert list to the live one.
     */
     const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
 
@@ -156,7 +195,51 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     const parkedConverted = parkedCalls.filter((s) => s.slice(0, s.indexOf("})")).includes("parkedColumns"));
 
     expect(parkedCalls.length).toBe(6);
-    expect(parkedConverted.length).toBe(2);
+    expect(parkedConverted.length).toBe(4);
+
+    /* The split that keeps the number honest. `parkedConverted` counts the SHAPE — the key is
+       present. This counts the RESOLUTION PATH, which is what decides whether a conversion can change
+       an answer on a renamed board.
+
+       Provenance, not proximity: the argument is almost always a variable (`[...driftedParkedColumns]`,
+       `roles.parked`), and the `await` lives in that variable's ASSIGNMENT, several lines above the
+       call. An earlier draft of this check keyed on `await` appearing inside the call window and
+       classified all four sites as inert — it measured nothing and would have passed at 0-live had
+       the expected number been written to match it. So: take the root identifier of the expression,
+       find where the file assigns it, and ask whether THAT is awaited. */
+    const provenanceOf = (source: string, site: string): string => {
+      const window = site.slice(0, site.indexOf("})"));
+      const expr = /parkedColumns:\s*([^,\n]+)/.exec(window)?.[1] ?? "";
+      const root = /([A-Za-z_$][\w$]*)/.exec(expr.replace(/^\s*\[?\s*\.{3}\s*/, ""))?.[1] ?? "";
+      if (!root) return "";
+      return new RegExp(`\\b${root}\\s*=\\s*(await\\s+)?[\\w.]+`).exec(source)?.[0] ?? "";
+    };
+
+    const sourceFor = (site: string) => [
+      read("agent-heartbeat.ts"), read("self-healing.ts"), read("scheduler.ts"), read("task-agent-sync.ts"),
+    ].find((src) => src.includes(site.slice(0, 60))) ?? "";
+
+    const asyncResolved = parkedConverted.filter((s) => provenanceOf(sourceFor(s), s).includes("await"));
+    const syncResolved = parkedConverted.filter((s) => !provenanceOf(sourceFor(s), s).includes("await"));
+
+    /* 3 resolve through an AWAITED resolver that reads the task's real selection
+       (self-healing.ts:13170 and :13293 via `resolveProjectColumnsForRoles`, task-agent-sync.ts:225
+       via `resolveLinkSyncColumnRoles`). 1 does not: scheduler.ts:1797. */
+    expect(asyncResolved.length).toBe(3);
+    expect(syncResolved.length).toBe(1);
+
+    /* Named, so the sync-resolved site cannot quietly become "just one of the four". This is the
+       assertion that fails if someone converts it properly — at which point move it to the live list
+       above rather than deleting this. */
+    const schedulerSource = read("scheduler.ts");
+    const schedulerParked = schedulerSource.split("evaluateParkedAgentTaskLink(").slice(1)
+      .filter((s) => s.trimStart().startsWith("{"));
+    expect(schedulerParked.length).toBe(1);
+    /* Asserted on the PROVENANCE, not the call window — the resolver name is in the assignment
+       (`const rollbackParked = resolveTaskParkedColumnsSync(...)`, scheduler.ts:1797), while the call
+       itself only mentions `rollbackParked`. Matching the window here is the same mistake the
+       resolution-path check above documents, and it fails loudly rather than silently passing. */
+    expect(provenanceOf(schedulerSource, schedulerParked[0]!)).toMatch(/resolveTaskParkedColumnsSync/);
 
     /* The lease seam's two SELF-HEALING sites. Its other two are in `scheduler.ts` and were converted
        from the start, so 2 converted here is the seam at 4-of-4.
