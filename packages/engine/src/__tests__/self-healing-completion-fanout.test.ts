@@ -260,6 +260,33 @@ describe("the task:moved fan-out resolves the board's own lanes", () => {
     mgr.stop();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-19:30:
+  `completedReviewColumns` was UNCOVERED on the #3115 map. It reads the DEPENDENTS resting in review
+  when a blocker completes; no case here put a dependent in a renamed review lane, so blinding it left
+  the file green.
+
+  What the literal costs: a dependent sitting in review is never read, so its `blockedBy` is never
+  cleared when the blocker finishes. It stays blocked by work that is already done — the most visible
+  form of this class, because the board simply stops moving.
+  */
+  it("clears blockedBy for a dependent resting in the board's own review lane", async () => {
+    const blocker = makeTask("FN-BLOCKER", { column: "shipped" });
+    const dependent = makeTask("FN-DEP", { column: "checking", blockedBy: "FN-BLOCKER", status: "queued" });
+    const store = createStore([blocker, dependent]) as unknown as TaskStore & EventEmitter;
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions =
+      vi.fn(async () => [{ id: "wf-renamed", ir: RENAMED_IR }]);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    await mgr.reconcileCompletedTask("FN-BLOCKER");
+
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-DEP",
+      expect.objectContaining({ blockedBy: null }),
+    );
+    mgr.stop();
+  });
+
   it("rebinds the branch on a move into the board's own review lane", async () => {
     const t = makeTask("FN-R2", { column: "checking" });
     const store = renamedStore(t);
