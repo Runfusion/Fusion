@@ -1,6 +1,8 @@
 {
-  "total": 20,
+  "total": 29,
   "byFile": {
-    "packages/engine/src/scheduler.ts": 20
+    "packages/engine/src/executor.ts": 4,
+    "packages/engine/src/scheduler.ts": 18,
+    "packages/engine/src/triage.ts": 7
   }
 }

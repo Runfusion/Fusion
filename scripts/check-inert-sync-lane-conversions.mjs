@@ -33,17 +33,35 @@ WHAT IT CHECKS. Per file: functions whose body reaches `resolveTaskWorkflowIrSyn
 column ids ("sync lane sources"), the locals assigned from them, and the `===`/`!==` guards that
 consume those locals' role fields. The per-file count is baselined and a RISE fails.
 
+SCHEDULER 20 -> 18, AND WHY THAT IS NOT A RETIREMENT (2026-07-31-20:30). #3065 replaced three
+`to === parked.complete || to === parked.archived` pairs with three `parked.terminal.has(to)` calls.
+Six comparison sites became three membership sites, so the COUNT fell while the guards themselves are
+unchanged and all three remain counted (#3068 taught this check to see `.has`). Verified before
+re-recording, because from inside this check a fall caused by denser encoding is indistinguishable
+from a fall caused by a gate being deleted — and only the second is a defect. That check is the
+standing obligation attached to every `--update-baseline`.
+
 WHY A RISE AND NOT ZERO. Existing sync-resolved guards are real, deliberate, and documented — the
 scheduler's listeners genuinely cannot await today, and their authors said so. Demanding zero would
 force either a revert or an exemption marker on day one. What must not happen is MORE literals
 quietly becoming inert-resolved, which is precisely the fleet-phase failure. A drop is welcome and
 re-records with `--update-baseline`.
 
-LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Sources are matched within a file by function NAME, so a
-helper imported from another module is not followed — this finds the dominant local-helper shape
-(`resolveTaskParkedColumnsSync`, `resolvePlannerLanes`) and will miss a cross-module one. It proves a
-guard consumes a sync-resolved answer, not that the answer is wrong for every caller. Treat a report
-as a pointer to investigate. Tests are excluded.
+CROSS-MODULE SOURCES ARE FOLLOWED (2026-07-31-19:05). The first two versions collected sync-lane
+sources PER FILE, so a helper defined in one module and consumed in another was invisible. That limit
+stopped being theoretical: `resolvePlannerLanes` lives in `replan-target.ts` and is consumed in
+`triage.ts` and `executor.ts`, and `triage.ts:723` already reads
+`task.column === disposeLanes.hold || ... || task.column === "in-progress"` — a sync-resolved pair
+sitting beside a literal, i.e. a site a fleet worker would reach for next, whose "conversion" would be
+inert and which this check could not have seen.
+
+So sources are now collected in a FIRST PASS over the whole tree, and consumption is counted in a
+second pass against that repo-wide set.
+
+LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Sources are still matched by function NAME, not by resolved
+symbol, so two unrelated functions sharing a name are conflated — the same caveat
+`check-inert-flag-seams.mjs` records. It proves a guard consumes a sync-resolved answer, not that the
+answer is wrong for every caller. Treat a report as a pointer to investigate. Tests are excluded.
 
 TO CLEAR A FAILURE: resolve asynchronously (thread the lane in from a caller that has already awaited
 a store read), or carry the resolved lanes on the event payload so no listener resolves at all. Do NOT
@@ -178,14 +196,24 @@ function countInertGuards(sf, locals, sources) {
   return hits;
 }
 
-const byFile = {};
-const detail = {};
-for (const file of sourceFiles(join(REPO, "packages"))) {
+const files = sourceFiles(join(REPO, "packages"));
+
+/* PASS 1 — every sync-lane source in the tree, so a helper consumed across a module boundary counts. */
+const sources = new Set();
+for (const file of files) {
   const text = readFileSync(file, "utf8");
   if (!text.includes(SYNC_IR_READER)) continue;
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-  const sources = syncLaneSources(sf);
-  if (sources.size === 0) continue;
+  for (const name of syncLaneSources(sf)) sources.add(name);
+}
+
+/* PASS 2 — guards consuming any of them, anywhere. */
+const byFile = {};
+const detail = {};
+for (const file of files) {
+  const text = readFileSync(file, "utf8");
+  if (![...sources].some((n) => text.includes(n))) continue;
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const locals = syncLaneLocals(sf, sources);
   const hits = countInertGuards(sf, locals, sources);
   if (hits.length === 0) continue;
