@@ -165,18 +165,14 @@ comparing, so the sync local never appears in a guard:
     const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo", … };
     if (from !== lanes.hold && from !== lanes.intake) return false;
 
-`sync` is registered, `lanes` is not, and every guard reads `lanes`. MEASURED: the file reported ZERO
-counted guards while the sync resolver was still there and still answering with the default board
-whenever the payload is absent.
+`sync` is registered, `lanes` is not, and every guard reads `lanes`. MEASURED: `executor.ts` reported
+ZERO counted guards while the sync resolver was still present.
 
-So a local built from an object literal whose property initializers mention a sync local is itself a
-sync local. Iterated to a fixpoint, because the laundering can chain (`a -> b -> c`) and a single pass
-would only ever catch the first link — the same one-pass mistake this file already made once.
+So a local built from an object literal that mentions a sync local is itself a sync local. Iterated to
+a fixpoint because the laundering can chain (`a -> b -> c`); a single pass catches only the first link.
 
-DELIBERATELY NOT full dataflow. This follows `const` object construction and nothing else: no
-function returns, no spread from another module, no reassignment. The point is to stop the scan going
-quiet on the shape the codebase actually uses, not to become a type checker — the LIMITS section
-above still governs.
+DELIBERATELY NOT full dataflow: `const` object construction only — no function returns, no
+cross-module spread, no reassignment. The LIMITS section above still governs.
 */
 function syncLaneLocals(sf, sources) {
   const locals = new Set();
@@ -206,12 +202,30 @@ function syncLaneLocals(sf, sources) {
     for (const decl of objectDecls) {
       if (locals.has(decl.name)) continue;
       for (const known of locals) {
-        if (new RegExp(`\\b${known}\\b`).test(decl.text)) { locals.add(decl.name); grew = true; break; }
+        if (mentionsIdentifier(decl.text, known)) { locals.add(decl.name); grew = true; break; }
       }
     }
     if (!grew) break;
   }
   return locals;
+}
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169 — the match could not fire):
+`\b` IS THE WRONG BOUNDARY FOR A JS IDENTIFIER, and the name was interpolated unescaped.
+
+`new RegExp(`\\b${name}\\b`)` breaks on a perfectly legal local. For `$sync` it builds `\b$sync\b`,
+where `$` is an ANCHOR — so the pattern can never match and the laundered guard is silently missed,
+which is the failure mode this scanner exists to prevent. `_sync` fails differently: `\b` sits between
+two non-word positions and does not assert what it looks like it asserts.
+
+So the name is escaped, and the boundary is an explicit identifier boundary — `$` and `_` are
+identifier characters in JS and must not count as separators. Chosen over `\b` deliberately: `\b`
+happens to work for the common case and hides exactly the cases above.
+*/
+function mentionsIdentifier(haystack, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![A-Za-z0-9_$])${escaped}(?![A-Za-z0-9_$])`).test(haystack);
 }
 
 /** `x === parked.review` / `parked.hold !== y` — a guard consuming a sync-resolved role.

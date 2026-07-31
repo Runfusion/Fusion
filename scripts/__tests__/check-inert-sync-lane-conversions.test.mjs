@@ -148,15 +148,8 @@ Driven through a real file in the scanned tree rather than a unit call, because 
 nodes the scan VISITS — a helper-level assertion would have been written against the same wrong
 mental model that produced the gap.
 
-KNOWN REMAINING GAP, stated so this case is not read as full coverage: only ONE hop is followed. The
-two-hop form — sync local -> object literal -> comparison — is still uncounted:
-
-    const sync  = payload ? undefined : localSync(store, id);
-    const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo" };
-    if (from !== lanes.hold) …            // still invisible
-
-`executor.ts` is written that way today, which is how it reads as 0 while the sync call is still
-present. Closing it needs propagation through object-literal construction.
+The two-hop form this case originally listed as an open gap — sync local -> object literal ->
+comparison — is covered by the chained case below; the gap was closed in the same branch.
 */
 test("counts a sync lane reached through a CONDITIONAL initializer, not just a direct call", () => {
   const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-conditional.ts");
@@ -219,6 +212,39 @@ test("counts a sync lane laundered through an object literal, including a chain"
       counts.byFile["packages/engine/src/__probe-inert-twohop.ts"],
       1,
       "a sync lane rebuilt into an object (and relayed again) must still be counted",
+    );
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169):
+A local named `$sync` could not be matched at all. The propagation step built `\b${name}\b` from raw
+source text, so `$` was read as an ANCHOR and the pattern never fired — a laundered guard silently
+uncounted, which is the exact failure this scanner exists to prevent. `_sync` is wrong for the
+related reason that `\b` does not assert an identifier boundary next to `_`.
+
+`$` is a legal and common identifier character, so this is a shape the codebase can produce today.
+*/
+test("matches a laundered sync local whose name contains regex metacharacters", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-dollar.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, from: string, payload: { hold?: string } | undefined): boolean {`,
+    `  const $sync = payload ? undefined : localSync(store, id);`,
+    `  const lanes = { hold: payload?.hold ?? $sync?.hold ?? "todo" };`,
+    `  return from !== lanes.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    const counts = liveCounts();
+    assert.equal(
+      counts.byFile["packages/engine/src/__probe-inert-dollar.ts"],
+      1,
+      "a sync local named `$sync` must still be followed into the object it is laundered through",
     );
   } finally {
     rmSync(probe, { force: true });
