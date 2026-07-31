@@ -369,3 +369,55 @@ describe("self-healing pause-abort requeue target vocabulary", () => {
     expect(vi.mocked(moveTask).mock.calls[0]?.[1]).toBe("todo");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (fleet — active/terminal membership):
+Two multi-id membership guards, both asking "is this card live or finished?" and both matching NOTHING
+on a renamed board.
+
+`reconcilePreExecutionWorktrees` is the destructive one: a renamed board made every working card look
+parked, so the sweep would have SEIZED a worktree from live work. That is why over-inclusion is the
+acceptable failure direction for it and the project union is the right scope — a column wrongly counted
+as active only leaves a worktree alone.
+*/
+describe("self-healing active/terminal membership vocabulary", () => {
+  function releaseStoreFor(ir: WorkflowIr | undefined, tasks: Task[]) {
+    return {
+      ...storeFor(ir),
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
+      listTasks: vi.fn(async () => tasks),
+      getProjectWorkflowIds: vi.fn(async () => (ir ? ["custom:renamed"] : [])),
+      listWorkflowDefinitions: vi.fn(async () => (ir ? [{ id: "custom:renamed", ir }] : [])),
+      logEntry: vi.fn(async () => undefined),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+    } as unknown as TaskStore;
+  }
+
+  const withWorktree = (id: string, column: string): Task => ({
+    id,
+    column,
+    worktree: `/tmp/wt/${id}`,
+    updatedAt: "2020-01-01T00:00:00.000Z",
+    columnMovedAt: "2020-01-01T00:00:00.000Z",
+  } as unknown as Task);
+
+  it("does not seize the worktree of a card in a RENAMED working lane", async () => {
+    const store = releaseStoreFor(RENAMED_WITH_REVIEW, [withWorktree("FN-9300", "building")]);
+    const release = vi.fn(async () => true);
+    const manager = Object.create(SelfHealingManager.prototype) as SelfHealingManager;
+    (manager as unknown as Record<string, unknown>).store = store;
+    (manager as unknown as Record<string, unknown>).options = { releasePreExecutionWorktree: release };
+    await (manager as unknown as { reconcilePreExecutionWorktrees(): Promise<number> }).reconcilePreExecutionWorktrees();
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("does not seize the worktree of a card in a RENAMED review lane", async () => {
+    const store = releaseStoreFor(RENAMED_WITH_REVIEW, [withWorktree("FN-9301", "signoff")]);
+    const release = vi.fn(async () => true);
+    const manager = Object.create(SelfHealingManager.prototype) as SelfHealingManager;
+    (manager as unknown as Record<string, unknown>).store = store;
+    (manager as unknown as Record<string, unknown>).options = { releasePreExecutionWorktree: release };
+    await (manager as unknown as { reconcilePreExecutionWorktrees(): Promise<number> }).reconcilePreExecutionWorktrees();
+    expect(release).not.toHaveBeenCalled();
+  });
+});
