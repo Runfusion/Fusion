@@ -273,6 +273,45 @@ What actually finds these:
 
 A false positive is loud and gets fixed. A false negative prints a baseline and reads as coverage.
 
+### A sixth shape: the resolved value arrives, and a memo has already answered
+
+Three defects in one session, all the same shape and none visible to any instrument here.
+
+A lane value resolved asynchronously — the board fetches workflow traits after first paint — is read
+inside a `useMemo`/`useCallback` whose dependency list omits it. The first computation runs with the
+flags `undefined`, the role helpers correctly fall back to the legacy ids, and on a RENAMED board
+that answer is wrong. When the flags arrive nothing in the dependency list has changed, so the memo
+never recomputes and the pre-load answer stands.
+
+A legacy board hides it completely: there the fallback already answers correctly on the first paint,
+so the stale list costs nothing. **Every instance is renamed-board-only**, which is why they
+accumulated. This repo also has no `react-hooks/exhaustive-deps` rule, so the class is invisible to
+lint, and a disable directive for that rule fails CI.
+
+Found: the blocker fan-out map (empty trait index, permanent), the card's live elapsed-time indicator
+(never subscribed, permanent), and the near-duplicate chip (stale closure, bounded).
+
+**Two properties decide severity, and both are checkable by reading the dependency list:**
+
+1. **Does any dependency refresh quickly?** A live clock, `allTasks`, a task identity — any of these
+   rebuilds the closure on the next update, so the wrong answer is a bounded window rather than
+   permanent. The near-duplicate chip keys on `allTasks` and self-heals on the next task refresh; the
+   time indicator keys on `task.column`, which never changes, so it never recovers.
+2. **Is the value covered TRANSITIVELY?** A dependency that itself lists the flags gets a new
+   identity when they arrive, which propagates. `TaskCard`'s context-menu memo omits all three role
+   flags and is nonetheless correct, because it depends on `taskActionMenuModel.actions` and that
+   model lists `taskColumnFlags`. Reading the dependency list alone reports this as a defect.
+
+**A gate for this was built and rejected.** A scanner for "memoized hook reads a lane value absent
+from its deps" reports 19 sites; two were real. Property 2 is the reason — transitive coverage is
+invisible to any purely syntactic check, and would need a real dependency graph to resolve. Freezing
+19 would have baselined mostly noise and trained everyone to skip the report, which is the failure
+this document already records for `sortTasksForDisplayColumn`. The scanner is a good investigative
+tool and a bad ratchet; the distinction is worth keeping.
+
+The triage that does work is cheap: run the scan, then for each hit ask the two questions above. Nine
+of the nineteen survive question 1; hand-checking those is an afternoon, not a project.
+
 ### The probe harness lies more often than the gate does
 
 Probing four gates with unimagined shapes in one session produced **two rounds of silently invalid
