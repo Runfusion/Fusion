@@ -716,7 +716,6 @@ html .column.drag-over * {
   transition: none !important;
 }
 
-[data-theme="light"] .agent-detail-overlay,
 [data-theme="light"] .agent-dialog-overlay,
 [data-theme="light"] .chat-new-dialog-backdrop {
   background: transparent;
@@ -3780,7 +3779,6 @@ Toast text must contrast its status background across every dashboard theme and 
 
   /* Modal: full-screen on mobile (cross-cutting overlay/modal base chrome) */
   .modal-overlay:not(.confirm-dialog-overlay),
-  .agent-detail-overlay,
   .agent-dialog-overlay,
   .workflow-output-modal-overlay {
     padding-top: 0;

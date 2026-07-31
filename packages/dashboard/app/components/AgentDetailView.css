@@ -1,15 +1,22 @@
 /* === Agent Detail Modal === */
-.agent-detail-overlay {
-  position: fixed;
-  inset: 0;
-  background: color-mix(in srgb, var(--bg) 60%, transparent);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: var(--space-lg);
-}
+/*
+FNXC:ModalTouchGeometry 2026-07-30-23:55:
+`.agent-detail-overlay` is DELETED — nothing has rendered it since FN-8619 moved Agent Detail onto
+FloatingWindow, whose `modal` host owns the scrim (`.floating-window-overlay--modal`).
+
+It defined a fixed, blurred, flex-centred backdrop, and a mobile rule below reset its padding and
+stretched its alignment. Neither is a lost feature: FloatingWindow's overlay is `position: fixed;
+inset: 0` with no flex context, so those declarations had nothing to act on — it positions the panel
+by geometry instead.
+
+Deleting it was blocked on one real question: two containment guards
+(`dashboard-overflow-containment`, `mobile-horizontal-pan-containment`) pinned a selector list naming
+this class, and if that list were the mechanism keeping modal scrims inside mobile pan containment,
+removing the entry would open a hole. MEASURED: it is not. The lockdown lives on the global mobile
+`html, body` block in styles.css (`overflow-x: hidden`, `overscroll-behavior-x: none`,
+`touch-action: pan-y`); the per-overlay list only reasserts it for overlays that are themselves
+scroll containers. FloatingWindow.css says the same in its own note at the mobile breakpoint.
+*/
 
 .agent-detail-modal {
   background: var(--surface);
@@ -1780,11 +1787,6 @@ Agent Settings composes native inputs, buttons, editors, and portaled controls. 
   Keep its inner modal panel container-sized there; only true phones take over the viewport.
   */
   @media (max-width: 767.98px) {
-    .agent-detail-overlay {
-      padding: 0;
-      align-items: stretch;
-    }
-
     .agent-detail-modal {
       /* Reset the desktop min-width: 480px / min-height: 320px — otherwise the
          fullscreen mobile sheet can still overflow narrow viewports. The

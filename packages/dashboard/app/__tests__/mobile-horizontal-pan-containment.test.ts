@@ -87,7 +87,7 @@ describe("mobile horizontal pan containment (FN-6365)", () => {
   it("constrains mobile fullscreen overlays to the viewport inline size", () => {
     const overlayBlock = ruleBlock(
       mobileCss,
-      ".modal-overlay:not(.confirm-dialog-overlay),\n  .agent-detail-overlay,\n  .agent-dialog-overlay,\n  .workflow-output-modal-overlay",
+      ".modal-overlay:not(.confirm-dialog-overlay),\n  .agent-dialog-overlay,\n  .workflow-output-modal-overlay",
     );
     const modalBlock = ruleBlock(
       mobileCss,
