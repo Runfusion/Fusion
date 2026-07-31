@@ -24,6 +24,14 @@ async function resolveFinalizationColumns(
       isCompleteColumn: (columnId: string) => columnHasFlag(ir, columnId, "complete"),
     };
   } catch {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — the FAIL-SOFT arm of an
+    already-converted resolver): the resolved path is the `try` above. This block runs only when the
+    workflow IR cannot be read at all, and its whole job is to answer with the built-in vocabulary so
+    finalization keeps working rather than throwing. Resolving here is impossible by construction —
+    the resolver is what just failed — so this is not pending conversion work and is marked instead of
+    being left to re-offer itself as available on every census.
+    */
     return {
       completeColumn: "done",
       mergeColumn: "in-review",
@@ -114,6 +122,8 @@ export async function validateWorkflowDoneMergeProof(
   being re-asked with an id — which is the half-conversion shape this program keeps finding, here
   within one file.
   */
+  /* DELIBERATE-LITERAL: the fallback arm of the conversion described directly above — reached only
+     when a caller passes no resolved predicate. The resolved path is `options.isCompleteColumn`. */
   const isCompleteLane = options.isCompleteColumn ? options.isCompleteColumn(task.column) : task.column === "done";
   if (!hasProof) return { ok: false, reason: isCompleteLane ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
   if (options.checkWorkflowSteps !== false && hasIncompleteWorkflowSteps(task)) {

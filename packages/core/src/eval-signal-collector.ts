@@ -131,6 +131,16 @@ export function collectDeterministicSignals(
 
   return {
     taskId: task.id,
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — this is a FALLBACK ARM, not
+    pending work): the resolved path is `options.archivedColumns`, and the literal is only reached when
+    a caller supplies no resolved set. Marked rather than converted because there is nothing left to
+    convert here: rewriting the fallback to resolve on its own would need a workflow read inside a
+    collector that takes none, and would move this file's TypeScript tally in
+    `archived-column-gate-parity.test.ts`, whose argument is that the archived gate's three encodings
+    must move together. The marker exempts it from the census; the comparison itself is unchanged, and
+    that guard's scan is marker-blind, so its inventory is untouched.
+    */
     column: (options?.archivedColumns ? options.archivedColumns.has(task.column) : task.column === "archived")
       ? "archived"
       : "done",

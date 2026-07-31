@@ -155,6 +155,15 @@ export async function getLiveTaskColumn(
     .limit(1);
   const row = rows[0];
   if (!row) return null;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — FALLBACK ARM, not pending work):
+  `archivedColumns` is the resolved path; the literal is reached only when a caller supplies no
+  resolved set. `archived-column-gate-parity.test.ts` opens by naming THIS FILE as the worked example
+  of why the archived gate cannot be converted one encoding at a time — the SQL halves in this same
+  module still compare the raw string, so converting the TypeScript arm alone is the split brain it
+  describes. Marked so the census stops offering it as available; the comparison is unchanged and that
+  guard's scan is marker-blind, so its audited inventory is untouched.
+  */
   const isArchivedLane = archivedColumns ? archivedColumns.has(row.column) : row.column === "archived";
   if (isArchivedLane || row.deletedAt != null) return "archived";
   return row.column;

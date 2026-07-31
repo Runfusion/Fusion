@@ -542,7 +542,7 @@ describe("the baseline can always be re-recorded", () => {
     });
 
     /*
-    FNXC:LifecycleColumnCensus 2026-08-01-00:35:
+    FNXC:LifecycleColumnCensus 2026-07-31-23:50:
     "Unclaimed" is not "available", and the first version of --claims conflated them — it put
     `taskRevert.ts` (two guards with a written blocker) and `scheduler.ts` (the canonical INERT
     sync-resolver file) at the top of "start here". Both would have been active mistakes to convert.

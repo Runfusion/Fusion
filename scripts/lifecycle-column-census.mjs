@@ -143,7 +143,29 @@ guard whose text marks a deliberate deferral. It cannot tell a good reason from 
 far above its guard reads as unflagged. It is a triage aid for choosing work, never a gate — which is
 why it is opt-in and why nothing downstream consumes it.
 */
-const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on/;
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:51 (the marker list was a guess, and it under-matched):
+MEASURED by working the start-here list this flag produces: ALL SIX files it offered carry an explicit
+deferral note, in phrasing none of the original markers matched.
+
+  - `moves.ts`                    "THIS ARM STAYS INLINE, deliberately"
+  - `mission-store.ts`            "audited — DEAD SYNC PATH, do not convert"
+  - `ResearchTaskActionModal.tsx` "SIZED, NOT CONVERTED" / "STILL A LITERAL"
+  - `audit-ops.ts`, `async-comments-attachments.ts`, `eval-signal-collector.ts`
+                                  defer to `archived-column-gate-parity.test.ts` by name
+
+The cost of missing them is not cosmetic. Five of the six are `packages/core` `archived` sites inside
+that parity guard's three-encoding inventory, where converting the TypeScript half ALONE is the
+documented split brain. So the start-here list was most confidently offering the one class of
+conversion this repo maintains a dedicated ratchet to prevent — an under-matching marker list does not
+merely overstate the backlog, it aims a worker at the trap.
+
+WHY PHRASES AND NOT A CASE-INSENSITIVE CATCH-ALL. Adding `i` would let "flagged" match casual prose
+anywhere in a 40-line window and quietly reclassify live guards as reviewed, which is the same failure
+in the opposite direction. These are the literal phrasings present in the tree, added as evidence
+rather than as a net.
+*/
+const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|NOT CONVERTED|not converted|do not convert|do NOT convert|STAYS INLINE|STILL A LITERAL|archived-column-gate-parity|non-renameable system column|SIZED, NOT/;
 
 /** Split the column guards into documented-deferral vs unexamined, by comment proximity. */
 function triageFindings() {
@@ -176,7 +198,7 @@ if (json) {
   console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-01:40:
+  FNXC:LifecycleColumnCensus 2026-07-31-23:51:
   Reported BESIDE the backlog, not subtracted from it. A fallback literal is still a literal and should go
   when the trait path becomes unconditional — but it is an ALREADY-CONVERTED site's documented degradation,
   not unconverted work, and a batch worker told to convert it would delete the only answer available to a
@@ -207,7 +229,7 @@ if (json) {
   */
   console.log(`  QUERY filters (column: "<legacy>"): ${summary.properties.query}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+  FNXC:LifecycleColumnCensus 2026-07-31-23:54:
   The split, because the single number reads as "dead reads to convert" and most of it is not.
   Measured while converting this class: outside `self-healing.ts` the read-shaped sites are
   convertible; the rest are soft-delete TOMBSTONE writes and synthetic in-memory literals, and
@@ -323,7 +345,7 @@ if (claims && !json) {
     if (claimed.length > 12) console.log(`    … and ${claimed.length - 12} more claimed files`);
 
     /*
-    FNXC:LifecycleColumnCensus 2026-08-01-00:20 (UNCLAIMED IS NOT THE SAME AS AVAILABLE):
+    FNXC:LifecycleColumnCensus 2026-07-31-23:50 (UNCLAIMED IS NOT THE SAME AS AVAILABLE):
     The first version of this flag printed the unclaimed list under "start here". That is wrong, and it
     misled ME within minutes of shipping it: the top unclaimed file was `taskRevert.ts`, whose two
     guards carry a written blocker — they classify a NEIGHBOUR row, and supplying the modal's own flags
@@ -345,7 +367,7 @@ if (claims && !json) {
     const deferred = unclaimed.filter(([file]) => fullyFlagged.has(file));
 
     /*
-    FNXC:LifecycleColumnCensus 2026-08-01-00:35 (the third filter, and the one with teeth):
+    FNXC:LifecycleColumnCensus 2026-07-31-23:50 (the third filter, and the one with teeth):
     A file can be unclaimed and unflagged and STILL be the wrong place to start, because converting a
     guard through `resolveTaskWorkflowIrSync` is INERT — that resolver answers with the default
     workflow in production, so the converted guard behaves exactly as the literal did while leaving the
