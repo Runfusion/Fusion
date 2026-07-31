@@ -155,8 +155,33 @@ function unwrapForSyncCall(node) {
   return out;
 }
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (the SECOND hop — a sync lane laundered through an
+object literal):
+One hop was not enough. The real shape in `executor.ts` rebuilds the lanes into a fresh object before
+comparing, so the sync local never appears in a guard:
+
+    const sync  = payload ? undefined : resolvePlannerLanes(this.store, taskId);
+    const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo", … };
+    if (from !== lanes.hold && from !== lanes.intake) return false;
+
+`sync` is registered, `lanes` is not, and every guard reads `lanes`. MEASURED: the file reported ZERO
+counted guards while the sync resolver was still there and still answering with the default board
+whenever the payload is absent.
+
+So a local built from an object literal whose property initializers mention a sync local is itself a
+sync local. Iterated to a fixpoint, because the laundering can chain (`a -> b -> c`) and a single pass
+would only ever catch the first link — the same one-pass mistake this file already made once.
+
+DELIBERATELY NOT full dataflow. This follows `const` object construction and nothing else: no
+function returns, no spread from another module, no reassignment. The point is to stop the scan going
+quiet on the shape the codebase actually uses, not to become a type checker — the LIMITS section
+above still governs.
+*/
 function syncLaneLocals(sf, sources) {
   const locals = new Set();
+  const objectDecls = [];
+
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
       for (const call of unwrapForSyncCall(node.initializer)) {
@@ -166,10 +191,26 @@ function syncLaneLocals(sf, sources) {
           : call.expression.getText(sf);
         if (sources.has(callee)) locals.add(node.name.getText(sf));
       }
+      if (ts.isObjectLiteralExpression(node.initializer)) {
+        objectDecls.push({ name: node.name.getText(sf), text: node.initializer.getText(sf) });
+      }
     }
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sf, visit);
+
+  /* Fixpoint: an object built from a sync local is one too, and that can chain. Bounded by the
+     number of object declarations, so it always terminates. */
+  for (let pass = 0; pass < objectDecls.length + 1; pass += 1) {
+    let grew = false;
+    for (const decl of objectDecls) {
+      if (locals.has(decl.name)) continue;
+      for (const known of locals) {
+        if (new RegExp(`\\b${known}\\b`).test(decl.text)) { locals.add(decl.name); grew = true; break; }
+      }
+    }
+    if (!grew) break;
+  }
   return locals;
 }
 

@@ -180,3 +180,47 @@ test("counts a sync lane reached through a CONDITIONAL initializer, not just a d
     rmSync(probe, { force: true });
   }
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+THE SECOND HOP, which the case above explicitly left open.
+
+A sync local laundered through an object literal reached the guards while the scan saw nothing:
+
+    const sync  = payload ? undefined : localSync(store, id);
+    const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo" };
+    if (from !== lanes.hold) …            // inert, counted as nothing
+
+`executor.ts` is written exactly this way, and MEASURED it reported ZERO counted guards while the
+sync resolver was still present and still answering with the default board whenever the payload is
+absent. With the fix that file reports 2 — the two guards that genuinely remain after its dead
+helper is deleted.
+
+The chained case is in the probe on purpose: laundering can go `a -> b -> c`, and a single pass
+would catch only the first link. That is the same one-pass mistake this file's earlier cases record,
+made twice already in this scanner.
+*/
+test("counts a sync lane laundered through an object literal, including a chain", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-twohop.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, from: string, payload: { hold?: string } | undefined): boolean {`,
+    `  const sync = payload ? undefined : localSync(store, id);`,
+    `  const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo" };`,
+    `  const relayed = { hold: lanes.hold };`,
+    `  return from !== relayed.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    const counts = liveCounts();
+    assert.equal(
+      counts.byFile["packages/engine/src/__probe-inert-twohop.ts"],
+      1,
+      "a sync lane rebuilt into an object (and relayed again) must still be counted",
+    );
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
