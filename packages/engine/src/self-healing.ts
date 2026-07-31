@@ -13179,6 +13179,22 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         live agent linked to a card resting in a RENAMED hold lane read as not-parked — the safeguard
         that preserves its task link never applied, and the link was dropped.
         */
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-18:05 (INERT HERE, and deliberately kept):
+        `parkedColumns` influences exactly one output — `shouldPreserveParkedLink` — and THIS sweep
+        never reads it. The gate below is `hasFreshRun || hasActiveExecution`, neither of which depends
+        on the lane, so passing a resolved set changes nothing today. Blinding it back to the legacy
+        ids leaves every test green because there is no behaviour to observe.
+
+        Kept rather than deleted for two reasons. Removing it would make this call site read as
+        UNWIRED to the lane-wiring ratchet, inviting the next worker to "fix" it by re-adding exactly
+        this; and if the gate ever adopts `shouldPreserveParkedLink` — which is the parked-specific
+        semantics the sibling sweep uses (see `recoverDriftedAgentTaskLinks`, wired in #3208) — the
+        resolved set is already correct here.
+
+        Recorded because "passed but unread" is the mirror of "resolved gate, literal branch" that
+        #3208 fixed: both read as converted while deciding nothing.
+        */
         parkedColumns: [...agentParkedColumns],
         activeRun,
         hasActiveAgentExecution: this.options.hasActiveAgentExecution,
