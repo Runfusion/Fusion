@@ -878,6 +878,33 @@ export class TriageProcessor {
   */
   private async sweepStalePlanningStatuses(allTasks: Task[], now: number): Promise<void> {
     try {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (FLAGGED — same blocker as `recoverApprovedTask`;
+      the async twin is NOT a drop-in):
+
+      This lane test is inert (`resolvePlannerLanes` -> `resolveTaskWorkflowIrSync` -> DEFAULT board
+      under PostgreSQL) and the enclosing sweep is `async`, so converting looks free. MEASURED: it is
+      not. Swapping in `resolvePlannerLanesForTaskAsync` (with the `filter` rewritten as an awaited
+      loop, which is itself fine) fails `clears a stale planning status so triage can re-pick the card`
+      — and correctly.
+
+      A stored pre-U11 row sits in `triage`. The sync reader fails to `LEGACY_PLANNER_LANES`, whose
+      `intake` IS `"triage"`, so the row matches. The async reader succeeds and returns the workflow's
+      real lanes, where post-U11 intake and hold are one merged column — so `"triage"` matches nothing
+      and the sweep stops clearing the strand it was written for (FN-8596).
+
+      So this guard's current correctness DEPENDS ON THE SYNC RESOLVER'S FAILURE MODE. Converting it
+      needs the legacy `triage` acceptance made explicit, not a different resolver.
+
+      THE PATTERN ALREADY EXISTS IN THIS FILE and is the right one:
+      `recoverApprovedTask` scopes its legacy acceptance to an ORPHANED `triage` row — one whose
+      workflow does not declare a `triage` column — using `resolveWorkflowIrForTaskWithProvenance`,
+      precisely because a custom workflow may legitimately name a non-intake lane `triage`. Applying
+      that here is a real change with its own surfaces (every row in the sweep, plus the R11
+      compatibility contract), which is why it is sized here rather than smuggled into a conversion.
+
+      Left inert and COUNTED, deliberately NOT marked deliberate: the gate should keep pointing here.
+      */
       const stale = allTasks.filter((t) => {
         if (t.status !== "planning") return false;
         const lanes = resolvePlannerLanes(this.store, t.id);
@@ -1271,6 +1298,30 @@ export class TriageProcessor {
     a fix. `triage` stays a legal column id for stored rows (R11), so accepting both
     is compatibility, not a second source of truth — once a row is re-homed the
     resolved lane is what matches.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (FLAGGED — the async twin is NOT a drop-in here, and
+    swapping it is a BEHAVIOR CHANGE that 13 tests catch):
+
+    This guard is inert for the usual reason — `resolvePlannerLanes` reads `resolveTaskWorkflowIrSync`,
+    which answers with the DEFAULT board under PostgreSQL — and `recoverApprovedTask` is `async`, so
+    the mechanical fix looks free. It is not. MEASURED: swapping in
+    `resolvePlannerLanesForTaskAsync` fails 13 cases in `triage.test.ts`, and they are right to fail.
+
+    WHY THE TWO RESOLVERS DISAGREE HERE. The sync reader cannot resolve, so it returns
+    `LEGACY_PLANNER_LANES` — `intake: "triage"`. The async reader SUCCEEDS and returns the workflow's
+    real lanes, where post-U11 intake and hold are one merged column (`intake: "todo"`). So a stored
+    pre-U11 row sitting in `triage` matches today and stops matching after the swap: the recovery this
+    function exists to perform silently stops happening for exactly the migration case the note below
+    describes.
+
+    In other words this site's CURRENT correctness depends on the sync resolver's failure mode. That is
+    a genuinely bad place to be, and it is not fixable by changing which resolver is called — the
+    legacy `triage` acceptance has to become explicit rather than a side effect of the fallback, which
+    is a compatibility decision with its own surfaces (R11 keeps `triage` a legal stored column id).
+
+    Left inert and COUNTED rather than converted, and NOT marked deliberate: the gate should keep
+    pointing here. Tracked with the emitter/async-threading work in #3082.
     */
     const lanes = resolvePlannerLanes(this.store, task.id);
     /*
