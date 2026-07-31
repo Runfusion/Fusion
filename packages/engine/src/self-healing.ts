@@ -976,6 +976,84 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       && task.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER);
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:05 (fleet — task:moved fan-out vocabulary):
+  The lane sets the `task:moved` fan-out routes on. MEMBERSHIP throughout, for the arity reason
+  `resolveReviewColumnsFor` documents, and unioned with the legacy ids so a degraded IR keeps the
+  fan-out firing rather than silently resolving empty sets.
+
+  `wip` is `countsTowardWip` rather than the `wip` trait: the counter it feeds measures cards LEAVING the
+  working lane, which is the same population the WIP cap governs. A board declaring a second working lane
+  outside the cap should not have exits from it counted as board progress.
+  */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet):
+  The synchronous twin of `resolveMoveFanoutColumnsFor`, for the one caller that cannot await: the
+  board-stall counter, whose increment must be visible to a sweep already in progress.
+
+  `resolveTaskWorkflowIrSync` is the same seam `scheduler.ts` uses for its own sync lane resolution. A
+  store that does not implement it, or a workflow that will not resolve, yields the legacy ids — the
+  degraded answer every resolver in this file gives, and the one that keeps the counter counting rather
+  than silently flat-lining board-stall detection.
+  */
+  private resolveMoveFanoutColumnsSync(taskId: string): {
+    wip: ReadonlySet<string>;
+    review: ReadonlySet<string>;
+    complete: ReadonlySet<string>;
+    archived: ReadonlySet<string>;
+    hold: ReadonlySet<string>;
+  } {
+    const wip = new Set<string>(["in-progress"]);
+    const review = new Set<string>(["in-review"]);
+    const complete = new Set<string>(["done"]);
+    const archived = new Set<string>(["archived"]);
+    const hold = new Set<string>(["todo"]);
+    try {
+      const ir = this.store.resolveTaskWorkflowIrSync?.(taskId);
+      if (ir) {
+        for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
+        for (const id of columnsWithFlag(ir, "mergeOrchestration")) review.add(id);
+        for (const id of columnsWithFlag(ir, "humanReview")) review.add(id);
+        const lifecycle = resolveLifecycleColumns(ir);
+        if (lifecycle?.complete) complete.add(lifecycle.complete);
+        if (lifecycle?.archived) archived.add(lifecycle.archived);
+        if (lifecycle?.hold) hold.add(lifecycle.hold);
+      }
+    } catch {
+      /* degraded: the legacy ids alone, matching the async siblings' catch */
+    }
+    return { wip, review, complete, archived, hold };
+  }
+
+  private async resolveMoveFanoutColumnsFor(
+    taskId: string,
+    cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
+  ): Promise<{
+    wip: ReadonlySet<string>;
+    review: ReadonlySet<string>;
+    complete: ReadonlySet<string>;
+    archived: ReadonlySet<string>;
+    hold: ReadonlySet<string>;
+  }> {
+    const wip = new Set<string>(["in-progress"]);
+    const complete = new Set<string>(["done"]);
+    const archived = new Set<string>(["archived"]);
+    const hold = new Set<string>(["todo"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.store, taskId, cache);
+      if (ir) {
+        for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
+        const lifecycle = resolveLifecycleColumns(ir);
+        if (lifecycle?.complete) complete.add(lifecycle.complete);
+        if (lifecycle?.archived) archived.add(lifecycle.archived);
+        if (lifecycle?.hold) hold.add(lifecycle.hold);
+      }
+    } catch {
+      /* degraded: the legacy ids alone, matching the sibling resolvers' catch */
+    }
+    return { wip, review: await this.resolveReviewColumnsFor(taskId, cache), complete, archived, hold };
+  }
+
   /** The review + active-work sets the pause-abort router needs, resolved together over one IR cache. */
   private async resolvePauseAbortColumnsFor(
     taskId: string,
@@ -1523,28 +1601,32 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
     this.store.on("settings:updated", this.settingsListener);
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet):
+    Split deliberately by OBSERVABILITY, not by convenience.
+
+    The board-stall counter is incremented SYNCHRONOUSLY, because it is not merely read by a later
+    periodic sweep — `runBoardStallAutoRecoverySweep` performs its own recovery moves and then evaluates
+    progress in the SAME pass, so the increment must land before that read. Deferring it behind an await
+    made the sweep read a stale zero and report a real recovery as unrecovered (caught by
+    board-stall-auto-recovery.test.ts, which is why the sync resolver is used here).
+
+    The two reconcile branches were already fire-and-forget before this change, so they keep that shape
+    and resolve asynchronously.
+    */
     this.taskMovedFanoutListener = ({ task, from, to }) => {
+      const sync = this.resolveMoveFanoutColumnsSync(task.id);
       if (
-        from === "in-progress"
-        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
+        sync.wip.has(from)
+        && (sync.hold.has(to) || sync.review.has(to) || sync.complete.has(to) || sync.archived.has(to))
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.
         this.boardStallWindow.transitionsOutOfInProgressInWindow++;
       }
-      if (to === "in-review") {
-        void this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
-        });
-      }
-      const shouldReconcile =
-        (from === "in-review" && to === "done") ||
-        (from === "done" && to === "archived");
-      if (!shouldReconcile) return;
-      void this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
+      void this.handleTaskMovedFanout(task, from, to).catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        log.warn(`[self-healing] task:moved completion fan-out failed for ${task.id}: ${errorMessage}`);
+        log.warn(`[self-healing] task:moved fan-out failed for ${task.id}: ${errorMessage}`);
       });
     };
     this.store.on("task:moved", this.taskMovedFanoutListener);
@@ -1553,6 +1635,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.startMaintenance();
 
     log.debug("Started");
+  }
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:05 (fleet):
+  The `task:moved` fan-out, routed on the moving task's own resolved lanes instead of the five literals
+  it used to compare against. On a renamed board every branch here went inert at once: the board-stall
+  counter stopped counting, in-review rebind stopped firing, and completed-task reconciliation stopped
+  running -- none of which fails a test, because the move still happens.
+
+  One IR read per move event, not per branch: the three branches share a cache.
+  */
+  private async handleTaskMovedFanout(task: Task, from: string, to: string): Promise<void> {
+    const columns = await this.resolveMoveFanoutColumnsFor(task.id, new Map());
+
+    if (columns.review.has(to)) {
+      try {
+        await this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) });
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
+      }
+    }
+    const shouldReconcile =
+      (columns.review.has(from) && columns.complete.has(to)) ||
+      (columns.complete.has(from) && columns.archived.has(to));
+    if (!shouldReconcile) return;
+    try {
+      await this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined });
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`[self-healing] task:moved completion fan-out failed for ${task.id}: ${errorMessage}`);
+    }
   }
 
   /**
