@@ -23,8 +23,10 @@ baseline records per-file counts, a new file or a higher count fails, and a LOWE
 the baseline is ratcheted down as sites are migrated rather than silently drifting.
 
 COMMENTS ARE NOT MATCHED, and that is the whole reason this is AST-based. A line-oriented grep for
-the same pattern reports 37 hits, 25 of which are prose quoting `column === "done"` in an explanatory
-note. A guard with a 68% false-positive rate teaches its readers to skip it, and this repo already
+the same pattern reported 37 hits when this was written (2026-07-30), 25 of them prose quoting
+`column === "done"` in an explanatory note. Re-measured 2026-07-31: 38 grep hits against 20 real ones.
+The totals drift as conversions land and comments do not — the RATIO is the argument, and it has held
+at roughly half. A guard with a 68% false-positive rate teaches its readers to skip it, and this repo already
 learned that lesson the expensive way. Comments are not AST nodes, so walking string and template
 literals cannot match them at all.
 */
