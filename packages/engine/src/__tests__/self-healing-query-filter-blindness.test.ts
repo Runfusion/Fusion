@@ -899,4 +899,61 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-12:45 (the query-filter class, twenty-fourth sweep):
+  `recoverStaleIncompleteReviewTasks` requeues a review card whose STEPS are not finished — it reached
+  review on a graph failure, not on completed work. The literal read meant that on a renamed board it was
+  never requeued: the card sat in review claiming to be done while its own steps said otherwise.
+
+  Observable is `evaluateBackwardMoveTripleProof`, private and called once per candidate BEFORE the move,
+  so no git fixture is needed. `taskStuckTimeoutMs` is set and a step left non-terminal, or the card is
+  filtered out for reasons unrelated to lanes.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function staleIncompleteFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-INCOMPLETE",
+      column,
+      status: "failed",
+      steps: [{ id: "s1", status: "in-progress" }],
+      columnMovedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+    return { manager, proof };
+  }
+
+  it("requeues a step-incomplete card on a RENAMED review lane", async () => {
+    const { manager, proof } = staleIncompleteFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverStaleIncompleteReviewTasks();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-INCOMPLETE" }), expect.anything());
+  });
+
+  it("leaves a step-incomplete card in the RENAMED wip lane alone", async () => {
+    /*
+    Non-vacuous companion: a card with unfinished steps in the WIP lane is not stale — it is simply being
+    worked on. A read returning every column would requeue live work.
+    */
+    const { manager, proof } = staleIncompleteFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverStaleIncompleteReviewTasks();
+
+    expect(proof).not.toHaveBeenCalled();
+  });
 });
