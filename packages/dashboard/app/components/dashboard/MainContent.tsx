@@ -375,6 +375,9 @@ export function MainContent({
             renderTaskCard: (task: Task | TaskDetail) => (
               <TaskCard
                 task={task}
+                /* Plugin-rendered cards resolved NO traits before this: every role helper inside the
+                   card fell back to the legacy id for any view using `renderTaskCard`. */
+                taskColumnFlags={columnFlagsByTaskId?.get(task.id)}
                 projectId={currentProject?.id}
                 onOpenDetail={openPluginTaskDetail}
                 addToast={addToast}

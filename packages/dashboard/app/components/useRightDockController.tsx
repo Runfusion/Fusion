@@ -174,6 +174,10 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   const renderTaskCard = useCallback((task: Task | TaskDetail) => (
     <TaskCard
       task={task}
+      /* Plugin- and dock-rendered cards resolved NO traits before this, so every role helper inside
+         the card fell back to the legacy id. The map is already in scope for the canonical lookup
+         below — the card itself was simply never given it. */
+      taskColumnFlags={input.columnFlagsByTaskId?.get(task.id)}
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
       onDeleteTask={input.onDeleteTask}
