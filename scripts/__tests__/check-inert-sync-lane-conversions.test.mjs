@@ -22,7 +22,7 @@ about its output.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -126,4 +126,57 @@ test("the gate is still actually scanning source, not just comparing numbers", (
   const result = runGate();
   assert.match(`${result.stdout}${result.stderr}`, /guard\(s\) consuming a sync-resolved lane/);
   assert.ok(JSON.parse(readFileSync(BASELINE, "utf8")).total > 0, "baseline should not be empty");
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+THE INITIALIZER IS NOT ALWAYS THE CALL — the shape that evaded this gate, now pinned.
+
+`syncLaneLocals` registered a local only when its initializer WAS a call expression, so the
+payload-first/sync-fallback form slipped past entirely:
+
+    const sync = payload ? undefined : localSync(store, id);
+    return column === sync?.hold;          // inert, and counted as nothing
+
+That matters more than the inline spelling the header already covers, because this shape is the one
+authors are STEERED toward: falling back to the sync resolver is better than falling back to legacy
+literals (it is best-effort under legacy SQLite; a literal can never be right on a renamed board), so
+writing the guard well is what made it invisible. A ratchet that goes quiet exactly when the code
+improves is worse than none.
+
+Driven through a real file in the scanned tree rather than a unit call, because the bug was in which
+nodes the scan VISITS — a helper-level assertion would have been written against the same wrong
+mental model that produced the gap.
+
+KNOWN REMAINING GAP, stated so this case is not read as full coverage: only ONE hop is followed. The
+two-hop form — sync local -> object literal -> comparison — is still uncounted:
+
+    const sync  = payload ? undefined : localSync(store, id);
+    const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo" };
+    if (from !== lanes.hold) …            // still invisible
+
+`executor.ts` is written that way today, which is how it reads as 0 while the sync call is still
+present. Closing it needs propagation through object-literal construction.
+*/
+test("counts a sync lane reached through a CONDITIONAL initializer, not just a direct call", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-conditional.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, column: string, payload: { hold?: string } | undefined): boolean {`,
+    `  const sync = payload ? undefined : localSync(store, id);`,
+    `  return column === sync?.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    const counts = liveCounts();
+    assert.equal(
+      counts.byFile["packages/engine/src/__probe-inert-conditional.ts"],
+      1,
+      "the conditional-initializer shape must be counted; before this fix the scan reported nothing for it",
+    );
+  } finally {
+    rmSync(probe, { force: true });
+  }
 });
