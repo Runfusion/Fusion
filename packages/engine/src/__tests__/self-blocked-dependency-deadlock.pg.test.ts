@@ -1,5 +1,5 @@
 /*
-FNXC:PostgresCutover 2026-07-31-17:25 (regression — the SECOND instance of PR #2809's deadlock class):
+FNXC:PostgresCutover 2026-07-30-17:25 (regression — the SECOND instance of PR #2809's deadlock class):
 
 `updateTaskDependenciesImpl` wraps its whole body in `store.withTaskLock(id, ...)` and then reads the
 current blocker with `readDepTask(task.blockedBy)`, which calls `store.getTask()`. `getTaskImpl` opens

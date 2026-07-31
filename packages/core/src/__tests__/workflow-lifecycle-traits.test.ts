@@ -276,7 +276,7 @@ describe("resolveTaskLifecycleColumns — U1 store-aware form", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:10 (the arity contract, pinned):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:10 (the arity contract, pinned):
 `LifecycleColumns` names ONE column per role even when the workflow declares several — nothing
 validates that a trait appears at most once, and `resolveLifecycleColumns` takes the head of
 `columnsWithFlag`.
@@ -292,7 +292,7 @@ lesson.
 */
 describe("LifecycleColumns arity — one id per role, even when several qualify", () => {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-07:40 (PR #2721 review — greptile, and the premise was
+  FNXC:WorkflowLifecycleColumns 2026-07-30-07:40 (PR #2721 review — greptile, and the premise was
   wrong):
   Uses `complete`, NOT `intake`. My first version demonstrated the arity gap with two intake lanes
   and bypassed typing with `as never` to build it — but `validateColumnTraits` raises
@@ -352,7 +352,7 @@ describe("LifecycleColumns arity — one id per role, even when several qualify"
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:20:
 The set-shaped answer to "is this card ALREADY in a review lane", which four consumers each invented
 separately before this existed (#2713, #2722, #2723, #2728). Both directions are asserted, because the
 whole reason it exists is that the single-id `.review` silently answers a different question.

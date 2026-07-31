@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-09:20 (fleet: the CLI surface on a renamed board):
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:20 (fleet: the CLI surface on a renamed board):
 
 THE INVARIANT: `active=N` counts the board's own wip and review lanes.
 
@@ -73,7 +73,7 @@ describe("the CLI's active-task count resolves the board's lanes", () => {
 
   it("PINS the per-task selection read, so the cost is visible rather than hidden", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-13:40 (PR #2728 review — greptile P2, and it is a fair catch):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-13:40 (PR #2728 review — greptile P2, and it is a fair catch):
     The shared IR cache avoids repeated workflow-DEFINITION reads, not the per-task SELECTION read — a board
     can mix workflows, so "which workflow governs this card" has to be asked per card. My first version
     asserted only the definition count, which made the aggregation look cheaper than it is.
@@ -120,7 +120,7 @@ describe("the CLI's active-task count resolves the board's lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-13:00 (PR #2728 review — greptile P1 x2):
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:00 (PR #2728 review — greptile P1 x2):
 
 THE INVARIANT: the shared missing-worktree classifier answers with the CALLER'S review lane.
 
@@ -178,7 +178,7 @@ describe("the shared missing-worktree classifier takes the caller's resolved rev
       const call = code.match(/isInReviewMissingWorktreeSessionStartFailure\(([^)]*)\)/);
       expect(call, `${surface.pathname} does not call the classifier`).toBeTruthy();
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-23:25 (PR #2751 review — greptile P2):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-23:25 (PR #2751 review — greptile P2):
       TIED TO THE RESOLVED MEMBERSHIP TEST, not just to "a second argument exists". `contains a comma` is
       satisfied by `(task, true)` or any unrelated flag while that surface classifies renamed lanes differently
       from the other two — a guard that reports success without checking anything.
@@ -197,7 +197,7 @@ describe("the shared missing-worktree classifier takes the caller's resolved rev
 
   it("uses ONE definition of the review columns — core's resolveReviewColumns", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-23:40 (the consolidation this PR is about):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:40 (the consolidation this PR is about):
     Three in-tree copies of "which columns are review" disagreed with each other and with core (#2730): the
     dashboard route and the pi extension each took only the FIRST mergeOrchestration column while the CLI
     command took the full union, so `fn_task_retry` refused a card in a second merge lane that `fn task retry`

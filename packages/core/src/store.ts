@@ -311,7 +311,7 @@ function filterRepairOverlapIgnoredPaths(paths: string[], ignorePaths: string[])
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
 Does this candidate still hold an active file-scope lease? Hoisted to module scope because the
 overlap repair asks it in TWO places (the blocker pre-check and the reroute search) and they must not
 drift — one of the two answering differently is how the repair reroutes to a blocker the other half
@@ -846,7 +846,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const shiftedTaskIds: string[] = [];
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-05:00:
     The engine-downtime timing shift read the wip lane by name, so on a renamed board it found NO
     tasks and no active-timing anchor was ever shifted — every card's active time then silently
     absorbed the stopped-engine wall-clock this sweep exists to exclude.
@@ -1685,7 +1685,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return recordRunAuditEventImpl(this, input);
   }
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
   `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
 
   Synchronous by necessity — it is a pure row predicate used to filter an already-loaded list — so it
@@ -1768,7 +1768,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   async acquireMergeQueueLease(workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:25 (#2819 review — greptile):
     Supplies the per-task review-lane resolver for the stale-row sweep. This is the production path,
     so wiring it here is what makes the option live rather than one only tests fill.
     */
@@ -1848,7 +1848,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
     ONE lane resolution for the whole repair, shared by every question below.
 
     The overlap-blocker repair was inert end to end on a renamed board. It refused here first
@@ -1904,7 +1904,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const taskScope = await getScope(task.id);
     if (blocker) {
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
       The blocker's OWN lanes decide whether it still holds a file-scope lease — it may live on a
       different board from the task it blocks.
 
@@ -1936,7 +1936,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
     Each dependency's terminal columns come from ITS OWN workflow. Keyed on the literals, a finished
     dependency on a renamed board never counted as resolved, so the repair kept re-blocking the card
     it had just unblocked.
@@ -2078,7 +2078,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     Stale-overlap repair must reroute only to tasks that the scheduler would still treat as active file-scope lease holders. Operator-paused or failed active rows are parked work, not live blockers, so the repair should clear stale state instead of creating a fresh blocker edge to them.
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed):
     Resolve each candidate's lanes before the sync filter, sharing the caller's IR cache. Resolution
     is restricted to candidates that survive the id filter so an unrelated backlog costs nothing.
     */
@@ -2220,7 +2220,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async archiveTaskAndCleanup(id: string): Promise<Task> {
     return this.archiveTask(id, true);
   }
-  /* FNXC:WorkflowLifecycleColumns 2026-08-02-16:30 (fleet): async because the restore destination is resolved
+  /* FNXC:WorkflowLifecycleColumns 2026-07-30-16:30 (fleet): async because the restore destination is resolved
      from the task's workflow; `taskId` is optional so any caller that has not been updated keeps the legacy
      answer rather than silently resolving the wrong board. */
   public resolveUnarchiveTargetColumn(preArchiveColumn: unknown, taskId?: string): Promise<Column> {

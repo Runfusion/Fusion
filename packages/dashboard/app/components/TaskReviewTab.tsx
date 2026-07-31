@@ -25,7 +25,7 @@ interface Props {
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:20 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:20 (fleet phase):
   Resolved trait flags for the task's CURRENT column. OPTIONAL: TaskDetailModal already has them
   (`workflowMoveMetadata?.currentColumnFlags`) and passes them; the test harness and any other host omit
   them and the role helpers fall back to the legacy id, so nothing else changes.

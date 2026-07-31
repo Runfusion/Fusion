@@ -298,7 +298,7 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
   tx: DbTransaction,
   now: string,
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (#2819 review — greptile):
   Per-task review lanes, supplied by the caller. This runs inside an open transaction with only a
   `tx` handle, so it cannot resolve a workflow itself — and the lanes are genuinely per task, because
   queued tasks can run different workflows.
@@ -322,7 +322,7 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
     );
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (#2819 review — greptile):
   THE SQL PREDICATE IS A SUPERSET NOW, NOT THE VERDICT.
 
   `column IS DISTINCT FROM 'in-review'` is evaluated by PostgreSQL, which cannot know a task's

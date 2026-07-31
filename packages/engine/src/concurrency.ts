@@ -56,7 +56,7 @@ export function compareAdmissionCandidates(a: Pick<AdmissionCandidate, "taskId" 
 }
 
 /*
-FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+FNXC:ConcurrencyAdmission 2026-07-30-12:00:
 FN-8453 / #2359 requires a per-project oldest-first authority rather than
 independent triage/execute/merge polls or semaphore lane priority. Lanes refresh
 candidates then hand their starts here; nested runNested helpers are deliberately
@@ -120,7 +120,7 @@ export class ProjectAdmissionCoordinator {
         .flat()
         .filter((candidate) => candidate.projectId === params.projectId)
         .sort(compareAdmissionCandidates);
-      // FNXC:ConcurrencyAdmission 2026-08-06-12:00: FN-8453/#2359 requires
+      // FNXC:ConcurrencyAdmission 2026-07-30-12:00: FN-8453/#2359 requires
       // in-memory handoffs to count until they either become live or are dropped.
       // Persisted task rows lag a fire-and-forget lane start, so omitting these
       // reservations lets a second coordinator pass over-admit one project.
@@ -315,7 +315,7 @@ value: an optional parameter that reads as if it does something.
 
 The coordinator reservation is the half that MATTERS and stays: every rejection path
 funnels through this helper so an early scheduler/triage return cannot permanently
-consume a project slot (FNXC:ConcurrencyAdmission 2026-08-06-12:00).
+consume a project slot (FNXC:ConcurrencyAdmission 2026-07-30-12:00).
 
 Sites that still hold a semaphore reference release it EXPLICITLY next to their
 drop, so behaviour is unchanged for any caller that supplies one.
@@ -392,7 +392,7 @@ export function computeTopLevelConcurrencyClaimed(params: {
 /**
  * Store-backed production counterpart to {@link computeTopLevelConcurrencyClaimed}.
  *
- * FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+ * FNXC:ConcurrencyAdmission 2026-07-30-12:00:
  * FN-8453 forbids admission from raw task rows whenever workflow IR is available:
  * custom complete/archived columns can retain stale session metadata, so each row
  * must be trait-enriched before it is allowed to occupy a top-level capacity slot.
@@ -453,7 +453,7 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
   if (!semaphore) return { candidateSinceMs: null };
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-14:30 (FLAGGED, NOT FIXED — the last raw caller of the running-agent predicate):
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:30 (FLAGGED, NOT FIXED — the last raw caller of the running-agent predicate):
   `persistedTopLevelAgentSlots` takes RAW tasks, so `live-agent-count.ts`'s trait fields are undefined here
   and its predicates fall back to the legacy ids (`in-progress` for wip, `done`/`archived` for terminal).
 

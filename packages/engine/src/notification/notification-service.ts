@@ -246,7 +246,7 @@ export class NotificationService {
   }
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-03:20 (PR #2722 review — greptile):
   REVIEW IS A SET, AND `humanReview` COUNTS. `resolveLifecycleColumns().review` reads the
   `mergeOrchestration` flag only, so a lane carrying the `human-review` trait and NOT the merge trait
   resolves to nothing — the guard fell back to the literal `in-review`, and on a renamed board the
@@ -530,7 +530,7 @@ export class NotificationService {
       Left COUNTED with no exemption marker — four of this file's five remaining entries are here, and the
       census should keep saying so.
 
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (ATTEMPTED, MEASURED, REVERTED — do not retry as written):
+      FNXC:WorkflowResolvedColumns 2026-07-30-02:40 (ATTEMPTED, MEASURED, REVERTED — do not retry as written):
       I converted these four ids to a resolved `progressedLanes` set and it broke an existing gate test
       (`task-wedge-notification.test.ts` -> "sends one actionable push and mailbox message per active
       terminal episode": 1 message delivered, 2 expected).
@@ -1069,7 +1069,7 @@ export class NotificationService {
     suppress, so this is already the narrow tail of the deferred-failure path.
     */
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site, which my own
+    FNXC:WorkflowResolvedColumns 2026-07-30-06:40 (PR #2722 review — the SECOND site, which my own
     first pass missed):
     Same defect as the moved-to-review guard above: `.review` reads `mergeOrchestration` only, so a
     lane carrying `human-review` alone resolved to nothing and this fell back to the literal. Under

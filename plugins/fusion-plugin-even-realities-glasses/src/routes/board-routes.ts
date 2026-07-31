@@ -11,7 +11,7 @@ import {
 import { requireApiKey } from "./quick-capture-routes.js";
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:45:
+FNXC:WorkflowResolvedColumns 2026-07-30-00:45:
 `?columns=` filters on the ids the CALLER asked for. There is no allow-list to clear first.
 
 This validated the parameter against a hardcoded six-id list, and the failure mode was the worst
@@ -62,7 +62,7 @@ function requestData(req: unknown): {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:40:
 The project's terminal lanes, resolved once per request and handed to the deck builder.
 
 `boardToDeck` filters out finished cards, and it named `archived`/`done`. On a board that calls its

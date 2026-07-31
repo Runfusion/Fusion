@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import ts from "typescript";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-18:00 (fleet — stop the inert-conversion class growing):
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:00 (fleet — stop the inert-conversion class growing):
 
 `resolveTaskWorkflowIrSync` returns the DEFAULT workflow IR for EVERY task in production. Proven in
 `postgres/sync-workflow-ir-is-always-default.pg.test.ts`: the sync selection reader is a
@@ -91,7 +91,7 @@ function* walk(dir: string): Generator<string> {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-20:10 (PR #2759 review — greptile P2):
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:10 (PR #2759 review — greptile P2):
 ALIASES COUNT. Matching only `<expr>.resolveTaskWorkflowIrSync(...)` left an opening: destructure or
 rebind the method and the callee becomes a bare identifier, so a new synchronous resolution passes a
 guard whose whole purpose is to catch it.

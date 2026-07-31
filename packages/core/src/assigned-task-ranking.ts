@@ -56,7 +56,7 @@ function titleSnippet(task: AssignedTaskLike, max = 72): string {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:00 (batch-core feed):
 "Finished either way" comes from core's role helper, not from a local copy of the two ids.
 
 `isTerminalColumnRole` already encodes exactly this union AND its legacy-id degraded mode, so passing

@@ -923,7 +923,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         // Compute live task counts from the project-specific store
         const tasks = await projectStore.listTasks({ slim: true });
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-08:10:
         Project-health "active tasks" is the negation of each card's OWN terminal lanes.
 
         CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison. On a renamed board it
@@ -957,7 +957,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
          */
         const inFlightAgentCount = countRunningAgentTasks(tasks);
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (batch-core):
+        FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (batch-core):
         Project-health "tasks completed" — landed work, resolved from each task's own workflow. Keyed
         on the literal pair, a board that renamed its complete lane reported 0 completed forever, so
         project health read as a project that had never finished anything.

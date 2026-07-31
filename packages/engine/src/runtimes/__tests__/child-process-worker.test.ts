@@ -14,7 +14,7 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("../../logger.js", () => {
-  // FNXC:EngineTests 2026-07-31-00:20: `debug` is part of the logger surface; omitting it throws
+  // FNXC:EngineTests 2026-07-30-00:20: `debug` is part of the logger surface; omitting it throws
   // "runtimeLog.debug is not a function" on the first demoted line and fails the whole file.
   const mockLogger = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   return {
@@ -117,7 +117,7 @@ type MockWorker = {
 type MockRuntime = {
   config: ProjectRuntimeConfig;
   centralCore: {
-    /* FNXC:CapacityModel 2026-07-31-03:10: mirrors the worker's stub surface —
+    /* FNXC:CapacityModel 2026-07-30-03:10: mirrors the worker's stub surface —
        `getGlobalConcurrencyState` was DELETED with the cross-project cap. */
     getLiveRunningAgentCounts?: () => Promise<unknown>;
     recordTaskCompletion?: () => Promise<void>;
@@ -230,7 +230,7 @@ describe("child-process-worker", () => {
     expect(runtime.start).toHaveBeenCalledTimes(1);
     expect(runtime.getStatus).toHaveBeenCalled();
     /*
-    FNXC:CapacityModel 2026-07-31-00:45:
+    FNXC:CapacityModel 2026-07-30-00:45:
     RE-PINNED to the stub's current surface. `getGlobalConcurrencyState` is DELETED — the
     cross-project cap was dropped (central-core.ts:2124, FNXC:CapacityModel 2026-07-28-23:30),
     together with `updateGlobalConcurrency`, `acquireGlobalSlot`, `releaseGlobalSlot` and the

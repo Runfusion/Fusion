@@ -252,7 +252,7 @@ export function getTaskMergeBlocker(
   the sole deciders without lying about the task's actual column.
   */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (batch-core feed):
   `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
 
   Distinct from `skipColumnIdentityCheck`, which says "I have already proven lane identity, do not
@@ -397,7 +397,7 @@ export interface TaskCompletionBlockerOptions {
    */
   resolveTask?: (taskId: string) => Promise<Pick<Task, "id" | "column"> | null | undefined>;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (batch-core feed):
   Per-blocker resolved lane vocabulary, keyed by the BLOCKER's task id — not the blocked task's.
   A dependency lives on its own board and its own workflow decides when it is finished.
 
@@ -413,7 +413,7 @@ export interface TaskCompletionBlockerOptions {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (batch-core feed):
 The two dependency questions, resolved against the DEPENDENCY's own workflow.
 
 Keyed on the literals, a blocker that had genuinely finished on a renamed board never counted as

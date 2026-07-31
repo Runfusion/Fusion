@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:00 (dashboard-server feed):
 
 THE INVARIANT: the agent "working on" sanitizer asks each linked task's OWN terminal lanes.
 

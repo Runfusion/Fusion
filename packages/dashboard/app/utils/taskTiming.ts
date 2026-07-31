@@ -98,7 +98,7 @@ export function getActiveRuntimeMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
   nowMs: number,
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:10:
   THE DASHBOARD HAS ITS OWN COPY OF THIS FUNCTION, and converting core's did not touch it.
 
   `@fusion/core`'s `task-timing.ts` exports a `getTotalAgentActiveMs` that was converted onto

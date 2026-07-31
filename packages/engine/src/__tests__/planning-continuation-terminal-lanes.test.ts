@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-16:50 (fleet: the planning-continuation drain):
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:50 (fleet: the planning-continuation drain):
 
 THE INVARIANT: a due planning work item whose task is TERMINAL is an orphan to cancel, and "terminal" is the
 task's own board.

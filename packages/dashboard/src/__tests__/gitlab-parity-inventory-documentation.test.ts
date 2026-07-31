@@ -70,7 +70,7 @@ describe("gitlab parity inventory documentation contract", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-09:45 (fleet phase — CODE parity, not just documentation parity):
+FNXC:WorkflowResolvedColumns 2026-07-30-09:45 (fleet phase — CODE parity, not just documentation parity):
 The contract above checks that the parity INVENTORY DOC mentions each surface. It cannot notice that the
 two tracking services, which implement one of those surfaces twice, have drifted in how they decide which
 moves warrant a comment.

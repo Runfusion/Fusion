@@ -279,7 +279,7 @@ export async function countRunningAgentsInStore(store: TaskStore): Promise<numbe
   const tasks = await store.listTasks({ slim: true });
   const irCache = new Map();
   /*
-  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FNXC:ConcurrencyIndicators 2026-07-30-12:00:
   FN-8453 requires dashboard store counts to enrich custom workflow traits before
   the pure predicate runs; otherwise a custom complete card with stale session
   metadata would falsely consume displayed/global top-level concurrency.

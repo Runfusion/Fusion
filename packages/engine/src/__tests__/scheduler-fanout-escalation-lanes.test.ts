@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-11:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:10:
 
 THE INVARIANT: the overlap-bottleneck warning ages a blocker using the board's OWN active lanes.
 
@@ -104,7 +104,7 @@ describe("the overlap-bottleneck warning ages blockers by resolved lane", () => 
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-18:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:40:
 The REVIEW half of the same call, wired after the escalation half — and found only by auditing the
 flat-set class by hand, not by any guard.
 

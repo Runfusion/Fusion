@@ -12,7 +12,7 @@ const { spawnMock, createConnectionMock } = vi.hoisted(() => ({
 
 vi.mock("node:child_process", () => ({
   /*
-  FNXC:DashboardTestMocks 2026-08-03-04:20 (whole-file red on main — same class as the `createLogger` pair):
+  FNXC:DashboardTestMocks 2026-07-30-04:20 (whole-file red on main — same class as the `createLogger` pair):
   `execFile` is stubbed because a `vi.mock("node:child_process", …)` factory REPLACES the module: something in
   this import graph now calls `execFile`, and an omitted export throws `No "execFile" export is defined`, failing
   the WHOLE file rather than one case.

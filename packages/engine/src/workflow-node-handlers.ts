@@ -452,7 +452,7 @@ export function createPrimitivePromptLikeHandler(
       }
       if (seam === "review-handoff") {
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-01:05:
         Ask for the review LANE by role; this handler cannot resolve it and must not guess.
 
         Naming `in-review` here was a hard failure, not a silent one: post-U12 `moveTask` rejects a

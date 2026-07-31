@@ -136,7 +136,7 @@ export function resolveCompleteColumn(ir: WorkflowIr): string | undefined {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:20 (the divergence four consumers each solved differently):
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:20 (the divergence four consumers each solved differently):
 REVIEW IS A SET, AND `humanReview` COUNTS.
 
 `resolveLifecycleColumns().review` is a SINGLE id derived from ONE flag (`mergeOrchestration`). The
@@ -277,7 +277,7 @@ The first is a real workflow shape to honor; the second means the caller has no 
 decide and must skip-and-log rather than guess a legacy literal.
 */
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (arity contract, after two production bugs):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:00 (arity contract, after two production bugs):
 EACH FIELD IS **ONE** COLUMN, EVEN WHEN THE WORKFLOW DECLARES SEVERAL.
 
 Uniqueness is validated for exactly ONE trait. `TraitRegistry.validateColumnTraits` raises

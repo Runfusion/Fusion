@@ -45,7 +45,7 @@ describe("task move route — bypassGuards is not forwardable", () => {
       "POST",
       "/api/tasks/FN-001/move",
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-03-00:20 (red on main — a stale target column, not a route bug):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (red on main — a stale target column, not a route bug):
       THE TARGET WAS `triage`, AND U11 DELETED THAT COLUMN. The move route validates against the TASK'S
       WORKFLOW (U12/R2), and the default lineage post-#2515 declares
       `todo | in-progress | in-review | done | archived` — so the route correctly answered 400 "Invalid
@@ -74,7 +74,7 @@ describe("task move route — bypassGuards is not forwardable", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-03-00:35 (added while fixing the red above):
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:35 (added while fixing the red above):
 
 THE PAIRED CASE THE SUITE WAS MISSING: an undeclared column must still be REJECTED.
 

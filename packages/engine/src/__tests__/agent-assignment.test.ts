@@ -198,7 +198,7 @@ describe("listEligibleExecutorAgents", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:40 (batch-engine feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:40 (batch-engine feed):
 
 THE INVARIANT: assignment load counts the cards a board's OWN lanes call active.
 
@@ -274,7 +274,7 @@ describe("assignment load resolves the board's own active lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:40 (#2787 review — greptile P1, third round):
 
 THE INVARIANT: load is counted per task, against the task's OWN workflow.
 

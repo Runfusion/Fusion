@@ -34,7 +34,7 @@ const BASELINE = join(REPO, "scripts", "lib", "fnxc-future-dates-baseline.json")
 /* Build output and vendored bundles are generated; their stamps are copies of the source ones. */
 const SKIP_DIRS = new Set(["node_modules", "dist", ".gate-bundle", "coverage", "build", ".next"]);
 /*
-FNXC:FnxcStampHygiene 2026-07-31-03:40 (#2941 review): HYPHENS ARE PART OF THE REQUIRED FORM.
+FNXC:FnxcStampHygiene 2026-07-30-03:40 (#2941 review): HYPHENS ARE PART OF THE REQUIRED FORM.
 AGENTS.md specifies `FNXC:Area-of-product`, and the first matcher accepted only `[A-Za-z0-9_]+` — so
 every hyphenated area, i.e. the documented spelling, was skipped entirely. The gate was blind to the
 shape the rule actually prescribes, which is the worst possible subset to miss.
@@ -55,7 +55,7 @@ function* walk(dir) {
 /*
 Today in the repo's LOCAL calendar; a stamp for today is fine, tomorrow is not.
 
-FNXC:FnxcStampHygiene 2026-07-31-03:40 (#2941 review): `toISOString()` is UTC, so for anyone west of
+FNXC:FnxcStampHygiene 2026-07-30-03:40 (#2941 review): `toISOString()` is UTC, so for anyone west of
 Greenwich it rolls the date forward for part of each day — a stamp written correctly at 5pm in
 California read as "tomorrow" and failed the gate. Authors write the local date, so the comparison
 has to use the local one.
@@ -94,7 +94,7 @@ if (process.argv.includes("--update-baseline")) {
 }
 
 /*
-FNXC:FnxcStampHygiene 2026-07-31-03:45 (#2941 review): VALIDATE THE SHAPE, not just the JSON.
+FNXC:FnxcStampHygiene 2026-07-30-03:45 (#2941 review): VALIDATE THE SHAPE, not just the JSON.
 
 The first version caught only a parse error, so `null`, an array, or a negative/NaN count reached the
 comparison and either crashed with a stack trace or — worse — compared as `undefined` and silently

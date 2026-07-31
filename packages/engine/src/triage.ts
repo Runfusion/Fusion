@@ -550,7 +550,7 @@ export class TriageProcessor {
         // handoff can bypass the poll's bounded refinement scheduling.
         if (!this.running || this.polling || settings.globalPause || settings.enginePaused) return [];
         const now = Date.now();
-        // FNXC:ConcurrencyAdmission 2026-08-07-10:30:
+        // FNXC:ConcurrencyAdmission 2026-07-30-10:30:
         // FN-8453/#2359 requires coordinator refresh to use the identical
         // discovery predicate as poll(). A seed is ready before specifyTask
         // stamps status:"planning"; exposing only that durable status lets newer
@@ -1641,7 +1641,7 @@ export class TriageProcessor {
             const roles = resolveLifecycleColumns(ir);
             const columns = (ir as { columns?: Array<{ id: string; traits?: Array<{ trait: string; config?: Record<string, unknown> }> }> }).columns ?? [];
             /*
-            FNXC:ManualIntakeAdmission 2026-07-31-04:20:
+            FNXC:ManualIntakeAdmission 2026-07-30-04:20:
             The intake trait's `autoTriage: false` comes from the SAME resolution, not a second read —
             it is the only durable signal that separates a parked card from one an operator released.
             */
@@ -1671,7 +1671,7 @@ export class TriageProcessor {
     // candidate and both predicates are correctly false for it.
     const isAtHoldColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.hold === t.column;
     /*
-    FNXC:ManualIntakeAdmission 2026-07-31-04:25 (live bug — FN-7596's rule was broken by the trait conversion):
+    FNXC:ManualIntakeAdmission 2026-07-30-04:25 (live bug — FN-7596's rule was broken by the trait conversion):
     A MANUAL intake (`autoTriage: false`) is never auto-admitted. Coding (Ideas) exists so an operator
     can park a card without the engine planning it; the operator promotes it into Planning when ready.
 
@@ -1918,7 +1918,7 @@ export class TriageProcessor {
       const triageTasks = await this.discoverReadyPlanningTasks(allTasks, now);
 
       /*
-      FNXC:ConcurrencyAdmission 2026-08-03-12:00:
+      FNXC:ConcurrencyAdmission 2026-07-30-12:00:
       FN-8453 removed the separate maxTriageConcurrent pool, and the capacity simplification deleted the orphaned setting it left behind. Planning uses the
       same maxConcurrent live-agent claim as execute/review so a project cannot
       exceed its operator-facing top-level capacity in a different lane.
@@ -1936,7 +1936,7 @@ export class TriageProcessor {
         pendingSpecifyCount,
       });
       /*
-      FNXC:CapacityModel 2026-07-31-11:10 (PR #2562 review — coderabbit; CORRECTED):
+      FNXC:CapacityModel 2026-07-30-11:10 (PR #2562 review — coderabbit; CORRECTED):
       Capacity is the PROJECT's agent count, full stop. The second term was the
       cross-project host semaphore's AVAILABILITY, which no longer constrains
       admission: permanently Infinity here, so `Math.min` was a no-op keeping a dead
@@ -2085,7 +2085,7 @@ export class TriageProcessor {
               taskId: task.id,
               projectId: this.rootDir,
               createdAt: task.createdAt,
-              // FNXC:ConcurrencyAdmission 2026-08-05-10:00: the planner must
+              // FNXC:ConcurrencyAdmission 2026-07-30-10:00: the planner must
               // own the coordinator's real host reservation before it starts;
               // deferring to semaphore.run would reintroduce priority overtaking.
               reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
@@ -2153,7 +2153,7 @@ export class TriageProcessor {
       || this.processing.has(task.id)
       || this.hasLivePlanningWork(task.id)
     ) {
-      // FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+      // FNXC:ConcurrencyAdmission 2026-07-30-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
@@ -2610,7 +2610,7 @@ export class TriageProcessor {
           "triage",
         );
 
-        // FNXC:TaskTiming 2026-08-01-10:00: triage owns the initial planning lane;
+        // FNXC:TaskTiming 2026-07-30-10:00: triage owns the initial planning lane;
         // first-start wins so a crash between ownership and persistence cannot open a second segment.
         const planningStart = startPlanningSegment(task);
         if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
@@ -3124,7 +3124,7 @@ export class TriageProcessor {
         this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
-      // FNXC:ConcurrencyAdmission 2026-08-06-10:00: a coordinator reservation
+      // FNXC:ConcurrencyAdmission 2026-07-30-10:00: a coordinator reservation
       // can exist before planner setup reaches takePreHeldExecutorSlot(). Every
       // early setup failure must return that untransferred host slot; after a
       // successful transfer this is intentionally a no-op.

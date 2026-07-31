@@ -36,7 +36,7 @@ its own right, and a guard written as `task.paused` alone would pass every other
 const WF = "custom:paused-dispatch";
 
 /*
-FNXC:TaskDispatch 2026-07-31-01:35 (PR #2779 review — greptile P2):
+FNXC:TaskDispatch 2026-07-30-01:35 (PR #2779 review — greptile P2):
 Each `createStore` mints a temp tasks dir for the planned spec, so without this every local and CI
 run leaves `fusion-paused-dispatch-*` directories behind in the OS temp dir forever.
 
@@ -106,7 +106,7 @@ function createStore(task: Task, freshTask: Task | null = null, settings: Partia
   const tasksDir = mkdtempSync(join(tmpdir(), "fusion-paused-dispatch-"));
   seededTaskDirs.push(tasksDir);
   /*
-  FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
+  FNXC:TestHygiene 2026-07-30-02:30 (PR #2779 review — greptile):
   Every `createStore` call seeds a real spec on disk, and nothing removed it, so each local and CI
   run left another `fusion-paused-dispatch-*` directory in the OS temp root forever. Tracked and
   removed in `afterEach` below rather than swept later: the project forbids the recursive temp-root
@@ -165,7 +165,7 @@ async function dispatchAttempted(store: TaskStore): Promise<boolean> {
 }
 
 /*
-FNXC:TestHygiene 2026-07-31-02:30 (PR #2779 review — greptile):
+FNXC:TestHygiene 2026-07-30-02:30 (PR #2779 review — greptile):
 Exact paths only — see the note at the allocation site for why this cannot be a temp-root sweep.
 */
 const allocatedFixtureDirs: string[] = [];

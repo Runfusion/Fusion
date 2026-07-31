@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:00:
 
 THE INVARIANT: the legacy auto-merge stamp backfill reads from the board's OWN review lanes.
 

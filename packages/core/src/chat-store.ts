@@ -320,7 +320,7 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
   }
 
   /*
-  FNXC:ChatTags 2026-08-05-10:55:
+  FNXC:ChatTags 2026-07-30-10:55:
   Direct-conversation tags are project-scoped by the session's owner project.
   Tag mutations are transactional and return an enriched session so SSE clients
   never receive an assignment update without its deterministic tag array.

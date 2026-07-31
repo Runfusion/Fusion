@@ -33,7 +33,7 @@ describe("cards", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:40:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-02:40:
   THE INVARIANT: a finished card never occupies a deck slot, whatever its lane is called.
 
   `boardToDeck` filtered on the literals `archived`/`done`, and the consequence on a renamed board is

@@ -68,7 +68,7 @@ export function extractMissingWorktreePathFromSessionStartFailure(error: unknown
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-18:20 (fleet: the missing-worktree recovery classifiers):
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:20 (fleet: the missing-worktree recovery classifiers):
 THE REVIEW LANE ARRIVES FROM THE CALLER, matching the contract added to
 `isInReviewMissingWorktreeSessionStartFailure` in #2728 — this module is pure and synchronous by design
 (the classifiers are combined in chains) and every caller either holds a store or already resolved the lane.
@@ -116,7 +116,7 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(
 }
 
 /**
- * FNXC:WorkflowLifecycleColumns 2026-07-31-01:15 (PR #2736 review — greptile P1):
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-01:15 (PR #2736 review — greptile P1):
  * `isReviewColumn` is an optional RESOLVED answer; omitted, it is exactly today's behaviour.
  *
  * This predicate selects the SPECIALIZED retry that clears `worktree`/`branch`/`sessionFile`. Its
@@ -125,7 +125,7 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(
  * the generic branch leaves the stale session metadata in place — so the next execution hit the very
  * same missing-worktree failure. A retry that reports success and changes nothing.
  *
- * FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (note drift — the stated reason stopped being true):
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-02:00 (note drift — the stated reason stopped being true):
  * The paragraph here used to say the parameter is optional "because the other caller (`extension.ts`)
  * still asks BOTH questions with the literal". That is no longer the case, and had it stayed it would
  * have told the next reader an unconverted caller exists — the kind of note that keeps an
@@ -169,7 +169,7 @@ export class RestartRecoveryCoordinator {
 
   async recoverInterruptedRuns(): Promise<void> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (the FLAGGED query, now converted):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:20 (the FLAGGED query, now converted):
     The note this replaces was right that the QUERY was the live filter and the `.filter` below it a
     redundant re-assertion — so converting the predicate alone would have dropped a census count and
     changed nothing an operator sees, because the board's wip rows were never listed.

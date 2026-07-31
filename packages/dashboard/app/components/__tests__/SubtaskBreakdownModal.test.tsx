@@ -132,7 +132,7 @@ describe("SubtaskBreakdownModal", () => {
     const { container } = renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
     /*
-    FNXC:PortalQueryRoot 2026-07-31-20:10:
+    FNXC:PortalQueryRoot 2026-07-30-20:10:
     document, not container — the planning modal renders through a PORTAL.
 
     `container.querySelector(".planning-modal")` returned null, and the `?.` below turned that into

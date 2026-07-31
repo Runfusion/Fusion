@@ -39,7 +39,7 @@ export function enqueueMergeQueueSyncInternalImpl(store: TaskStore, taskId: stri
         throw new MergeQueueTaskNotFoundError(taskId);
       }
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-10:35 (fleet — FLAGGED, deliberately NOT converted):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-10:35 (fleet — FLAGGED, deliberately NOT converted):
       This guard runs inside `store.db.transactionImmediate`, a SYNCHRONOUS SQLite transaction. Converting
       it needs a synchronous lane resolution, and the only one available (`resolveTaskWorkflowIrSync`) reads
       `getTaskWorkflowSelectionImpl`, which returns `undefined` unconditionally in PostgreSQL mode — the
@@ -186,7 +186,7 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
 export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     const task = await store.getTask(taskId);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-10:20 (fleet: the PR-merged transition):
     ONE SNAPSHOT for the whole transition — the pre-check, the RE-READ check, and the MOVE TARGET. This
     function reads the row twice on purpose (a merge can land between the checks), and each read was
     compared against the default lineage's ids while the move went to the literal `done`.
@@ -202,7 +202,7 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     for. A board with no complete column refuses the transition instead of inventing one.
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-14:10 (PR #2733 review — greptile P1, and my COMMENT contradicted
+    FNXC:WorkflowLifecycleColumns 2026-07-30-14:10 (PR #2733 review — greptile P1, and my COMMENT contradicted
     my CODE):
     A WORKFLOW THAT DECLARES COLUMNS BUT NO COMPLETE LANE REFUSES, it does not fall back to `done`. My first
     version wrote `?? "done"` while the comment above it claimed the transition refuses rather than inventing
@@ -253,7 +253,7 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-14:20 (PR #2733 review — greptile P1, the resolve/move race):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-14:20 (PR #2733 review — greptile P1, the resolve/move race):
     THE RACE IS REAL AND `moveTask` IS THE BACKSTOP. If the task's workflow selection changes between the
     resolution above and this call, `completeColumn` describes the old board while `moveTask` validates against
     the new one — and it REJECTS an unknown column rather than writing it. So the failure mode is a thrown

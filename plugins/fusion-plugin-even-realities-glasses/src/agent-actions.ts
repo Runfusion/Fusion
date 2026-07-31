@@ -102,7 +102,7 @@ async function laneContext(
   taskId: string,
 ): Promise<{ lanes: Lanes | undefined; declared: Set<string>; degraded: boolean }> {
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-02:25 (PR #2644 review, greptile P1):
+  FNXC:PluginLifecycleColumns 2026-07-30-02:25 (PR #2644 review, greptile P1):
   ONE SNAPSHOT PER ACTION. Three helpers used to read the workflow independently — the degraded
   probe, the lane resolution, and the declared-column read — so a workflow edited or deleted
   mid-action could combine a NOT-degraded verdict with fallback lanes, or lanes from one revision
@@ -131,7 +131,7 @@ async function laneContext(
   }
 
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-08:10 (PR #2644 review — my identity check rejected every
+  FNXC:PluginLifecycleColumns 2026-07-30-08:10 (PR #2644 review — my identity check rejected every
   persisted custom workflow):
 
   PROVE THE READ, DO NOT CHECK THE IR'S IDENTITY. My previous revision required the resolved IR to
@@ -184,7 +184,7 @@ async function laneContext(
       }
       if (definition?.ir == null) return { lanes: undefined, declared: new Set(), degraded: true };
       /*
-      FNXC:PluginLifecycleColumns 2026-07-31-17:10 (PR #2644 review, CodeRabbit — REAL, and NOT fixed):
+      FNXC:PluginLifecycleColumns 2026-07-30-17:10 (PR #2644 review, CodeRabbit — REAL, and NOT fixed):
       A STORED STRING IR COSTS A SECOND READ, so the lanes can come from a different revision than the
       degraded verdict — the drift the surrounding comment claims to have removed. My earlier excuse for
       it ("deliberate and confined to that shape") was not a reason.
@@ -398,7 +398,7 @@ export async function retryTask(input: AgentActionInput, deps: AgentActionDeps):
 
   const { lanes: retryLanes, declared: retryDeclared, degraded: retryDegraded } = await laneContext(deps.taskStore, taskId);
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-15:10 (PR #2644 review, CodeRabbit — MAJOR, my regression):
+  FNXC:PluginLifecycleColumns 2026-07-30-15:10 (PR #2644 review, CodeRabbit — MAJOR, my regression):
   DEGRADED GATES ONLY THE LANE-DEPENDENT BRANCH. I put the refusal at the top of `retryTask`, which also
   blocked the plain failure-retry below — a branch that reads no lanes at all and only clears status. So a
   FAILED card became un-retryable whenever its workflow definition could not be read, which is exactly the

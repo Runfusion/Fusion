@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed: task-priority.ts 3 → 0, assigned-task-ranking.ts 2 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:00 (batch-core feed: task-priority.ts 3 → 0, assigned-task-ranking.ts 2 → 0):
 
 THE INVARIANT: display ordering and assigned-work ranking ask core's column-ROLE helpers, never the
 column's name.

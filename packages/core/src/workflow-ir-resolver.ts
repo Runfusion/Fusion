@@ -184,7 +184,7 @@ export async function resolveWorkflowIrById(
   if (isBuiltinWorkflowId(workflowId)) {
     const builtin = getBuiltinWorkflow(workflowId);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-01:15 (PR #2815 review — greptile P1, and it corrects me):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:15 (PR #2815 review — greptile P1, and it corrects me):
     THE FOURTH DEGRADATION PATH, and the only one that was never branded. An id that LOOKS builtin but
     is not registered — a workflow removed between releases, a typo'd selection — lands here, finds no
     `builtin.ir`, and silently substitutes the default coding IR.
@@ -339,7 +339,7 @@ export async function resolveWorkflowIrForTaskWithProvenance(
   */
   const ir = await resolveWorkflowIrById(store, workflowId, irCache);
   /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
+FNXC:WorkflowLifecycleColumns 2026-07-30-03:10 (the id cross-check is DELETED — it is unreliable and redundant):
   THE MARKER IS THE WHOLE ANSWER. An id-equality check used to run after this line, on the reasoning
   that a returned IR whose `id` differs from the requested one proves a fallback. Both halves of that
   are wrong.
@@ -390,7 +390,7 @@ export async function resolveWorkflowIrForTask(
 }
 
 /*
-FNXC:StateMachine 2026-07-31-20:10 (PR #2793's finding, fixed):
+FNXC:StateMachine 2026-07-30-20:10 (PR #2793's finding, fixed):
 IS `nodeId` THE TASK'S OWN TERMINAL NODE? Resolved from the task's REAL workflow.
 
 The previous answer came from `store.resolveTaskWorkflowIrSync`, which returns the DEFAULT workflow

@@ -438,7 +438,7 @@ describe("EphemeralWorkerManager", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-06:10 (engine feed):
 
 THE INVARIANT: the zombie sweep asks the task's OWN workflow whether its worker is still working.
 
@@ -516,7 +516,7 @@ describe("ephemeral zombie sweep resolves the board's own lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (#2787 review — greptile P1):
 A SECOND wip lane must keep its worker too.
 
 `resolveLifecycleColumns` returns the FIRST column carrying each trait, so the first version of this

@@ -216,7 +216,7 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
       expect(metaStyle.rowGap).toBe("var(--space-lg)");
       expect(metaStyle.columnGap).toBe("var(--space-sm)");
       /*
-      FNXC:AgentDetailMobile 2026-07-31-19:15:
+      FNXC:AgentDetailMobile 2026-07-30-19:15:
       DECLARED, NOT COMPUTED — jsdom cannot answer this one at all.
 
       This read `getComputedStyle(card).padding` and expected the raw token text. jsdom does not

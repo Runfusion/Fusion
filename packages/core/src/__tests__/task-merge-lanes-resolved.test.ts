@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-00:20 (batch-core feed: task-merge.ts 6 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:20 (batch-core feed: task-merge.ts 6 → 0):
 
 THE INVARIANT: the merge gate and the completion gate answer with the board's OWN columns.
 

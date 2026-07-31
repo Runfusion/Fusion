@@ -44,7 +44,7 @@ export function diffSnapshots(
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-03:05 (supersedes the 2026-07-30-22:25 and -01:20 notes):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:05 (supersedes the 2026-07-30-22:25 and -01:20 notes):
     The completion notification asks each card's OWN complete column, and the caller now builds it.
 
     Keyed on the literal, a renamed board would never fire a "completed" card to the glasses — the

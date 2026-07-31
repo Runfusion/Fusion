@@ -347,7 +347,7 @@ describe("state, phase and result enums are not column guards", () => {
 });
 
 /*
-FNXC:LifecycleColumnCensus 2026-08-01-01:30:
+FNXC:LifecycleColumnCensus 2026-07-30-01:30:
 
 A LEGACY LITERAL IN A FALLBACK BRANCH IS NOT BACKLOG. The converted shape is
 

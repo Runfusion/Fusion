@@ -102,7 +102,7 @@ export interface LifecycleIrOptions {
  */
 export const MERGED_VOCAB: Vocabulary = {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-00:10 (fix-forward, surfaced by a typecheck that reaches here):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-00:10 (fix-forward, surfaced by a typecheck that reaches here):
   `intake` was MISSING, which is a type error `Vocabulary` already forbade — invisible because the engine
   tsconfig has `exclude: ["src/__tests__/**"]`, so nothing in this directory is typechecked. It surfaced
   only when a test OUTSIDE that directory (`src/notification/__tests__/`) imported this fixture.

@@ -84,7 +84,7 @@ describe("normalizeEvalFollowUps", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (engine feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-06:40 (engine feed):
   THE INVARIANT: "open" is the negation of the card's OWN terminal lanes.
 
   Census-invisible: the old gate was `OPEN_COLUMNS`, a `Set` literal — a definition, not a

@@ -26,7 +26,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 // Mock @fusion/core to prevent cascade loading of real fs modules
 vi.mock("@fusion/core", () => ({
   /*
-  FNXC:DashboardTestMocks 2026-08-03-04:10 (whole-file red on main — a mock factory missing one export):
+  FNXC:DashboardTestMocks 2026-07-30-04:10 (whole-file red on main — a mock factory missing one export):
   `createLogger` is stubbed because a `vi.mock("@fusion/core", …)` factory REPLACES the module: any export the
   module under test (or anything it transitively imports) reaches for and the factory omits throws
   `No "createLogger" export is defined`, which fails the ENTIRE file rather than one case.

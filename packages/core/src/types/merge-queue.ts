@@ -172,7 +172,7 @@ export interface MergeQueueAcquireOptions {
    *  The task must be unexpired/available; otherwise falls back to normal queue-head selection. */
   targetTaskId?: string;
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:25 (#2819 review — greptile):
   Resolves a task's review lanes for the stale-row sweep that runs at the start of lease acquisition.
   That sweep deletes rows whose task has left review, and its predicate is evaluated by PostgreSQL —
   which cannot know a workflow. Without this the SQL literal deleted every queued row on a renamed

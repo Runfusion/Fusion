@@ -3,7 +3,7 @@ import { computeBlockerFanoutMap, isStaleBlockedByBlocker } from "../blocker-fan
 import type { Task } from "../types.js";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (fleet — a blocker that blocked forever):
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:00 (fleet — a blocker that blocked forever):
 
 `isStaleBlockedByBlocker` decides whether a `blockedBy` marker is stale. Keyed on the literals, a
 FINISHED blocker on a renamed board never read as stale, so the dependent kept its marker
@@ -110,7 +110,7 @@ describe("a finished blocker reads as STALE under a renamed vocabulary", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2749 review — greptile P1):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:00 (PR #2749 review — greptile P1):
   THE SET-SHAPED PATH IS THE ONE PRODUCTION TAKES.
 
   The cases above drive `classify`, but the ONLY production caller — `buildUnblockWeightMap` in

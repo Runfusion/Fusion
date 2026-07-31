@@ -52,7 +52,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
 
       if (updates.nodeId !== undefined) {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (#2821 review — greptile, second call site):
+        FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (#2821 review — greptile, second call site):
         THE COLUMN IS RE-READ AFTER THE AWAIT.
 
         `task` was loaded above, and awaiting lane resolution here opened a window: another process
@@ -69,7 +69,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         */
         const overrideLanes = await resolveNodeOverrideLanes(store, id);
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-01:50 (#2821 review — greptile, and it caught a DEADLOCK I shipped):
+        FNXC:WorkflowResolvedColumns 2026-07-30-01:50 (#2821 review — greptile, and it caught a DEADLOCK I shipped):
         RE-READ WITHOUT THE LOCK. My previous version used `store.getTask(id)`, which acquires the
         per-task lock. This function is `updateTaskUnlockedImpl` — the caller ALREADY HOLDS that lock,
         and it is non-reentrant, so the inner read waited on the outer update forever. A stale-column
@@ -81,7 +81,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         */
         const freshForGuard = await store.readTaskJson(dir).catch(() => null);
         /*
-        FNXC:StateMachine 2026-08-01-10:20 (PR #2793's finding — the INNER half, merged with #2821):
+        FNXC:StateMachine 2026-07-30-10:20 (PR #2793's finding — the INNER half, merged with #2821):
         THIS GUARD RUNS SECOND AND USED TO OVERRIDE THE FIRST. `updateTaskImpl` resolves the terminal
         question and passes it in; this call passed no `isTerminalNodeId`, so it fell to
         `defaultIsTerminalNodeId` — the bare literal `nodeId === "end"`. An unconverted literal behind
@@ -158,7 +158,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.dependencies = normalizedDependencies;
 
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-02:40 (batch-core feed):
         THIS WROTE A COLUMN THAT NO LONGER EXISTS ON ANY BOARD.
 
         Adding a new dependency to a hold-lane card re-seeds it for re-specification. The destination
@@ -252,7 +252,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.paused = undefined;
         task.pausedByAgentId = undefined;
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-02:40 (batch-core feed):
         Clearing the `paused` STATUS on unassignment applies to the two lanes where a card is
         actively being worked — wip and review. Keyed on the literals, a renamed board left
         `status: "paused"` behind after the pause itself was lifted, so the card read as paused in

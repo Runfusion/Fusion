@@ -54,7 +54,7 @@ describe("board routes", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:45:
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:45:
   THE INVARIANT: `?columns=` filters on the board's OWN lane ids, whatever they are named.
 
   The parameter was validated against a hardcoded six-id allow-list and the filter had NO coverage

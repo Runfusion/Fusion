@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (fleet phase — why `async-comments-attachments.ts` was NOT converted):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (fleet phase — why `async-comments-attachments.ts` was NOT converted):
 THE ARCHIVED GATE IS ENFORCED IN THREE ENCODINGS, AND CONVERTING ONE OF THEM IS A SPLIT BRAIN.
 
 Every other file in the column-literal backlog can be converted on its own: resolve the task's
@@ -71,7 +71,7 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/task-merge.ts": 2,
   "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
   /*
-  FNXC:ArchivedGateParity 2026-07-31-22:10:
+  FNXC:ArchivedGateParity 2026-07-30-22:10:
   8 -> 5 after #2886, AND THE COUNT MOVED WITHOUT THE BEHAVIOUR MOVING. Read this before trusting it.
 
   #2886 fixed a real bug (the archived-document guards failed in OPPOSITE directions on a renamed
@@ -263,7 +263,7 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
               */
               const inner = ts.isNonNullExpression(a) ? a.expression : a;
               /*
-              FNXC:WorkflowResolvedColumns 2026-07-31-12:50 (#2724 review — greptile P2):
+              FNXC:WorkflowResolvedColumns 2026-07-30-12:50 (#2724 review — greptile P2):
               ELEMENT ACCESS too. The first version accepted `x.column` and a bare `column`, so
               `row["column"] === "archived"` walked straight past the inventory — a guard defeated by
               changing syntax, which is precisely the failure I fixed in the maxWorktrees audit by moving

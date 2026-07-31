@@ -123,7 +123,7 @@ describe("useSessionFiles", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:30 (dashboard-app feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:30 (dashboard-app feed):
 
 THE INVARIANT: the Files tab loads for any column whose ROLE carries a worktree.
 

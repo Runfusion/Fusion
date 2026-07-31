@@ -136,7 +136,7 @@ export function buildUnblockWeightMap(
 ): Map<string, number> {
   const taskList = [...tasks];
   const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
-  /* FNXC:WorkflowLifecycleColumns 2026-07-31-10:00: forward the review lane too — this is the one
+  /* FNXC:WorkflowLifecycleColumns 2026-07-30-10:00: forward the review lane too — this is the one
      production caller, so an option it does not pass is an option that never fires. */
   const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, {
     terminalColumns,
@@ -223,7 +223,7 @@ export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
   tasks: readonly T[],
   column: string,
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-02:00 (batch-core feed):
   The column's RESOLVED trait flags. Omitted, core's role helpers fall back to the legacy ids, so an
   unconverted caller is byte-identical — that degraded mode lives in `column-roles.ts` and is covered
   by its own tests, which is why this takes flags rather than another bespoke set.

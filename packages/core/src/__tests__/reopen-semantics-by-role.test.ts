@@ -247,7 +247,7 @@ describe("the store's reopen check and the hooks' cannot disagree", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-04:40 (fleet phase — the same safety argument, applied to TIMING):
+FNXC:WorkflowResolvedColumns 2026-07-30-04:40 (fleet phase — the same safety argument, applied to TIMING):
 The header of this file explains why the reopen predicates had to stop naming the default lineage: these
 hooks run on the flag-ON path for EVERY workflow, because the trait registry resolves each hook by trait
 id, not by workflow. The timing, completion and in-review hooks had the same defect and were not part of

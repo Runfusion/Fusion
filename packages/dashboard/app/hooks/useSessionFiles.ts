@@ -8,7 +8,7 @@ import {
 } from "../utils/columnRoles";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-07:30 (dashboard-app feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:30 (dashboard-app feed):
 Session files load for cards that HAVE a worktree — wip, review, and complete.
 
 CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
@@ -61,7 +61,7 @@ export function useSessionFiles(
 ): UseSessionFilesResult {
   const enabled = options.enabled ?? true;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-07:30 (dashboard-app feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-07:30 (dashboard-app feed):
   Collapsed to a BOOLEAN before the effect, deliberately. `columnFlags` is an object, and a caller
   building it inline hands this hook a new identity every render — putting it in the dep array below
   would refetch on every parent render. The derived boolean is stable for a stable answer.

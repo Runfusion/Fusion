@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:10:
 
 THE INVARIANT: the stale-spec guard skips cards the board's OWN workflow calls active.
 
@@ -45,7 +45,7 @@ const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
 describe("the stale-spec skip resolves the board's own active lanes", () => {
   it("resolves the task's own workflow IR before deciding the skip", () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-08-02-02:20 (the ratchet drifted behind an IMPROVEMENT):
+    FNXC:WorkflowResolvedColumns 2026-07-30-02:20 (the ratchet drifted behind an IMPROVEMENT):
     THE GUARD GOT BETTER AND THIS FILE WENT RED. It used to read
     `resolveLifecycleColumns(...)` and add `?.wip / ?.review / ?.complete`, which returns the FIRST
     column carrying each trait — so a board with two wip lanes, or a review lane plus a second

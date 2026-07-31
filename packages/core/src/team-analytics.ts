@@ -16,7 +16,7 @@ export interface TeamAnalyticsQuery {
   /** User-managed pricing overrides that take precedence over the built-in baseline. */
   pricingOverrides?: ModelPricingOverrides;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-03:20 (batch-core feed):
   Resolved trait flags per column NAME, so the wip/review tallies below come from the board's own
   lanes. Omitted, core's role helpers fall back to the legacy ids — that degraded mode lives in
   `column-roles.ts` and is tested there, so this file carries no hand-written fallback.

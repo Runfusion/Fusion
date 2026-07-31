@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:30 (E2E evidence — BOUNDING the inert-sync-resolution class):
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:30 (E2E evidence — BOUNDING the inert-sync-resolution class):
 
 Four PRs in this series (#2789 scheduler, #2791 planner lanes, #2792 custom fields, #2793 terminal
 node) each proved a site broken because it resolved a task's workflow synchronously. Read together
@@ -135,7 +135,7 @@ pgDescribe("the sync-selection defect class, bounded on a live store", () => {
     expect(asyncColumns).toContain(RENAMED_VOCAB.hold);
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (PR #2794 review — greptile):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:20 (PR #2794 review — greptile):
     POSITIVE first. `not.toContain(RENAMED_VOCAB.hold)` alone is satisfied by an empty, malformed, or
     entirely unrelated IR — anything that merely lacks `backlog` — so it could stay green while
     establishing nothing about the stated default-board behaviour. Naming the columns the sync helper

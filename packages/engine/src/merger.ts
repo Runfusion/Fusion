@@ -1897,7 +1897,7 @@ async function sweepAutostashOrphans(
         continue;
       }
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-10:50 (fleet: merger.ts terminal guards):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-10:50 (fleet: merger.ts terminal guards):
       "IS THE SOURCE TASK FINISHED?" from its own workflow, unioned with the legacy pair — a row can outlive
       the column it is stored in, and this guard decides whether an orphaned stash is still LIVE. Being too
       strict here keeps a stash alive forever (harmless clutter); being too loose discards a stash whose task
@@ -4932,7 +4932,7 @@ export async function findWorktreeUser(
 ): Promise<string | null> {
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-02-10:55 (fleet: merger.ts):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:55 (fleet: merger.ts):
   The worktree-conflict scan asks "is another UNFINISHED task holding this worktree?". Resolved per task, but
   ONLY for rows that actually share the worktree path — the path test is free and eliminates all but a
   handful, so the lane resolution never runs over the whole board. (The naive order — resolve, then filter —

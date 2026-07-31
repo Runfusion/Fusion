@@ -85,7 +85,7 @@ export function GraphTaskNode({
   this is a synchronous React render, where an IR lookup is not available.
   */
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-11:50 (PR #2644 review, greptile P1):
+  FNXC:PluginLifecycleColumns 2026-07-30-11:50 (PR #2644 review, greptile P1):
   A STALE APPROVAL STATUS MUST NOT HIDE A RUNNING CARD. Dropping the column condition made the
   awaiting-approval signal status-only, which is right for a planning-lane card — but `awaiting-approval`
   is DURABLE, so a card that carries it into an execution lane was rendered as not-active: no active

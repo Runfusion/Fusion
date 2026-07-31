@@ -1,6 +1,6 @@
 /*
 FNXC:StateMachine 2026-07-30-23:55 (E2E evidence — the terminal-node guard fires on the wrong node)
-FNXC:StateMachine 2026-07-31-20:45 (FIXED in PR #2811 — the two cases below now assert the CORRECT behaviour):
+FNXC:StateMachine 2026-07-30-20:45 (FIXED in PR #2811 — the two cases below now assert the CORRECT behaviour):
 
 Fourth in the inert-sync-resolution series (#2789 scheduler, #2791 planner lanes, #2792 custom
 fields). This one does not merely answer with the wrong vocabulary: it makes a SAFETY GUARD fire on a

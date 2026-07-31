@@ -143,7 +143,7 @@ export function taskToCard(
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:40:
 `terminalColumns` — which lanes mean "finished" — supplied by the route, not guessed here.
 
 The filter below named `archived` and `done`, and on a board that calls its finished lane anything

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-11:20 (fleet: the merge path on a renamed board):
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (fleet: the merge path on a renamed board):
 
 THE INVARIANT: the PR-merged transition recognises the board's review and complete lanes, and moves the
 card to the complete lane the board declares.
@@ -100,7 +100,7 @@ describe("the PR-merged transition follows the board's own lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-14:30 (PR #2733 review — greptile P1, and my comment had contradicted
+FNXC:WorkflowLifecycleColumns 2026-07-30-14:30 (PR #2733 review — greptile P1, and my comment had contradicted
 my code):
 
 A WORKFLOW WITH A REVIEW LANE AND NO COMPLETE LANE REFUSES, rather than moving to an undeclared `done`.

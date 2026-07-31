@@ -115,7 +115,7 @@ describe("completeColumnsForTask is narrower than the landed set", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-00:05 (self-audit after #2821's review):
+FNXC:WorkflowResolvedColumns 2026-07-30-00:05 (self-audit after #2821's review):
 
 THE RESOLVERS NOBODY WAS TESTING.
 

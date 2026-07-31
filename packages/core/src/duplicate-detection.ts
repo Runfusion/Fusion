@@ -132,7 +132,7 @@ export function findDuplicateMatches(
     threshold?: number;
     limit?: number;
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (batch-core feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:20 (batch-core feed):
     `readonly string[]`, not the legacy `Column[]` enum. A renamed board's terminal column is a
     perfectly valid id that the enum cannot express, so the enum made this parameter unusable by
     exactly the callers that need it — the type was the guard's real limit, not the logic.

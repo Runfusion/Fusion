@@ -340,7 +340,7 @@ export class EphemeralWorkerManager {
       const task = await this.taskStore.getTask(agent.taskId);
       if (!task) return true;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-06:10 (engine feed):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-06:10 (engine feed):
       A LIVE WORKER WAS REAPED AS A ZOMBIE ON A RENAMED BOARD.
 
       Census-invisible: the terminal check is a `Set` literal (a definition, not a comparison), and
@@ -355,7 +355,7 @@ export class EphemeralWorkerManager {
       flight, and those are not symmetric.
       */
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (#2787 review — greptile P1):
       MEMBERSHIP, not first-per-role. `resolveLifecycleColumns` returns the FIRST column carrying each
       trait, so a workflow declaring TWO implementation lanes had only one of them recognised — a live
       worker in the second lane was still classified as a zombie and deleted. Same defect this commit

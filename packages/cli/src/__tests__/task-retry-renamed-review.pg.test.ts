@@ -157,7 +157,7 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:15 (PR #2736 review — greptile P1):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:15 (PR #2736 review — greptile P1):
   THE TWO CLASSIFIERS MUST AGREE ON WHAT "IN REVIEW" MEANS.
 
   Converting only the GENERIC retry classifier split the two: on a renamed lane the generic branch
@@ -220,7 +220,7 @@ pgDescribe("runTaskRetry under a renamed review column", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-12:30 (PR #2752 review — greptile P1):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:30 (PR #2752 review — greptile P1):
   THE GENERIC RETRY PATH — a plainly failed card outside the review lane.
 
   The cases above all enter through the in-review stall branches. The ordinary retry — a `failed`

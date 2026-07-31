@@ -95,7 +95,7 @@ export interface VerificationPrimitiveResult {
 export interface TransitionPrimitiveInput {
   column?: string;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:05:
   Ask for the LANE BY ROLE when the caller cannot resolve it.
 
   Seam handlers in `workflow-node-handlers.ts` are pure functions over an IR node and a task; they

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-08:10 (fleet: executor.ts graph-failure recovery family):
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:10 (fleet: executor.ts graph-failure recovery family):
 
 THE INVARIANT: every lifecycle question the graph-failure recovery family asks is answered from the
 task's OWN workflow, and the halves of one decision answer it from ONE snapshot.
@@ -121,7 +121,7 @@ describe("FN-7214: an auto-merge-off review row stays terminal on a RENAMED boar
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-08:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:40:
 ASSERT THE CALL, NOT THE RETURN VALUE. My first version of this block asserted
 `routeUnusableWorktreeGraphFailureToRecovery(...) === false` and passed with the literals restored —
 the pre-fix path ran the whole recovery and then returned false for an unrelated reason (the mock's
@@ -199,7 +199,7 @@ describe("FN-5147: unusable-worktree recovery does not run on a finished or huma
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-10:30 (fleet: executor.ts wip-lane liveness family):
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:30 (fleet: executor.ts wip-lane liveness family):
 
 THE INVARIANT: "is this card still executing?" is the board's WIP lane.
 
@@ -266,7 +266,7 @@ describe("the wip-lane liveness family resolves the board's own wip column", () 
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-11:20 (fleet: executor.ts review-lane family):
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (fleet: executor.ts review-lane family):
 
 THE INVARIANT: "is this card in review?" is the board's review lane.
 
@@ -307,7 +307,7 @@ describe("the review-lane family resolves the board's own review column", () => 
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-13:30 (fleet: executor.ts — the REVERSE half-conversion):
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:30 (fleet: executor.ts — the REVERSE half-conversion):
 
 `routeGraphFailureToExecutionResume`'s move DESTINATION was already resolved from the workflow (U7's
 `resolveReboundColumnFor`) while its entry gate compared against three default-lineage literals. So on
@@ -364,7 +364,7 @@ describe("the execution-resume router's gate reads the same board as its destina
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-20:50 (PR #2703 review — greptile P1, the sync-resolver no-op):
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:50 (PR #2703 review — greptile P1, the sync-resolver no-op):
 
 THE INVARIANT: no lifecycle guard in this file resolves its lane through the SYNCHRONOUS resolver.
 
@@ -422,7 +422,7 @@ describe("no lifecycle GUARD resolves its lane synchronously", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-04:30 (PR #2703 review — coderabbit MAJOR, and it is my own rule
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:30 (PR #2703 review — coderabbit MAJOR, and it is my own rule
 turned back on me):
 
 THE INVARIANT: every classifier in one recovery shares ONE lane snapshot.

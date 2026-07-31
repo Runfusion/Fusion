@@ -1,5 +1,5 @@
 /*
-FNXC:PostgresCutover 2026-07-31-15:55 (regression — the startup sweep deadlocked on itself):
+FNXC:PostgresCutover 2026-07-30-15:55 (regression — the startup sweep deadlocked on itself):
 
 `recoverStaleTransitionPendingImpl` runs its whole per-task body inside `store.withTaskLock(id, ...)`.
 On the PostgreSQL arm it then read the task with `store.getTask(id)` — and `getTaskImpl` opens with
@@ -157,7 +157,7 @@ pgDescribe("stale transition-pending recovery does not deadlock on the per-task 
 
   it("REGRESSION — the interrupted hook is re-run for a task on a CUSTOM workflow", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-18:55 (PR #2809 review — greptile P1):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-18:55 (PR #2809 review — greptile P1):
     THE SECOND DEFECT ON THIS LINE, and it only became reachable once the deadlock above was fixed.
     The recovery resolved the task's IR with `resolveTaskWorkflowIrSync`, which hands back the DEFAULT
     workflow for every task under PostgreSQL. The hook runner derives its pending set from the

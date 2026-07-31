@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-16:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:40:
 
 THE INVARIANT: a lane-resolution parameter that no production caller supplies is a build failure.
 
@@ -33,7 +33,7 @@ import { findUnwiredLaneParameters, LANE_PARAMETER_NAMES } from "../../../../scr
 
 const REPO_ROOT = resolve(import.meta.dirname, "../../../..");
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:20:
 `plugins` is scanned, and its absence was half of a real escape.
 
 Plugins hold lane logic like anything else — the glasses plugin resolves workflow IRs, filters by
@@ -59,7 +59,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:35:
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:35:
 The KNOWN-UNWIRED baseline, and why a guard that reported `[]` is being changed to report 18.
 
 This assertion used to be `toEqual([])` and it passed — because the mention rule it ran on ("the
@@ -165,7 +165,7 @@ describe("no lane-resolution parameter is left unwired", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:20:
   The INLINE options-object shape — the third spelling, and the one that produced a real escape.
 
   `diffSnapshots` in the glasses plugin declared

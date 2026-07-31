@@ -47,7 +47,7 @@ describe("quick-capture parsing", () => {
   });
 
   /*
-  FNXC:PluginLifecycleColumns 2026-07-31-09:00 (PR #2644 review): this case used to assert the card was
+  FNXC:PluginLifecycleColumns 2026-07-30-09:00 (PR #2644 review): this case used to assert the card was
   created in `triage` because that was the configured default. `triage` is the column #2515 DELETED from
   the default lineage, so that assertion pinned a card being created into a column its own workflow does
   not declare — the defect greptile flagged, encoded as an expectation.
@@ -153,7 +153,7 @@ describe("quick capture accepts the columns the board actually declares", () => 
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-06:20 (PR #2644 review — third revision of this rule):
+FNXC:PluginLifecycleColumns 2026-07-30-06:20 (PR #2644 review — third revision of this rule):
 
 ACCEPT ONLY THE COLUMNS OF THE WORKFLOW THE NEW CARD WILL ACTUALLY USE, which is the project's DEFAULT
 workflow. The two earlier versions were both wrong, in opposite directions:
@@ -235,7 +235,7 @@ describe("quick capture accepts the columns of the workflow a new card lands on"
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-09:10 (PR #2644 review, greptile P1):
+FNXC:PluginLifecycleColumns 2026-07-30-09:10 (PR #2644 review, greptile P1):
 
 THE CONFIGURED DEFAULT IS ALSO A COLUMN, and it was the one path that never got validated. A capture
 with no `column` returned the plugin SETTING verbatim, so on a project whose default workflow does not
@@ -301,7 +301,7 @@ describe("the configured default column is validated too", () => {
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-11:00 (PR #2644 review — I split the snapshot again):
+FNXC:PluginLifecycleColumns 2026-07-30-11:00 (PR #2644 review — I split the snapshot again):
 
 ONE RESOLUTION FOR BOTH ANSWERS. The declared-column set and the intake fallback each resolved the
 workflow independently, so a workflow edit between them validated against one revision and selected the
@@ -365,7 +365,7 @@ describe("capture resolves the board once, not once per question", () => {
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-12:35 (PR #2644 review — what I could NOT prove, recorded):
+FNXC:PluginLifecycleColumns 2026-07-30-12:35 (PR #2644 review — what I could NOT prove, recorded):
 
 `resolveWorkflowIrById` silently substitutes the BUILTIN default IR when a configured custom workflow is
 missing or unparsable, so its columns get treated as this project's vocabulary. The reviewer is right that

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-03-02:30 (this suite outlived its own source changes):
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:30 (this suite outlived its own source changes):
 
 WHAT THIS FILE IS NOW. It arrived with a conversion of `github-tracking-comments.ts` and
 `github-tracking-reconciler.ts`; both files were then converted independently by #2715 and #2737 while the PR
@@ -14,7 +14,7 @@ if the bound is removed (measured: 600 resolutions for a 600-row history against
 Everything below is unchanged from when it was written against my own implementation.
 */
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-00:10 (fleet: the GitHub tracking subsystem on a renamed board):
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:10 (fleet: the GitHub tracking subsystem on a renamed board):
 
 THE INVARIANT: GitHub tracking recognises "started" and "finished" from the task's OWN workflow.
 
@@ -199,7 +199,7 @@ describe("the reconciler scans the board's own terminal columns", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-01:30 (PR #2714 review — greptile P2):
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:30 (PR #2714 review — greptile P2):
 
 THE SCAN LIMIT MUST BOUND THE RESOLUTION, not just the result.
 

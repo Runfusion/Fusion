@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:00 (batch-core feed: duplicate-intake 2 → 0, near-duplicate-canonical 2 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:00 (batch-core feed: duplicate-intake 2 → 0, near-duplicate-canonical 2 → 0):
 
 THE INVARIANT: "is this candidate finished?" comes from the terminal ROLE, never from two names.
 

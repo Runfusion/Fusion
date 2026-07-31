@@ -1128,7 +1128,7 @@ describe("TaskReviewTab", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:35 (fleet phase — evidence for the review-lane conversion):
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:35 (fleet phase — evidence for the review-lane conversion):
   Three of this tab's questions were `task.column === "in-review"`: the Create-PR button, the
   "frozen on entry to review" auto-merge hint, and PR-feedback addressing. On a board whose review lane is
   renamed, all three silently took their non-review branch — the button was absent and the hint claimed
@@ -1178,7 +1178,7 @@ describe("TaskReviewTab", () => {
 
   it("offers Address PR Feedback on a RENAMED lane with no loaded review items (#2744 review)", async () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-11:15 (#2744 review — greptile P1):
+    FNXC:WorkflowResolvedColumns 2026-07-30-11:15 (#2744 review — greptile P1):
     The half-conversion this pins: the tab's own lane check was converted while
     `canStartPrFeedbackAddressing` in utils/prFeedback.ts still compared ids. With NO loaded display
     items the action depends entirely on that helper, so on a renamed lane it stayed hidden even though

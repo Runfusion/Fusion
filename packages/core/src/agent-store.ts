@@ -225,7 +225,7 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
     return `Current Task: ${taskId} (unresolved)`;
   }
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase — FLAGGED AND LEFT COUNTED):
+  FNXC:WorkflowResolvedColumns 2026-07-30-08:10 (fleet phase — FLAGGED AND LEFT COUNTED):
   A pure formatter over `Pick<Task, "column">` — no store, no task id, and its output PRINTS the column
   name for a human reader. Same class as `github-tracking-comments.ts:165` and
   `in-process-runtime`'s duration helpers: threading a resolution into a string builder to pick a word is
@@ -1477,7 +1477,7 @@ export class AgentStore extends EventEmitter {
     }
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+    FNXC:WorkflowResolvedColumns 2026-07-30-08:10 (fleet phase):
     The terminal guard on a claim. On a renamed board neither literal matched, so an agent could CLAIM a
     finished card — the claim succeeded and the agent began work on completed output. `this.taskStore` is
     already in hand two lines up, so this costs one resolution on a path that already does a task read.

@@ -414,7 +414,7 @@ describe("getUnifiedTaskProgress", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-15:50:
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:50:
 
 THE INVARIANT: the running-gate badge appears in the board's OWN review lane.
 

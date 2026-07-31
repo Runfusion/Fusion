@@ -162,7 +162,7 @@ describe("fn pr create resolves the board's own review lane", () => {
 
   it("takes the legacy fallback when the resolved workflow declares no review lane", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-03:10:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:10:
     THIS TEST ASSERTED A DECISION THAT WAS SUPERSEDED BEFORE #2775 LANDED, and it went red on main
     the moment it did.
 

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed: team-analytics 2 → 0, workflow-analytics 2 → 0, task-timing 1 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-03:20 (batch-core feed: team-analytics 2 → 0, workflow-analytics 2 → 0, task-timing 1 → 0):
 
 THE INVARIANT: metrics count a card's lane by its ROLE, never by its name.
 

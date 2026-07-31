@@ -289,7 +289,7 @@ if (process.argv.includes("--update-baseline")) {
     }
   }
   /*
-  FNXC:SqlColumnLiteralRatchet 2026-07-31-06:40 (a DROP now tightens instead of failing the merge gate):
+  FNXC:SqlColumnLiteralRatchet 2026-07-30-06:40 (a DROP now tightens instead of failing the merge gate):
   A stale allowance is still rot — a migrated site that leaves its entry behind is a slot the surface
   can regrow into. But hard-failing on it put THIS CHECK, which runs inside `pnpm test:gate`, into a
   state where one converting PR blocked every other worker's PR until someone re-recorded by hand.

@@ -299,7 +299,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   */
   persistAgentToolOutput: false,
   /*
-  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  FNXC:ToolOutputBudget 2026-07-30-16:00:
   FN-8616 lets operators raise, lower, or disable the FN-8614 per-result tool-output
   budget. Undefined preserves the finite 16,000-character default; only 0 means no limit.
   */
@@ -461,7 +461,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   autoResolveReviewComments: true,
   testMode: undefined,
   /*
-  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  FNXC:ToolOutputBudget 2026-07-30-16:00:
   Project settings participate in the existing effective-settings merge, allowing a
   project-specific tool-output cap or explicit no-limit sentinel to override global policy.
   */

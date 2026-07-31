@@ -163,7 +163,7 @@ function inRole(
 export function applyTimingEffects(ctx: DefaultWorkflowMoveContext): void {
   const { task, fromColumn, toColumn } = ctx;
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:20 (fleet phase):
   `cumulativeActiveMs` accrues while a card sits in the WIP lane, so both halves of the segment
   boundary must name that lane by ROLE. Keyed on one resolved value rather than two independent reads:
   the exit test and the re-entry test have to agree about which column is WIP or a rename makes the

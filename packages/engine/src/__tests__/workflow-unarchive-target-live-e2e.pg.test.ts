@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-13:10 (restore lands a card back on its OWN board — the fix):
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:10 (restore lands a card back on its OWN board — the fix):
 
 `resolveUnarchiveTargetColumnImpl` decides where a restored card lands, and its comments record THREE
 defects fixed on those few lines: a `?? "done"` that invented an undeclared column, an `isColumn`

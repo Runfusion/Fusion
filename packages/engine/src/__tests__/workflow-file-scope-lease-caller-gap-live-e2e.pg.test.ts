@@ -1,5 +1,5 @@
 /*
-FNXC:OverlapScheduling 2026-07-31-03:15 (E2E evidence — a SECOND inert-conversion mechanism, at the call site):
+FNXC:OverlapScheduling 2026-07-30-03:15 (E2E evidence — a SECOND inert-conversion mechanism, at the call site):
 
 The previous five files in this series (#2789, #2791, #2792, #2793, #2794) all concern one mechanism:
 a site resolves the workflow synchronously and silently gets the default board. This file is about a

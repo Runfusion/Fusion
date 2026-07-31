@@ -38,7 +38,7 @@ On desktop and tablet, the Settings navigation rail has no hard divider between 
 <!-- FNXC:SettingsDefaults 2026-07-04-00:00: FN-7505 requires every user-editable setting's help text to state its own default value, so operators reading a field's description know what it defaults to without checking the reference doc. -->
 Every user-editable setting's help text (the `.settings-description`/`<small>` hint under a field) states its own default value — for example “Default: 3.”, “Default: enabled.”, or “No default — unset (inherits the global setting).” for values that fall back to another scope. Canonical default values come from `DEFAULT_GLOBAL_SETTINGS` / `DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`; the dashboard copy never invents a number. A guard test (`settings-default-descriptions.test.tsx`) enforces that every surfaced setting states its default and that every `DEFAULT_SETTINGS` key is either documented or explicitly allowlisted as not surfaced in the Settings UI.
 
-<!-- FNXC:SettingsAutoSaveDocs 2026-08-02-20:55: FN-8395 removes the ambiguous Settings Save affordance. Operators need the persistence timing and close guarantee documented where Settings behavior is introduced. -->
+<!-- FNXC:SettingsAutoSaveDocs 2026-07-30-20:55: FN-8395 removes the ambiguous Settings Save affordance. Operators need the persistence timing and close guarantee documented where Settings behavior is introduced. -->
 Settings form changes save automatically after a short pause. The footer no longer includes a **Save** button and closing Settings does not ask about unsaved changes: Close, Escape, and clicking outside the modal first flush any pending edit. The footer shows quiet **Saving…**, **Saved**, or save-failure status; correct the value and retry after a failure.
 
 ## Voice Input
@@ -625,7 +625,7 @@ Create requests never send an explicit `column`. The task store resolves the lan
 
 Optional workflow steps declared by the active workflow are available from the quick-add action row and the **New Task** dialog's inline quick buttons. For example, the coding workflow's browser verification option appears as a quick drop-down when that workflow is active; each option is seeded from the workflow step's `defaultOn` setting and is sent with the task's `enabledWorkflowSteps` payload at creation time.
 
-<!-- FNXC:QuickAddAttachments 2026-08-03-00:00: Quick Add's compact paperclip accepts the same task-store-supported photos and files through picker, paste, and drag/drop. Images retain accessible floating previews; non-image files expose a filename and remove action without an empty open control. -->
+<!-- FNXC:QuickAddAttachments 2026-07-30-00:00: Quick Add's compact paperclip accepts the same task-store-supported photos and files through picker, paste, and drag/drop. Images retain accessible floating previews; non-image files expose a filename and remove action without an empty open control. -->
 <!-- FNXC:QuickAddPriorityIndicator 2026-07-10-21:45: Quick Add keeps status controls in the bottom action cluster: GitHub tracking sits beside the paperclip attach button, Priority is icon-only with low/down, normal/flag, high/up, urgent/alert glyphs, and Fast is an icon-only lightning button.
 FNXC:PriorityColorCoding 2026-07-11-00:00: Priority glyphs share urgency colors across Quick Add, the New Task inline row, and task-card badges: low=info/blue, normal=muted, high=warning/amber, urgent=error/red. -->
 Quick Add and Inline Create model selection include Plan, Executor, Reviewer, and Merger lanes. Each lane can inherit its default or select a task-specific model; Plan, Reviewer, and Merger also provide independent thinking-level overrides.
@@ -1124,7 +1124,7 @@ For the full research workflow, provider setup, CLI commands, API reference, and
 
 ## Ideation View
 
-<!-- FNXC:Navigation 2026-08-01-00:00: FN-8352 promotes Ideation from Command Center into one default-off experimental top-level destination. Desktop uses the sidebar (or Header More fallback when the sidebar is opted out), while mobile always keeps it in More rather than a configurable footer tab. -->
+<!-- FNXC:Navigation 2026-07-30-00:00: FN-8352 promotes Ideation from Command Center into one default-off experimental top-level destination. Desktop uses the sidebar (or Header More fallback when the sidebar is opted out), while mobile always keeps it in More rather than a configurable footer tab. -->
 Ideation is a standalone dashboard surface for capturing divergent candidates and converging one into the Mission hierarchy.
 
 > Available only when `experimentalFeatures.ideationView` is enabled. The flag is off by default and is managed in **Settings → Experimental Features**.

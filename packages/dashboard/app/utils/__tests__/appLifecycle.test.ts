@@ -222,7 +222,7 @@ describe("resolveDesktopShellRedirectTarget", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:10:
 
 THE INVARIANT: the CLI-session banner's Cancel returns the card to ITS OWN hold lane.
 

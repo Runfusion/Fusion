@@ -243,7 +243,7 @@ structurally rather than by filename: a definition's object literal also carries
 a query's does not.
 */
 /*
-FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+FNXC:LifecycleColumnCensus 2026-07-30-04:00:
 A QUERY property is not always a READ, and the difference decides whether it is convertible.
 
 `column:` sits in an options-shaped object for both a source query and a write, so the existing
@@ -303,7 +303,7 @@ function columnPropertyLiteral(node) {
 
 
 /*
-FNXC:LifecycleColumnCensus 2026-08-01-01:10:
+FNXC:LifecycleColumnCensus 2026-07-30-01:10:
 A LEGACY LITERAL IN A FALLBACK BRANCH IS NOT BACKLOG. The converted shape across the dashboard is
 
     if (flags) return flags.hold === true || flags.countsTowardWip === true;
@@ -552,7 +552,7 @@ export function findComparisons(filePath, source) {
 /** Aggregate findings into the four headline counts plus per-file and per-column breakdowns. */
 export function summarize(findings) {
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-01:55:
+  FNXC:LifecycleColumnCensus 2026-07-30-01:55:
   Reported ALONGSIDE `totals`, not inside it. `totals` is the four-class contract other suites deep-equal, so
   adding a key there breaks assertions that are correctly strict about the shape — my first attempt did
   exactly that and failed two existing cases. An advisory number does not belong in the structure that

@@ -56,7 +56,7 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     expect(updated.blockedBy).toBeUndefined();
     expect(updated.status).toBeUndefined();
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-03:20 (fleet — this assertion pinned a live bug):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:20 (fleet — this assertion pinned a live bug):
     THE RE-SPECIFICATION TARGET IS THE BOARD'S INTAKE COLUMN, and on today's default lineage that is
     `todo`, not `triage`. U11 (#2515) merged Todo into Planning KEEPING the id `todo` and DELETING
     `triage` — measured from `resolveDefaultWorkflowIr()`:
@@ -88,7 +88,7 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-02:05 (PR #2720 review — greptile):
   DISTINCT HOLD AND INTAKE LANES, the configuration the default lineage does not exercise.
 
   Post-U11 the default board merges hold and intake into one column, so every existing case here runs

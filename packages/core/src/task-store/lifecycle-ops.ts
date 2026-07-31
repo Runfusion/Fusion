@@ -1047,7 +1047,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
         const hasSurvivingPluginHook = hooksRemaining.some((h) => h !== "default-workflow:postCommit");
         if (hasSurvivingPluginHook) {
           /*
-          FNXC:PostgresCutover 2026-07-31-15:40 (DEADLOCK, introduced by the backend-mode port above):
+          FNXC:PostgresCutover 2026-07-30-15:40 (DEADLOCK, introduced by the backend-mode port above):
           LOCK-FREE READ, and it must stay lock-free. This whole block runs inside
           `store.withTaskLock(id, ...)`, and the per-task lock is NON-REENTRANT — the same invariant
           `branch-and-pr-entities.ts` and `workflow-ops.ts` both state in prose. `store.getTask()`
@@ -1070,7 +1070,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
             : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-18:40 (PR #2809 review — greptile P1):
+            FNXC:WorkflowLifecycleColumns 2026-07-30-18:40 (PR #2809 review — greptile P1):
             ASYNC RESOLVER, because the sync one cannot answer here. `resolveTaskWorkflowIrSync`
             returns the DEFAULT workflow IR for every task under PostgreSQL (its selection reader is
             a cutover stub that answers `undefined` unconditionally). The hook runner below derives

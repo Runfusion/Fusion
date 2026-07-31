@@ -153,7 +153,7 @@ describe("getTaskAgeStalenessSignal", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-08:25 (fleet phase — evidence for the lane gate):
+FNXC:WorkflowResolvedColumns 2026-07-30-08:25 (fleet phase — evidence for the lane gate):
 Age-staleness applies ONLY to the mid-flight and review lanes; a card in a hold or terminal lane is
 waiting or finished, not stale. Both lanes were named by id, so on a renamed board this returned
 `undefined` for EVERY card and the stale-card warning never appeared anywhere on the board.

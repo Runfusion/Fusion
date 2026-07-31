@@ -97,7 +97,7 @@ describe("buildBoardWorkflowsPayload built-in column labels", () => {
     const workflow = payload.workflows.find(({ id }) => id === "builtin:coding");
     const named = Object.fromEntries((workflow?.columns ?? []).map((column) => [column.id, column.name]));
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-03-03:30 (red on main — the deleted-column class again):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:30 (red on main — the deleted-column class again):
     THE DEFAULT LINEAGE HAS FIVE LIFECYCLE COLUMNS, NOT SIX. #2515 merged Todo into Planning: the id `todo`
     survives carrying the label "Planning", and `triage` is gone. This expectation still asserted both a
     `triage: "Planning"` key and a `todo: "Todo"` one, so it described a board that has not shipped since that

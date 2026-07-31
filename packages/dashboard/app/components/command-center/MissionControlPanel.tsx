@@ -91,7 +91,7 @@ Placed directly on the declaration so it cannot be orphaned again by a future in
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
   { id: "triage", match: (c) => TRIAGE_STAGE_COLUMN_ALIASES.has(c) },
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 DELIBERATE-LITERAL:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:20 DELIBERATE-LITERAL:
   Markers, not a behaviour change. The JSDoc above already explains why this whole table is an ALIAS
   TABLE rather than a lifecycle decision — it maps several vocabularies (`to-do`, `ready`, `review`,
   `shipped`, ...) onto one DISPLAY stage, with an explicit `other` bucket for anything unrecognised, and

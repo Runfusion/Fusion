@@ -1160,7 +1160,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       }
 
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+      FNXC:WorkflowLifecycleColumns 2026-07-30-05:05:
       Resolve the board's terminal lanes and hand them down; without this the predicate is inert.
 
       Keyed on the literals, a genuinely completed card on a renamed board fell through every branch
@@ -1264,7 +1264,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     a deterministic duplicate from another mission can never be repurposed.
     */
     /*
-    FNXC:MissionAdmission 2026-08-10-00:00:
+    FNXC:MissionAdmission 2026-07-30-00:00:
     Concurrent bootstrap requests must serialize on the defined Feature before
     either inserts its task. READ COMMITTED alone permits both readers to claim
     it; this row lock makes the second request re-read the committed taskId and

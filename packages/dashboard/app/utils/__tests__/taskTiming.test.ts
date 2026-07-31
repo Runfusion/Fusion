@@ -66,7 +66,7 @@ describe("taskTiming helpers", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:10:
 
 THE INVARIANT: the card's active-time chip counts the live run from the card's OWN wip lane.
 

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:00:
 
 THE INVARIANT: "Archive all done" reads the board's OWN complete lane.
 

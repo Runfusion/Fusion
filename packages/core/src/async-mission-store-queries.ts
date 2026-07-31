@@ -1097,7 +1097,7 @@ export async function recordGeneratedFixOperatorStop(
   if (seen.has(root.id)) throw new Error("MISSION_LINEAGE_UNRESOLVED: cyclic generated-fix lineage");
 
   /*
-  FNXC:MissionLineageBudget 2026-08-03-00:00:
+  FNXC:MissionLineageBudget 2026-07-30-00:00:
   Deletion/archive must acquire the same project-scoped canonical-root lock as
   generated-fix creation before recording its durable stop. This serializes an
   intervention with remediation admission, so a waiting creator re-reads the
@@ -2174,7 +2174,7 @@ export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:05:
 `column` is the lane the card ACTUALLY reached, not the built-in name for its role.
 
 These two arms pinned `"done"` and `"archived"` in the TYPE, which is the census-invisible shape that
@@ -2233,7 +2233,7 @@ export async function getTerminalTaskEvidence(
   it so the two cannot disagree about what "finished" means.
   */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-05:05:
   The lane sets arrive from the caller; omitted, the legacy ids answer exactly as before.
 
   I deferred this twice on the premise that `AsyncMissionStore` "holds a layer, not a store" and so

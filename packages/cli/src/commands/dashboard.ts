@@ -39,7 +39,7 @@ import {
 } from "@fusion/core";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-08:50 (fleet: CLI dashboard/serve stats):
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:50 (fleet: CLI dashboard/serve stats):
 "ACTIVE" IS THE BOARD'S WIP AND REVIEW LANES, counted once for a whole task list.
 
 The same aggregation appears FOUR times in this file (the TUI stats refresh, the serve summary, the status

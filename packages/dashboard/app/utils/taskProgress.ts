@@ -209,7 +209,7 @@ FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
 Plan Review's planning-lane restriction is GONE (see getRunningOptionalGateBadge) — it badges wherever it runs. The badge is keyed on the RUNNING gate rather than the card's column, so it stays correct across every workflow regardless of where that workflow places the node.
 */
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-15:50:
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:50:
 DELIBERATE-LITERAL — the unresolved-flags default, reviewed 2026-07-31-15:50.
 
 Census-invisible: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle

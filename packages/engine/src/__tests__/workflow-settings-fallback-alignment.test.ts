@@ -95,7 +95,7 @@ describe("workflow-settings fallback alignment (KTD-3, item 4)", () => {
       buildRetryCount: 0, // merger.ts: ?? 0
       verificationFixRetries: 3, // executor.ts: ?? 3; merger.ts aligned to ?? 3 (was ?? 2, dead)
       /*
-      FNXC:WorkflowOptionalStepCycle 2026-07-31-01:10:
+      FNXC:WorkflowOptionalStepCycle 2026-07-30-01:10:
       Raised 3 -> 10 deliberately, and the read sites no longer inline a literal at all: they import
       `DEFAULT_MAX_POST_REVIEW_FIXES` from core (builtin-workflow-settings.ts:555), whose own comment
       records that the declaration default and two inline `?? 3`s had drifted apart — "raising the

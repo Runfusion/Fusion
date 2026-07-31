@@ -537,7 +537,7 @@ describe("fast mode workflow/runtime invariants", () => {
 
     expect(result.disposition).toBe("completed");
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-02:40:
+    FNXC:WorkflowResolvedColumns 2026-07-30-02:40:
     `start` is NOT traversed here, and that is the graph-entry contract working.
 
     v1 normalization places nodes into synthesized default columns BY SEAM (workflow-ir.ts:150):

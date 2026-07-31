@@ -188,7 +188,7 @@ export async function deleteChatSession(handle: QueryHandle, id: string): Promis
   if (!session) return false;
   const sessionProjectId = session.projectId;
   if (!sessionProjectId) throw new Error("Chat session is missing its required project partition");
-  // FNXC:ChatTags 2026-08-05-12:15: cleanup retains the session's RLS partition even for bypass/admin handles; an unqualified ID could delete another project's assignment.
+  // FNXC:ChatTags 2026-07-30-12:15: cleanup retains the session's RLS partition even for bypass/admin handles; an unqualified ID could delete another project's assignment.
   await handle.delete(schema.project.chatSessionTags).where(and(
     eq(schema.project.chatSessionTags.sessionId, id),
     eq(schema.project.chatSessionTags.projectId, sessionProjectId),
@@ -229,7 +229,7 @@ async function attachTagsToSessions(handle: QueryHandle, sessions: ChatSession[]
   return sessions.map((session) => ({ ...session, tags: tagsBySession.get(session.id) ?? [] }));
 }
 
-/** FNXC:ChatTags 2026-08-05-10:55: Tags normalize whitespace/case and are always read in deterministic name order. */
+/** FNXC:ChatTags 2026-07-30-10:55: Tags normalize whitespace/case and are always read in deterministic name order. */
 export async function listChatTags(handle: QueryHandle, projectId: string | null): Promise<ChatTag[]> {
   const rows = await handle.select().from(schema.project.chatTags).where(eq(schema.project.chatTags.ownerProjectId, tagScope(projectId))).orderBy(asc(schema.project.chatTags.normalizedName), asc(schema.project.chatTags.id));
   return rows.map(rowToTag);
@@ -257,7 +257,7 @@ export async function deleteChatTag(layer: AsyncDataLayer, id: string, projectId
       .where(and(eq(schema.project.chatTags.id, id), eq(schema.project.chatTags.ownerProjectId, tagScope(projectId))));
     if (!tag?.projectId) return false;
     const tagProjectId = tag.projectId;
-    // FNXC:ChatTags 2026-08-05-12:15: validate the scoped parent before cleanup; bypass handles must not erase a same-ID tag assignment in another partition.
+    // FNXC:ChatTags 2026-07-30-12:15: validate the scoped parent before cleanup; bypass handles must not erase a same-ID tag assignment in another partition.
     await tx.delete(schema.project.chatSessionTags).where(and(
       eq(schema.project.chatSessionTags.tagId, id),
       eq(schema.project.chatSessionTags.projectId, tagProjectId),
@@ -285,7 +285,7 @@ export async function replaceChatSessionTags(layer: AsyncDataLayer, sessionId: s
       eq(schema.project.chatTags.projectId, sessionProjectId),
     )) : [];
     if (tags.length !== uniqueIds.length) throw new Error("One or more tags do not belong to this project");
-    // FNXC:ChatTags 2026-08-05-12:15: replacements are scoped by the locked session partition, preserving project isolation when the DB bypass role is active.
+    // FNXC:ChatTags 2026-07-30-12:15: replacements are scoped by the locked session partition, preserving project isolation when the DB bypass role is active.
     await tx.delete(schema.project.chatSessionTags).where(and(eq(schema.project.chatSessionTags.sessionId, sessionId), eq(schema.project.chatSessionTags.projectId, sessionProjectId)));
     if (uniqueIds.length) await tx.insert(schema.project.chatSessionTags).values(uniqueIds.map((tagId) => ({ projectId: sessionProjectId, sessionId, tagId, assignedAt: new Date().toISOString() }))).onConflictDoNothing();
     return attachTags(tx, session);

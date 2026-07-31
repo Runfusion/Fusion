@@ -58,7 +58,7 @@ async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["ge
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:10 (fleet: CLI surface): the board's archived column.
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-08:10 (fleet: CLI surface): the board's archived column.
          With the literal, a renamed board's archived duplicates printed with no `(archived)` marker, so the
          operator could not tell a live duplicate from a filed one in the lineage line. */
       const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
@@ -340,7 +340,7 @@ async function runCliNearDuplicateCheck(args: {
     if (!args.bypass) {
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-08:15 (fleet: CLI surface):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-08:15 (fleet: CLI surface):
       Duplicate detection compares against UNFINISHED work, and "finished" is the board's complete column.
       With the literal, a renamed board kept every completed card in the candidate set: the guard then
       reported a new task as a duplicate of work that had already landed, which is the opposite of useful.
@@ -940,7 +940,7 @@ export async function runTaskSetNode(id: string, nodeNameOrId: string, projectNa
   await withBoardWrite(projectName, { id, action: "set node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-08:20 (fleet: CLI surface): the board's wip lane. With the
        literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
        node override of a card that was actively executing — the guard exists because that races the run. */
     const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
@@ -970,7 +970,7 @@ export async function runTaskClearNode(id: string, projectName?: string) {
   await withBoardWrite(projectName, { id, action: "clear node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-08:20 (fleet: CLI surface): the board's wip lane. With the
        literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
        node override of a card that was actively executing — the guard exists because that races the run. */
     const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
@@ -1336,7 +1336,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-08:30 (fleet: CLI surface — the retry gate exists TWICE):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-08:30 (fleet: CLI surface — the retry gate exists TWICE):
     This is the CLI's copy of the dashboard route's retry classifier, and #2713 converted only the route. So
     after that PR `POST /tasks/:id/retry` accepted a renamed board's stalled review card while
     `fn task retry` still refused it with "not in a retryable state" — the same operator action answering
@@ -1346,7 +1346,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     before claiming a lane is converted.
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-22:10 (consolidation onto #2730's core resolver):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:10 (consolidation onto #2730's core resolver):
     ONE DEFINITION, IN CORE. `resolveReviewColumns` is now the authoritative answer to "which columns are
     review", and this inline union was one of THREE in-tree copies that disagreed with each other:
 
@@ -1395,7 +1395,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-11:20 (fleet — the retry TARGET, live regression on main):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-11:20 (fleet — the retry TARGET, live regression on main):
     Retry re-queues the card to its board's HOLD column, resolved from the task's own workflow.
 
     #2728 converted the retry CLASSIFIER above (`retryReviewColumns.has(task.column)`) and left all
@@ -1481,7 +1481,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     // store's durable index and may overwrite task.json-only updates, so apply the
     // manual retry reset patch after the move to make the cleared counters stick.
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-12:30 (PR #2752 review — greptile P1):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-12:30 (PR #2752 review — greptile P1):
     THE FOURTH TARGET, and the one that matters most.
 
     This is the GENERIC retry fallthrough — a plainly `failed` or `stuck-killed` card, which is the

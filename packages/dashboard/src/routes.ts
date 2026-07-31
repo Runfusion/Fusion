@@ -1318,7 +1318,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * as "working on" in agent UI surfaces to avoid stale activity indicators.
    */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-07:00 (dashboard-server feed):
   DELIBERATE-LITERAL — the fallback for a task whose workflow will not resolve, reviewed
   2026-07-31-07:00. The resolved answer is threaded per task at the call site below.
 
@@ -1362,7 +1362,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (dashboard-server feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-07:00 (dashboard-server feed):
     Each linked task's OWN terminal lanes, resolved once per unique id with a shared IR cache. A task
     whose workflow will not resolve is left out of the map and falls back to the literal pair above,
     which is the pre-existing behaviour rather than a guess.
@@ -1371,7 +1371,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const terminalByTaskId = new Map<string, ReadonlySet<string>>();
     for (const taskId of taskIds) {
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (#2787 review — greptile P1):
       MEMBERSHIP, not first-per-role — a workflow may declare more than one complete or archived
       column, and `resolveLifecycleColumns` returns only the FIRST of each. A linked task in the
       second terminal lane kept its `taskId` and the agent stayed displayed as working on finished

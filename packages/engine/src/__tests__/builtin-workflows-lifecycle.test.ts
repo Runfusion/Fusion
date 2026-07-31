@@ -295,7 +295,7 @@ const EXPECTATIONS: BuiltinExpectation[] = [
   {
     id: "builtin:coding",
         /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:35:
     U11 merged the two pre-implementation columns for this lineage: its declared columns are now
     `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
     former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.
@@ -345,7 +345,7 @@ const EXPECTATIONS: BuiltinExpectation[] = [
   {
     id: "builtin:stepwise-coding",
         /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:35:
     U11 merged the two pre-implementation columns for this lineage: its declared columns are now
     `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
     former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.
@@ -467,7 +467,7 @@ const EXPECTATIONS: BuiltinExpectation[] = [
        phrase; after that it is the stepwise-final-review pipeline. */
     id: "builtin:brainstorming",
         /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:35:
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:35:
     U11 merged the two pre-implementation columns for this lineage: its declared columns are now
     `todo,in-progress,in-review,done,archived` with NO `triage`. So the card ENTERS at `todo` and the
     former `triage -> todo` graph hop does not exist — there is no longer a boundary to cross.

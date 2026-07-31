@@ -80,7 +80,7 @@ export function parseUtterance(raw: unknown, opts: { maxTitleChars?: number } = 
 }
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-10:50 (PR #2644 review — I split the snapshot AGAIN):
+FNXC:PluginLifecycleColumns 2026-07-30-10:50 (PR #2644 review — I split the snapshot AGAIN):
 
 ONE RESOLUTION FOR BOTH ANSWERS. `declaredCaptureColumnIds` and the intake lookup each resolved the
 workflow independently, so a workflow edit between them validated against one revision and selected the
@@ -111,7 +111,7 @@ async function resolveCaptureBoard(
     if (workflowId && !isBuiltinWorkflowId(workflowId) && store.getWorkflowDefinition) {
       const definition = await store.getWorkflowDefinition(workflowId);
       /*
-      FNXC:PluginLifecycleColumns 2026-07-31-12:30 (PR #2644 review — and I could NOT prove the fix, so
+      FNXC:PluginLifecycleColumns 2026-07-30-12:30 (PR #2644 review — and I could NOT prove the fix, so
       it is not here):
       The reviewer is right that `resolveWorkflowIrById` silently substitutes the BUILTIN default IR when
       a configured custom workflow is missing or unparsable, so its columns get treated as this project's
@@ -154,7 +154,7 @@ const LEGACY_CAPTURE_COLUMN_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-08:50:
+FNXC:PluginLifecycleColumns 2026-07-30-08:50:
 THE CONFIGURED DEFAULT IS ALSO A COLUMN, and it was the one path that never got checked. A capture with
 no `column` returned the plugin SETTING verbatim — `triage` out of the box, the column #2515 deleted — so
 on a project whose default workflow does not declare it, every voice capture created a card in an

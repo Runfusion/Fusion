@@ -40,7 +40,7 @@ export class StaleTaskReporter {
 
     const cycleStartMs = this.now();
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-22:20:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
     THE QUERY, not a comparison — this file's census count is ZERO and it was inert anyway.
 
     `listTasks({ column })` filters in the store, so on a board whose lanes are renamed both reads
@@ -83,7 +83,7 @@ export class StaleTaskReporter {
       let signal;
       try {
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-22:40:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-22:40:
         BOTH LAYERS, and the second only became visible once the first was fixed.
 
         `getTaskAgeStalenessSignal` takes an optional `lifecycle` and defaults to the legacy pair, so

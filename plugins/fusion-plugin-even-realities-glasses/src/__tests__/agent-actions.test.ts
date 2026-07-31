@@ -664,7 +664,7 @@ describe("a legacy id is not a destination once the workflow speaks columns", ()
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-00:35 (PR #2607 review — sixth finding):
+FNXC:PluginLifecycleColumns 2026-07-30-00:35 (PR #2607 review — sixth finding):
 
 DEGRADED RESOLUTION LOOKS EXACTLY LIKE THE DEFAULT BOARD. `resolveWorkflowIrForTask` is TOTAL by
 design: a missing workflow definition or a failed read silently returns the DEFAULT coding IR. So a
@@ -729,7 +729,7 @@ describe("a card whose custom workflow cannot be read is refused, not treated as
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-02:35 (PR #2644 review, greptile P1):
+FNXC:PluginLifecycleColumns 2026-07-30-02:35 (PR #2644 review, greptile P1):
 
 ONE SNAPSHOT PER ACTION. The degraded probe, the lane resolution and the declared-column read used to
 consult the workflow independently, so a workflow edited or deleted mid-action could combine a
@@ -784,7 +784,7 @@ describe("an action reads the workflow once, not three times", () => {
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-08:20 (PR #2644 review — the identity check was worse than the
+FNXC:PluginLifecycleColumns 2026-07-30-08:20 (PR #2644 review — the identity check was worse than the
 bug it replaced, and my own fixture hid that):
 
 WHAT THE DEGRADED STATE MUST PROVE: that the definition READ succeeded — not that the resolved IR
@@ -869,7 +869,7 @@ describe("degraded means the definition read failed, not that the IR looks diffe
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-15:30 (PR #2644 review, CodeRabbit — MAJOR, my regression):
+FNXC:PluginLifecycleColumns 2026-07-30-15:30 (PR #2644 review, CodeRabbit — MAJOR, my regression):
 
 DEGRADED GATES ONLY THE LANE-DEPENDENT BRANCH. I put the refusal at the top of `retryTask`, which also
 blocked the plain failure-retry below — a branch that reads no lanes and only clears status. So a FAILED
@@ -921,7 +921,7 @@ describe("a degraded workflow does not block retries that move nothing", () => {
 });
 
 /*
-FNXC:PluginLifecycleColumns 2026-07-31-16:00 (PR #2644 review, CodeRabbit — recorded, not fixed):
+FNXC:PluginLifecycleColumns 2026-07-30-16:00 (PR #2644 review, CodeRabbit — recorded, not fixed):
 
 A STORED STRING IR COSTS A SECOND READ. The reviewer is right that the lanes can then come from a different
 revision than the degraded verdict, and my excuse ("deliberate and confined to that shape") was not a

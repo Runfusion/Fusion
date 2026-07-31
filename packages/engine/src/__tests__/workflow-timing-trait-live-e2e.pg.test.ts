@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-08-01-09:10 (E2E evidence — the `timing` role, and it is CORRECT):
+FNXC:WorkflowResolvedColumns 2026-07-30-09:10 (E2E evidence — the `timing` role, and it is CORRECT):
 
 Coverage for the last lifecycle role with none, and the result is a clean bill of health — recorded
 because a working conversion with no test is one refactor away from a silent regression, and because

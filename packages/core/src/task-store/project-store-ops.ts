@@ -505,7 +505,7 @@ export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFi
   }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — DEAD SYNC PATH, do not convert):
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:45 (audited — DEAD SYNC PATH, do not convert):
 The literal below would leak a merge-queue entry on a renamed board — a card leaving review would
 never be dequeued — except that this function does not run in production.
 

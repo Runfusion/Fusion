@@ -75,7 +75,7 @@ describe("resolveWorkflowIrForTask", () => {
     });
     const ir = await resolveWorkflowIrForTask(store, "t1");
     /*
-    FNXC:WorkflowIrResolver 2026-07-31-08:10:
+    FNXC:WorkflowIrResolver 2026-07-30-08:10:
     STRUCTURAL, not identity — the fallback is deliberately a BRANDED COPY now.
 
     This asserted `toBe`, i.e. the very object exported as the builtin constant. #2815 added

@@ -46,7 +46,7 @@ export interface ColumnLifecycleClass {
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-10:15 DELIBERATE-LITERAL:
+FNXC:WorkflowResolvedColumns 2026-07-30-10:15 DELIBERATE-LITERAL:
 The named legacy default of the injected-classifier seam, and the only place these two ids remain in this
 file. It is the answer when no workflow can be resolved — the documented degraded mode — not an
 unconverted guard: `decideIssueAction`'s `classify` parameter defaults to it so a caller without an IR
@@ -181,7 +181,7 @@ export class GitHubTrackingStateService {
 
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-10:15 (fleet phase — THE SEAM WAS NEVER WIRED):
+    FNXC:WorkflowResolvedColumns 2026-07-30-10:15 (fleet phase — THE SEAM WAS NEVER WIRED):
     `decideIssueAction` has taken an injectable `classify` since U12/R2, and the header above states the
     defect it fixed: "a user-authored workflow whose terminal column is called something else never closed
     its linked GitHub issue". But this — the ONLY production caller — passed no classifier, so every real

@@ -106,7 +106,7 @@ export function resolveEvalFollowUpPolicyMode(policy?: "off" | "suggest" | "crea
 export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {
   const { parentTaskId, runId, drafts, overallBand, store, policyMode } = input;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (engine feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-06:40 (engine feed):
   "Open" is the negation of the task's OWN terminal lanes, not a hard-coded list of four ids.
 
   Census-invisible: `OPEN_COLUMNS` is a `Set` literal — a definition, not a comparison — so nothing
@@ -128,7 +128,7 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   */
   const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false });
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (#2787 review — greptile P2):
   ONE IR read per WORKFLOW, not per card. This loop runs over every live task on the board, so
   without the shared cache a large board paid a store read per card before a single follow-up draft
   was processed — measurable added latency on every scheduled evaluation. The cache is the

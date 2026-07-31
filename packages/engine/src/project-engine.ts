@@ -636,7 +636,7 @@ export class ProjectEngine {
     */
     const projectId = this.config.projectId || this.config.workingDirectory;
     /*
-    FNXC:ConcurrencyAdmission 2026-08-06-16:20:
+    FNXC:ConcurrencyAdmission 2026-07-30-16:20:
     FN-8453/#2359 requires the actual durable merge queue to refresh on every
     project admission pass. A one-shot candidate only exists after this pump
     dequeues it, which lets a newer planning/execute candidate overtake an older
@@ -651,7 +651,7 @@ export class ProjectEngine {
         const queuedTaskIds = [...this.mergeQueue];
         const tasks = await Promise.all(queuedTaskIds.map(async (taskId) => await store.getTask(taskId).catch(() => null)));
         /*
-        FNXC:WorkflowLifecycleColumns 2026-08-01-19:10 (fleet: project-engine.ts merge lane):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:10 (fleet: project-engine.ts merge lane):
         THE MERGE LANE IS THE TASK'S OWN, resolved through core's `resolveTaskLifecycleColumns` — the
         canonical helper, so no new abstraction here. Every guard in this file spelled it `in-review`, and
         on a renamed board that means the merge machinery does not recognise its own queue: this snapshot
@@ -1508,7 +1508,7 @@ export class ProjectEngine {
   }
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-00:20:
   The flags for a task's OWN column, for the planner-overseer stage classification.
 
   `resolveWatchedStage` is pure and sync with no store, so the answer has to be resolved here and
@@ -1629,7 +1629,7 @@ export class ProjectEngine {
 
       let observation = this.plannerOverseer ? this.plannerOverseer.getObservations(taskId).slice(-1)[0] : undefined;
       if (!observation && this.plannerOverseer) {
-        /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: the manual nudge classifies the same way the
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-00:20: the manual nudge classifies the same way the
            poll does, or a renamed board answers `no-active-stage` to an operator pressing the button. */
         const columnFlags = await this.resolveTaskColumnFlags(store, task, new Map());
         observation = (await this.plannerOverseer.observeTask(task, level, { columnFlags })) ?? undefined;
@@ -2349,7 +2349,7 @@ export class ProjectEngine {
     } catch {
       // Fall through to the not-eligible response below.
     }
-    /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:15 (fleet): merge eligibility asks whether the card is in
+    /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:15 (fleet): merge eligibility asks whether the card is in
        ITS board's merge lane. With the literal, no card on a renamed board was ever eligible — auto-merge
        did not fail, it declined every card, which is why this class of defect has no error signature. */
     const eligibleReviewColumn = task
@@ -3044,7 +3044,7 @@ export class ProjectEngine {
           // in-progress task reports `signal: "stuck"` instead of always
           // `progressing` (the FN-7732 symptom).
           const executorStuckAfterMs = resolveExecutorStuckAfterMs(workflowEffective.plannerOverseerExecutorStuckAfterMs);
-          /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: without this the stage is resolved from
+          /* FNXC:WorkflowLifecycleColumns 2026-07-30-00:20: without this the stage is resolved from
              the legacy ids and every card on a renamed board classifies as null — see
              `resolveTaskColumnFlags`. The cache is per-poll so a workflow edit is picked up next tick. */
           const columnFlags = await this.resolveTaskColumnFlags(store, task, overseerIrCache);
@@ -3072,7 +3072,7 @@ export class ProjectEngine {
           Session-advisor log feed when effective enable resolves true for the task
           (task override → project default → workflow flag → off). Still needs model.
           */
-          /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:30 (fleet): the wip lane — the advisor feed exists
+          /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:30 (fleet): the wip lane — the advisor feed exists
              for cards that are executing, and the literal silenced it on every renamed board. */
           if (task.column === ((await resolveTaskLifecycleColumns(store, task.id))?.wip ?? "in-progress")
             && this.sessionAdvisor) {
@@ -3835,7 +3835,7 @@ export class ProjectEngine {
 
           const coordinatorReservedMerge = this.coordinatorAdmittedMergeTaskIds.delete(taskId);
           /*
-          FNXC:ConcurrencyAdmission 2026-08-07-10:30:
+          FNXC:ConcurrencyAdmission 2026-07-30-10:30:
           FN-8453/#2359 applies the same top-level slot reservation to direct and
           pull-request merge bodies. The current queue item is passed as a
           one-shot candidate after dequeue because durable merge providers only
@@ -4891,7 +4891,7 @@ export class ProjectEngine {
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-01-19:20 (fleet): ONE snapshot for the handoff and its
+      FNXC:WorkflowLifecycleColumns 2026-07-30-19:20 (fleet): ONE snapshot for the handoff and its
       post-grace recheck below. The two are halves of one decision — "did this card just enter the merge
       lane, and is it still there?" — and with the literal neither half fired on a renamed board, so
       auto-merge was never handed a card at all.
@@ -5029,7 +5029,7 @@ export class ProjectEngine {
 
   private wireTaskPauseMergeInterruption(store: TaskStore): void {
     this.taskUpdatedHandler = async (task: Task) => {
-      /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:25 (fleet): on a renamed board this dropped EVERY card
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-19:25 (fleet): on a renamed board this dropped EVERY card
          from the paused-review set on its next update, so a merge paused mid-flight was never interrupted. */
       if (task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
         this.pausedReviewTaskIds.delete(task.id);
@@ -5113,7 +5113,7 @@ export class ProjectEngine {
    * Unconditional (not gated on autoMerge). Safe to run on the critical path.
    */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-01-00:20:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-00:20:
   ONE lane-aware read for this class's six `listTasks({ column: "<literal>" })` sites.
 
   `listTasks`' `column` option filters in the STORE, so on a board whose lanes are renamed each of

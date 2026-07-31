@@ -448,7 +448,7 @@ describe("createSSE connection log severity", () => {
     delete process.env.FUSION_DEBUG;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     /*
-    FNXC:DashboardTestMocks 2026-08-03-04:55 (red on main — and the sibling NEGATIVE case was passing falsely):
+    FNXC:DashboardTestMocks 2026-07-30-04:55 (red on main — and the sibling NEGATIVE case was passing falsely):
     The +/- connection lines go through core's `createLogger("sse").debug(...)`, and that logger writes every
     level except `warn` to **console.error** (stdio-transport safety). So a spy on `console.log` sees nothing —
     which made the DEBUG case below fail loudly and made THIS quiet case pass for the wrong reason: an absence

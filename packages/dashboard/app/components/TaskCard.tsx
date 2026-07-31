@@ -377,7 +377,7 @@ function getTaskEndToEndDurationMs(
   task: Task,
   nowMs: number,
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:10:
   THREADED SO THE CONVERSION IS NOT INERT. `getTotalAgentActiveMs` gained an optional `columnFlags`
   so the LIVE execution segment is counted from the card's own wip lane. This is one of its two
   production callers, and it passed nothing — so the resolved path existed and never ran, and the
@@ -1883,7 +1883,7 @@ function TaskCardComponent({
     projectId,
     {
       enabled: isInViewport,
-      // FNXC:WorkflowResolvedColumns 2026-07-31-03:30: the card already resolved these; the hook needs
+      // FNXC:WorkflowResolvedColumns 2026-07-30-03:30: the card already resolved these; the hook needs
       // them so its done/active decision is a role question rather than an id comparison.
       columnFlags: taskColumnFlags,
       worktree: task.worktree,

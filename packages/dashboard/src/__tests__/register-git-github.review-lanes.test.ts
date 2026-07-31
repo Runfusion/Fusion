@@ -139,7 +139,7 @@ describe("namedReviewColumns renders a refusal an operator can act on", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2780 review — greptile):
+FNXC:WorkflowResolvedColumns 2026-07-30-01:25 (#2780 review — greptile):
 
 THE GUARD AND THE MOVE ARE ONE PAIR, AND THIS PINS THEM TOGETHER.
 

@@ -70,7 +70,7 @@ export function sortTasksForDisplayColumn(
   */
   isHoldColumn: boolean = isHoldColumnRole(undefined, column),
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (fleet phase — completing the caller-supplies-the-trait shape):
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:10 (fleet phase — completing the caller-supplies-the-trait shape):
   The last two questions this function asked by id. Same contract as the two params above: the caller
   passes the resolved trait, and the default is the legacy id so callers that do not resolve flags keep
   today's behaviour exactly.

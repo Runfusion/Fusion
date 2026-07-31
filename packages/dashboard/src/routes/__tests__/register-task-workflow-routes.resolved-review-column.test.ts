@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-15:00 (fleet: register-task-workflow-routes.ts review lane):
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:00 (fleet: register-task-workflow-routes.ts review lane):
 
 THE INVARIANT: the task routes decide "is this card in review?" from the task's OWN workflow.
 
@@ -133,7 +133,7 @@ describe("the task routes resolve the board's own review column", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-21:40 (PR #2701 review — greptile P1):
+FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2701 review — greptile P1):
 
 THE INVARIANT: an open PR blocks the in-review user-comment re-engagement on ANY board.
 
@@ -231,7 +231,7 @@ describe("the re-engage open-PR guard survives a renamed board", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-07:35 (PR #2723 review — greptile P1):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:35 (PR #2723 review — greptile P1):
 
 THE ROUTES MUST AGREE WITH CORE ON *WHICH* MERGE LANE, not just on the trait.
 
@@ -296,7 +296,7 @@ describe("the review set agrees with core on WHICH merge lane", () => {
 
   it("STILL admits a second merge lane when it ALSO carries humanReview — traits only ever ADD", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-04:05 (PR #2723 review — greptile; I judge the finding NOT a
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:05 (PR #2723 review — greptile; I judge the finding NOT a
     defect, and pin the behaviour so the question is settled rather than re-litigated).
 
     The finding asks to exclude a secondary `mergeOrchestration` column that ALSO carries `humanReview`,
@@ -346,7 +346,7 @@ describe("the review set agrees with core on WHICH merge lane", () => {
 
   it("ACCEPTS a second mergeOrchestration column, because core says every merge lane is review", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-22:55 (consolidation onto #2730 — this case INVERTED, deliberately):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:55 (consolidation onto #2730 — this case INVERTED, deliberately):
     This asserted a REFUSAL, from #2723's review round: I had narrowed the route resolver to core's then-single
     `.review` choice because a superset let the dashboard act on a lane the engine did not own.
 

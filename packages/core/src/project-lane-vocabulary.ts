@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-19:30:
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:30:
 The PROJECT's lane vocabulary — the columns to READ before there is a task to resolve from.
 
 WHY THIS EXISTS. Every lane guard so far resolves from a task: `resolveTaskLifecycleColumns(store, id)`
@@ -42,7 +42,7 @@ import type { TraitFlags } from "./trait-types.js";
 /** The store surface this needs — deliberately narrow so callers can pass a fake. */
 export interface ProjectLaneVocabularyStore {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-01-03:10:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-03:10:
   OPTIONAL, because several call sites hold a deliberately narrow store interface that does not
   declare this method even though the real `TaskStore` behind it has one (`EvalBatchTaskStore` is the
   first such caller). Requiring it would force every narrow interface to widen — a contract change
@@ -132,7 +132,7 @@ export const REVIEW_ROLES = ["mergeOrchestration", "mergeBlocker", "humanReview"
 export const TERMINAL_ROLES = ["complete", "archived"] as const;
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:10:
 ONE archived-lane answer, shared, because the alternative is callers disagreeing.
 
 `getLiveTaskColumn` manufactures the string "archived" for an archived-or-soft-deleted parent, and a

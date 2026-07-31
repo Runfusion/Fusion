@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-19:30:
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:30:
 
 THE INVARIANT: a QUERY resolves the PROJECT's lane vocabulary, not a task's.
 

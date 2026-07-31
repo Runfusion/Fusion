@@ -117,7 +117,7 @@ export function resolvePlannerLanes(store: TaskStore, taskId: string): PlannerLa
 /**
  * The ASYNC twin of {@link resolvePlannerLanes}, and the one that actually resolves.
  *
- * FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (fleet — the sync resolver is a no-op):
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-23:10 (fleet — the sync resolver is a no-op):
  * `resolvePlannerLanes` reads `store.resolveTaskWorkflowIrSync`, whose selection reader returns
  * `undefined` unconditionally in PostgreSQL mode — the shipped backend. So it resolves the DEFAULT
  * workflow for every task and answers with the legacy ids no matter what board the card is on, while
@@ -394,7 +394,7 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     if (workflowHasColumn(ir, "triage")) return "triage";
     if (workflowHasColumn(ir, "todo")) return "todo";
     /*
-    FNXC:WorkflowReplan 2026-07-31-13:35 (U11 — the flagged fallback, now converted):
+    FNXC:WorkflowReplan 2026-07-30-13:35 (U11 — the flagged fallback, now converted):
     Was `return "triage"`, naming a column this workflow does not declare AND that the
     DEFAULT lineage stopped declaring at #2515. A workflow with neither legacy planner
     id was therefore handed a nonexistent target, so the replan move either failed or
@@ -405,7 +405,7 @@ export async function resolveReplanTargetColumn(store: TaskStore, taskId: string
     declares and the replan lanes stay consistent with the rebound lanes.
     */
     /*
-    FNXC:ReplanTargetR7 2026-07-31-15:30 (CORRECTS my own #2659, superseded by #2598):
+    FNXC:ReplanTargetR7 2026-07-30-15:30 (CORRECTS my own #2659, superseded by #2598):
     PREFER HOLD, THEN INTAKE, THEN NOTHING — never an arbitrary column.
 
     #2659 (mine) used `resolveReboundTarget`, whose third fallback is "first declared
@@ -467,7 +467,7 @@ export async function moveTaskToReplanColumn(
 ): Promise<string | undefined> {
   const replanColumn = target ?? await resolveReplanTargetColumn(store, task.id);
   /*
-  FNXC:ReplanTargetR7 2026-07-31-15:35 (PR #2598):
+  FNXC:ReplanTargetR7 2026-07-30-15:35 (PR #2598):
   NO DECLARED REPLAN COLUMN: do NOT move, and say so. Every caller treats the return
   value as "where the card now is", so a silent no-op would be a lie — returning
   `undefined` forces the caller to state the outcome instead of assuming one.

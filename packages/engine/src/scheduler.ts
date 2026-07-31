@@ -836,7 +836,7 @@ export class Scheduler {
       logger: schedulerLog,
     });
     /*
-    FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+    FNXC:ConcurrencyAdmission 2026-07-30-09:00:
     FN-8453's union must outlive a single scheduler poll. A temporary provider
     was gone before planning/merge asked for capacity, allowing newer work to
     overtake ready execute work. The refreshed map is the durable lane view.
@@ -1096,7 +1096,7 @@ export class Scheduler {
       if (task.sliceId && task.status === "failed") {
         if (task.column === "in-progress") this.failedTaskIds.add(task.id);
         /*
-        FNXC:MissionReconciliation 2026-08-01-00:00:
+        FNXC:MissionReconciliation 2026-07-30-00:00:
         In-place failure parks do not emit task:moved, but they release the
         task's durable symbol lock. Reconcile any mission-linked failure update
         so the roadmap records withheld provenance without fabricating completion.
@@ -1207,7 +1207,7 @@ export class Scheduler {
 
           const deletedParked = resolveTaskParkedColumnsSync(this.store, task.id);
           /*
-          FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+          FNXC:WorkflowLifecycleColumns 2026-07-30-05:00:
           A HALF-CONVERTED PAIR, one line apart. The hold read above already resolved its lane while
           the wip read below stayed on the literal, so on a renamed board this dependent sweep saw
           the queued cards and none of the running ones — a dependency held by an in-flight task was
@@ -1462,7 +1462,7 @@ export class Scheduler {
 
   private async emitHighOverlapFanoutWarnings(tasks: Task[]): Promise<void> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-11:10:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-11:10:
     WIRING THE ESCALATION LANES — the option existed and nothing in production filled it.
 
     `computeBlockerFanoutMap`'s `escalationColumns` was added as an optional resolved answer and this,
@@ -1489,7 +1489,7 @@ export class Scheduler {
     const holdByTaskId = new Map<string, boolean>();
     const terminalByTaskId = new Map<string, boolean>();
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-18:40:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-18:40:
     The REVIEW half was still unwired after the escalation fix, and I only found it by auditing the
     rest of the flat-set class rather than by any guard.
 
@@ -2400,7 +2400,7 @@ export class Scheduler {
             }
 
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P1):
+            FNXC:WorkflowLifecycleColumns 2026-07-30-09:30 (#2787 review — greptile P1):
             PASS THE RESOLVED LANES. Without this the optional parameter added to
             `selectPermanentAgentForTask` is never supplied by the only production caller, so the
             predicate keeps its legacy default and the load tally stays empty on a renamed board —
@@ -2413,7 +2413,7 @@ export class Scheduler {
             held in the second must still count.
             */
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+            FNXC:WorkflowLifecycleColumns 2026-07-30-11:40 (#2787 review — greptile P1, third round):
             RESOLVE PER TASK, because a project runs several workflows at once.
 
             My first wiring resolved the lanes from the CANDIDATE task's workflow and handed that flat
@@ -2568,7 +2568,7 @@ export class Scheduler {
           }
 
           /*
-          FNXC:MissionSymbolAdmission 2026-07-31-12:00:
+          FNXC:MissionSymbolAdmission 2026-07-30-12:00:
           FN-8306 blocks mission-linked work before any file-scope or work-slot
           reservation unless the canonical lineage predicate is satisfied. A
           symbol-lock candidate bypasses coarse overlap only; every capacity,
@@ -2679,7 +2679,7 @@ export class Scheduler {
           let acquiredSymbols: string[] | undefined;
           if (missionAdmission.kind === "symbol-lock") {
             /*
-            FNXC:MissionSymbolAdmission 2026-07-31-12:00:
+            FNXC:MissionSymbolAdmission 2026-07-30-12:00:
             Acquire after all capacity gates and immediately before hold release;
             the reservation release path below returns this lock if moveTask
             rejects, while a successful move transfers ownership to the task.

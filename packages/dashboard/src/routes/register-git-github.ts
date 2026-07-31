@@ -2290,7 +2290,7 @@ export async function applyChangesRequestedTransition(
     author: "system",
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2780 review — greptile, and it caught my own half-conversion):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:20 (#2780 review — greptile, and it caught my own half-conversion):
   THE GUARD AND THE MOVE MUST RESOLVE THE SAME WAY.
 
   Broadening the entry guard above to accept any resolved review lane, while leaving this move on the

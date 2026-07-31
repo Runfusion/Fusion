@@ -1030,7 +1030,7 @@ failed resolve leaves the query on its documented legacy lanes rather than faili
 export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
         const layer = store.asyncLayer!;
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-06:20:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-06:20:
     Named type, not an inferred literal, and the reason is a tool contract rather than style.
 
     `scripts/lib/unwired-lane-parameter.mjs` decides a lane parameter is WIRED when some other file

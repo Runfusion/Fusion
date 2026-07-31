@@ -2,7 +2,7 @@ import type { Task } from "./types.js";
 import { normalizeSymbolLockKey } from "./task-store/symbol-locks.js";
 
 /**
- * FNXC:SymbolLock 2026-07-31-10:00:
+ * FNXC:SymbolLock 2026-07-30-10:00:
  * FN-8305 normalizes caller-provided locks but tasks need a durable declaration
  * source. File Scope is deliberately never converted into symbols: overlapping
  * paths may still contain disjoint declarations. Write hydration is presence-based

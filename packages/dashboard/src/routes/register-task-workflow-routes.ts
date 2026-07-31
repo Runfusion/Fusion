@@ -232,7 +232,7 @@ async function resolveWipColumnForTask(store: TaskStore, taskId: string): Promis
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-03:30 (fleet: register-task-workflow-routes.ts):
+FNXC:WorkflowResolvedColumns 2026-07-30-03:30 (fleet: register-task-workflow-routes.ts):
 The three roles this file needed and did not have, following the idiom its own
 `resolveIntakeColumnForTask` / `resolveWipColumnForTask` / `resolveReboundColumnForTask` already
 established: resolve the column ID from the task's workflow, fall back to the legacy id when the IR
@@ -248,7 +248,7 @@ lane can block merges without a human in it and vice versa, and every caller her
 in review".
 */
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2713 review — greptile P1, same class as the
+FNXC:WorkflowResolvedColumns 2026-07-30-06:40 (PR #2713 review — greptile P1, same class as the
 terminal finding one round earlier):
 MEMBERSHIP, because `mergeBlocker` and `humanReview` can sit on DIFFERENT columns.
 
@@ -265,7 +265,7 @@ the second kind.
 */
 async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-02-22:20 (consolidation onto #2730's core resolver):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:20 (consolidation onto #2730's core resolver):
   THE BODY IS NOW CORE'S. This resolver went through three shapes in three review rounds — a single id, then a
   membership set over mergeBlocker/humanReview (#2713), then plus the FIRST mergeOrchestration column (#2723) —
   and every round was an argument about arity at one call site. #2730 settled it in core, authoritatively and
@@ -284,7 +284,7 @@ async function resolveReviewColumnsForTask(store: TaskStore, taskId: string): Pr
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-05:00 (PR #2713 review — greptile P1):
+FNXC:WorkflowResolvedColumns 2026-07-30-05:00 (PR #2713 review — greptile P1):
 MEMBERSHIP, not "the first one". A workflow may declare MORE THAN ONE column carrying `complete` or
 `archived`, and `columnsWithFlag(...)[0]` picks one of them — so a task sitting in the second valid
 terminal column failed the revert guard with a 409.
@@ -904,7 +904,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     if (
       isBackwardMoveBlockedByOpenPr({
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-05:20 (PR #2713 review — greptile P1):
+        FNXC:WorkflowResolvedColumns 2026-07-30-05:20 (PR #2713 review — greptile P1):
         The REVIEW LANE'S legacy index, not `COLUMNS.indexOf(task.column)`.
 
         `isBackwardMoveBlockedByOpenPr` bails with `if (fromIndex < 0) return false`, and
@@ -2824,7 +2824,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-04:15 (fleet: register-task-workflow-routes.ts):
+      FNXC:WorkflowResolvedColumns 2026-07-30-04:15 (fleet: register-task-workflow-routes.ts):
       Resolved ONCE for the whole retry handler and reused by all three review checks below, so they
       cannot disagree about which column is the review lane.
       */
@@ -2879,7 +2879,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       FNXC:MissingWorktreeRetry 2026-07-10-18:32:
       Dashboard retry must support the upstream #1992 signature where the task is stranded in a merge-active status but the durable failure is an unusable worktree session-start assertion. Only that classifier bypasses the merge-active status gate.
       */
-      /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:15 (PR #2728 review): the classifier now takes the set
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-12:15 (PR #2728 review): the classifier now takes the set
          this route already resolved, instead of falling back to its own literal — the gate above and this
          delegate must agree about which columns are review. */
       const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
@@ -3916,7 +3916,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const prStatusReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
       if (!prStatusReviewColumns.has(task.column)) {
         /*
-        FNXC:WorkflowLifecycleColumns 2026-08-02-05:10 (the operator-facing half of #2713's conversion):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-05:10 (the operator-facing half of #2713's conversion):
         THE MESSAGE NAMES THE BOARD'S OWN COLUMNS. The gate resolves review by trait, but the 400 still
         said `in-review` — a column the operator's board may not have. Being told your card must be in a
         column that does not exist is worse than a wrong guard: a wrong guard is a bug report, a wrong
@@ -4965,7 +4965,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         ? workflowIr.columns.find((column) => column.id === task.column)
         : undefined;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-04:00 (fleet: register-task-workflow-routes.ts):
+      FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (fleet: register-task-workflow-routes.ts):
       FLAGS-FIRST, id only as the fallback. This ORed the legacy id with the resolved trait
       unconditionally, so a column merely NAMED `archived` counted as archived even when its own
       workflow says otherwise — the same inversion pattern found in TaskContextMenu and
@@ -5939,7 +5939,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-03:45 (fleet: register-task-workflow-routes.ts):
+      FNXC:WorkflowResolvedColumns 2026-07-30-03:45 (fleet: register-task-workflow-routes.ts):
       Resolved once for this handler and reused by both arms below, so the review/WIP decision cannot
       be made from two different answers.
       */
@@ -5984,7 +5984,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const prFeedbackReviewColumns = await resolveReviewColumnsForTask(scopedStore, task.id);
       const prFeedbackWipColumn = await resolveWipColumnForTask(scopedStore, task.id);
       if (!prFeedbackReviewColumns.has(task.column) && task.column !== prFeedbackWipColumn) {
-        /* FNXC:WorkflowLifecycleColumns 2026-08-02-05:12: same fix — the operator reads their own columns. */
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-05:12: same fix — the operator reads their own columns. */
         const allowed = [...prFeedbackReviewColumns, prFeedbackWipColumn].map((column) => `'${column}'`).join(" or ");
         throw badRequest(`PR feedback can only be addressed for tasks in ${allowed}`);
       }

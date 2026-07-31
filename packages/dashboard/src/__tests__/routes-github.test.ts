@@ -2177,7 +2177,7 @@ describe("POST /tasks/:id/spec/revise", () => {
         "Please add more details about error handling"
       );
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-03-01:10 (red on main — `triage` no longer exists):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (red on main — `triage` no longer exists):
       A CARD AT INTAKE IS RESET IN PLACE, not moved. #2515 merged Todo into Planning keeping the id `todo`, so
       the default lineage's intake column IS `todo` — and the respecify route's own comment says a task already
       sitting at intake skips the transition check and `moveTask` entirely, resetting for replanning where it is.
@@ -2421,7 +2421,7 @@ describe("POST /tasks/:id/spec/rebuild", () => {
         "Specification rebuild requested by user"
       );
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-03-01:40: the resolved rebuild target for the default lineage IS
+      FNXC:WorkflowLifecycleColumns 2026-07-30-01:40: the resolved rebuild target for the default lineage IS
       `todo` (no `triage` since #2515), and the route only moves when `task.column !== replanColumn` — so a card
       already in `todo` is rebuilt IN PLACE. Two stale things in one assertion: the column, and the move itself.
       */
@@ -2663,7 +2663,7 @@ describe("POST /tasks/:id/approve-plan", () => {
 
   it("returns 400 when the task is not at the workflow's intake column", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-03-01:50 (red on main): the guard is "is the card at the workflow's
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:50 (red on main): the guard is "is the card at the workflow's
     INTAKE column", and on the default lineage intake IS `todo` — so a `todo` fixture is now the VALID case and
     proves nothing. The rejection needs a column that is genuinely not intake.
     */
@@ -2831,7 +2831,7 @@ describe("POST /tasks/:id/reject-plan", () => {
 
   it("returns 400 when the task is not at the workflow's intake column", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-03-01:50 (red on main): the guard is "is the card at the workflow's
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:50 (red on main): the guard is "is the card at the workflow's
     INTAKE column", and on the default lineage intake IS `todo` — so a `todo` fixture is now the VALID case and
     proves nothing. The rejection needs a column that is genuinely not intake.
     */

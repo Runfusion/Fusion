@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-10:40 (#2787 review — greptile P1, second round):
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:40 (#2787 review — greptile P1, second round):
 
 THE INVARIANT: the resolved load-lane set covers EVERY role the legacy literal covered.
 
@@ -64,7 +64,7 @@ describe("the scheduler's load-lane union covers every legacy role", () => {
 
   it("the scheduler builds this same union", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:20:
     AST, NOT A SOURCE-TEXT MATCH — the previous form hardcoded a local VARIABLE NAME.
 
     It asserted `source.toContain('...columnsWithFlag(loadLaneIr, "<flag>")')`. #2796 resolves

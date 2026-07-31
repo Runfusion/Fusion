@@ -2256,7 +2256,7 @@ export { findWorkflowEventShapeViolations, isIdsOnlyWorkflowEvent, MAX_ID_VALUE_
 export type { WorkflowLifecycleEvent, WorkflowLifecycleEventType, WorkflowLifecycleEventBase, TaskTransitionedEvent, NodeEnteredEvent, NodeCompletedEvent, RunSuspendedEvent, RunResumedEvent, WorkflowEventShapeViolation, ImplementationExit } from "./types/workflow-events.js";
 export { columnsWithFlag, columnHasFlag, resolveReboundTarget, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveTerminalColumns, resolveReviewColumns } from "./workflow-lifecycle-traits.js";
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-00:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:40:
 ALSO exported from the GATE barrel, not just `index.ts`.
 
 `packages/engine`'s gate vitest project resolves `@fusion/core` through a bundle built from THIS

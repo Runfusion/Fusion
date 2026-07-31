@@ -20,7 +20,7 @@ function taskFixture(overrides: Partial<OverseerTaskRef> = {}): OverseerTaskRef 
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:20:
 
 THE INVARIANT: the watched stage comes from the column's ROLE, not from its id.
 

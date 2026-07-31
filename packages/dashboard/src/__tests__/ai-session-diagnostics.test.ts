@@ -520,7 +520,7 @@ describe("ai-session-diagnostics", () => {
   describe("default sink behavior", () => {
     it("logs info to console.log with prefix", () => {
     /*
-    FNXC:DashboardTestMocks 2026-08-03-04:40 (red on main — the sink moved to createLogger, the test did not):
+    FNXC:DashboardTestMocks 2026-07-30-04:40 (red on main — the sink moved to createLogger, the test did not):
     `defaultSink` now emits through core's `createLogger(scope)` rather than calling `console.log/warn/error`
     directly, and that logger has TWO deliberate differences these cases predate:
 

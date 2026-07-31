@@ -550,7 +550,7 @@ function AppInner() {
   const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const footerColumnFlagsByTaskId = useMemo(() => {
     const index = new Map<string, ExecutorColumnFlags>();
-    // FNXC:ConcurrencyIndicators 2026-08-04-10:00: remote tasks belong to a
+    // FNXC:ConcurrencyIndicators 2026-07-30-10:00: remote tasks belong to a
     // different store, so local board-workflow metadata must never be applied to
     // their ids. Until the remote node supplies its own traits, use only the
     // documented literal fallback rather than fabricate custom lifecycle state.
@@ -565,7 +565,7 @@ function AppInner() {
     return index;
   }, [footerBoardWorkflows, footerTasks, isRemote]);
   /*
-  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FNXC:ConcurrencyIndicators 2026-07-30-12:00:
   FN-8453 threads board workflow traits into the footer so custom intake,
   complete, WIP, and merge columns share the same live-agent predicate as the engine.
   */
@@ -1450,7 +1450,7 @@ function AppInner() {
         openAuthenticationSettings: () => openSettingsWithNav("authentication" as SectionId),
         addToast,
         /*
-        FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+        FNXC:WorkflowLifecycleColumns 2026-07-30-02:10:
         Resolve Cancel's destination from the card's OWN workflow. Without this the banner moved to a
         hardcoded `"todo"`, which `moves.ts` REJECTS on a board that does not declare it — the button
         threw instead of cancelling. Wired here rather than left optional: an unsupplied parameter is

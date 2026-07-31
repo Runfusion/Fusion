@@ -124,7 +124,7 @@ function stubMaintenance(manager: SelfHealingManager) {
     vi.spyOn(manager as never, method).mockResolvedValue(0 as never);
   }
   /*
-  FNXC:TestInfrastructure 2026-08-01-23:05 (the suite exited 1 with ZERO failing tests):
+  FNXC:TestInfrastructure 2026-07-30-23:05 (the suite exited 1 with ZERO failing tests):
   STUBBING THE SWEEPS IS NOT ENOUGH — the shared surfacing cycle is built in the ARGUMENT.
   `runMaintenance` invokes the surfacing family as `() => this.surfaceInReviewStalled(maintenanceSurfacing())`,
   and `maintenanceSurfacing()` lazily calls `openSurfacingCycle()`, which does

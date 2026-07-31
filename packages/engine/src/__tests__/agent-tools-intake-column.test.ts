@@ -114,7 +114,7 @@ async function seedApprovedLineage(store: TaskStore): Promise<{ mission_id: stri
     expect((result as { isError?: boolean }).isError).toBeFalsy();
     const task = await store.getTask((result.details as { taskId: string }).taskId);
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:20:
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:20:
     RE-PINNED, not deleted. These two guards exist to hold the DEFAULT workflow's landing column
     stable, and they fired on an intended change: U11 merged the two pre-implementation columns, so
     `builtin:coding`'s intake column is now `todo` (the merged Planning column, carrying

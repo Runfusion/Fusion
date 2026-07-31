@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-03:20 (provenance: what it may vouch for):
+FNXC:WorkflowLifecycleColumns 2026-07-30-03:20 (provenance: what it may vouch for):
 
 `resolveWorkflowIrForTaskWithProvenance` exists so a caller can TRUST `source: "selection"`. Its own
 note says why: "a signal that lies is one nobody can build the census conversions on." Two ways it
@@ -113,7 +113,7 @@ pgDescribe("workflow IR provenance against a live store", () => {
 
   it("a selection naming an UNREGISTERED BUILTIN id is still reported as default", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-01:30 (PR #2815 review — greptile P1, and it caught a
+    FNXC:WorkflowLifecycleColumns 2026-07-30-01:30 (PR #2815 review — greptile P1, and it caught a
     real hole in this change):
     THE FOURTH DEGRADATION PATH. An id that looks builtin but is not registered — a workflow removed
     between releases, a typo'd selection — takes a different branch from the missing-definition case

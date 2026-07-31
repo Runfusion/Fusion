@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
 
 THE INVARIANT: `excludeArchived` excludes the cards the board's OWN workflow calls archived.
 

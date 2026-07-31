@@ -47,7 +47,7 @@ function parsePersistedMissionLineage(task: Task): PersistedMissionLineage | und
 }
 
 /**
- * FNXC:MissionSymbolAdmission 2026-08-01-00:00:
+ * FNXC:MissionSymbolAdmission 2026-07-30-00:00:
  * Decision-A follow-up tasks retain the source feature's scalar taskId and carry
  * a separately validated sourceMetadata.missionLineage reference. Resolve that
  * reference before the canonical link so scheduler admission and reconciliation
@@ -69,7 +69,7 @@ export async function resolveMissionFeatureForTask(
 }
 
 /**
- * FNXC:MissionSymbolAdmission 2026-07-31-12:00:
+ * FNXC:MissionSymbolAdmission 2026-07-30-12:00:
  * FN-8306 makes autonomous implementation a three-way contract using
  * evaluateMissionLineageApproval: approved mission lineage with durable symbols
  * uses a symbol lock; mission-linked work that cannot prove active

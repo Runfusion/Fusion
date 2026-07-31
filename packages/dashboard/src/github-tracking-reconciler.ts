@@ -11,7 +11,7 @@ const RECONCILE_CONCURRENCY_LIMIT = 4;
 
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-05:10 (fleet phase — the SYNC-FILTER class, decided):
+FNXC:WorkflowResolvedColumns 2026-07-30-05:10 (fleet phase — the SYNC-FILTER class, decided):
 PREFETCH A RESOLVED MAP, then filter synchronously. This is the pattern for every
 `.filter((task) => task.column === "<id>")` over a list of OTHER tasks — a shape I flagged across four
 files and left unconverted while waiting for a decision that had to be mine.
@@ -45,7 +45,7 @@ async function resolveLifecycleByTaskId(
   tasks: readonly Task[],
   irCache: Map<string, WorkflowIr>,
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-12:10 (#2737 review — greptile P2):
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:10 (#2737 review — greptile P2):
   STOP once `limit` tasks have matched. The first version resolved for every row `listTasks` returned —
   an unbounded board — before slicing to RECONCILE_SCAN_LIMIT, so the prefetch did unbounded work to feed
   a bounded scan. `match` is applied here rather than by the caller precisely so the loop can stop.
@@ -342,7 +342,7 @@ export class GitHubTrackingReconciler {
     const tasks = Array.isArray(listedTasks?.tasks) ? listedTasks.tasks : [];
     const hasMore = listedTasks?.hasMore === true;
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-05:20:
+    FNXC:WorkflowResolvedColumns 2026-07-30-05:20:
     Resolved for the PAGE, not the board — this pass's list comes from
     `listTasksForGithubTrackingReconcile`, which is already offset/limit bounded (<= RECONCILE_SCAN_LIMIT).
 

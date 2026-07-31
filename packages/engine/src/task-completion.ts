@@ -2,7 +2,7 @@ import { getTaskCompletionBlocker, type Task, type TaskStore } from "@fusion/cor
 import { resolveDependencySatisfactionColumns } from "./scheduler.js";
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-01:45 (#2780 review — greptile, "dependency lifecycle context stays unset"):
+FNXC:WorkflowResolvedColumns 2026-07-30-01:45 (#2780 review — greptile, "dependency lifecycle context stays unset"):
 
 THE INJECTION POINT EXISTED AND NOTHING IN PRODUCTION FILLED IT.
 

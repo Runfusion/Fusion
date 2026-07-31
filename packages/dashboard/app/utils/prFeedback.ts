@@ -20,7 +20,7 @@ export function hasActionablePrFeedback(task: Pick<Task, "prInfo" | "prInfos">):
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (#2744 review — greptile P1, a half-conversion I shipped):
+FNXC:WorkflowResolvedColumns 2026-07-30-11:10 (#2744 review — greptile P1, a half-conversion I shipped):
 The lane pair here is the SAME question TaskReviewTab and TaskCard ask, and converting only the callers
 left this rejecting custom column ids. Measured consequence: on a renamed review or WIP lane a task with
 actionable PR feedback but no loaded display items had the Address-PR-Feedback action stay hidden, because

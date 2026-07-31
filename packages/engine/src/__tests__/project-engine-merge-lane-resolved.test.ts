@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-19:50 (fleet: project-engine.ts merge lane):
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:50 (fleet: project-engine.ts merge lane):
 
 THE INVARIANT: the merge machinery recognises the task's OWN merge lane.
 
@@ -104,7 +104,7 @@ describe("project-engine merge eligibility resolves the board's own merge lane",
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-22:10 (PR #2706 review — greptile P2, and the project's own
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:10 (PR #2706 review — greptile P2, and the project's own
 Surface Enumeration rule says the same thing):
 
 The first block covered `requestInterpreterMerge` only, while the change also touches the merge-queue

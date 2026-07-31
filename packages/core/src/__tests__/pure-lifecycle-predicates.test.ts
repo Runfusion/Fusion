@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-18:45 (fleet: the pure lifecycle predicates):
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:45 (fleet: the pure lifecycle predicates):
 
 THE INVARIANT: a pure predicate answers with the lanes its CALLER resolved, and keeps the legacy ids when the
 caller supplies none.
@@ -37,7 +37,7 @@ function task(overrides: Partial<Task>): Task {
 const NOW = Date.parse("2026-01-08T00:00:00.000Z"); // a week later — well past any threshold
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-21:30 (rebase onto #2746 — another worker landed the same fix):
+FNXC:WorkflowLifecycleColumns 2026-07-30-21:30 (rebase onto #2746 — another worker landed the same fix):
 THE CONTEXT SHAPE IS THEIRS, not mine. #2746 converted `task-age-staleness.ts` while this PR was open, with a
 `lifecycle: { wip, review }` context field where I had used two flat fields. Theirs is on main and is the better
 shape — one field for one resolved struct, so a third lane cannot arrive as a third parameter — so my
@@ -110,7 +110,7 @@ describe("blocker staleness follows the caller's lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-20:55 (PR #2745 review — greptile P1 x2, and the shape is worth its
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:55 (PR #2745 review — greptile P1 x2, and the shape is worth its
 own name):
 
 A CAPABILITY WITH NO CALLER IS A HALF-CONVERSION TOO.

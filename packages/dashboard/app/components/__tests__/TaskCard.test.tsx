@@ -158,7 +158,7 @@ function seedAgentsCache(projectId: string, agents: Array<{ id: string; name: st
 }
 
 /*
-FNXC:TaskCardParity 2026-07-31-00:25:
+FNXC:TaskCardParity 2026-07-30-00:25:
 READ DECLARED CSS FROM THE CSSOM — `getComputedStyle` cannot be trusted for tokenized values here.
 
 jsdom does not substitute `var()`. Worse, WHAT it does instead changed under us: on jsdom 27 an
@@ -846,7 +846,7 @@ describe("TaskCard", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (fleet phase — evidence for the 39 converted guards):
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:35 (fleet phase — evidence for the 39 converted guards):
   TaskCard asked "is this card terminal / mid-flight / in review?" by comparing `task.column` to a
   literal THIRTY-NINE times, while `taskColumnFlags` was already threaded in and already consumed by
   `canEdit` and `isTaskAgentActive`. The failure mode is a card rendering as live work by one question
@@ -5945,7 +5945,7 @@ describe("TaskCard", () => {
       expect(githubStyles.fontSize).toBe(timeStyles.fontSize);
       expect(githubStyles.lineHeight).toBe(timeStyles.lineHeight);
       /*
-      FNXC:TaskCardParity 2026-07-31-00:10:
+      FNXC:TaskCardParity 2026-07-30-00:10:
       BORDER WIDTH IS READ FROM THE CSSOM, because computed style cannot answer it in jsdom.
 
       The chips are in real parity: the GitHub badge declares `border: 1px solid transparent`, the
@@ -5973,7 +5973,7 @@ describe("TaskCard", () => {
       expect(declaredBorderWidth(".card-time-indicator")).toBe(declaredBorderWidth(".card-github-badge"));
 
       /*
-      FNXC:TaskCardParity 2026-07-31-01:05 (PR #2782 review — greptile P2):
+      FNXC:TaskCardParity 2026-07-30-01:05 (PR #2782 review — greptile P2):
       PARITY MUST SURVIVE A THEME, which the assertion above cannot see on its own.
 
       It resolves --btn-border-width from `:root`, and the fixture deliberately does not mount
@@ -6008,7 +6008,7 @@ describe("TaskCard", () => {
 
   it("FN-4511 preserves transparent border slot on .card-github-badge", () => {
     /*
-    FNXC:TaskCardParity 2026-07-31-01:20 (PR #2782 review — greptile P2):
+    FNXC:TaskCardParity 2026-07-30-01:20 (PR #2782 review — greptile P2):
     THE SLOT IS THE INVARIANT, not the literal width.
 
     This required `border: 1px solid transparent` verbatim. The badge now declares

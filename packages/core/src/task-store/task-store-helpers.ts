@@ -78,7 +78,7 @@ export async function recordBranchGroupMemberLandedImpl(store: TaskStore,
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-17:45 (fleet — the SAME "satisfied" answer as #2720):
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:45 (fleet — the SAME "satisfied" answer as #2720):
 A DEPENDENCY IS SATISFIED IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived), unioned with the legacy
 ids. This is the third place that question is asked, and it now gives the same answer as the store's
 `blockedBy` computation (#2720) and the merge blocker — three surfaces, one rule, which is the whole reason
@@ -162,7 +162,7 @@ params: {
     if (params.bypassGuards) return true;
     if (params.options?.recoveryRehome === true) return true;
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-17:55 (fleet):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:55 (fleet):
     THE HARD-CANCEL SHAPE — a USER dragging a card from the wip lane back to the hold lane — is what
     AGENTS.md's Move-Task contract calls a hard cancel, and it is the one move allowed to bypass workflow
     transition guards. Spelled as literals, the bypass never applied on a renamed board: the operator's drag
@@ -228,7 +228,7 @@ export function getWorkflowWorkItemByIdentityImpl(store: TaskStore,
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:00:
 THE QUERY WAS THE DEFECT, not the predicate below it.
 
 `isLegacyAutoMergeStampCandidate` gained an optional resolved `reviewColumns` and no caller passed

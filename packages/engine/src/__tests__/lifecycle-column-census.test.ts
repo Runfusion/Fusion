@@ -369,7 +369,7 @@ describe("the baseline can always be re-recorded", () => {
   const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
 
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-06:30:
+  FNXC:LifecycleColumnCensus 2026-07-30-06:30:
   STRIP COMMENTS — the assertions below index on marker strings, and the CLI's own prose names them.
 
   These two cases went red on main claiming the ORDER was inverted: `updateAt` 26374, `riseAt` 19345.
@@ -508,7 +508,7 @@ describe("the baseline can always be re-recorded", () => {
 });
 
 /*
-FNXC:LifecycleColumnCensus 2026-08-01-02-45 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
+FNXC:LifecycleColumnCensus 2026-07-30-02-45 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
 
 A DROP NOW TIGHTENS THE BASELINE INSTEAD OF FAILING. Failing hard was defensible in isolation — a stale
 allowance is a hole, since those guards can return up to the old count while the check stays green. What it

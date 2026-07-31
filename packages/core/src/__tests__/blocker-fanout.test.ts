@@ -133,7 +133,7 @@ describe("computeBlockerFanoutMap — column roles are resolved, not enumerated 
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:00 (batch-core feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:00 (batch-core feed):
 
 THE INVARIANT: escalation recognises the board's own active lanes.
 
@@ -188,7 +188,7 @@ describe("escalation resolves the board's own active lanes", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-18:00:
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:00:
 
 THE INVARIANT: escalation asks the BLOCKER's own workflow, not a board-wide union.
 

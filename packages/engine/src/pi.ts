@@ -1878,12 +1878,12 @@ export function wrapToolsWithBoundary(
 }
 
 /*
-FNXC:ToolOutputBudget 2026-08-06-12:00:
+FNXC:ToolOutputBudget 2026-07-30-12:00:
 FN-8614 requires one finite budget for the total model-visible text in every
 engine-injected tool result. Per-tool overrides remain finite positive integers;
 only the operator-level setting can select the explicit unlimited mode.
 
-FNXC:ToolOutputBudget 2026-08-06-16:00:
+FNXC:ToolOutputBudget 2026-07-30-16:00:
 FN-8616 makes the shared cap configurable at the session seam. A `null` resolved
 value returns the original tool list, avoiding all clamp/marker rewriting.
 */
@@ -2584,7 +2584,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       boundaryContext.worktreeProjectRoot,
       normalizedAdditionalSkillPaths,
     );
-    // FNXC:ToolOutputBudget 2026-08-06-16:00:
+    // FNXC:ToolOutputBudget 2026-07-30-16:00:
     // Keep this outermost so policy-gate and boundary rejection text is bounded too;
     // a null setting-derived budget intentionally returns the chain unchanged.
     const customToolList: ToolDefinition[] = wrapToolsWithOutputBudget(boundaryWrappedTools, {

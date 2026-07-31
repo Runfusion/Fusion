@@ -164,7 +164,7 @@ describe("NotificationService", () => {
 
   it("notifies for a review lane that carries human-review WITHOUT the merge trait", async () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+    FNXC:WorkflowResolvedColumns 2026-07-30-03:20 (PR #2722 review — greptile):
     `resolveLifecycleColumns().review` reads the `mergeOrchestration` flag ONLY, so a lane carrying
     `human-review` and not the merge trait resolved to nothing and the guard fell back to the literal
     `in-review`. On a renamed board the operator's "ready for review" notification never fired — no
@@ -1388,7 +1388,7 @@ describe("NotificationService", () => {
 
   it("treats a RENAMED human-review lane as terminal, so the failure is not deferred forever", async () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site in this file):
+    FNXC:WorkflowResolvedColumns 2026-07-30-06:40 (PR #2722 review — the SECOND site in this file):
     Under a deferred failure mode, `isTerminal` decided whether a failure notification fires now or
     waits. It read `.review`, which is `mergeOrchestration`-only, so a task failing in a lane carrying
     `human-review` alone was never terminal and its notification was deferred indefinitely.

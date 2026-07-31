@@ -1077,7 +1077,7 @@ includes soft-deletes whose delete lifecycle puts them in `archived` on both
 persistence backends without a synchronous SQLite dependency.
 */
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-14:20:
 Column trait flags for the intake duplicate guard, resolved from the candidates' OWN workflows.
 
 WHY THIS PATH MATTERS MORE THAN THE OTHER TWO. `findSameAgentDuplicates` gained
@@ -1175,7 +1175,7 @@ export async function resolveSameAgentDuplicateIntake(store: TaskStore, task: Ta
     if (settings.autoArchiveDuplicateTasksEnabled === true) {
       await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-14:20:
+      FNXC:WorkflowLifecycleColumns 2026-07-30-14:20:
       Mirror the archive into the in-memory row using the board's OWN archived lane. Writing the
       literal here made the returned object disagree with what the archive actually did on a renamed
       board — the caller then saw a task claiming a column its workflow does not declare, the same

@@ -23,7 +23,7 @@ vi.mock("../github-auth.js", () => ({
 }));
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (fleet phase — why the existing cases could not catch this):
+FNXC:WorkflowResolvedColumns 2026-07-30-05:30 (fleet phase — why the existing cases could not catch this):
 `workflowIr` is OPTIONAL and every pre-existing case omits it. Without a workflow reader,
 `resolveTaskLifecycleColumns` catches and returns undefined, so the reconciler falls back to the legacy
 ids and those cases assert exactly what they always asserted — which is why all 33 stayed green through
@@ -359,7 +359,7 @@ describe("GitHubTrackingReconciler", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (fleet phase — the SYNC-FILTER class, converted):
+  FNXC:WorkflowResolvedColumns 2026-07-30-05:30 (fleet phase — the SYNC-FILTER class, converted):
   Before this, every `.filter((task) => task.column === "done" || task.column === "archived")` in the
   reconciler matched NOTHING on a board whose terminal lanes are renamed. The pass then reported
   `scanned: 0, closed: 0` — a clean-looking run that closed no GitHub issues at all.

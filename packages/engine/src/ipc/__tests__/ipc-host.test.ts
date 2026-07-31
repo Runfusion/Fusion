@@ -21,7 +21,7 @@ import { OK, ERROR, PONG, TASK_CREATED } from "../ipc-protocol.js";
 vi.mock("../../logger.js", () => ({
   ipcLog: {
     log: vi.fn(),
-    // FNXC:EngineTests 2026-07-31-05:10: `debug` completes the logger surface; the
+    // FNXC:EngineTests 2026-07-30-05:10: `debug` completes the logger surface; the
     // logger-mock-completeness ratchet fails without it.
     debug: vi.fn(),
     warn: vi.fn(),

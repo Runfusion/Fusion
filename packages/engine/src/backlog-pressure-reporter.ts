@@ -57,7 +57,7 @@ export class BacklogPressureReporter {
       }
 
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-20:10:
+      FNXC:WorkflowLifecycleColumns 2026-07-30-20:10:
       THE QUERY, not the comparison — this reporter had no comparison to convert at all.
 
       `listTasks({ column })` filters in the store, so on a board whose lanes are renamed both reads

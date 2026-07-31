@@ -374,7 +374,7 @@ describe("#3 the continuation drain holds, and never cancels, an approval-blocke
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:50 (fleet phase — the drain's TERMINAL test):
+  FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (fleet phase — the drain's TERMINAL test):
   `resolvePlanningContinuationCandidate` orphans a continuation whose task has reached a terminal lane.
   That test was `column === "archived" || column === "done"`, so on a renamed board it matched nothing and
   a FINISHED card's planning continuation was still handed to the executor — re-entering plan review on

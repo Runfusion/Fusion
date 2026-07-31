@@ -273,7 +273,7 @@ describe("AgentListModal", () => {
         expect(screen.getAllByText((_, el) => el?.textContent === "FN-BARE · Unresolved task").length).toBeGreaterThanOrEqual(1);
       });
   /*
-      FNXC:PortalQueryRoot 2026-07-31-20:10:
+      FNXC:PortalQueryRoot 2026-07-30-20:10:
       document, not container — this modal renders through a PORTAL.
 
       `container` from `render()` is empty for a portalled subtree, so this lookup could only ever

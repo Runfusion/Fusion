@@ -2,7 +2,7 @@ import type { Task } from "./types.js";
 import { isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
 
 /**
- * FNXC:TaskTiming 2026-08-01-10:00:
+ * FNXC:TaskTiming 2026-07-30-10:00:
  * Operators' active-time totals include live and persisted planning AI work as
  * well as in-progress execution. Column dwell remains idle wall-clock data and
  * must never be substituted for an agent session anchor.
@@ -11,7 +11,7 @@ export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
   nowMs: number,
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-03:20 (batch-core feed):
   The task column's resolved trait flags. Omitted, `isWipColumnRole` falls back to the legacy id, so
   an unconverted caller is byte-identical.
 

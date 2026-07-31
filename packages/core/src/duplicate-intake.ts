@@ -221,7 +221,7 @@ export function findSameAgentDuplicates(
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-04:20 (batch-core feed):
   THE EXACT-FINGERPRINT PATH NEEDED THIS TOO, and it is the path that actually fires.
 
   `findDuplicateMatches` excludes terminal candidates via its own `DEFAULT_EXCLUDE_COLUMNS`
@@ -279,7 +279,7 @@ export function findSameAgentDuplicates(
   if (sourceBigrams.size === 0) return [];
   return recent.flatMap((candidate) => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-04:00 (batch-core feed):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-04:00 (batch-core feed):
     A FINISHED sibling must never be reused as the canonical for new work.
 
     Opposite direction from `near-duplicate-canonical.ts`, and worse: keyed on the literals, a

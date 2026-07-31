@@ -2916,7 +2916,7 @@ describe("POST /tasks/:id/pr/address-feedback", () => {
 
     expect(res.status).toBe(400);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-03-03:00 (red on main from my own #2723):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:00 (red on main from my own #2723):
     THE MESSAGE NOW NAMES THE BOARD'S RESOLVED COLUMNS. #2723 changed this 400 from
     "PR feedback can only be addressed for in-review or in-progress tasks" to
     "... for tasks in '<review>' or '<wip>'" — because telling an operator their card must be `in-review` on a

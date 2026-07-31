@@ -123,7 +123,7 @@ describe("GitHubTrackingStateService", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-10:40 (fleet phase — THE SEAM WAS NEVER WIRED):
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:40 (fleet phase — THE SEAM WAS NEVER WIRED):
   `decideIssueAction` has accepted an injectable `classify` since U12/R2, and the header of
   github-tracking-state.ts states the defect that seam fixed: "a user-authored workflow whose terminal
   column is called something else never closed its linked GitHub issue". But the only PRODUCTION caller

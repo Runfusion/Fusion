@@ -1255,7 +1255,7 @@ describe("ListView", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:45 (fleet phase — evidence for the ListView row-menu conversion):
+  FNXC:WorkflowResolvedColumns 2026-07-30-03:45 (fleet phase — evidence for the ListView row-menu conversion):
   The Archive and Revert row entries were gated on `task.column === "done"` / `=== "archived"`, so on a
   board whose terminal lanes are RENAMED they simply did not render. No error, no log — the operator just
   has no way to archive or revert from the list.

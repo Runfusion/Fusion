@@ -3,7 +3,7 @@ import { isTaskInTerminalLane } from "../agent-heartbeat.js";
 import type { TaskStore, WorkflowIr } from "@fusion/core";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — two heartbeat terminal checks):
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:20 (fleet — two heartbeat terminal checks):
 
 Both call sites asked "is this task finished?" with `column === "done" || "archived"`, and neither is
 cosmetic:

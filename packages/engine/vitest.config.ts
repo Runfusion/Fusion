@@ -186,7 +186,7 @@ export default defineConfig({
           */
           include: [
             /*
-            FNXC:EngineTests 2026-07-31-00:40 (PR #2557 review — greptile):
+            FNXC:EngineTests 2026-07-30-00:40 (PR #2557 review — greptile):
             THE CENSUS RATCHET MUST BE IN THE BLOCKING GATE, or it cannot do the one
             thing it exists for. Outside the gate a PR can add a legacy column
             comparison and every blocking check stays green while the count rises —

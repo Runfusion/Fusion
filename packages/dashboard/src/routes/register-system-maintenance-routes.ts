@@ -92,7 +92,7 @@ const collectSystemStatsResponse = async (req: Request) => {
     totalTasks = tasks.length;
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-00:35 (batch-core):
+    FNXC:WorkflowResolvedColumns 2026-07-30-00:35 (batch-core):
     "Is this card ACTIVE?" for the maintenance health count — WIP or review, resolved from each task's
     own workflow. Keyed on the literal pair, a board that renamed either lane reported ZERO active
     tasks, and the health panel showed an idle system while work was running.

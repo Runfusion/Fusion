@@ -104,7 +104,7 @@ function harness(ir: WorkflowIr | undefined, column: string, syncResolvesIr = fa
   const moves: Array<[string, string]> = [];
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (the sync seam could not see production):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-23:10 (the sync seam could not see production):
   THE AUTHORITATIVE READERS, not just the sync one.
 
   This harness injected ONLY `resolveTaskWorkflowIrSync`, so every case here proved the promotion

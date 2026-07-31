@@ -115,7 +115,7 @@ describe("TaskDetailModal", () => {
     }
 
     /*
-    FNXC:TaskDetailModalTests 2026-07-31-15:10:
+    FNXC:TaskDetailModalTests 2026-07-30-15:10:
     QUERY THE DOCUMENT — TaskDetailModal renders through a portal, so `container` is the wrong root.
 
     This helper took the `container` from `render()` and asked it for

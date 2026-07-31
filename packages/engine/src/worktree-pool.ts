@@ -1227,7 +1227,7 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
 
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
+  FNXC:WorkflowResolvedColumns 2026-07-30-08:20 (batch-engine — census-invisible membership, #2763 class):
   A branch is "active" (and so must not be reclaimed) unless the merger owns the card or it is archived.
   Both tests were hardcoded, so on a renamed board a card in review or complete was NOT recognised as
   merger-managed and its branch was treated as reclaimable — deleting a branch out from under an in-flight

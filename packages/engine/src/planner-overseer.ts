@@ -114,7 +114,7 @@ export function resolveWatchedStage(
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-00:20:
     Keyed on the ROLE, because keyed on the id this returned null for every card on a renamed board.
 
     The blast radius is why this is worth the parameter rather than a fallback: `observeTask` returns

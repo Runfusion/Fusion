@@ -88,7 +88,7 @@ Use this inventory as the documentation map for current workflow behavior:
 ### Skill-backed workflow steps
 
 <!--
-FNXC:WorkflowSteps 2026-08-08-00:00:
+FNXC:WorkflowSteps 2026-07-30-00:00:
 FN-7145 locks the execution invariant for skill-backed workflow nodes: naming a skill must load the skill into the step session, not only mention it in prompt text. FN-8461 / GitHub #2388 makes discovery multi-source: enabled-plugin body directories and the optional Compound Engineering root both participate. The executor warns only when the named skill has no viable source after that merge; missing CE configuration alone must not mislead operators when a plugin body resolves the named skill.
 -->
 

@@ -679,7 +679,7 @@ async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Setting
  * and provides the Paperclip-style execution engine via executeHeartbeat().
  */
 /**
- * FNXC:WorkflowLifecycleColumns 2026-08-01-07:20 (fleet — heartbeat terminal checks):
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-07:20 (fleet — heartbeat terminal checks):
  * Is this task finished — resting in its OWN board's complete or archived lane?
  *
  * Both heartbeat call sites asked with `column === "done" || "archived"`. Neither is cosmetic:
@@ -2593,7 +2593,7 @@ export class HeartbeatMonitor {
           }, {
             rootDir: this.rootDir,
             /*
-            FNXC:MissionAdmission 2026-08-01-02:00:
+            FNXC:MissionAdmission 2026-07-30-02:00:
             Idle heartbeats have no source task whose approved lineage can be
             inherited. Require a supplied lineage so the factory validates and
             persists the same Feature → Slice → Milestone → Mission proof.

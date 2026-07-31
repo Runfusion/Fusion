@@ -416,7 +416,7 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       */
       try {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+        FNXC:WorkflowResolvedColumns 2026-07-30-08:10 (fleet phase):
         Resolved through the SAME per-pass `listPassIrCache` the hold-column read above already uses, so
         one workflow is read once per pass rather than once per card.
 
@@ -622,7 +622,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
             now,
             thresholds: staleThresholds,
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (fleet — the omitted sibling site):
+            FNXC:WorkflowLifecycleColumns 2026-07-30-09:00 (fleet — the omitted sibling site):
             THE MODIFIED-SINCE PASS NEEDS THE LANES TOO. #2746 threaded `lifecycle` into the list
             pass above and left this one on the defaults, so a renamed board still produced no
             age-staleness badge for any card arriving through the incremental refresh — which is the

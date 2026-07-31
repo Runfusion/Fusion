@@ -42,7 +42,7 @@ export interface ComputeBlockerFanoutOptions {
   */
   terminalColumns?: ReadonlySet<string>;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (PR #2749 review — greptile P1):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-10:00 (PR #2749 review — greptile P1):
   The board's REVIEW lane, the set-shaped twin of `terminalColumns`.
 
   Without it, the set-shaped path (the one the ONLY production caller actually takes) could resolve
@@ -76,7 +76,7 @@ export interface ComputeBlockerFanoutOptions {
   */
   classify?: (task: Task) => { isHold: boolean; isTerminal: boolean };
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-05:00 (batch-core feed):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-05:00 (batch-core feed):
   The lanes an ACTIVE blocker can occupy for escalation purposes — wip ∪ review.
 
   This one was invisible to the census: the gate is a membership test against the exported
@@ -93,7 +93,7 @@ export interface ComputeBlockerFanoutOptions {
   */
   escalationColumns?: ReadonlySet<string>;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-18:00:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-18:00:
   PER-TASK escalation, and it takes precedence over the flat set above.
 
   Added by applying a rule I had just written for myself on another review: *if a caveat describes a
@@ -126,7 +126,7 @@ interface MutableEntry {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-17:35 (fleet: the pure lifecycle predicates):
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:35 (fleet: the pure lifecycle predicates):
 "IS THIS BLOCKER STALE?" — i.e. may the blocked card stop waiting on it. Three lifecycle questions in four
 lines: the blocker is finished, or it is parked in review, or it is a review row that exhausted its merge
 retries. All three were the default lineage's ids.
@@ -242,7 +242,7 @@ export function computeBlockerFanoutMap(
   for (const [blockerId, entry] of fanout) {
     const blocker = taskById.get(blockerId);
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-21:40 (rebased onto #2745):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (rebased onto #2745):
     THREAD THE LANES INTO THE PREDICATE. #2745 gave `isStaleBlockedByBlocker` an optional `lanes`
     argument and left THIS — its only production call — passing none, so the converted predicate ran
     on the legacy defaults and behaviour was unchanged while the census scored the conversion as

@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-13:20 (E2E evidence — a THIRD inert-conversion mechanism):
+FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (E2E evidence — a THIRD inert-conversion mechanism):
 
 Two mechanisms are already measured in this series:
 

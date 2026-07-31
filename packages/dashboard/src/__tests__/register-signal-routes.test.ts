@@ -813,7 +813,7 @@ pgDescribe("ingestSignal — incident capture", () => {
     expect(res.taskId).toBe("FN-1");
     expect(store._tasks).toHaveLength(1);
     /*
-    FNXC:DashboardTestMocks 2026-08-03-05:15 (red on main — same createLogger shape as the sse/diagnostics pair):
+    FNXC:DashboardTestMocks 2026-07-30-05:15 (red on main — same createLogger shape as the sse/diagnostics pair):
     The bridge logs through core's `createLogger("signal-incident-bridge")`, which prefixes a severity marker and
     folds the scope into the MESSAGE (`<marker>[signal-incident-bridge] Failed …`) rather than passing the scope
     as a separate first argument. So the two-argument form this asserted no longer matches: the received call is

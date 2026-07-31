@@ -176,7 +176,7 @@ export async function composeLiveSnapshot(
   ).count;
 
   /*
-  FNXC:LiveActivity 2026-08-03-00:00:
+  FNXC:LiveActivity 2026-07-30-00:00:
   FN-8429 requires current board metrics to exclude soft-deleted tasks. Live
   readers obey VAL-DATA-005, so archived/deleted rows cannot inflate the
   Overview or Mission Control stage counts after their board lifecycle ends.

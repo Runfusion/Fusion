@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-16:40:
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:40:
 Find lane-resolution parameters that NO production caller supplies.
 
 WHY THIS EXISTS. The lifecycle-column program repeatedly shipped a conversion shaped like this:
@@ -84,7 +84,7 @@ function collectLaneParameters(filePath, source) {
   };
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:20:
   An INLINE options-object type is the third spelling of the same declaration, and the guard was
   blind to it — the blind spot found by an actual escape, not by inspection.
 
@@ -155,7 +155,7 @@ export function findUnwiredLaneParameters(files, readFile = (f) => readFileSync(
     for (const [file, source] of sources) {
       if (file === declaration.file) continue;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-01:35:
+      FNXC:WorkflowLifecycleColumns 2026-07-30-01:35:
       The mention must come from a file that also names the DECLARING symbol.
 
       The original rule — "the parameter name appears in any other file" — is unusable for any name

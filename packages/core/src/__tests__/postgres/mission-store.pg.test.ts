@@ -398,7 +398,7 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   Regression coverage exercises every terminal-evidence representation through the real PostgreSQL store. Reconciliation must never route through ordinary triage linking, mutate loop attempts or mission controls, or partially commit when the transaction fails.
   */
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-05:05:
   THE INVARIANT: terminal evidence is the card's ROLE, not the id `done`.
 
   `getTerminalTaskEvidence` tested only `column === "done"`, so a genuinely completed card on a

@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /*
-FNXC:EngineTests 2026-07-31-05:20:
+FNXC:EngineTests 2026-07-30-05:20:
 Ratchet for the recurring incomplete-logger-mock failure class.
 
 THE CLASS. `createLogger` returns four methods — `log`, `debug`, `warn`, `error` (logger.ts:20-27).

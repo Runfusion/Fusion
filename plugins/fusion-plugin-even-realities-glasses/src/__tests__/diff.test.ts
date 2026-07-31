@@ -56,7 +56,7 @@ describe("diffSnapshots", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:20:
   THE INVARIANT: "completed" is decided by the caller's resolved complete lanes, not by `"done"`.
 
   The two cases above pass only because their fixture board is the built-in one. On a renamed board

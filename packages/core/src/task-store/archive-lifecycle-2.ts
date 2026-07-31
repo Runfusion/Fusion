@@ -45,7 +45,7 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       priority: normalizeTaskPriority(task.priority),
       column: "archived",
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-01-11:30 (PR #2824's finding, fixed):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-11:30 (PR #2824's finding, fixed):
       CAPTURE THE COLUMN THE CARD WAS IN. This field was only ever COPIED — here, back out of the
       entry on restore, and through serialization — and never SET from anywhere, so it was `undefined`
       for every archive that has ever happened. `unarchiveTaskImpl` then fell to its `?? "todo"` and
@@ -463,7 +463,7 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
     }
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-12:40 (PR #2824's finding, fixed — read the SNAPSHOT):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-12:40 (PR #2824's finding, fixed — read the SNAPSHOT):
     THE HISTORY LIVES IN COLD STORAGE, NOT ON THE ROW. `preArchiveColumn` has no column in
     `project.tasks` — it exists on the `Task` type and in the archive entry, and nowhere else. So the
     in-place restore above cannot carry it, `store.getTask(id)` reads a live row that never had it,

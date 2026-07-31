@@ -105,7 +105,7 @@ pgDescribe("archived-document guards resolve the board's archived lane", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-04:10:
   THE SENTINEL ITSELF, not just the two guards that read a row directly.
 
   #2886 fixed `upsertTaskDocument` and `publishArchivedTaskDocumentAddition`, which read `task.column`

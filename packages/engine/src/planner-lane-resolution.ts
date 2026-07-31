@@ -30,7 +30,7 @@ where even the default cannot be resolved.
 import { resolveLifecycleColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, type TaskStore, type WorkflowIr } from "@fusion/core";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:10 (PR #2616 review — greptile; a real
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:10 (PR #2616 review — greptile; a real
 defect in code I merged in #2610):
 A HOLD COLUMN IS ONLY A PLANNER LANE IF IT SITS BEFORE IMPLEMENTATION.
 

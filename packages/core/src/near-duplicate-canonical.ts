@@ -7,7 +7,7 @@ export interface NearDuplicateCanonicalState {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:00 (batch-core feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:00 (batch-core feed):
 "Still active" is the negation of core's terminal ROLE, not of two column names.
 
 `columnFlags` is the column's resolved trait flags; omitted, `isTerminalColumnRole` falls back to the

@@ -335,7 +335,7 @@ describe("usage-limit parking and recovery round trip (U11)", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-22:35:
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:35:
 
 THE EXECUTOR AND MERGER LANES WERE STILL LITERALS. `taskUsesProvider` resolves a task's active lane to decide
 which providers it is running on; the PLANNER lane was converted to traits (the note in that function
@@ -401,7 +401,7 @@ describe("a provider rate limit pauses every card actually running on that provi
 
   it("keeps the LEGACY wip id when a resolvable workflow declares no wip column", async () => {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-23:55 (PR #2672 review — greptile P1):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:55 (PR #2672 review — greptile P1):
     THE FALLBACK IS PER ROLE, not per object, and nothing pinned that until now.
 
     A workflow that RESOLVES but declares no `wip` column previously suppressed the
@@ -459,7 +459,7 @@ describe("a provider rate limit pauses every card actually running on that provi
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-23:35 (PR #2672 review, greptile P1 + P2):
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:35 (PR #2672 review, greptile P1 + P2):
 
 TWO PROPERTIES MY FIRST VERSION GOT WRONG.
 

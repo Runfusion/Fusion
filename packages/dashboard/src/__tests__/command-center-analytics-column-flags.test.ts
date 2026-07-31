@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-12:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-12:20:
 
 THE INVARIANT: the Command Center analytics routes supply the column trait flags the aggregators
 need, so the wip/review tallies come from ROLES rather than ids.

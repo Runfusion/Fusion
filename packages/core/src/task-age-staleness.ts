@@ -33,7 +33,7 @@ interface TaskAgeStalenessContext {
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+  FNXC:WorkflowResolvedColumns 2026-07-30-08:10 (fleet phase):
   The task's resolved lifecycle columns. Age-staleness applies ONLY to the mid-flight and review lanes —
   a card resting in a hold or terminal lane is not "stale", it is waiting or finished. Both lanes were
   named by id, so on a renamed board this signal returned undefined for every card and the stale-card

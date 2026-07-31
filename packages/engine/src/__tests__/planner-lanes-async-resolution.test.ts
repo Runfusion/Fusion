@@ -3,7 +3,7 @@ import { resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "../replan-
 import type { TaskStore, WorkflowIr } from "@fusion/core";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (fleet — the sync resolver never resolved):
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:10 (fleet — the sync resolver never resolved):
 
 `resolvePlannerLanes` reads `store.resolveTaskWorkflowIrSync`, whose selection reader
 (`getTaskWorkflowSelectionImpl`) returns `undefined` UNCONDITIONALLY in PostgreSQL mode — the shipped

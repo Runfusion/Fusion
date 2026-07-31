@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-19:25 (PR #2742 review — greptile P1, my third `?? legacy` slip):
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:25 (PR #2742 review — greptile P1, my third `?? legacy` slip):
 
 THE INVARIANT: the unarchive destination is a column the board DECLARES, or the restore refuses.
 

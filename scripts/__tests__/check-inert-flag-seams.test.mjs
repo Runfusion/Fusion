@@ -116,7 +116,7 @@ test("a .tsx declaring file resolves its module name the same way", () => {
 });
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-00:05 (#2851 review — the alias half of the finding):
+FNXC:LifecycleColumnCensus 2026-07-30-00:05 (#2851 review — the alias half of the finding):
 
 THE DIRECTION IS THE RISK, so these assert it explicitly rather than just "the map is populated".
 

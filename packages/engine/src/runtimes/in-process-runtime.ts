@@ -118,7 +118,7 @@ export interface PlanningContinuationCandidate {
  * blocking later due rows (FN-8470 tombstone starved FN-8471 plan-review).
  */
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-15:10 (fleet: the planning-continuation drain):
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (fleet: the planning-continuation drain):
 THE TERMINAL PAIR ARRIVES FROM THE CALLER, matching this file's OWN injection idiom — the
 specification-complete reaction already takes a `resolveIr` dependency for exactly this reason (the
 classifiers are exported so they can be tested without constructing a runtime, which would attach to the real
@@ -1169,7 +1169,7 @@ export class InProcessRuntime
               try {
                 const latest = await this.taskStore.getTask(task.id);
                 /*
-                FNXC:WorkflowLifecycleColumns 2026-08-02-15:30 (fleet — GUARD AND DESTINATION together):
+                FNXC:WorkflowLifecycleColumns 2026-07-30-15:30 (fleet — GUARD AND DESTINATION together):
                 A mission task that errored is requeued from the WIP lane back to the HOLD lane. Both ends were
                 literals, so on a renamed board the guard never matched and the requeue never happened — the
                 errored mission task stayed in the wip lane holding a slot, which is worse than a requeue that
@@ -2305,7 +2305,7 @@ export class InProcessRuntime
           limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
         }),
         getTask: (taskId) => Promise.resolve(this.taskStore.getTask(taskId)),
-        /* FNXC:WorkflowLifecycleColumns 2026-08-02-15:20 (fleet): the PRODUCTION resolver for the drain's
+        /* FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (fleet): the PRODUCTION resolver for the drain's
            terminal check — the pure pass keeps the legacy pair when this is omitted, which is what every
            existing test relies on. One IR read per due item, and the batch is capped by
            DUE_PLANNING_CONTINUATION_BATCH_LIMIT. */
@@ -2458,7 +2458,7 @@ export class InProcessRuntime
       FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
       In-process task archival is the retention cutoff for task-local planner chats. Keep interacted planner chats when tasks reach done, but delete exact task-planner sessions on archive through ChatStore so normal conversations and other tasks remain untouched.
 
-      FNXC:WorkflowLifecycleColumns 2026-08-02-15:50 (fleet):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-15:50 (fleet):
       ARCHIVAL IS THE CUTOFF, and on a renamed board the literal never matched — so task-planner chats were
       never deleted on archive. That is the quiet direction of this defect class: nothing breaks, data that
       should have been cleaned up simply accumulates, and the only symptom is storage growth nobody attributes

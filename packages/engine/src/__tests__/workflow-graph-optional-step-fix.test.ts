@@ -70,7 +70,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     expect(scheduled).toBe(true);
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-01:50:
+    FNXC:WorkflowResolvedColumns 2026-07-30-01:50:
     The replan rebound target is RESOLVED, not literal: executor.ts:4392 moves to
     `resolveReboundColumnFor(store, taskId)`, which for the default lineage is now `todo` — U11 merged
     the two pre-implementation columns, so `builtin:coding` declares no `triage`.
@@ -326,7 +326,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-7066",
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:00:
+      FNXC:WorkflowResolvedColumns 2026-07-30-02:00:
       The message INTERPOLATES the resolved column (executor.ts:5366 uses `${replanColumn}`), so a
       hard-coded id here re-pins a column name inside prose every time the vocabulary moves. Matching
       the shape plus the attempt counter keeps what this case owns — that a Plan Review failure logs a
@@ -633,7 +633,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
   });
 
   /*
-  FNXC:WorkflowOptionalStepCycle 2026-07-31-02:10:
+  FNXC:WorkflowOptionalStepCycle 2026-07-30-02:10:
   The generic optional-gate budget is `DEFAULT_MAX_POST_REVIEW_FIXES`, raised 3 -> 10
   (builtin-workflow-settings.ts:555). Driven off the imported constant rather than a re-inlined
   number, because that constant exists precisely BECAUSE the declaration default and two inline

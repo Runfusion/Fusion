@@ -503,7 +503,7 @@ export async function getTasksByAssignedAgentImpl(store: TaskStore,
     });
     if (options?.excludeArchived !== true) return assigned;
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-13:40:
     `excludeArchived` asks each card's OWN workflow, not the literal id.
 
     Found by auditing an unwired optional parameter one level up: `rankAssignedTasksForWakeDelta`
@@ -609,7 +609,7 @@ export async function updateTaskImpl(store: TaskStore,
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
         /*
-        FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+        FNXC:StateMachine 2026-07-30-20:15 (PR #2793's finding, fixed):
         RESOLVED BEFORE the guard, because the guard's callback is synchronous and the real answer
         needs an await. `validateNodeOverrideChange` asks the question at most once, for
         `updates.nodeId`, so pre-resolving that single answer is equivalent — and this frame is
@@ -645,7 +645,7 @@ export async function updateTaskImpl(store: TaskStore,
 }
 
 /*
-FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+FNXC:StateMachine 2026-07-30-20:15 (PR #2793's finding, fixed):
 `isTaskTerminalNodeIdImpl` LIVED HERE and is deleted, not kept as a fallback. It resolved the task's
 graph through `store.resolveTaskWorkflowIrSync`, which answers with the DEFAULT workflow for every
 task under PostgreSQL — so it reported on a board the card is not on. Its replacement,

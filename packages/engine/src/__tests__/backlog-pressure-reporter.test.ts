@@ -213,7 +213,7 @@ describe("BacklogPressureReporter", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-20:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:10:
 
 THE INVARIANT: the backlog-pressure ratio counts the board's OWN hold and wip lanes.
 

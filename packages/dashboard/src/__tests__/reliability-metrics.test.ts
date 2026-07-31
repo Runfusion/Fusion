@@ -306,7 +306,7 @@ describe("reliability move counts span every lane carrying the role", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-00:05 (#2875 review — greptile P1):
+FNXC:WorkflowLifecycleColumns 2026-07-30-00:05 (#2875 review — greptile P1):
 
 THE PRODUCER WAS CONVERTED AND THE CONSUMER DISCARDED THE ANSWER.
 

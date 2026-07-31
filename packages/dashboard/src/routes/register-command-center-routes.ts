@@ -394,7 +394,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
    * The Team endpoint must inherit Command Center auth and resolve getScopedStore(req) before aggregation so project-A callers cannot read project-B agent rows or task metrics. It intentionally omits GitHub issue stats; FN-6653 owns that overlay.
    */
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-12:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-12:20:
 Board-wide column trait flags for the analytics tallies, keyed by column ID.
 
 WIRING AN OPTION NOTHING FILLED. `columnFlagsByName` was added to both aggregators so
@@ -442,7 +442,7 @@ async function resolveColumnFlagsByName(
           continue;
         }
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-17:20 (#2803 review — greptile P1):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-17:20 (#2803 review — greptile P1):
         A CONFLICTING id is DROPPED, not merged.
 
         My first version merged flags across workflows with `{ ...existing, ...flags }`. Where two

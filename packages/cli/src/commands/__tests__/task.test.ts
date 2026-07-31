@@ -1689,7 +1689,7 @@ describe("runTaskImportGitHubInteractive", () => {
       title: "First Issue",
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
       /*
-      FNXC:WorkflowLifecycleColumns 2026-07-31-02:10:
+      FNXC:WorkflowLifecycleColumns 2026-07-30-02:10:
       NO `column` HERE — the import deliberately stopped choosing one. #2603 (U11) removed the
       hardcoded `column: "triage"` from the GitHub/GitLab import writes so `createTaskImpl`
       resolves the WORKFLOW'S intake column instead; passing `column` would override that

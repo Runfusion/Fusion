@@ -416,7 +416,7 @@ describe("GitHubTrackingCommentService", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (PR #2715 review — greptile):
+  FNXC:WorkflowResolvedColumns 2026-07-30-00:40 (PR #2715 review — greptile):
   A TRACKED TASK ON A RENAMED BOARD MUST STILL GET ITS COMMENT.
 
   The service resolved the wip/complete columns but tested `event.to` against the literal ids FIRST,

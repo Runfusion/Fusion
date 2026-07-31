@@ -137,7 +137,7 @@ pgDescribe("near-duplicate markers clear when the canonical reaches a RENAMED te
     const duplicate = await seedDuplicateOf(canonical.id, wf);
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-04:25 (#2823 review — greptile, and it was right):
+    FNXC:WorkflowResolvedColumns 2026-07-30-04:25 (#2823 review — greptile, and it was right):
 
     DRIVEN THROUGH THE REAL COMPLETION MOVE, not by handing the consumer a column.
 
@@ -159,7 +159,7 @@ pgDescribe("near-duplicate markers clear when the canonical reaches a RENAMED te
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:45 (#2823 review — what driving production actually showed):
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:45 (#2823 review — what driving production actually showed):
 
   THE CASE THAT SEPARATES THE ARGUMENT FROM THE ACCIDENT.
 

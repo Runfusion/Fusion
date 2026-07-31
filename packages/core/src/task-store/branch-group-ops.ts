@@ -176,7 +176,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     const roleCompatibleAssignedTasks = assignedTasks.filter(isBindCompatible);
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-20:35 (PR #2745 review — greptile P1: "dependency lanes remain
+    FNXC:WorkflowLifecycleColumns 2026-07-30-20:35 (PR #2745 review — greptile P1: "dependency lanes remain
     legacy-only"):
     ONE SATISFIED SET FOR THE WHOLE BATCH, resolved from the dependency rows already loaded into `tasksById`.
     The reviewer's point is the one that matters: adding `satisfiedColumns` to `areAllDependenciesDone` without

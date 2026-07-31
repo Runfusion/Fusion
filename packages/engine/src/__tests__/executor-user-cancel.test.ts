@@ -239,7 +239,7 @@ describe("TaskExecutor user cancel handling", () => {
     resolveAbort!();
     await (executor as any).pendingTaskDisposals.get("FN-RACE");
     /*
-    FNXC:EngineTests 2026-07-31-05:40:
+    FNXC:EngineTests 2026-07-30-05:40:
     WAIT FOR THE OUTCOME, do not count turns.
 
     This drained exactly two microtask turns and then asserted the order. #2783's task-move-disposer

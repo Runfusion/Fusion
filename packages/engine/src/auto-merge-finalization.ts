@@ -82,7 +82,7 @@ export async function validateWorkflowDoneMergeProof(
 ): Promise<WorkflowDoneMergeProofVerdict> {
   const hasProof = hasDurableMergeProof(task, options.result);
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL but DIAGNOSTIC-ONLY):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-02:45 (audited — REAL but DIAGNOSTIC-ONLY):
   This literal selects which REASON STRING is reported, not which branch runs. Both arms return
   `{ ok: false }`, so on a renamed board a card sitting in the complete lane is refused with the
   generic `missing-merge-confirmation` instead of the specific `done-without-merge-confirmation`.

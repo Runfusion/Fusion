@@ -28,7 +28,7 @@ function createTask(overrides: Partial<Task>): Task {
 }
 
 /*
-FNXC:MissingWorktreeRetry 2026-07-31-06:10 (PR #2728 review — greptile):
+FNXC:MissingWorktreeRetry 2026-07-30-06:10 (PR #2728 review — greptile):
 The classifier hardcoded `in-review`, so on a renamed board a card stranded by an unusable-worktree
 session start was not recognised as retryable — while every guard AROUND it had already been
 converted. A disagreement between neighbouring checks is harder to diagnose than the original inert
@@ -197,7 +197,7 @@ describe("RestartRecoveryCoordinator", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-23:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:20:
 
 THE INVARIANT: restart recovery sweeps the board's OWN wip lane.
 

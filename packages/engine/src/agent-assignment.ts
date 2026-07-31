@@ -2,7 +2,7 @@ import type { Agent, AgentStore, Task, TaskStore } from "@fusion/core";
 import { isAgentAutoAssignable, isEphemeralAgent } from "@fusion/core";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-05:40 (batch-engine feed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-05:40 (batch-engine feed):
 The lanes an assigned card still counts as LOAD against its agent.
 
 CENSUS-INVISIBLE: this is a `Set` literal, i.e. a definition rather than a comparison, so nothing in
@@ -24,7 +24,7 @@ type SelectPermanentAgentForTaskOptions = {
   agentStore: Pick<AgentStore, "listAgents" | "getChainOfCommand">;
   taskStore: Pick<TaskStore, "listTasks">;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-11:40 (#2787 review — greptile P1, third round):
+  FNXC:WorkflowLifecycleColumns 2026-07-30-11:40 (#2787 review — greptile P1, third round):
   A PER-TASK predicate, not a flat set.
 
   The flat `activeColumns` I first added was resolved from the CANDIDATE task's workflow and then

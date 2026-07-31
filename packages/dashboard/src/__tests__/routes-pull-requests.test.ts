@@ -240,7 +240,7 @@ describe("column move-backward guard (R16)", () => {
 
   it("does NOT protect a column whose id is not in the legacy COLUMNS array", () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (PR #2713 review — greptile P1):
+    FNXC:WorkflowResolvedColumns 2026-07-30-05:30 (PR #2713 review — greptile P1):
     The guard's own escape hatch, pinned so callers know it exists. `COLUMNS.indexOf` returns -1 for
     any custom column id, and this function bails on a negative index — so passing an unmapped
     column silently ALLOWS the move rather than blocking it.

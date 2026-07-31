@@ -533,7 +533,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       }
       if (toColumn === (moveLifecycle?.complete ?? "done")) {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (#2823 review — greptile):
+        FNXC:WorkflowResolvedColumns 2026-07-30-04:20 (#2823 review — greptile):
         PASS THE COLUMN THE CARD ACTUALLY REACHED, not the legacy name for it.
 
         The gate above already resolves the complete lane, so on a renamed board this fires correctly
@@ -1435,7 +1435,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       });
     }
     if (toColumn === (moveLifecycle?.complete ?? "done")) {
-      /* FNXC:WorkflowResolvedColumns 2026-07-31-04:20 (#2823 review): the sibling of the call above —
+      /* FNXC:WorkflowResolvedColumns 2026-07-30-04:20 (#2823 review): the sibling of the call above —
          same gate, same hardcoded argument, same inert result. Both move together. */
       await store.clearNearDuplicateReferencesToFailSoft(id, {
         column: toColumn,

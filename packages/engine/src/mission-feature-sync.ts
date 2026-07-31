@@ -78,7 +78,7 @@ export async function reconcileMissionFeatureState(
   silent, which is the exact failure being fixed here.
   */
   /*
-  FNXC:MissionFeatureSyncLanes 2026-07-31-11:30 (found auditing my OWN merged code for the split I made
+  FNXC:MissionFeatureSyncLanes 2026-07-30-11:30 (found auditing my OWN merged code for the split I made
   three times in PR #2644):
   ONE SNAPSHOT. This read the workflow TWICE — `resolveTaskLifecycleColumns` for the roles and
   `resolveWorkflowIrForTask` for the declared column ids — which is literally the same read twice, since
@@ -203,7 +203,7 @@ export async function reconcileMissionFeatureState(
   to `triaged` would misreport the roadmap.
   */
   /*
-  FNXC:MissionFeatureSyncLanes 2026-07-31-00:10 (rebase onto main's independent conversion):
+  FNXC:MissionFeatureSyncLanes 2026-07-30-00:10 (rebase onto main's independent conversion):
   Three sources of truth, in priority order, and each is here for a reason main's version and
   this PR's version each covered only half of:
     1. `context.plannerColumns` — a caller that KNOWS the board's planner columns (main's

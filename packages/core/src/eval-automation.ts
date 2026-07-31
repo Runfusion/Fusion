@@ -174,7 +174,7 @@ export async function runScheduledEvalBatch(
 
   try {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-03:10:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-03:10:
     THE QUERY plus its redundant re-assertion — the scheduled eval run selected NOTHING.
 
     `listTasks({ column })` filters in the store, so on a renamed board this read returned an empty

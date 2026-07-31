@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import ts from "typescript";
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (fleet — the same mistake, three times, one file):
+FNXC:WorkflowLifecycleColumns 2026-07-30-09:00 (fleet — the same mistake, three times, one file):
 
 THE RECURRING DEFECT. A signal helper in this subsystem gains a resolved-role parameter, and exactly
 ONE of the two age-staleness hydration sites in `reads.ts` is updated. The guard is then correct, the

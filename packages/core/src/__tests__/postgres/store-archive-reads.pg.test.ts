@@ -203,7 +203,7 @@ pgDescribe("TaskStore archived read parity (PostgreSQL)", () => {
     expect(restored.id).toBe(task.id);
     expect(restored.description).toBe("restore from snapshot only");
     /*
-    FNXC:ArchiveRestore 2026-07-31-09:25:
+    FNXC:ArchiveRestore 2026-07-30-09:25:
     `done`, because #2832 made restore return a card to the lane it was ARCHIVED FROM.
 
     This asserted `todo`, which was the old behaviour: `preArchiveColumn` has no database column, so

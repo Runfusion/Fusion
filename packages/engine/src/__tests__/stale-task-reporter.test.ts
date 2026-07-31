@@ -88,7 +88,7 @@ describe("StaleTaskReporter", () => {
 });
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-22:20:
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
 
 THE INVARIANT: the stale-task sweep reads the board's OWN wip and review lanes.
 

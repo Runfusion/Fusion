@@ -24,7 +24,7 @@ export type RunningAgentTaskShape = Pick<Task, "column" | "status" | "paused" | 
 };
 
 /*
-FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+FNXC:ConcurrencyIndicators 2026-07-30-12:00:
 FN-8453 / GitHub #2359 defines Running as a live top-level working agent, not a
 board-column or worktree-holder count. Every production store- or board-backed
 consumer enriches this pure shape from workflow traits before it counts; the

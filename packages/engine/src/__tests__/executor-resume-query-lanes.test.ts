@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-01:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:10:
 
 THE INVARIANT: both resume sweeps read the board's OWN wip lane.
 

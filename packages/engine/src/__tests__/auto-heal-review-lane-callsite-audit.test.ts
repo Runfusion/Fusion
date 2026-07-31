@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-08:45 (call-site audit — a DELIBERATE-LITERAL note that is not true):
+FNXC:WorkflowLifecycleColumns 2026-07-30-08:45 (call-site audit — a DELIBERATE-LITERAL note that is not true):
 
 Fourth instance of the optional-role-parameter class (#2795, #2798, #2799), and the only one so far
 where the source ANNOTATION asserts the opposite of the fact.

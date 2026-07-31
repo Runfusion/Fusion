@@ -27,13 +27,13 @@ export async function refineTaskImpl(store: TaskStore, id: string, feedback: str
     const sourceTask = await store.getTask(id);
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-02:10 (fleet: task-store dependency + refine guards):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-02:10 (fleet: task-store dependency + refine guards):
     REFINE IS ALLOWED FROM THE BOARD'S COMPLETE OR REVIEW LANE. Spelled as literals, `fn_task_refine` was
     unavailable on every renamed board — and the error text named two columns the operator does not have,
     which sends them looking for a column that does not exist. The message now names the real ones.
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-02:50 (the LEGACY-ROW union, and the existing suite caught it):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-02:50 (the LEGACY-ROW union, and the existing suite caught it):
     UNIONED WITH THE LEGACY IDS, because a row can outlive the column it is stored in. My first version
     compared ONLY the resolved lanes, and `refine-duplicate-task.pg.test.ts` immediately failed with
     "task is in 'done', must be in 'published' or 'editorial-review'" — a row sitting in `done` on a board
@@ -337,7 +337,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
         /*
-        FNXC:PostgresCutover 2026-07-31-17:10 (DEADLOCK, same class as PR #2809):
+        FNXC:PostgresCutover 2026-07-30-17:10 (DEADLOCK, same class as PR #2809):
         THE TASK WE ALREADY HOLD THE LOCK FOR IS ALREADY IN SCOPE. This closure runs inside
         `store.withTaskLock(id, ...)` (the wrapper at the top of `updateTaskDependenciesImpl`), and
         `store.getTask()` acquires that same lock — `getTaskImpl` opens with `withTaskLock(id, ...)`
@@ -367,7 +367,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       };
 
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-02:20 (fleet — THE "WHAT DOES SATISFIED MEAN" DECISION):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-02:20 (fleet — THE "WHAT DOES SATISFIED MEAN" DECISION):
       A DEPENDENCY IS SATISFIED WHEN IT RESTS IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived).
       I flagged this question in three files rather than guessing at it — executor.ts, the task routes, and
       here — because the answer had to be the same in all three or the scheduler and the store would
@@ -424,7 +424,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       task.log ??= [];
       let movedToTriage = false;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-02:30 (fleet — GUARD AND DESTINATION together):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-02:30 (fleet — GUARD AND DESTINATION together):
       A new dependency on a card still resting in the HOLD lane sends it back to INTAKE for
       re-specification. Both ends were literals, so this never fired on a renamed board — and converting
       only the guard would have written an `intake` column the board may not declare directly into the row,
@@ -442,7 +442,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
         movedToTriage = true;
         task.status = undefined;
         /*
-        FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
+        FNXC:WorkflowLifecycleColumns 2026-07-30-02:05 (PR #2720 review — greptile):
         `columnMovedAt` IS THE MOVE TIMESTAMP, so it may only move when the column does. On the default
         lineage post-U11 hold and intake are the SAME column, so this branch runs without the card going
         anywhere — and refreshing the stamp there restarts time-in-column and every staleness calculation
@@ -487,7 +487,7 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       // FNXC:BoardConsistency 2026-06-21-08:31: updateTaskDependencies' todo→triage re-spec move can also carry title/blocker changes, and leaving taskCache on the pre-move row made watch/SSE/board consumers surface one task ID in two columns (FN-6851/FN-6812). Sync the cache after the authoritative write like sibling mutation paths.
       if (store.isWatching) store.taskCache.set(id, { ...task });
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-03:10 (fleet — THE EVENT IS A DESTINATION TOO):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-03:10 (fleet — THE EVENT IS A DESTINATION TOO):
       The emitted `from`/`to` were hardcoded `todo`/`triage`. That is not cosmetic: `task:moved` is what the
       GitHub tracking poster, the auto-merge handoff and the executor's listeners react to, so this handed
       every listener a column pair that need not exist. On TODAY'S DEFAULT BOARD `triage` is gone — U11

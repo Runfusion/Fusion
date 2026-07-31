@@ -425,7 +425,7 @@ export function isTaskArchivedImpl(store: TaskStore, id: string): boolean {
     row is already hydrated; otherwise false (caller should have used async).
     */
     /*
-    FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL, and narrow):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-02:45 (audited — REAL, and narrow):
     `cached.column` is a real board lane, so a renamed archived column is not recognised and this
     sync check answers false for a card the board shows as archived.
 
@@ -455,7 +455,7 @@ export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Pro
     const live = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
     // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
     /*
-    FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+    FNXC:LifecycleColumnCensus 2026-07-30-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
     
     This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
     "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —

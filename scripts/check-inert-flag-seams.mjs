@@ -383,7 +383,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     uniformly wrong; this one works on the board you tested and degrades on the column you did not.
     */
     /*
-    FNXC:InertFlagSeams 2026-07-31-03:10 (#2822 review — greptile):
+    FNXC:InertFlagSeams 2026-07-30-03:10 (#2822 review — greptile):
     AN EXEMPTION IS BOUNDED BY COUNT, NOT OPEN-ENDED.
 
     `<file>::<function>` previously exempted EVERY call to that function in that file, so a later call
@@ -469,7 +469,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 
   /*
-  FNXC:InertFlagSeams 2026-07-31-03:45 (#2830 review — greptile):
+  FNXC:InertFlagSeams 2026-07-30-03:45 (#2830 review — greptile):
   THE SAME ROT REACHES ALLOWED_OMISSIONS, and the pass above did not cover it.
 
   Both staleness rules for the per-site list live inside the per-declaration loop, so they only run for

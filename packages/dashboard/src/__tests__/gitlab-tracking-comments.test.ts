@@ -23,7 +23,7 @@ describe("GitLabTrackingCommentService", () => {
     expect(s.logEntry).toHaveBeenCalledWith("FN-1", "Posted GitLab tracking comment", "g/p!5 (done)");
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-09:35 (fleet phase — the GitLab half, and the PAIR):
+  FNXC:WorkflowResolvedColumns 2026-07-30-09:35 (fleet phase — the GitLab half, and the PAIR):
   `handleTaskMoved` decided which moves warrant a comment by comparing `event.to` to the literals
   `in-progress` and `done`. On a renamed board neither matched, so GitLab tracking silently posted NO
   comments — the linked issue or MR just stopped being updated, with no error and no log line.

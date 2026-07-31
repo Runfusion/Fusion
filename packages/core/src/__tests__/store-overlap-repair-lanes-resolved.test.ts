@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed: store.ts 11 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (batch-core feed: store.ts 11 → 0):
 
 THE INVARIANT: the overlap-blocker repair reads the board's own lanes at every step.
 

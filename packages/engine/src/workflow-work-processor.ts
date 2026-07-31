@@ -30,7 +30,7 @@ export async function processDueWorkflowWorkItem(
   settings: (Pick<Settings, "experimentalFeatures"> & Partial<Settings>) | undefined,
   opts: WorkflowWorkProcessorOptions,
 ): Promise<WorkflowWorkProcessorResult> {
-  /* FNXC:MissionSymbolAdmission 2026-07-31-12:00: await the async symbol-lock admission before runtime may consume the workflow work lease. */
+  /* FNXC:MissionSymbolAdmission 2026-07-30-12:00: await the async symbol-lock admission before runtime may consume the workflow work lease. */
   const dispatch = await claimDueWorkflowWorkItem(store, {
     now: opts.now,
     leaseOwner: opts.leaseOwner,
@@ -41,7 +41,7 @@ export async function processDueWorkflowWorkItem(
 
   let runtimeResult: WorkflowTaskRuntimeResult;
   /*
-  FNXC:MissionSymbolAdmission 2026-08-01-01:00:
+  FNXC:MissionSymbolAdmission 2026-07-30-01:00:
   Workflow execution can outlive the ten-minute crash-recoverable lease. Renew
   only locks acquired by this claim while its runtime is live; transition release
   remains authoritative once the work reaches review, requeue, or terminal state.

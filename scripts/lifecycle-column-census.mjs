@@ -47,7 +47,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-18:20 (PR #2668 review — greptile):
+FNXC:LifecycleColumnCensus 2026-07-30-18:20 (PR #2668 review — greptile):
 BASELINE PATH IS OVERRIDABLE so the CLI can be driven END TO END in a test.
 
 The suite could only assert this file's SOURCE TEXT — substrings, marker ordering,
@@ -101,7 +101,7 @@ if (json) {
   console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-01:40:
+  FNXC:LifecycleColumnCensus 2026-07-30-01:40:
   Reported BESIDE the backlog, not subtracted from it. A fallback literal is still a literal and should go
   when the trait path becomes unconditional — but it is an ALREADY-CONVERTED site's documented degradation,
   not unconverted work, and a batch worker told to convert it would delete the only answer available to a
@@ -119,7 +119,7 @@ if (json) {
   */
   console.log(`  QUERY filters (column: "<legacy>"): ${summary.properties.query}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+  FNXC:LifecycleColumnCensus 2026-07-30-04:00:
   The split, because the single number reads as "dead reads to convert" and most of it is not.
   Measured while converting this class: outside `self-healing.ts` the read-shaped sites are
   convertible; the rest are soft-delete TOMBSTONE writes and synthetic in-memory literals, and
@@ -277,7 +277,7 @@ if (!existsSync(BASELINE_PATH)) {
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-15:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-15:10:
 FAIL WITH A DIAGNOSIS, not a stack trace, when the baseline is not valid JSON.
 
 Measured cause, twice in one program: a rebase or cherry-pick leaves CONFLICT MARKERS in the baseline,
@@ -311,7 +311,7 @@ const baseline = readBaselineOrExplain();
 const baselineByFile = new Map(Object.entries(baseline.byFile ?? {}));
 const currentByFile = new Map(summary.byFile);
   /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (PR #2661 review — greptile, narrowed and closed):
+FNXC:WorkflowLifecycleColumns 2026-07-30-06:40 (PR #2661 review — greptile, narrowed and closed):
 THE DELIBERATE TOTAL IS PINNED TOO, because a marker exempts the construct it is attached to and
 everything INSIDE it — so a comparison appended to an already-marked expression inherits the
 exemption and never reaches the byFile counts.
@@ -345,7 +345,7 @@ every existing marker as a fresh rise and demand people convert literals that we
 Seed it on the next `--update-baseline` instead, and start comparing once it is present.
 */
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-10:05:
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:05:
 The key SHAPE changed (file -> file\u0000columnId), and a shape change is the same migration hazard
 as a missing field: comparing new keys against old ones reports every existing marker as a fresh
 rise and demands people convert already-reviewed literals. I hit exactly that on the first run here
@@ -364,7 +364,7 @@ for (const [file, count] of deliberateTracked ? currentDeliberateByFile : []) {
   const [f, columnId] = file.split("\u0000");
   const label = `${f} (DELIBERATE-LITERAL: ${columnId})`;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-21:40:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
   A deliberate rise is tagged as a RECLASSIFICATION when the same file+column's guard count fell by
   at least as much. Adding a `DELIBERATE-LITERAL` marker moves a site from `byFile` to
   `deliberateByFile`, so the totals shift even though unconverted debt went DOWN.
@@ -422,7 +422,7 @@ for (const [file, allowed] of baselineByFile) {
 }
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-06:10 (PR #2650 review — greptile):
+FNXC:LifecycleColumnCensus 2026-07-30-06:10 (PR #2650 review — greptile):
 MOVED OUT OF THE `--compare` BRANCH, where it could not work in either mode.
 
 Inside `--compare` it read `baseline`, `regressions` and `stale` — all declared
@@ -455,7 +455,7 @@ for (const [file, allowed] of baselineQueryByFile) {
 
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-18:20:
+FNXC:LifecycleColumnCensus 2026-07-30-18:20:
 `--update-baseline` MUST RUN EVEN WHEN A FILE ROSE, and it could not: the rise check exited first, so the
 only supported way to re-record was unavailable in exactly the situation that needs it.
 
@@ -547,7 +547,7 @@ if (regressions.length > 0) {
         "resolveTaskLifecycleColumns) instead of comparing its name. If the literal is genuinely\n" +
         `correct, record why at the site with a ${"DELIBERATE-LITERAL"} marker.\n` +
         /*
-        FNXC:LifecycleColumnCensus 2026-07-31-09:10 (placement is the failure nobody sees):
+        FNXC:LifecycleColumnCensus 2026-07-30-09:10 (placement is the failure nobody sees):
         A marker in the wrong POSITION is indistinguishable from no marker, and the miss is silent until
         CI. Measured on #2883: the marker sat inline in the middle of a conditional expression, attached
         to the wrong node, and three reviewed literals scored as new debt (self-healing.ts 86 -> 89).
@@ -564,7 +564,7 @@ if (regressions.length > 0) {
 }
 
 /*
-FNXC:LifecycleColumnCensus 2026-07-31-18:25: the `--update-baseline` branch that lived here is GONE — it
+FNXC:LifecycleColumnCensus 2026-07-30-18:25: the `--update-baseline` branch that lived here is GONE — it
 now runs above, before the rise exit, so a risen file can be re-recorded. Keeping a second copy here would
 be two writers for one artifact, and the one behind the rise exit was unreachable in the case that needed
 it. The `!deliberateTracked && updateBaseline` condition went with it: the unconditional block covers the
@@ -572,7 +572,7 @@ legacy-shape migration too.
 */
 if (stale.length > 0) {
   /*
-  FNXC:LifecycleColumnCensus 2026-08-01-02-30 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
+  FNXC:LifecycleColumnCensus 2026-07-30-02-30 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
   A DROP TIGHTENS THE BASELINE INSTEAD OF FAILING. The old behaviour failed hard, and the reasoning was sound
   in isolation — a stale allowance is a hole, since those guards can return up to the old count while the
   check stays green. What it missed is that the drop is almost never the author's to fix: eleven files dropped

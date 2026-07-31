@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-02:40 (batch-core feed: task-update.ts 3 → 0):
+FNXC:WorkflowLifecycleColumns 2026-07-30-02:40 (batch-core feed: task-update.ts 3 → 0):
 
 THE HEADLINE IS NOT A RENAMED BOARD — IT IS A COLUMN THAT NO LONGER EXISTS.
 

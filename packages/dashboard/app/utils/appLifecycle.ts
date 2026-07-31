@@ -199,7 +199,7 @@ export interface CliActionDeps {
   currentProjectId?: string;
   retryTask: (id: string) => Promise<unknown>;
   /*
-  FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+  FNXC:WorkflowLifecycleColumns 2026-07-30-02:10:
   `string`, not the literal type — the signature itself was pinning the destination.
 
   Cancel moves the session's task back to the hold lane. Keyed on `"todo"`, and with the TYPE

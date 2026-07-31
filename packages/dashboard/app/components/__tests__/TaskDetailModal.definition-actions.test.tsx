@@ -381,7 +381,7 @@ describe("TaskDetailModal", () => {
 
     it("does NOT show Changes tab for triage/todo tasks", () => {
       /*
-      FNXC:TaskDetailModalTests 2026-07-31-16:20:
+      FNXC:TaskDetailModalTests 2026-07-30-16:20:
       UNMOUNT BETWEEN THE TWO RENDERS — the modal is portalled, so both would share one document root.
 
       This case rendered the triage modal and the todo modal back to back and told them apart by their

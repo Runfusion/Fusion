@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-01:05:
+FNXC:WorkflowLifecycleColumns 2026-07-30-01:05:
 
 THE INVARIANT: the review-handoff seam moves the card to the workflow's OWN review lane.
 

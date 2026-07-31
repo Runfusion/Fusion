@@ -876,7 +876,7 @@ async function formatDuplicateLineageLine(task: Task, store: TaskStore): Promise
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:45 (fleet): the board's archived column — the same marker
+      /* FNXC:WorkflowLifecycleColumns 2026-07-30-12:45 (fleet): the board's archived column — the same marker
          as the CLI command's copy of this helper, converted there in this PR. */
       const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
       return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
@@ -1880,7 +1880,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
       
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-12:40 (PR #2728 review — the retry gate exists THREE times):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-12:40 (PR #2728 review — the retry gate exists THREE times):
       This is `fn_task_retry`, the MCP tool AGENTS call — the third copy of the same classifier, after the
       dashboard route (#2713) and the CLI command (this PR). Converting two of three is worse than converting
       none: the operator retries from the board and it works, the agent retries the same card and is told it
@@ -1891,7 +1891,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       resolver in core, which is a follow-up rather than a rider on this PR.
       */
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-22:15 (consolidation onto #2730's core resolver):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:15 (consolidation onto #2730's core resolver):
       CORE'S `resolveReviewColumns` — see the fuller note in `commands/task.ts`. This copy carried
       `.slice(0, 1)` on the merge-orchestration lanes while the CLI command took the full union, so
       `fn_task_retry` refused a card in a SECOND merge lane that `fn task retry` accepted: two surfaces, one

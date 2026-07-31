@@ -26,7 +26,7 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   "research",
   "evals",
   /*
-  FNXC:Navigation 2026-08-01-00:00:
+  FNXC:Navigation 2026-07-30-00:00:
   FN-8352 makes Ideation a top-level experimental destination, but it remains
   More-only on mobile. Keep it registered for labels and More rendering while
   excluding it from the footer-promotion registry below.

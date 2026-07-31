@@ -226,7 +226,7 @@ pgDescribe("planning-continuation terminal columns, measured on a live store", (
     expect(classifierCalls.filter(passesTerminalColumns)).toHaveLength(1);
 
     /*
-    FNXC:WorkflowScheduling 2026-08-02-00:20 (THE ALARM FIRED — a partial conversion landed):
+    FNXC:WorkflowScheduling 2026-07-30-00:20 (THE ALARM FIRED — a partial conversion landed):
     THE INNER PREDICATE IS NOW THREADED. `resolvePlanningContinuationCandidate` passes its resolved
     set down as `isPlanningContinuationTaskDispatchable(task, terminal)`, so this case flipped from
     arity 1 to arity 2 and turned this suite red — which is exactly what it was written to do.

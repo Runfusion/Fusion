@@ -1,5 +1,5 @@
 /*
-FNXC:LifecycleColumnCensus 2026-08-01-04:00:
+FNXC:LifecycleColumnCensus 2026-07-30-04:00:
 
 THE INVARIANT: the query class is reported split into READ-shaped (convertible) and WRITE (must not
 be converted).

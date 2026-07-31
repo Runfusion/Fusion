@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-03:40 (fleet — settling "what does SATISFIED mean"):
+FNXC:WorkflowLifecycleColumns 2026-07-30-03:40 (fleet — settling "what does SATISFIED mean"):
 
 THE INVARIANT: a dependency is satisfied when it rests in ITS OWN board's terminal pair.
 
@@ -114,7 +114,7 @@ pgDescribe("dependency satisfaction on a renamed board (PostgreSQL)", () => {
 
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-06:50 (PR #2720 review — the half the other fix did not cover):
+FNXC:WorkflowLifecycleColumns 2026-07-30-06:50 (PR #2720 review — the half the other fix did not cover):
 
 THE EMITTED `task:moved` ENDPOINTS, not just the persisted column.
 

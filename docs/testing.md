@@ -130,7 +130,7 @@ netted — a wrong classification stays visible instead of silently moving the b
 - a **rise** fails hard — that is the ratchet's purpose, "no new guards";
 - a **drop** TIGHTENS the baseline automatically, reports what it lowered, and exits 0.
 
-<!-- FNXC:LifecycleColumnCensus 2026-08-01-03:05: the drop behaviour was a hard failure and is not any more,
+<!-- FNXC:LifecycleColumnCensus 2026-07-30-03:05: the drop behaviour was a hard failure and is not any more,
 because the drop is almost never the failing author's to fix. Eleven files dropped in one merge wave, none of
 those PRs re-recorded, and none of their authors did anything wrong; measured three times since CI began
 gating this. A permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then
