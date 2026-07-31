@@ -2310,6 +2310,53 @@ describe("SelfHealingManager", () => {
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
+    #3047 converted this sweep's two lane guards to the COMPLETE and TERMINAL roles and merged with no
+    case that could see the difference — measured: reverting that commit leaves all 825 self-healing
+    tests passing, because every fixture above uses the id `done`, where the literal is correct.
+
+    What the literal cost on a renamed board: the dependent scan treated EVERY task as active (nothing
+    matched `done`/`archived`), so every candidate looked like it had active dependents and the sweep
+    archived nothing. A silent no-op — the board just quietly stops auto-archiving.
+    */
+    it("archives a stale card in a RENAMED complete lane, and skips one whose dependent is still live", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      (store.listWorkflowDefinitions as ReturnType<typeof vi.fn> | undefined)?.mockResolvedValue?.([]);
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+            { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "FN-OLD", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-BLOCKED", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        /* A LIVE dependent in the renamed wip lane must still protect its blocker from archiving. */
+        { id: "FN-LIVE", column: "building", dependencies: ["FN-BLOCKED"], updatedAt: "2026-01-03T00:00:00.000Z" },
+        /* Already in the renamed archive lane: terminal, so neither a candidate nor an active dependent. */
+        { id: "FN-FILED", column: "vault", dependencies: ["FN-OLD"], updatedAt: "2026-01-03T00:00:00.000Z" },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(1);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OLD");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-BLOCKED");
+    });
+
     it("uses doneAutoArchiveDays threshold and logs task age", async () => {
       vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
