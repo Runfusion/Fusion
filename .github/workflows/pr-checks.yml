@@ -60,6 +60,8 @@ jobs:
         run: pnpm check:sql-column-literals
       - name: Inert lane/flag seams
         run: pnpm check:inert-flag-seams
+      - name: FNXC stamp dates
+        run: pnpm check:fnxc-future-dates
 
   typecheck:
     name: Typecheck
