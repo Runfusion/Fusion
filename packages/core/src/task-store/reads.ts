@@ -20,7 +20,7 @@ import {getAgentLogFilePath} from "../agent-log-file-store.js";
 import {getInReviewStalledSignal} from "../in-review-stalled.js";
 import {getStalePausedReviewSignal} from "../stale-paused-review.js";
 import {getStalePausedTodoSignal} from "../stale-paused-todo.js";
-import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {resolveLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 
@@ -150,17 +150,28 @@ Fail-soft to "in-review" for the same reason as the hold helper: this is read-pa
 hydration, so a workflow lookup failure must degrade to today's behavior rather than
 break a board list. Cache is caller-owned so a list pass reads one IR per workflow.
 */
-async function resolveReviewColumnForTask(
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:20 (ONE lane answer for all three stall signals):
+The three signals decorating a row — `inReviewStall`, `inReviewStalled`, `stalePausedReview` — each
+took their own lane input and DISAGREED: two took a singular `reviewColumn`
+(`resolveLifecycleColumns().review`, the FIRST column per role) and the third had no seam at all and
+used the literal. So one row could be judged in-review by one signal and not by another, and a board
+with a separate merge lane beside its human-review lane had a second review column matching none.
+
+`resolveReviewColumns` is the union of the three review roles. The legacy id stays unioned so a board
+mid-rename is never skipped, and all ten call sites now read from THIS answer.
+*/
+async function resolveReviewColumnsForTask(
   store: TaskStore,
   taskId: string,
   cache?: Map<string, WorkflowIr>,
-): Promise<string> {
+): Promise<ReadonlySet<string>> {
+  const columns = new Set<string>(["in-review"]);
   try {
-    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
-    return lifecycle?.review ?? "in-review";
-  } catch {
-    return "in-review";
-  }
+    const ir = await resolveWorkflowIrForTask(store, taskId, cache);
+    if (ir) for (const id of resolveReviewColumns(ir)) columns.add(id);
+  } catch { /* degraded: the legacy id above still answers */ }
+  return columns;
 }
 
 
@@ -220,13 +231,13 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
-      const reviewColumnForTask = await resolveReviewColumnForTask(store, task.id);
+      const reviewColumnsForTask = await resolveReviewColumnsForTask(store, task.id);
       task.inReviewStalled = mergeQueuedTaskIds.has(task.id)
         ? undefined
         : getInReviewStalledSignal(task, {
           now,
           executingTaskIds,
-          reviewColumn: reviewColumnForTask,
+          reviewColumns: reviewColumnsForTask,
           thresholdMs: settings.inReviewStalledThresholdMs,
           autoMerge: allowsAutoMergeProcessing(task, settings),
           engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -383,18 +394,18 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
-      const reviewColumnForRow = await resolveReviewColumnForTask(store, task.id, listPassIrCache);
+      const reviewColumnsForRow = await resolveReviewColumnsForTask(store, task.id, listPassIrCache);
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
-        reviewColumn: reviewColumnForRow,
+        reviewColumns: reviewColumnsForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
-        reviewColumn: reviewColumnForRow,
+        reviewColumns: reviewColumnsForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -416,7 +427,7 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       */
       try {
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+        FNXC:WorkflowResolvedColumns 2026-07-30-08:10 (fleet phase):
         Resolved through the SAME per-pass `listPassIrCache` the hold-column read above already uses, so
         one workflow is read once per pass rather than once per card.
 
@@ -559,13 +570,13 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     card count. Unlike hold — which only matters for a paused card — the review signals
     apply to any row, so this resolves for every row on the page.
     */
-    const reviewColumnByTaskId = new Map<string, string>();
+    const reviewColumnsByTaskId = new Map<string, ReadonlySet<string>>();
     const lifecycleByTaskId = new Map<string, Awaited<ReturnType<typeof resolveTaskLifecycleColumns>>>();
     {
       const irCache = new Map<string, WorkflowIr>();
       for (const pgRow of pageRows) {
         const row = store.pgRowToTaskRow(pgRow);
-        reviewColumnByTaskId.set(row.id, await resolveReviewColumnForTask(store, row.id, irCache));
+        reviewColumnsByTaskId.set(row.id, await resolveReviewColumnsForTask(store, row.id, irCache));
         lifecycleByTaskId.set(row.id, await resolveTaskLifecycleColumns(store, row.id, irCache));
         if (store.rowToTask(row).paused !== true) continue;
         holdColumnByTaskId.set(row.id, await resolveHoldColumnForTask(store, row.id, irCache));
@@ -592,18 +603,18 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
-      const reviewColumnForRow = reviewColumnByTaskId.get(task.id) ?? "in-review";
+      const reviewColumnsForRow = reviewColumnsByTaskId.get(task.id) ?? new Set<string>(["in-review"]);
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
-        reviewColumn: reviewColumnForRow,
+        reviewColumns: reviewColumnsForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
-        reviewColumn: reviewColumnForRow,
+        reviewColumns: reviewColumnsForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -622,7 +633,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
             now,
             thresholds: staleThresholds,
             /*
-            FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (fleet — the omitted sibling site):
+            FNXC:WorkflowLifecycleColumns 2026-07-30-09:00 (fleet — the omitted sibling site):
             THE MODIFIED-SINCE PASS NEEDS THE LANES TOO. #2746 threaded `lifecycle` into the list
             pass above and left this one on the defaults, so a renamed board still produced no
             age-staleness badge for any card arriving through the incremental refresh — which is the
@@ -725,7 +736,7 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
-        reviewColumn: await resolveReviewColumnForTask(store, task.id, searchPassIrCache),
+        reviewColumns: await resolveReviewColumnsForTask(store, task.id, searchPassIrCache),
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,

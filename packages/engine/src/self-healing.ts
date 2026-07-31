@@ -8440,7 +8440,33 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
       const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:05 (the query-filter class — the LAST read-shaped one):
+      `listTasks({ column: "in-review" })` returns EMPTY on a renamed board, so `surfaceInReviewStalls`
+      surfaced nothing: a card stalled in review past `taskStuckTimeoutMs` was never kicked back to the
+      hold lane, and the operator saw a review column that silently stopped draining. Same shape as the
+      twenty-odd siblings in this file, documented in
+      `docs/solutions/architecture-patterns/self-healing-sweeps-are-blind-on-a-renamed-board.md`.
+
+      Read via the project UNION and de-duplicate by id: a board mid-rename has rows under both the old
+      and the new id, and over-inclusion costs one extra query whose rows the per-card guards below then
+      filter. Under-inclusion is what was broken.
+
+      `allowsAutoMergeProcessing` and `getInReviewStallReason` already gate every card individually, so
+      no second lane test is needed here — the union only decides which rows are LOOKED at.
+
+      Measured, not claimed: `lifecycle-column-census.mjs --json` reports `queryRoles.read` at 2 before
+      this change and 1 after. I first wrote "the last one, 1 -> 0" and the tool said otherwise — one
+      more read-shaped query survives elsewhere. Stating the number I actually saw rather than the one
+      that would have read better, because a comment asserting a fact about the rest of the tree is the
+      decay class this program has already had to correct twice.
+      */
+      const stallReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const stallCandidatesById = new Map<string, Task>();
+      for (const column of stallReviewColumns) {
+        for (const task of await this.store.listTasks({ column, slim: false })) stallCandidatesById.set(task.id, task);
+      }
+      const tasks = [...stallCandidatesById.values()];
       let surfaced = 0;
 
       for (const task of tasks) {
