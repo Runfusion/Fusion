@@ -39,6 +39,40 @@ deliberate, are both real decisions with real blast radius. Neither is a fleet c
 templates are worse again: one of them is a hand-written `SELECT` string, so its comparison is not even
 a Drizzle expression that could take a bound value without rewriting the query.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE TS HALF — mostly already converted; the inventory
+counts FALLBACK ARMS, which is why 20 reads as 20 outstanding guards and is not):
+Sampled the TS inventory the same way. It does not decompose into LANE/STATE the way the SQL half
+does, because most entries are not pending conversions at all:
+
+  FALLBACK ARM of an already-converted guard — the literal is reached only when a caller supplies no
+  resolved set, and it is the documented degraded answer:
+    async-comments-attachments.ts   `archivedColumns ? has(row.column) : row.column === "archived"`
+                                    — already marked DELIBERATE-LITERAL / FALLBACK ARM in place.
+    update-task-deps.ts:406-408     resolved arm first (`lifecycle?.archived ?? "archived"`), literal
+                                    last.
+    task-merge.ts:478,489           `if (!columns) return dependency.column === "done" || ...` — the
+                                    whole branch is the no-metadata fallback.
+
+  STATE / SENTINEL, not a lane:
+    task-id-integrity.ts:444        compares `getLiveTaskColumn`'s MANUFACTURED "archived", which that
+                                    function returns for archived OR SOFT-DELETED rows. A normalized
+                                    sentinel; resolving it would compare a lane id against a value no
+                                    lane produces.
+    archive-lifecycle-2.ts:47       `column: "archived"` is a WRITE — it SETS the archive state.
+
+So the TS count overstates outstanding work in the OPPOSITE direction from the SQL count: the SQL half
+had two sites that must never be converted, and the TS half has several that are already correct.
+
+WHAT THIS MEANS FOR THE DECISION. "52 sites across three encodings" is the number the gate must keep
+in LOCKSTEP, not the number a conversion has to CHANGE. After triage the conversion is the six LANE
+Drizzle sites plus whatever small TS remainder is neither a fallback arm nor a sentinel — with the
+inventories updated in the same commit so the three encodings stay in step.
+
+That is a materially smaller and better-understood change than the headline implies, and it is now
+specified rather than estimated. Still not done here: the gate requires one coordinated commit, and
+the remaining judgement is per-site verification of the TS remainder, which wants the owner making the
+conversion rather than a third pass of sampling.
+
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE TRIAGE, DONE — 8 SQL sites classified with evidence):
 The scoping note below says the first question is "which of these are LANE questions and which are
 STATE markers?" and that nobody had answered it. Answered here for the Drizzle half, per site, by
