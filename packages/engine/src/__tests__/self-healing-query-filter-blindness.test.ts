@@ -899,4 +899,56 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-11:00 (the query-filter class, twenty-third sweep):
+  `recoverTransientMergeFailures` refunds the retry budget for a merge that failed for a TRANSIENT reason
+  and burned all its retries. The literal read meant that on a renamed board the refund never happened,
+  so a card that failed on a network blip or a provider fault stayed failed permanently — visibly failed
+  to the operator, with no visible cause.
+
+  The error string is a REAL signature (`classifyTransientMergeError` matches "ACP turn failed"), not
+  invented prose. An unrecognised string is filtered out one line later and the case would pass with the
+  fix reverted — the same trap that produced the post-done wedge fixture's first failure.
+
+  Observable is the injected `requeueForAutoMerge`, called once per recovered card.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function transientFixture(column: string) {
+    const failed = {
+      ...shippedCard(),
+      id: "FN-TRANSIENT",
+      column,
+      status: "failed",
+      mergeRetries: 99,
+      error: "ACP turn failed while merging",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([failed]);
+    const requeueForAutoMerge = vi.fn(async () => true);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo", requeueForAutoMerge });
+    return { manager, requeueForAutoMerge };
+  }
+
+  it("refunds a transient merge failure on a RENAMED review lane", async () => {
+    const { manager, requeueForAutoMerge } = transientFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverTransientMergeFailures();
+
+    expect(requeueForAutoMerge).toHaveBeenCalled();
+  });
+
+  it("does not refund a transient failure for a card outside the review lanes", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A
+    failed card in the wip lane has not reached merge at all — there is no merge budget to refund.
+    */
+    const { manager, requeueForAutoMerge } = transientFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverTransientMergeFailures();
+
+    expect(requeueForAutoMerge).not.toHaveBeenCalled();
+  });
 });

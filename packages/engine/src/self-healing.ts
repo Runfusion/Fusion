@@ -8517,9 +8517,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
 
-      const slim = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:55 (the query-filter class, twenty-third sweep):
+      A merge that failed for a TRANSIENT reason and burned its whole retry budget. The literal read
+      meant that on a renamed board the retry budget was never refunded, so a card that failed on a
+      network blip stayed failed permanently — an operator-visible failure with no operator-visible cause.
+
+      The `t.column === "in-review"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const transientReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const transientById = new Map<string, Task>();
+      for (const column of transientReviewColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) transientById.set(entry.id, entry);
+      }
+      const slim = [...transientById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const transientLanes = new Map<string, Set<string>>();
+      for (const entry of slim) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          transientLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(transientReviewColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          transientLanes.set(entry.id, new Set(transientReviewColumns));
+        }
+      }
       const candidates = slim.filter((t) =>
-        t.column === "in-review"
+        (transientLanes.get(t.id) ?? transientReviewColumns).has(t.column)
         && allowsAutoMergeProcessing(t, settings)
         && t.status === "failed"
         && (t.mergeRetries ?? 0) >= maxAutoMergeRetries
@@ -8537,10 +8566,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const slimTask of candidates) {
         const task = await this.store.getTask(slimTask.id).catch(() => null);
         if (!task) continue;
-        // Re-check selector on the full row — the slim snapshot is best-effort
-        // and may be stale once we await.
+        /*
+        Re-check selector on the full row — the slim snapshot is best-effort and may be stale once we
+        await. FNXC:WorkflowResolvedColumns 2026-07-31-11:10: this SECOND lane guard converts with the
+        first. Converting only the read left it rejecting every renamed-board card the widened query
+        found, and the new test failed on exactly that — the "convert the pair or neither" rule, caught
+        by the test rather than by reading.
+        */
         if (
-          task.column !== "in-review"
+          !(transientLanes.get(task.id) ?? transientReviewColumns).has(task.column)
           || task.status !== "failed"
           || (task.mergeRetries ?? 0) < maxAutoMergeRetries
         ) {
