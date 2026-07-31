@@ -4,6 +4,8 @@
   "deliberateByFile": {
     "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 6,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
+    "packages/engine/src/scheduler.ts\u0000archived": 3,
+    "packages/engine/src/scheduler.ts\u0000done": 3,
     "packages/engine/src/scheduler.ts\u0000in-progress": 3,
     "packages/engine/src/scheduler.ts\u0000in-review": 3,
     "packages/engine/src/self-healing.ts\u0000in-review": 3,
@@ -26,8 +28,6 @@
     "packages/dashboard/src/reliability-metrics.ts\u0000in-review": 2,
     "packages/engine/src/auto-merge-finalization.ts\u0000done": 2,
     "packages/engine/src/cli-agent/state-machine.ts\u0000done": 2,
-    "packages/engine/src/scheduler.ts\u0000archived": 2,
-    "packages/engine/src/scheduler.ts\u0000done": 2,
     "packages/engine/src/self-healing.ts\u0000done": 2,
     "packages/engine/src/triage.ts\u0000triage": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,

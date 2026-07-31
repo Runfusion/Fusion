@@ -57,7 +57,7 @@ function invariantError() {
 
 describe("workflow column boundary — global pause suspends at every node entry", () => {
   /*
-  FNXC:EnginePause 2026-08-01-00:30:
+  FNXC:EnginePause 2026-07-31-23:30:
   Operator regression: Stop AI Engine (globalPause) did not stop the graph — a live run started a
   fresh Plan Review model session two minutes after pause, because no node boundary ever re-read
   settings. These fail if the `isPaused` probe is removed from onNodeEntry.

@@ -177,7 +177,7 @@ export interface WorkflowColumnBoundaryHooks {
   clearPin?: () => void | Promise<void>;
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
   onSuspend?: WorkflowColumnBoundaryDeps["onSuspend"];
-  /** FNXC:EnginePause 2026-08-01-00:20: polled at every node entry (see boundary deps). */
+  /** FNXC:EnginePause 2026-07-31-23:20: polled at every node entry (see boundary deps). */
   isPaused?: WorkflowColumnBoundaryDeps["isPaused"];
 }
 

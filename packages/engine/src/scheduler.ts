@@ -2230,6 +2230,21 @@ export class Scheduler {
       membership — wip cards without a worktree yet still reserve (they are about to acquire), and
       terminal lanes are excluded because their retained worktrees are cleanup-owned, not capacity.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:26:
+      DELIBERATE-LITERAL — the no-flags fallback, which is the documented shape for this family
+      (`live-agent-count.ts`, `DocumentsView.tsx`, `column-roles.ts` all use it). Flags decide
+      whenever the board resolves, and they cover renamed and custom terminal lanes; the literal is
+      reached only when `columnFlagsForTask` answers undefined, where there is nothing to resolve
+      FROM and inventing "not terminal" would over-count worktree holders against `maxWorktrees`.
+
+      Marked rather than converted because the resolved path already exists one line above. The
+      census scans comparisons and cannot see that the branch is unreachable on a board it can read,
+      so it counted these two as a backlog RISE (scheduler.ts 0 -> 2) and turned `--strict` red on
+      main. The marker is the census's own prescribed resolution for a correct literal, and it must
+      live in the declaration's LEADING comments — a mid-expression marker attaches to the wrong
+      node and is silently ignored.
+      */
       const isTerminalColumnTask = (task: Task): boolean => {
         const flags = columnFlagsForTask(task);
         if (flags) return flags.complete === true || flags.archived === true;

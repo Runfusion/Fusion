@@ -79,7 +79,7 @@
   "packages/engine/src/merger.ts": 2,
   "packages/engine/src/mission-symbol-admission.ts": 1,
   "packages/engine/src/pi.ts": 3,
-  "packages/engine/src/project-engine.ts": 8,
+  "packages/engine/src/project-engine.ts": 7,
   "packages/engine/src/restart-recovery-coordinator.ts": 1,
   "packages/engine/src/runtime-resolution.ts": 1,
   "packages/engine/src/runtimes/in-process-runtime.ts": 4,
