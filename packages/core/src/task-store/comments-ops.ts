@@ -63,7 +63,7 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       /*
-      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      FNXC:LifecycleColumnCensus 2026-07-30-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
       This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
       "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
@@ -340,13 +340,13 @@ Shared by both document paths so the "is this card archived?" answer cannot diff
 guard and the publication guard — one saying yes while the other says no is how a card ends up both
 read-only and un-publishable.
 
-FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+FNXC:WorkflowLifecycleColumns 2026-07-30-04:10:
 The helper that used to live here now lives in `project-lane-vocabulary.ts` and is imported. It grew a
 THIRD caller (`getLiveTaskColumn`, whose sentinel a dozen sites compare against), and three private
 copies of one fact is how the disagreement above happens at scale rather than between two functions.
 The analysis below is unchanged and still governs the shape.
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-31-03:35 (#2886 review — greptile P1, "project-wide lanes
+FNXC:WorkflowLifecycleColumns 2026-07-30-03:35 (#2886 review — greptile P1, "project-wide lanes
 misclassify tasks"): THE FINDING IS RIGHT AND THE OBVIOUS FIX IS A WORSE TRADE. Measured, not argued.
 
 The union includes a column if ANY enabled workflow calls it archived, so where two workflows reuse an

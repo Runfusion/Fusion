@@ -219,7 +219,7 @@ describe("resume lanes come from the task's own workflow", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-30-21:30 (a MISSED PAIR in resumeOrphaned):
+FNXC:WorkflowResolvedColumns 2026-07-30-19:30 (a MISSED PAIR in resumeOrphaned):
 `listWipLaneTasks()` already resolved the wip lane by role, and the filter beneath it did NOT — it
 re-asserted the literal `in-progress` on the rows that read returned. So on a renamed board the read
 found the orphans and the filter discarded every one.

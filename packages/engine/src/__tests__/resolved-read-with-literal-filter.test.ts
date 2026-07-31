@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the MISSED PAIR ratchet, generalised past self-healing):
+FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (the MISSED PAIR ratchet, generalised past self-healing):
 
 THE DEFECT THIS CATCHES, found in `executor.ts` after the sibling ratchet found five in
 `self-healing.ts`: a function resolves its lane by ROLE and then re-asserts a column LITERAL on the

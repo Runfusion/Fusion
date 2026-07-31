@@ -1,5 +1,5 @@
 /*
-FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the missed-pair ratchet):
+FNXC:WorkflowResolvedColumns 2026-07-30-11:55 (the missed-pair ratchet):
 A sweep whose READ was converted to resolved lanes but whose LOOP-BODY guards still compare column ids
 is worse than one converted nowhere. The widened read admits renamed-board cards, and every literal
 guard below it then mis-classifies exactly those cards.
