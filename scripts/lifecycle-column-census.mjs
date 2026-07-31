@@ -545,7 +545,20 @@ if (regressions.length > 0) {
         "  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n"
       : "\nResolve a lifecycle column from the task's own workflow (resolveLifecycleColumns /\n" +
         "resolveTaskLifecycleColumns) instead of comparing its name. If the literal is genuinely\n" +
-        `correct, record why at the site with a ${"DELIBERATE-LITERAL"} marker.\n`,
+        `correct, record why at the site with a ${"DELIBERATE-LITERAL"} marker.\n` +
+        /*
+        FNXC:LifecycleColumnCensus 2026-07-31-09:10 (placement is the failure nobody sees):
+        A marker in the wrong POSITION is indistinguishable from no marker, and the miss is silent until
+        CI. Measured on #2883: the marker sat inline in the middle of a conditional expression, attached
+        to the wrong node, and three reviewed literals scored as new debt (self-healing.ts 86 -> 89).
+
+        The second line is here because `pnpm lint` does NOT run this script — CI's Lint job does — so
+        the usual "lint passed locally" loop cannot catch either mistake.
+        */
+        `\nPut the ${"DELIBERATE-LITERAL"} marker in the DECLARATION's leading comments, not inline in an\n` +
+        "expression: markers are read from a node's leading comments, so a mid-expression one attaches to\n" +
+        "the wrong node and is silently ignored. Hoist the literal into a named helper if you need to.\n" +
+        "Note that `pnpm lint` does NOT run this census — run it explicitly before pushing.\n",
   );
   process.exit(1);
 }
