@@ -23,6 +23,7 @@
     "check:sql-column-literals": "node scripts/check-sql-column-literals.mjs",
     "check:inert-flag-seams": "node scripts/check-inert-flag-seams.mjs",
     "check:fnxc-future-dates": "node scripts/check-fnxc-future-dates.mjs",
+    "check:lane-wiring": "node scripts/check-lane-wiring.mjs",
     "census:lifecycle-columns": "node scripts/lifecycle-column-census.mjs",
     "check:quarantine-ledger": "node scripts/check-quarantine-ledger.mjs",
     "check:mock-completeness": "node scripts/check-mock-completeness.mjs",

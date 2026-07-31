@@ -62,6 +62,8 @@ jobs:
         run: pnpm check:inert-flag-seams
       - name: FNXC stamp dates
         run: pnpm check:fnxc-future-dates
+      - name: Lane-wiring ratchet
+        run: pnpm check:lane-wiring
 
   typecheck:
     name: Typecheck
