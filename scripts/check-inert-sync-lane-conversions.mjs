@@ -175,7 +175,17 @@ DELIBERATELY NOT full dataflow: `const` object construction only — no function
 cross-module spread, no reassignment. The LIMITS section above still governs.
 */
 function syncLaneLocals(sf, sources) {
-  const locals = new Set();
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169 — provenance is PER PROPERTY):
+  The map is name -> tainted role set, not a flat set of names. `null` means "every role", which is
+  what a DIRECT sync local is; an object rebuilt from one taints only the properties whose VALUES read
+  it. Marking a whole object over-approximated: `{ hold: sync?.hold, review: "todo" }` made
+  `lanes.review` count as inert though it is a literal, and `{ sync: "todo" }` matched a local's NAME
+  in a key without reading it. Over-counting is not a safe direction here — it inflates the baseline
+  and trains readers to skip the report, which this program's learnings record as how the next real
+  finding gets missed.
+  */
+  const taint = new Map();
   const objectDecls = [];
 
   const visit = (node) => {
@@ -185,10 +195,21 @@ function syncLaneLocals(sf, sources) {
         const callee = ts.isPropertyAccessExpression(call.expression)
           ? call.expression.name.getText(sf)
           : call.expression.getText(sf);
-        if (sources.has(callee)) locals.add(node.name.getText(sf));
+        if (sources.has(callee)) taint.set(node.name.getText(sf), null);
       }
       if (ts.isObjectLiteralExpression(node.initializer)) {
-        objectDecls.push({ name: node.name.getText(sf), text: node.initializer.getText(sf) });
+        /* Property-level provenance: which KEY, and the text of its VALUE only. A key that merely
+           shares a local's name (`{ sync: "todo" }`) must not taint anything, and a sibling literal
+           (`{ hold: sync?.hold, review: "todo" }`) must not make `review` inert. */
+        const props = [];
+        for (const p of node.initializer.properties) {
+          if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) {
+            props.push({ key: p.name.text, valueText: p.initializer.getText(sf) });
+          } else if (ts.isShorthandPropertyAssignment(p)) {
+            props.push({ key: p.name.getText(sf), valueText: p.name.getText(sf) });
+          }
+        }
+        objectDecls.push({ name: node.name.getText(sf), props });
       }
     }
     ts.forEachChild(node, visit);
@@ -200,28 +221,38 @@ function syncLaneLocals(sf, sources) {
   for (let pass = 0; pass < objectDecls.length + 1; pass += 1) {
     let grew = false;
     for (const decl of objectDecls) {
-      if (locals.has(decl.name)) continue;
-      for (const known of locals) {
-        if (mentionsIdentifier(decl.text, known)) { locals.add(decl.name); grew = true; break; }
+      const tainted = taint.get(decl.name) ?? new Set();
+      const before = tainted.size;
+      for (const prop of decl.props) {
+        if (tainted.has(prop.key)) continue;
+        for (const known of taint.keys()) {
+          if (mentionsIdentifier(prop.valueText, known)) { tainted.add(prop.key); break; }
+        }
       }
+      if (tainted.size > before) { taint.set(decl.name, tainted); grew = true; }
     }
     if (!grew) break;
   }
-  return locals;
+  return taint;
 }
 
 /*
 FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169 — the match could not fire):
 `\b` IS THE WRONG BOUNDARY FOR A JS IDENTIFIER, and the name was interpolated unescaped.
 
-`new RegExp(`\\b${name}\\b`)` breaks on a perfectly legal local. For `$sync` it builds `\b$sync\b`,
-where `$` is an ANCHOR — so the pattern can never match and the laundered guard is silently missed,
-which is the failure mode this scanner exists to prevent. `_sync` fails differently: `\b` sits between
-two non-word positions and does not assert what it looks like it asserts.
+`new RegExp(`\\b${name}\\b`)` is wrong in BOTH directions, and `$` is where each shows up:
 
-So the name is escaped, and the boundary is an explicit identifier boundary — `$` and `_` are
-identifier characters in JS and must not count as separators. Chosen over `\b` deliberately: `\b`
-happens to work for the common case and hides exactly the cases above.
+  MISS   name `$sync` builds `\b$sync\b`, where `$` is an ANCHOR — the pattern can never match, so a
+         laundered guard is silently uncounted. That is the failure this scanner exists to prevent.
+  FALSE  name `sync` builds `\bsync\b`, which DOES match inside `$sync` — `$` is a non-word character,
+         so a word boundary falls between it and `s`. An unrelated local taints the object.
+
+A CORRECTION TO AN EARLIER VERSION OF THIS NOTE, which claimed `_sync` also fails: it does not.
+`_` IS a word character, so `\b_sync\b` matches `_sync` correctly. Checked rather than reasoned
+about, after asserting the opposite here without checking.
+
+So the name is escaped, and the boundary is an explicit identifier class — `$` and `_` are identifier
+characters in JS and must not count as separators in either direction.
 */
 function mentionsIdentifier(haystack, name) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -243,8 +274,15 @@ function countInertGuards(sf, locals, sources) {
     if (!ROLE_FIELDS.has(field)) return undefined;
 
     const base = expr.expression;
-    /* `parked.review` — resolved once into a local. */
-    if (ts.isIdentifier(base) && locals.has(base.getText(sf))) return `${base.getText(sf)}.${field}`;
+    /* `parked.review` — resolved once into a local.
+       A DIRECT sync local taints every role (`null`); an object rebuilt from one taints only the
+       properties whose values read it, so the role must be in that set or this is a sibling literal
+       and not inert at all. */
+    if (ts.isIdentifier(base) && locals.has(base.getText(sf))) {
+      const tainted = locals.get(base.getText(sf));
+      if (tainted === null || tainted.has(field)) return `${base.getText(sf)}.${field}`;
+      return undefined;
+    }
 
     /* `resolveTaskParkedColumnsSync(store, id).review` — resolved inline at the guard. */
     let call = base;

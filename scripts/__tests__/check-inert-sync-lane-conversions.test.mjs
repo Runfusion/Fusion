@@ -250,3 +250,56 @@ test("matches a laundered sync local whose name contains regex metacharacters", 
     rmSync(probe, { force: true });
   }
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169 — OVER-approximation):
+Propagation is PER PROPERTY, and these are the negative cases that prove it.
+
+Marking a whole object sync-derived because its text mentioned a local counted guards that read a
+sibling LITERAL (`{ hold: sync?.hold, review: "todo" }` made `lanes.review` inert) and matched a
+local's NAME appearing as a KEY (`{ sync: "todo" }`) without anything reading it.
+
+Over-counting is not the safe direction for this gate. It inflates the baseline — so the allowance
+absorbs real inert conversions later — and it trains readers to skip the report, which this
+program's learnings record as exactly how the next genuine finding gets missed.
+*/
+test("does NOT count a sibling literal in an object that also carries a sync lane", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-mixed.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, from: string, payload: { hold?: string } | undefined): boolean {`,
+    `  const sync = payload ? undefined : localSync(store, id);`,
+    `  const lanes = { hold: payload?.hold ?? sync?.hold ?? "todo", review: "in-review" };`,
+    `  return from !== lanes.review;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    /* `lanes.hold` IS sync-derived, but nothing reads it here; the only guard reads `lanes.review`,
+       which is a literal. So the file must contribute nothing. */
+    assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-mixed.ts"] ?? 0, 0);
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
+
+test("does NOT count an object whose KEY merely shares a sync local's name", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-keyname.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `export function probe(store: unknown, id: string, from: string, payload: { hold?: string } | undefined): boolean {`,
+    `  const sync = payload ? undefined : localSync(store, id);`,
+    `  void sync;`,
+    `  const lanes = { sync: "todo", hold: "todo" };`,
+    `  return from !== lanes.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-keyname.ts"] ?? 0, 0);
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
