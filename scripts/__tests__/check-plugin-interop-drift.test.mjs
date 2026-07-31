@@ -38,3 +38,31 @@ test("a memo()-wrapped export is PRESENT but not comparable", () => {
 test("a non-exported function is invisible", () => {
   assert.equal(parse("function hidden(a) { return a; }").has("hidden"), false);
 });
+
+/*
+FNXC:PluginInteropDrift 2026-07-31-08:20:
+INTERFACES ARE ONE-DIRECTIONAL: fewer properties is correct, unknown ones are the drift.
+
+All six mirrors declare subsets (6, 8, 7, 7, 3, 6 against the real nine) because a plugin mirrors
+only the fields it uses. Demanding equality would fail every plugin for not using everything, which
+is how a check gets deleted. A property the real type lacks is a rename nobody propagated — the
+plugin keeps compiling and reads a field the host never sends.
+*/
+import { declaredInterfacesForTest } from "../check-plugin-interop-drift.mjs";
+
+test("an interface's property names are collected", () => {
+  const found = declaredInterfacesForTest("export interface P { a: string; b?: number }", "t.tsx");
+  assert.deepEqual([...(found.get("P") ?? new Map()).keys()], ["a", "b"]);
+});
+
+test("a mirror declaring FEWER properties is not drift", () => {
+  const real = declaredInterfacesForTest("export interface P { a: string; b?: number; c?: boolean }", "t.tsx").get("P");
+  const mirrored = ["a"];
+  assert.equal(mirrored.every((p) => real.has(p)), true);
+});
+
+test("a mirror declaring an UNKNOWN property is drift", () => {
+  /* The live case: `TaskCardProps.workflowStepNameLookup` outlived its removal from TaskCard. */
+  const real = declaredInterfacesForTest("export interface P { a: string }", "t.tsx").get("P");
+  assert.equal(real.has("workflowStepNameLookup"), false);
+});

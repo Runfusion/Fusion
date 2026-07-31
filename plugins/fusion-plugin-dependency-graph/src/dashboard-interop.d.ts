@@ -64,7 +64,6 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
     /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the prop the host card already accepts; without it
        declared here a plugin-drawn card could not be given the board's traits at all. */
     taskColumnFlags?: Partial<TraitFlags>;
-    workflowStepNameLookup?: ReadonlyMap<string, string>;
     disableDrag?: boolean;
   }
 
