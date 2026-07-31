@@ -307,7 +307,26 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
         throw error;
       }
 
-      if (task.column === "archived" || task.deletedAt != null) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-12:30 (fleet — moves.ts cluster):
+      THE ARCHIVE GUARD IS A ROLE QUESTION, resolved from the task's own workflow.
+
+      This refuses a hand-off from an archived card. Against the literal `archived`, a board whose
+      archive lane is renamed never matched, so an archived card could be handed to review — the
+      invariant this error exists to protect, silently unenforced.
+
+      The IR is resolved here rather than 28 lines down where `handoffTarget` already reads it, and
+      that hoist is safe: this function has already awaited `readTaskRowAsync` above, so no new tick
+      boundary is introduced. The later read reuses this one.
+
+      Absent or trait-free IR keeps the legacy id, so an unconverted board is byte-identical.
+      */
+      const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+      const handoffArchivedLanes = handoffIr ? new Set(columnsWithFlag(handoffIr, "archived")) : undefined;
+      const taskIsArchived = handoffArchivedLanes && handoffArchivedLanes.size > 0
+        ? handoffArchivedLanes.has(task.column)
+        : task.column === "archived";
+      if (taskIsArchived || task.deletedAt != null) {
         throw new HandoffInvariantViolationError(
           taskId,
           task.column,
@@ -335,7 +354,7 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
       is the lane a completion handoff belongs in; a `humanReview`-only lane is somewhere a card can BE
       in review, not somewhere the engine should PUT it.
       */
-      const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+      /* Reuses the IR hoisted for the archive guard above rather than resolving twice. */
       const handoffTarget = (handoffIr ? resolveLifecycleColumns(handoffIr)?.review : undefined) ?? "in-review";
 
       return store.moveTaskInternal(
