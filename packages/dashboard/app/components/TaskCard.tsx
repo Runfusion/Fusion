@@ -1063,6 +1063,26 @@ function TaskCardComponent({
   const isCompleteColumn = isCompleteColumnRole(taskColumnFlags, task.column);
   const isArchivedColumn = isArchivedColumnRole(taskColumnFlags, task.column);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:15:
+  THE TIME-INDICATOR GATE IS A ROLE QUESTION, not membership of a hardcoded id set.
+
+  `TIME_INDICATOR_COLUMNS` is `{in-progress, in-review, done}`, so a card in a renamed WIP, review or
+  completion lane was rejected before its traits were consulted and rendered no elapsed time at all.
+  #2996 fixed the SUBSCRIPTION for these cards — the memo that decides whether to join the shared
+  ticker kept a pre-load answer — which made them eligible and still not visible, because this gate
+  rejects them first. Both halves are needed; that PR's claim covered only one.
+
+  The census could not point here: it counts COMPARISONS against legacy ids, and this is a Set
+  literal, which is a DEFINITION. Same blind spot that hid `BLOCKER_ESCALATION_COLUMNS`.
+
+  DELIBERATE-LITERAL — the legacy set stays as the no-flags fallback, so a card whose traits have not
+  resolved (first paint, or a lane its workflow no longer declares) behaves exactly as before.
+  */
+  const showsTimeIndicator = taskColumnFlags
+    ? isWipColumn || isReviewColumn || isCompleteColumn
+    : TIME_INDICATOR_COLUMNS.has(task.column);
+
   const [isSaving, setIsSaving] = useState(false);
   const [showSteps, setShowSteps] = useState(
     isWipColumn ||
@@ -1754,7 +1774,7 @@ function TaskCardComponent({
   const timeIndicatorNowMs = useLiveTimeTicker(wantsLiveTimeIndicator);
 
   const timeIndicator = useMemo(() => {
-    if (!TIME_INDICATOR_COLUMNS.has(task.column)) {
+    if (!showsTimeIndicator) {
       return null;
     }
 
@@ -3129,7 +3149,7 @@ function TaskCardComponent({
     return null;
   })();
 
-  const chipFarRight = TIME_INDICATOR_COLUMNS.has(task.column)
+  const chipFarRight = showsTimeIndicator
     && filesChangedButton == null
     && showTrackingIndicator
     && Boolean(githubTrackedIssue);
