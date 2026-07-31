@@ -105,7 +105,14 @@ function createStore(ir: WorkflowIr, workflowId: string = WF): TaskStore {
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => ({ ir })),
-    resolveTaskWorkflowIrSync: vi.fn(() => ir),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    The `resolveTaskWorkflowIrSync` stub is REMOVED, and it was redundant: this suite passes without
+    it. That reader answers with the DEFAULT board for every task in production, so stubbing it with a
+    working IR feeds the broken reader the right answer — the suite would keep passing even if its
+    call site stopped resolving. Audited across the 8 files that stubbed it (#3197): four were
+    redundant like this one, one is legitimately about the sync path, one was masking real inertness.
+    */
     logEntry: vi.fn(),
   } as unknown as TaskStore;
 }
