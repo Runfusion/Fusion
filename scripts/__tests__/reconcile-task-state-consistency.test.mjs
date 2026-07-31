@@ -106,7 +106,7 @@ test("apply reconciles done task and emits exactly one note", async () => {
 });
 
 /*
-FNXC:OperatorScriptLaneAssumptions 2026-07-30-26:10:
+FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:10:
 THE INVARIANT: both consistency checks ask the task's OWN lanes, and they failed in OPPOSITE directions.
 
 Keyed on the literals, `hasDoneTransient` (`column === "done"`) NEVER fires on a renamed board, so a
