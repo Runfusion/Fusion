@@ -343,6 +343,35 @@ tool and a bad ratchet; the distinction is worth keeping.
 The triage that does work is cheap: run the scan, then for each hit ask the two questions above. Nine
 of the nineteen survive question 1; hand-checking those is an afternoon, not a project.
 
+### A deferral's stated blocker is a claim, and it decays the same way a measurement does
+
+Two pieces of work were filed rather than fixed in one session, each with a specific technical reason.
+Both reasons were wrong, and in both cases the real obstacle was smaller than the stated one.
+
+- **"The plugin has no scaffolding for faking its stores."** It had `_harness.ts`, building a real
+  `PluginContext` over a live PostgreSQL layer. The gap was two missing readers on a stub — additive,
+  and inert for every existing suite. The filed issue was a pipeline that stalls forever on a renamed
+  board, so the cost of that excuse was a real stall sitting open behind a plausible-sounding note.
+- **"Supplying this needs a published-API change."** The type was dashboard-internal and the SDK
+  package is `private: true`. Every consumer was in-repo. Building the chain took minutes and
+  surfaced a different, smaller obstacle: the plugin compiles against stale dashboard type
+  declarations, which is build plumbing rather than an API decision.
+
+The shape is the same both times: **the blocker was asserted from the shape of the problem rather than
+tested.** "This needs infrastructure that does not exist" and "this crosses a published boundary" are
+both checkable in about five minutes, and neither was checked before writing a paragraph explaining
+why the work could not proceed.
+
+Filing is often right — someone else owns the contract, the fix needs a decision, the data genuinely
+is not there. What makes it wrong is filing on an *untested* blocker, because a filed issue with a
+confident rationale is the one thing nobody re-derives. It reads as settled. That is the same
+mechanism as a stale "do not re-probe" note, one level up: there a measurement went stale, here a
+decision did.
+
+The rule that costs nothing: **before writing the blocker down, spend five minutes trying to hit it.**
+If it is real you will hit it immediately and can describe it precisely, which makes the issue more
+useful. If it is not, you have the fix instead of the issue.
+
 ### The probe harness lies more often than the gate does
 
 Probing four gates with unimagined shapes in one session produced **two rounds of silently invalid
