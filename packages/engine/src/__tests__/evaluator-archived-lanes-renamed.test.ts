@@ -99,12 +99,23 @@ async function archivedLanesHandedToCollector(archivedColumn: string): Promise<s
 }
 
 describe("evaluator resolves the board's own archived lanes", () => {
-  it("default vocabulary: hands the collector the archived lane", async () => {
-    expect(await archivedLanesHandedToCollector("archived")).toContain("archived");
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-22:35 (#3224 review follow-up — the half that was right):
+  EXACT SET, not `toContain`. The review asked for an exact SINGLE-column set (`["vaulted"]`), which
+  fails — see the note below on the legacy floor. But its underlying worry survives that correction:
+  `toContain` also passes when the set grows a lane nobody intended, and an over-broad archived set
+  silently classifies live rows as archived.
+
+  The exact set is assertable, it just is not the one the review proposed. `[...].sort()` in the
+  helper makes the ordering stable, so these pin the resolver's whole answer: the legacy floor plus
+  the board's own lane, and nothing else.
+  */
+  it("default vocabulary: hands the collector exactly the archived lane", async () => {
+    expect(await archivedLanesHandedToCollector("archived")).toEqual(["archived"]);
   });
 
-  it("renamed vocabulary: hands the collector the RENAMED archived lane", async () => {
-    expect(await archivedLanesHandedToCollector("vaulted")).toContain("vaulted");
+  it("renamed vocabulary: hands the collector exactly the legacy floor plus the RENAMED lane", async () => {
+    expect(await archivedLanesHandedToCollector("vaulted")).toEqual(["archived", "vaulted"]);
   });
 
   it("both vocabularies resolve their OWN lane — no column-id literal survives on this path", async () => {
