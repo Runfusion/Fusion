@@ -168,7 +168,7 @@ pgDescribe("scheduler parked-column resolution against a live store", () => {
 
   it("REGRESSION — a dependent in a RENAMED hold column IS unblocked when its blocker is deleted", async () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-08-01-02:20 (fleet — the flip this test was written to catch):
+    FNXC:WorkflowResolvedColumns 2026-07-31-22:20 (fleet — the flip this test was written to catch):
     This was a CHARACTERIZATION of the inert sync read: `resolveTaskParkedColumnsSync` answered
     `{ hold: "todo" }` for a board whose hold column is `backlog`, so the reconciliation queried a
     column that does not exist, found no dependents, and left `blockedBy` pointing at a deleted task.
