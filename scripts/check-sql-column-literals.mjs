@@ -37,6 +37,30 @@ import ts from "typescript";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGES = join(REPO, "packages");
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:58:
+`scripts/` is scanned, and `.mjs` counts — the operator scripts were the one place raw SQL actually
+lived, and this gate could not see any of it.
+
+Found by removing a raw-SQL lane literal from `scripts/reconcile-leaked-soft-deletes.mjs` and watching
+this gate report "22 known, none added" — unchanged and green. Its own header promises the opposite
+("a LOWER count fails too so the baseline is ratcheted down"), so the silence was the tell.
+
+TWO changes, and either alone still sees nothing: the walk started at `packages` only, and the filter
+took `.tsx?`, while every operator script is a repo-root `.mjs`. Adding one without the other scans
+nothing new and reports a reassuring zero — the same trap #2978 hit widening the lane-wiring census.
+
+This does NOT contradict the `.sql` note below. That reasoning is about feeding DDL to a TypeScript
+parser; `.mjs` IS JavaScript, so the existing AST walk applies unchanged.
+
+The ScriptKind move is DEFENSIVE, and I could not demonstrate it was necessary — stated plainly
+because the opposite claim would be easy to make and wrong. TSX reads `<` as JSX, so an ordinary
+comparison in a plain script is a plausible misparse; I tried three shapes for it
+(`x <div> y`, `f<b, c>(d)`, a literal between `<` and `>` comparisons) and TSX recovered from all of
+them, returning the same count as JS. So JS is used for `.mjs` because it is the correct kind for the
+file, not because a miss was observed.
+*/
+const SCRIPTS = join(REPO, "scripts");
 const BASELINE = join(REPO, "scripts", "lib", "sql-column-literals-baseline.json");
 const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2e", ".gate-bundle", "coverage"]);
 
@@ -132,7 +156,7 @@ function* walk(dir) {
     data backfill (`UPDATE tasks SET column = ...`) landing in a migration. If one ever does, this
     needs a separate raw-text matcher against `COMPARISON`, not an entry in the filter below.
     */
-    else if (/\.tsx?$/.test(full) && !/\.d\.ts$/.test(full)) yield full;
+    else if (/\.(tsx?|mjs)$/.test(full) && !/\.d\.ts$/.test(full)) yield full;
   }
 }
 
@@ -326,9 +350,11 @@ const matches = [];
 
 function scan() {
   const counts = {};
-  for (const file of walk(PACKAGES)) {
+  for (const file of [...walk(PACKAGES), ...walk(SCRIPTS)]) {
     const source = readFileSync(file, "utf8");
-    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    /* The correct kind for the file. Defensive rather than a proven fix — see the header. */
+    const kind = file.endsWith(".mjs") ? ts.ScriptKind.JS : ts.ScriptKind.TSX;
+    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind);
     const consts = collectStringConsts(sf);
     let hits = 0;
     const visit = (node) => {

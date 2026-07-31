@@ -12,5 +12,7 @@
   "packages/core/src/task-store/task-artifacts-ops.ts": 1,
   "packages/core/src/task-store/workflow-definitions.ts": 2,
   "packages/core/src/team-analytics.ts": 3,
-  "packages/core/src/workflow-analytics.ts": 3
+  "packages/core/src/workflow-analytics.ts": 3,
+  "scripts/audit-branch-cross-contamination.mjs": 4,
+  "scripts/reconcile-leaked-soft-deletes.mjs": 2
 }
