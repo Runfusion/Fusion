@@ -84,7 +84,6 @@
   "packages/engine/src/restart-recovery-coordinator.ts": 1,
   "packages/engine/src/runtime-resolution.ts": 1,
   "packages/engine/src/runtimes/in-process-runtime.ts": 4,
-  "packages/engine/src/scheduler.ts": 3,
   "packages/engine/src/triage.ts": 6,
   "packages/engine/src/workflow-work-processor.ts": 1,
   "scripts/lib/lifecycle-column-census-ast.mjs": 3,
