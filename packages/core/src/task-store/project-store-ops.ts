@@ -504,6 +504,20 @@ export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFi
     return rows.map((row) => store.rowToRunAuditEvent(row));
   }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — DEAD SYNC PATH, do not convert):
+The literal below would leak a merge-queue entry on a renamed board — a card leaving review would
+never be dequeued — except that this function does not run in production.
+
+It is the SQLite-mode twin. The live path is `dequeueMergeQueueOnColumnExitInTransaction`
+(`async-merge-coordination.ts`), called from `moves.ts`, and it is ALREADY converted: it takes
+`moveReviewColumns` and the caller supplies them. This body reaches for `store.db.prepare`, which
+throws in PostgreSQL backend mode, so a renamed board never gets far enough to be mis-dequeued.
+
+Converting it would mean threading a lane set into a function whose first statement cannot execute.
+Recorded instead, so the census entry is not mistaken for unconverted debt — and so that whoever
+finally deletes the sync SQLite residue can take this with it.
+*/
 export function dequeueMergeQueueOnColumnExitImpl(store: TaskStore, taskId: string, previousColumn: ColumnId, nextColumn: ColumnId, now: string): void {
     if (previousColumn !== "in-review" || nextColumn === "in-review") {
       return;

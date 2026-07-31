@@ -423,6 +423,22 @@ export function isTaskArchivedImpl(store: TaskStore, id: string): boolean {
     from async callers. In backend mode use the in-memory task cache when the
     row is already hydrated; otherwise false (caller should have used async).
     */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL, and narrow):
+    `cached.column` is a real board lane, so a renamed archived column is not recognised and this
+    sync check answers false for a card the board shows as archived.
+
+    Narrow because of what it already concedes: the note above says this path exists only for a row
+    that happens to be hydrated in the cache, and every async caller is told to use
+    `isTaskArchivedAsyncImpl` instead. The authoritative path (below) reads `getLiveTaskColumn`, whose
+    own comparison is the one worth converting — fixing it there makes this file's sentinel check
+    correct without touching it.
+
+    Left counted so the census keeps pointing here, and deliberately NOT converted in isolation: a
+    sync function with no store-scoped workflow read cannot resolve a lane, and converting this one
+    while `getLiveTaskColumn` still keys on the literal would leave the two disagreeing about what
+    archived means.
+    */
         const cached = store.taskCache.get(id);
     return cached?.column === "archived";
 }
