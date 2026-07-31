@@ -79,11 +79,15 @@ for (const file of files) {
   let source;
   try {
     source = readFileSync(join(REPO, file), "utf8");
-  } catch {
-    continue;
+  } catch (error) {
+    /* FNXC:MoveTargetRatchet 2026-07-31-23:55 (#3246 review): an unreadable tracked file made the
+       count silently short, and this count is a claim about the whole tree. Fail closed. */
+    console.error(`check-move-target-literals: cannot read tracked file ${file}: ${error?.message ?? error}`);
+    console.error("check-move-target-literals: refusing to report a count that may be short.");
+    process.exit(2);
   }
   if (!source.includes("moveTask")) continue;
-  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   let count = 0;
   const walk = (node) => {
     if (ts.isCallExpression(node)) {
@@ -91,10 +95,16 @@ for (const file of files) {
         ? node.expression.name.text
         : ts.isIdentifier(node.expression) ? node.expression.text : "";
       if (MOVE_FNS.has(callee)) {
-        for (const arg of node.arguments) {
-          if (ts.isStringLiteral(arg) && LEGACY_COLUMN_IDS.has(arg.text) && !hasDeliberateMarker(node, source)) {
-            count += 1;
-          }
+        /* FNXC:MoveTargetRatchet 2026-07-31-23:55 (#3246 review): DESTINATION ARGUMENT ONLY.
+           moveTask(id, toColumn, options?) and moveTaskInternal(id, toColumn, options, internal,
+           currentTask?) both put the destination at index 1. Scanning every argument counted
+           `{ reason: "done" }` in an options bag as a move target — work that does not exist and
+           that no real fix could clear. Backtick form included. */
+        const destination = node.arguments[1];
+        const isLiteral = destination
+          && (ts.isStringLiteral(destination) || ts.isNoSubstitutionTemplateLiteral(destination));
+        if (isLiteral && LEGACY_COLUMN_IDS.has(destination.text) && !hasDeliberateMarker(node, source)) {
+          count += 1;
         }
       }
     }
