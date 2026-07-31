@@ -116,7 +116,20 @@ guard whose text marks a deliberate deferral. It cannot tell a good reason from 
 far above its guard reads as unflagged. It is a triage aid for choosing work, never a gate — which is
 why it is opt-in and why nothing downstream consumes it.
 */
-const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on/;
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-04:20 (the marker set under-reported, which is the harmful direction):
+Measured after shipping: of nine sites `--triage` listed as unexamined, FOUR carried a full deferral
+note my markers simply did not match — `moves.ts` ("THIS ARM STAYS INLINE, deliberately"),
+`ResearchTaskActionModal.tsx` ("sized here rather than faked"), `audit-ops.ts` ("Not converted
+here because ..."), `mission-store.ts` ("do not convert"). A 44% false-positive rate on a list
+headed "this is the list to pick work from".
+
+Under-reporting is worse than over-reporting for this tool: it sends a worker at a site whose owner
+already wrote down why it must not move, which is exactly the sequence that produced #3114 (converting
+an arm #3108 had flagged hours earlier). Over-reporting would hide real work, so the added phrases are
+specific to declining a conversion rather than generic words like "deliberately" on its own.
+*/
+const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Recorded rather than|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|STAYS INLINE|[Nn]ot converted|do NOT convert|do not convert|sized here|in dead code/;
 
 /** Split the column guards into documented-deferral vs unexamined, by comment proximity. */
 function triageFindings() {
