@@ -149,6 +149,20 @@ function unwrapForSyncCall(node) {
     if (ts.isAwaitExpression(n) || ts.isParenthesizedExpression(n)) return walk(n.expression);
     if (ts.isConditionalExpression(n)) { walk(n.whenTrue); walk(n.whenFalse); return; }
     if (ts.isBinaryExpression(n)) { walk(n.left); walk(n.right); return; }
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-23:55 (ARGUMENT POSITION — the fourth shape):
+    A source call handed to a WRAPPER is still a sync answer. `scheduler.ts` reads
+
+        const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(store, id), lanes);
+
+    which prefers the event payload and falls back to the sync value whenever `lanes` is absent. The
+    callee is `mergeParkedColumns`, not a source, so the walker stopped at the call boundary and the
+    whole file read as clean — measured: 13 guards invisible, the entire scheduler.
+
+    Walking arguments before pushing the call keeps every shape above and adds this one. Still a NAME
+    match, not dataflow; the limits section still applies.
+    */
+    if (ts.isCallExpression(n)) { for (const a of n.arguments) walk(a); }
     out.push(n);
   };
   walk(node);
