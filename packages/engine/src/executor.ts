@@ -3088,17 +3088,20 @@ export class TaskExecutor {
     to the default board under PostgreSQL) whereas a literal can never be right on a renamed board.
     Optimising the guard off a ratchet at the cost of the degraded path is scoring the number.
 
-    MEASURED CONSEQUENCE, and it is not the one I predicted. I expected these to stay counted by
-    `check-inert-sync-lanes` and wrote that down; the gate then reported `executor.ts` at ZERO
-    (12 remaining = triage 7 + scheduler 5). It flags a guard whose lane value comes from the sync
-    resolver, and here the sync result reaches the comparison only through a fallback chain the scan
-    does not follow.
+    THESE TWO GUARDS STAY COUNTED by `check-inert-sync-lanes`, which is the honest state: the sync
+    call is still here, so the ratchet should still point at it. `executor.ts` goes 4 -> 2, from the
+    `isPlannerColumnFor` deletion below, not from these.
 
-    So the ratchet under-reports this shape. That is worth knowing and NOT worth "fixing" by writing
-    the code in whatever form the scanner happens to recognise — the payload-first/sync-fallback shape
-    is the correct one on the merits, and a guard that pushes authors toward a worse degraded path to
-    keep its own count tidy is a guard doing harm. Recorded here so the zero is not read as proof that
-    no sync resolver remains in this file.
+    That took two corrections to get right, recorded because the intermediate state was wrong in a way
+    that looked authoritative. I predicted "stays counted", the gate reported ZERO, and I wrote the
+    under-reporting down as fact. It was a gate defect, not a property of this code: the scan
+    registered a sync local only from a direct call initializer and did not follow one through a
+    conditional (#3169) or through the object literal these lanes are rebuilt into (#3170). With both
+    hops followed the gate reports 2 here — the original prediction.
+
+    The shape was deliberately NOT rewritten to whatever form the scanner recognised. Payload-first
+    with a sync fallback is correct on the merits, and a guard that pushes authors toward a worse
+    degraded path to keep its own count tidy is a guard doing harm — so the scanner was fixed instead.
     */
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = {
