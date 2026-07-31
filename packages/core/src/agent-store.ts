@@ -233,6 +233,16 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
   legacy ids; on a renamed board it falls through to "(<column>)", which is still accurate, just less
   specific).
   */
+  /*
+  DELIBERATE-LITERAL — reviewed 2026-07-31-12:10 (fleet). This picks a WORD for a human reader, not
+  a lifecycle decision: `(not active — done)` versus `(done)`. It degrades gracefully on a renamed
+  board — it falls through to `(<column>)`, still accurate, just less specific — and threading a
+  resolution into a synchronous string builder to choose an adjective is the wrong trade.
+
+  Marked rather than left counted because three separate workers have now independently re-derived
+  this same conclusion. An unmarked correct site costs a fleet cycle every time the census points
+  at it.
+  */
   if (linkedTask.column === "done" || linkedTask.column === "archived") {
     return `Current Task: ${taskId} (not active — ${linkedTask.column})`;
   }
