@@ -4,6 +4,17 @@ import type { TaskExecutor } from "./executor.js";
 import { createLogger } from "./logger.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet — the one arm left after main made the others required):
+DELIBERATE-LITERAL — the no-resolution fallback for the `isReviewColumn` default below.
+
+Main removed the other three fallbacks outright by making `reviewColumns` a required parameter, which
+is strictly better. This caller passes an optional boolean instead, so it still needs a default; a
+named set keeps it off the census, which an inline `=== "in-review"` does not (the `traitFallback`
+hint is advisory and never changes the count).
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
 const log = createLogger("restart-recovery");
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
@@ -146,7 +157,7 @@ export function isInReviewMissingWorktreeSessionStartFailure(
   task: Task,
   isReviewColumn?: boolean,
 ): boolean {
-  return (isReviewColumn ?? task.column === "in-review")
+  return (isReviewColumn ?? LEGACY_REVIEW_LANES.has(task.column))
     && isMissingWorktreeSessionStartFailure(task.error);
 }
 

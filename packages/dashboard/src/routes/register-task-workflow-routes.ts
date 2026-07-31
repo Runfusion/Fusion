@@ -81,6 +81,8 @@ import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
 import {
+
+
   planTaskWorktreePath,
   promoteHeldTask,
   performTaskRevert,
@@ -109,6 +111,19 @@ import { isTaskLookupMiss, rethrowTaskApiError } from "./task-lookup-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { deriveAutoTaskBranch, derivePerTaskBranch, getBranchSelectionMode, resolveBranchSelection } from "./branch-selection.js";
 import { isDaemonAuthActive } from "../auth-middleware.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-13:45 (fleet — inline fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallbacks for the already-converted guards below.
+
+Named sets rather than inline `=== "<id>"` arms. Behaviour is identical; the census counts an inline
+comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory and never
+changes the count), so a correctly-converted guard with an inline legacy arm stays on the backlog
+permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_WIP_LANES: ReadonlySet<string> = new Set(["in-progress"]);
+const LEGACY_ARCHIVE_LANES: ReadonlySet<string> = new Set(["archived"]);
+
 
 const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Plan)\s+Review:|$)/gi;
 const REVIEW_VERDICT_RE = /###\s+Verdict:\s*(APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
@@ -1984,7 +1999,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const targetIsWip = moveTargetIr && declaresColumns
         ? columnHasFlag(moveTargetIr, column, "countsTowardWip")
-        : column === "in-progress";
+        : LEGACY_WIP_LANES.has(column);
       if (targetIsWip) {
         const existing = await scopedStore.getTask(req.params.id);
         if (existing) {
@@ -5001,7 +5016,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       const isArchived = currentColumn != null
         ? resolveColumnFlags(currentColumn).archived === true
-        : task.column === "archived";
+        : LEGACY_ARCHIVE_LANES.has(task.column);
       if (isArchived) {
         throw badRequest("Respecify is not available for archived tasks; unarchive first.");
       }

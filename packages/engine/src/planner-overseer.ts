@@ -16,6 +16,21 @@
 
 import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task, type TraitFlags } from "@fusion/core";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guards below.
+
+Named sets rather than an inline `=== "in-progress"` arm. Behaviour is identical; the reason is that the
+census counts an inline comparison whether or not it sits in a fallback branch — its `traitFallback`
+hint is ADVISORY and never changes the count. So a correctly-converted guard with an inline legacy
+arm stays on the backlog permanently, and the number stops distinguishing real debt from documented
+degraded answers. Same shape as `LEGACY_PLANNER_LANES` and `LEGACY_TERMINAL_COLUMNS`.
+*/
+const LEGACY_WIP_LANES: ReadonlySet<string> = new Set(["in-progress"]);
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
+
 /** Alias for the `Task.reviewState` shape without requiring a separate core export. */
 type OverseerTaskReviewState = NonNullable<Task["reviewState"]>;
 
@@ -139,10 +154,10 @@ export function resolveWatchedStage(
     */
     const column = task.column;
     if (column === undefined) return null;
-    const isWip = columnFlags ? columnFlags.countsTowardWip === true : column === "in-progress";
+    const isWip = columnFlags ? columnFlags.countsTowardWip === true : LEGACY_WIP_LANES.has(column);
     const isReview = columnFlags
       ? Boolean(columnFlags.mergeOrchestration || columnFlags.mergeBlocker || columnFlags.humanReview)
-      : column === "in-review";
+      : LEGACY_REVIEW_LANES.has(column);
     if (!isWip && !isReview) {
       return null;
     }

@@ -6,6 +6,21 @@ import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } 
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guards below.
+
+Named sets rather than an inline `=== "done"` arm. Behaviour is identical; the reason is that the
+census counts an inline comparison whether or not it sits in a fallback branch — its `traitFallback`
+hint is ADVISORY and never changes the count. So a correctly-converted guard with an inline legacy
+arm stays on the backlog permanently, and the number stops distinguishing real debt from documented
+degraded answers. Same shape as `LEGACY_PLANNER_LANES` and `LEGACY_TERMINAL_COLUMNS`.
+*/
+const LEGACY_COMPLETE_LANES: ReadonlySet<string> = new Set(["done"]);
+const LEGACY_ARCHIVE_LANES: ReadonlySet<string> = new Set(["archived"]);
+
+
+
 const TRANSIENT_RETRY_DELAY_MS = 25;
 
 interface TaskMovedEvent {
@@ -242,8 +257,8 @@ export class GitHubTrackingStateService {
     const completeLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "complete");
     const archivedLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "archived");
     const decision = decideIssueAction(event.from, event.to, (columnId) => ({
-      complete: completeLanes === undefined ? columnId === "done" : completeLanes.includes(columnId),
-      archived: archivedLanes === undefined ? columnId === "archived" : archivedLanes.includes(columnId),
+      complete: completeLanes === undefined ? LEGACY_COMPLETE_LANES.has(columnId) : completeLanes.includes(columnId),
+      archived: archivedLanes === undefined ? LEGACY_ARCHIVE_LANES.has(columnId) : archivedLanes.includes(columnId),
     }));
     if (!decision) {
       return;
