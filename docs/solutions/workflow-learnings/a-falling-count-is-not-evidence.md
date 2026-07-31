@@ -120,6 +120,32 @@ must not move is precisely the #3108 → #3114 → #3126 sequence. Over-reportin
 under-reporting manufactures the collision. When in doubt, prefer showing a decided site over hiding
 an open one, and make the marker phrases specific to *declining a conversion* rather than generic.
 
+## Measured: what each lifecycle ratchet cannot see (2026-07-31)
+
+The checklist below says to mutate the shape a ratchet claims to catch and confirm it exits non-zero.
+Run against all five lifecycle gates on one tree, staging a probe file per form. Two were wrong.
+
+| gate | catches | does NOT catch |
+|---|---|---|
+| `lifecycle-column-census` | `===` / `!==` comparisons | ~~membership, switch~~ **fixed** — both were invisible while it printed "a new guard cannot land silently" |
+| `check-move-target-literals` | direct + backtick destinations | ~~ternary destination~~ **fixed**; still misses a destination bound to a local first |
+| `check-sql-column-literals` | `"column"` comparisons, including inside plain template literals — not only drizzle `sql` tags | nothing found; the one miss probed was an invented identifier the schema never uses |
+| `check-inert-sync-lane-conversions` | lane reads via the `resolvePlannerLanes` helper | a DIRECT `store.resolveTaskWorkflowIrSync(...)` read feeding `resolveLifecycleColumns` — inert by the same mechanism, untracked |
+| `check-fnxc-future-dates` | future stamps | nothing found — it caught the author of this table, twice |
+
+Two lessons the table encodes beyond its rows.
+
+**A ratchet's blind spot is invisible in exactly the way its subject is.** Both fixed gaps sat next to
+a printed zero and a sentence promising nothing could land silently. The count was true; the sentence
+was true only for the forms the parser happened to visit.
+
+**Probe correctness is its own trap.** The first census probe measured nothing because the scanner
+enumerates git-tracked files and the probe was untracked — the scanned-file count stayed flat, which
+reads exactly like "no gap". `git add -f` the probe and confirm the scanned count moved. A first
+`DELIBERATE-LITERAL` probe also read as a broken escape hatch until the marker was moved to its own
+line: mid-expression it attaches to the wrong node, which is the documented gotcha and still caught
+the person who had just written it down.
+
 ## Checklist
 
 - Before re-recording a baseline: dump the surviving hits and name which of the three causes applies.
