@@ -88,7 +88,7 @@ import {
 } from "./merger.js";
 import { resolveBranchGroupMergeRouting, type BranchGroupMergeRouting, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { DEFAULT_COMMIT_AUTHOR_EMAIL, DEFAULT_COMMIT_AUTHOR_NAME } from "./worktree-hooks.js";
-import { installWorktreeDependencies } from "./merge-dependency-sync.js";
+import { installWorktreeDependencies, LOCKFILE_CANDIDATES } from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 /*
@@ -899,7 +899,55 @@ export async function landOneRepo(
       agents still run (they may verify documentation or produce merge metadata); only the
       dependency install is skipped.
       */
-      if (ctx.noCommitsExpected === true) {
+      /*
+      FNXC:MergeNoCommits 2026-07-30-19:20 (PR #2501 review — greptile P1, and the flag alone is not
+      safe to trust here):
+      THE BRANCH IS KNOWN TO HAVE COMMITS AT THIS POINT. The `rev-list --count` short-circuit above
+      returns `outcome: "empty"` when the branch is zero commits ahead, so control only reaches this
+      line when it is AHEAD. `noCommitsExpected` is a task-level EXPECTATION set before execution,
+      and nothing revalidates it against what actually landed on the branch — the two empty-lane
+      guards below (#2259 already-landed proof, FN-8141 executor veto) both explicitly carve out
+      `noCommitsExpected` tasks, so they cannot catch the inverse case either.
+
+      So skipping on the flag alone means: a task marked no-commits whose executor did commit a
+      manifest or lockfile change gets its dependency install AND its frozen-lockfile validation
+      skipped, and the change lands unvalidated. That is the review finding, and it is reachable
+      rather than hypothetical.
+
+      Gate on the DIFF instead. The flag still expresses intent — it is what makes us look — but the
+      skip now requires that the branch genuinely touches no dependency-relevant file. A branch that
+      does touch one falls through to the normal sync, which is the behaviour that existed before
+      this option and the one the lockfile guard depends on.
+
+      Fail-safe on an unreadable diff: `git` errors yield "", which contains no manifest path, so we
+      would skip. Treat a FAILED diff as "cannot prove it is safe" and sync, matching the hard-fail
+      contract documented directly above.
+      */
+      let noCommitsDepsSkipAllowed = ctx.noCommitsExpected === true;
+      if (noCommitsDepsSkipAllowed) {
+        const changedRaw = await git(["diff", "--name-only", `${integrationBranch}...${branch}`], repoRootDir)
+          .catch(() => null);
+        if (changedRaw === null) {
+          noCommitsDepsSkipAllowed = false;
+          await log(`AI merge: no-commits task, but the branch diff could not be read — running dependency sync rather than assuming it is safe to skip`);
+        } else {
+          const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
+          const dependencyFiles = changedFiles.filter((file) => {
+            const name = file.split("/").pop() ?? file;
+            return name === "package.json" || LOCKFILE_CANDIDATES.includes(name);
+          });
+          if (dependencyFiles.length > 0) {
+            noCommitsDepsSkipAllowed = false;
+            await log(`AI merge: task is marked no-commits but its branch changes ${dependencyFiles.length} dependency file(s) (${dependencyFiles.slice(0, 3).join(", ")}) — running dependency sync so the lockfile is still validated`);
+            await audit.git({
+              type: "merge:ai-deps-sync",
+              target: integrationBranch,
+              metadata: { taskId, tipSha, mergeRoot: canonicalMergeRoot, noCommitsExpected: true, dependencyFileCount: dependencyFiles.length, skipOverridden: true },
+            });
+          }
+        }
+      }
+      if (noCommitsDepsSkipAllowed) {
         await log(`AI merge: skipping dependency sync — no-commits task (no code changes expected)`);
       } else {
       const depsSyncStartedAt = Date.now();

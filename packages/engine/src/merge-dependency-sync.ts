@@ -8,7 +8,10 @@ import type { Settings } from "@fusion/core";
 const execAsync = promisify(exec);
 
 export const INSTALL_MARKER_RELPATH = join("node_modules", ".fusion-install-marker");
-const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
+/* FNXC:MergeNoCommits 2026-07-30-19:25: exported so merger-ai's no-commits dep-sync skip tests the
+   SAME lockfile names this module installs against. A second copy of the list is how the skip and the
+   installer drift into disagreeing about what counts as a dependency change. */
+export const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
 const INSTALL_TIMEOUT_MS = 300_000;
 
 export interface WorktreeDependencySyncLogger {

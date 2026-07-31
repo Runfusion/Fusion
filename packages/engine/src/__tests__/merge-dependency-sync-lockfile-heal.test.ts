@@ -64,6 +64,18 @@ function readLog(path: string): string[][] {
   return readFileSync(path, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 }
 
+/*
+FNXC:TestInfrastructure 2026-07-30-20:10 (PR #2501 review — coderabbit):
+DELETE AN ABSENT VAR, DO NOT ASSIGN `undefined`. `process.env.X = undefined` stores the STRING
+"undefined", so a var that was absent before the test is left set to a truthy string afterwards and
+leaks into every later test in the process — the shape that makes an unrelated suite fail with an
+env-dependent path.
+*/
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
 describe("buildNonFrozenRetryCommand", () => {
   it("negates pnpm frozen flag explicitly (overrides CI default)", () => {
     expect(buildNonFrozenRetryCommand("pnpm install --frozen-lockfile")).toBe("pnpm install --no-frozen-lockfile");
@@ -194,9 +206,9 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
       expect(captured.npm_config_registry).toBe("https://fake.registry/");
     } finally {
       process.env.PATH = previousPath;
-      process.env.COREPACK_HOME = origCorepackHome;
-      process.env.PNPM_HOME = origPnpmHome;
-      process.env.npm_config_registry = origNpmRegistry;
+      restoreEnv("COREPACK_HOME", origCorepackHome);
+      restoreEnv("PNPM_HOME", origPnpmHome);
+      restoreEnv("npm_config_registry", origNpmRegistry);
     }
   });
 
@@ -253,9 +265,9 @@ fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(env));
       expect(captured.PATH).toBeDefined();
     } finally {
       process.env.PATH = previousPath;
-      process.env.COREPACK_HOME = origCorepackHome;
-      process.env.PNPM_HOME = origPnpmHome;
-      process.env.npm_config_registry = origNpmRegistry;
+      restoreEnv("COREPACK_HOME", origCorepackHome);
+      restoreEnv("PNPM_HOME", origPnpmHome);
+      restoreEnv("npm_config_registry", origNpmRegistry);
     }
   });
 });

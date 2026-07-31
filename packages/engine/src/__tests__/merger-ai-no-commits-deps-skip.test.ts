@@ -258,4 +258,56 @@ describeIfGit("landOneRepo no-commits dep-sync skip", () => {
     expect(result.outcome).toBe("landed");
     expect(vi.mocked(installWorktreeDependencies)).not.toHaveBeenCalled();
   });
+
+  it("STILL syncs when a no-commits task's branch changes a lockfile or manifest", async () => {
+    /*
+    FNXC:MergeNoCommits 2026-07-30-19:40 (PR #2501 review — greptile P1):
+    THE FLAG ALONE IS NOT SAFE TO SKIP ON. Control only reaches the dep-sync step when the branch is
+    AHEAD (the `rev-list --count` short-circuit returns `outcome: "empty"` at zero), and the two
+    empty-lane guards downstream both carve out `noCommitsExpected` tasks — so nothing revalidates
+    the expectation against what actually landed.
+
+    A task marked no-commits whose executor did commit a lockfile change would therefore have its
+    install AND its frozen-lockfile validation skipped, landing the change unvalidated. The skip is
+    now gated on the branch diff: the flag says look, the diff decides.
+
+    The case above stays as-is and still passes — `feature.txt` is not a dependency file, so an
+    ordinary source change on a no-commits task is still skipped. This case differs only in WHICH
+    file the branch touches, which is the whole point.
+    */
+    fx = createRepoFixture(false);
+    /* `createRepoFixture` leaves the working tree on main, so the lockfile commit has to be made on
+       the task branch explicitly — committing it here without switching puts it on MAIN, where the
+       `main...branch` diff cannot see it and the case passes for the wrong reason. */
+    execSync(`git checkout ${BRANCH}`, { cwd: fx.rootDir, stdio: "pipe" });
+    writeFileSync(path.join(fx.rootDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf-8");
+    execSync("git add pnpm-lock.yaml && git commit -m 'chore: bump lockfile'", { cwd: fx.rootDir, stdio: "pipe" });
+    execSync("git checkout main", { cwd: fx.rootDir, stdio: "pipe" });
+    store = createStore();
+    audit = createRunAuditor(store, {
+      runId: generateSyntheticRunId("ai-merge", TASK_ID),
+      agentId: "merger",
+      taskId: TASK_ID,
+      phase: "merge",
+    });
+
+    const result = await landOneRepo(fx.rootDir, BRANCH, "main", {
+      taskId: TASK_ID,
+      settings: { autoMerge: false } as never,
+      audit,
+      log: async () => undefined,
+      setStatus: async () => undefined,
+      maxPasses: 1,
+      mergeAgent: squashMergeAgent,
+      reviewAgent: approveReviewAgent,
+      stashResolveAgent: async () => undefined,
+      includeTaskId: true,
+      trailers: [],
+      store,
+      noCommitsExpected: true,
+    });
+
+    expect(result.outcome).toBe("landed");
+    expect(vi.mocked(installWorktreeDependencies)).toHaveBeenCalled();
+  });
 });
