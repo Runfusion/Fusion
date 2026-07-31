@@ -183,3 +183,78 @@ pgDescribe("mergeTask resolves the review lane from the task's own workflow", ()
     expect(message).toContain("signoff");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-15:45:
+THE MERGE RESULT ASSERTED A COLUMN IT DID NOT SET.
+
+`moveToDoneImpl` resolves the board's completion lane and WRITES it onto the task object
+(`task.column = completeColumn`). `mergeTaskImpl` then did
+
+    result.task = { ...task, column: "done" };
+
+putting the literal back over what the writer had just set. Every `task:merged` listener — GitHub
+tracking, the auto-merge handoff — was therefore told the card landed in `done` while the persisted
+row said `shipped`. The row was right and the event was wrong, which is the worse direction: the
+listeners act on the event.
+
+The companion defect is the already-complete short-circuit at the top of the same function, which
+asked `task.column === "done"` while the finaliser it guards asks the RESOLVED question. On a renamed
+board they disagreed, so a card already resting in the completion lane fell through and the merge ran
+again against a branch that was already landed and deleted.
+
+Reached without any git fixture: with no branch present, `git rev-parse --verify` fails and the
+function takes its documented "branch not found — moving to done without merge" path, which is the
+one that calls `moveToDone` and then builds the result.
+*/
+pgDescribe("the merge result reports the column the finaliser actually wrote", () => {
+  let harness: PgTestHarness;
+  let store: TaskStore;
+
+  beforeEach(async () => {
+    harness = await createTaskStoreForTest({ prefix: "fusion_merge_result_lane" });
+    store = harness.store;
+  });
+
+  afterEach(async () => {
+    await harness?.teardown();
+  });
+
+  async function cardInReviewLane(description: string) {
+    const created = await store.createWorkflowDefinition({ name: "renamed merge lanes", ir: RENAMED_IR as never });
+    const task = await store.createTask({ description });
+    await store.selectTaskWorkflow(task.id, created.id);
+    for (const lane of ["backlog", "building", "checking"]) {
+      await store.moveTask(task.id, lane as never, { moveSource: "user" } as never);
+    }
+    expect((await store.getTask(task.id)).column).toBe("checking");
+    return task.id;
+  }
+
+  it("reports the board's completion lane, not the `done` literal", async () => {
+    const id = await cardInReviewLane("merge result column");
+
+    const result = await store.mergeTask(id);
+
+    /* The persisted row and the emitted result must agree. Before the fix the row said `shipped`
+       and this said `done`. */
+    expect((await store.getTask(id)).column).toBe("shipped");
+    expect(result.task.column).toBe("shipped");
+  });
+
+  it("short-circuits a card already resting in the renamed completion lane", async () => {
+    const id = await cardInReviewLane("already complete");
+    await store.mergeTask(id);
+    expect((await store.getTask(id)).column).toBe("shipped");
+
+    /*
+    Second call. Keyed on the `done` literal this guard did not fire on a renamed board, so the card
+    fell through to the merge-blocker check and the operator saw a refusal for a card that had
+    already merged.
+    */
+    const second = await store.mergeTask(id);
+
+    expect(second.merged).toBe(false);
+    expect(second.task.column).toBe("shipped");
+  });
+});

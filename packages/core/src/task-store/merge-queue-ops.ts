@@ -13,7 +13,7 @@ import {assertNotWorkspaceTaskMerge} from "../types.js";
 import "../builtin-traits.js";
 import {getTaskMergeBlocker, resolveTaskMergeTarget} from "../task-merge.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
-import {resolveReviewColumns} from "../workflow-lifecycle-traits.js";
+import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
@@ -349,7 +349,20 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
       // but assert as defense-in-depth against future id-format changes.
       assertSafeGitBranchName(branch);
 
-      if (task.column === "done") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-15:30:
+      THE GUARD MUST AGREE WITH THE WRITER. `moveToDoneImpl` short-circuits on
+      `task.column === completeColumn`, resolved from the task's own workflow; this guard asked the
+      same question with the `done` literal. On a renamed board they DISAGREED — the guard said "not
+      finished" for a card already resting in the board's completion lane, so the merge path ran
+      again against a branch that was already landed and deleted.
+
+      Same resolution, same shape (a single first-match column, not membership), because the point is
+      that these two answers cannot differ. A workflow declaring no complete lane resolves to
+      `undefined`, which matches no column — the finaliser below refuses such a board explicitly.
+      */
+      const alreadyCompleteColumn = (await resolveTaskLifecycleColumns(store, id))?.complete ?? "done";
+      if (task.column === alreadyCompleteColumn) {
         const result: MergeResult = {
           task,
           branch,
@@ -470,7 +483,17 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
           mergeTargetSource: mergeTarget.source,
         };
         await store.moveToDone(task, dir);
-        result.task = { ...task, column: "done" };
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-15:30:
+        `moveToDone` already WROTE the resolved completion column onto this object
+        (`task.column = completeColumn` in `moveToDoneImpl`). The `column: "done"` override put the
+        literal back, so every `task:merged` listener — GitHub tracking, the auto-merge handoff —
+        was told the card landed in `done` while the persisted row said `shipped`.
+
+        Nothing to resolve here: read back what the writer set. A second resolution would be a second
+        chance to disagree with it.
+        */
+        result.task = { ...task };
         store.emit("task:merged", result);
         return result;
       }
@@ -529,7 +552,9 @@ export async function mergeTaskImpl(store: TaskStore, id: string): Promise<Merge
 
       // 5. Move task to done
       await store.moveToDone(task, dir);
-      result.task = { ...task, column: "done" };
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-15:30: read back what `moveToDone` wrote — see the
+         same override on the no-branch path above. */
+      result.task = { ...task };
 
       store.emit("task:merged", result);
       return result;
