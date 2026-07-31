@@ -4472,9 +4472,19 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       }
 
       expect(result.isError).not.toBe(true);
-      expect(result.content[0].text).toContain("will be picked up");
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:25 (#2894 review, second round):
+      NO PICKUP PROMISE ON A DEGRADED RESOLVE. This asserted the confident sentence, which is exactly
+      the claim the review says must not be made when the landing could not be verified. The card is
+      still created, assigned and left where it belongs — success — but the text now says the lane is
+      unconfirmed rather than promising dispatch, and `landingVerified: false` carries the same fact
+      structurally.
+      */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("could NOT confirm");
+      expect(result.details.landingVerified).toBe(false);
 
-      /* The claim has to be TRUE, not merely present: the card really is on the lane agents pick from. */
+      /* The lane is still the built-in hold column — unconfirmed is not the same as wrong. */
       const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
       expect(task.column).toBe("todo");
     });
@@ -4522,7 +4532,9 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       }
 
       expect(result.isError).not.toBe(true);
-      expect(result.content[0].text).toContain("will be picked up");
+      /* Same reason as the degraded-resolve case above: unverified landings do not promise pickup. */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.details.landingVerified).toBe(false);
     });
 
     /*
