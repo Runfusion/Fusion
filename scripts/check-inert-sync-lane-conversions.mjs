@@ -174,6 +174,37 @@ a fixpoint because the laundering can chain (`a -> b -> c`); a single pass catch
 DELIBERATELY NOT full dataflow: `const` object construction only — no function returns, no
 cross-module spread, no reassignment. The LIMITS section above still governs.
 */
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (the WRAPPER shape — 13 guards had gone invisible):
+A sync answer handed straight into a merge helper is still a sync answer.
+
+`scheduler.ts` rewrote its `task:moved` guards as
+
+    const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(store, id), lanes);
+
+which prefers the event payload and falls back to the sync answer whenever `lanes` is absent — most
+move paths today. The callee is not a source, so nothing registered `parked` and thirteen guards went
+uncounted. A merge-wrapper guard is a WEAKER defect than a raw one (it is correct whenever lanes
+arrive) but it is not clean, and counting it as clean is how the ledger stops meaning anything.
+
+EXACTLY ONE LEVEL, and that is now what the code does rather than what a comment claimed. An earlier
+version recursed while its note said "one level"; measured, both forms reported the same 20 guards, so
+recursion bought nothing. Deeper nesting is also where a wrapper is likelier to DISCARD its argument,
+and a false positive there would be absorbed into the baseline — the direction this gate must not fail
+in. The blind spot is pinned by a case; widen it with a failing test if a real nested shape appears.
+*/
+function hasDirectSourceArgument(call, sf, sources) {
+  return call.arguments.some((arg) => {
+    let inner = arg;
+    if (ts.isAwaitExpression(inner)) inner = inner.expression;
+    if (!ts.isCallExpression(inner)) return false;
+    const innerCallee = ts.isPropertyAccessExpression(inner.expression)
+      ? inner.expression.name.getText(sf)
+      : inner.expression.getText(sf);
+    return sources.has(innerCallee);
+  });
+}
+
 function syncLaneLocals(sf, sources) {
   /*
   FNXC:LifecycleColumnCensus 2026-07-31-23:59 (review finding on #3169 — provenance is PER PROPERTY):
@@ -195,7 +226,9 @@ function syncLaneLocals(sf, sources) {
         const callee = ts.isPropertyAccessExpression(call.expression)
           ? call.expression.name.getText(sf)
           : call.expression.getText(sf);
-        if (sources.has(callee)) taint.set(node.name.getText(sf), null);
+        if (sources.has(callee) || hasDirectSourceArgument(call, sf, sources)) {
+          taint.set(node.name.getText(sf), null);
+        }
       }
       if (ts.isObjectLiteralExpression(node.initializer)) {
         /* Property-level provenance: which KEY, and the text of its VALUE only. A key that merely
