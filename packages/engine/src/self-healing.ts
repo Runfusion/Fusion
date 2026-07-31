@@ -11359,9 +11359,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-14:10 (the query-filter class, twenty-sixth sweep):
+      A review card whose BRANCH TIP is bound to a different task's work. The literal read meant that on
+      a renamed board the misbinding was never detected, so the card would merge — or refuse to — against
+      a branch that is not its own.
+
+      The per-card verdict below converts with it. No second pair; verified with the derived ratchet from
+      #2879 rather than by eye.
+      */
+      const misboundColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const misboundById = new Map<string, Task>();
+      for (const column of misboundColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) misboundById.set(entry.id, entry);
+      }
+      const tasks = [...misboundById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const misboundLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          misboundLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(misboundColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          misboundLanes.set(entry.id, new Set(misboundColumns));
+        }
+      }
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (misboundLanes.get(task.id) ?? misboundColumns).has(task.column) &&
         Boolean(task.branch) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         !executingIds.has(task.id),
