@@ -397,6 +397,54 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   FNXC:MissionReconciliation 2026-07-20-08:34:
   Regression coverage exercises every terminal-evidence representation through the real PostgreSQL store. Reconciliation must never route through ordinary triage linking, mutate loop attempts or mission controls, or partially commit when the transaction fails.
   */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+  THE INVARIANT: terminal evidence is the card's ROLE, not the id `done`.
+
+  `getTerminalTaskEvidence` tested only `column === "done"`, so a genuinely completed card on a
+  renamed board fell through every branch to `nonterminal` and this method threw
+  `TASK_NOT_TERMINAL: ... must be in done or supported archived state, not shipped`. Mission
+  shipped-delivery repair refused valid work — and the message named the real column while the check
+  could not see it, which is the tell that the classifier and the reporter disagreed.
+
+  I deferred this twice on the premise that `AsyncMissionStore` "holds a layer, not a store". It
+  holds an OPTIONAL `taskStore`, and the single production construction site supplies it. That is the
+  third deferral of mine this session to dissolve on inspection, which is the argument for checking a
+  premise before recording it as a blocker.
+
+  REVERT PROOF, measured: restore `column === "done"` and this fails with a
+  `TASK_NOT_TERMINAL` rejection naming `shipped`.
+  */
+  it("accepts a completed card whose board calls the lane something else", async () => {
+    const m = missions();
+    const store = h.store();
+    await store.createWorkflowDefinition({
+      name: "Renamed complete",
+      ir: {
+        version: "v2",
+        name: "Renamed complete",
+        columns: [
+          { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          { id: "end", kind: "end", column: "shipped" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      } as never,
+    });
+    const mission = await m.createMission({ title: "Renamed-lane repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Delivered" });
+    const task = await store.createTask({ description: "shipped elsewhere", column: "shipped" as never });
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
+  });
+
   it("atomically reconciles live done evidence and remains idempotent", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Parked repair" });

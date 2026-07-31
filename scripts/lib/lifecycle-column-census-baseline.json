@@ -8,9 +8,9 @@
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/replan-target.ts": 4,
     "packages/engine/src/restart-recovery-coordinator.ts": 4,
-    "packages/core/src/async-mission-store-queries.ts": 3,
     "packages/core/src/task-store/task-artifacts-ops.ts": 3,
     "packages/core/src/agent-store.ts": 2,
+    "packages/core/src/async-mission-store-queries.ts": 2,
     "packages/core/src/task-store/audit-ops.ts": 2,
     "packages/core/src/task-store/moves.ts": 2,
     "packages/core/src/task-store/project-store-ops.ts": 2,
@@ -137,7 +137,6 @@
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
     "packages/engine/src/agent-tools.ts": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1,
-    "packages/engine/src/workflow-node-handlers.ts": 1
+    "packages/engine/src/auto-merge-finalization.ts": 1
   }
 }

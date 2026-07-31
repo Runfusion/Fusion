@@ -52,6 +52,7 @@ import type { Goal } from "./goal-types.js";
 import {
   deriveMilestoneAcceptanceCriteriaFromFeatures,
 } from "./mission-store.js";
+import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
 import type {
   MissionSummary,
   MissionAssertionBackfillReport,
@@ -1158,7 +1159,26 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
-      const evidence = await getTerminalTaskEvidence(tx, taskId);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+      Resolve the board's terminal lanes and hand them down; without this the predicate is inert.
+
+      Keyed on the literals, a genuinely completed card on a renamed board fell through every branch
+      to `nonterminal`, and this method then threw `TASK_NOT_TERMINAL: ... must be in done or
+      supported archived state, not shipped`. Mission shipped-delivery repair refused valid work, and
+      the message named the real column while the check could not see it.
+
+      `this.taskStore` is optional on the class but the single production construction site supplies
+      it (`workflow-definitions.ts`). Absent, the resolver is skipped and the legacy ids answer —
+      which is what every test that constructs the store without one already relies on.
+      */
+      const terminalColumns = this.taskStore
+        ? {
+            complete: await resolveProjectColumnsForRoles(this.taskStore, ["complete"]).catch(() => undefined),
+            archived: await resolveProjectColumnsForRoles(this.taskStore, ["archived"]).catch(() => undefined),
+          }
+        : undefined;
+      const evidence = await getTerminalTaskEvidence(tx, taskId, terminalColumns);
       if (evidence.kind === "missing") {
         throw new TerminalTaskReconciliationError("TASK_NOT_FOUND", `Delivery task ${taskId} not found`);
       }
