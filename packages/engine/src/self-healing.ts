@@ -8409,10 +8409,43 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:20 (the query-filter class, twenty-second sweep):
+      A GHOST review card — parked in review past the stuck timeout with nobody owning its merge lane.
+      The literal read meant that on a renamed board it was never found, so the card sat in review
+      indefinitely with no merger, no session and no timeout ever firing against it.
+
+      The `task.column === "in-review"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+
+      The kick-back below keeps its literal `todo` DELIBERATELY: it passes `recoveryRehome: true`, one of
+      the 22 documented escapes `moves.ts` exempts so a card stranded in an undeclared column stays
+      rescuable. Converting it removes the rescue path.
+      */
+      const ghostReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const ghostById = new Map<string, Task>();
+      for (const column of ghostReviewColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) ghostById.set(entry.id, entry);
+      }
+      const tasks = [...ghostById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const ghostLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          ghostLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(ghostReviewColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          ghostLanes.set(entry.id, new Set(ghostReviewColumns));
+        }
+      }
       // Pre-filter sync conditions, then resolve async merge-lane ownership.
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (ghostLanes.get(task.id) ?? ghostReviewColumns).has(task.column) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         !executingIds.has(task.id) &&

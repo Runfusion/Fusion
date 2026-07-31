@@ -899,4 +899,61 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-10:25 (the query-filter class, twenty-second sweep):
+  A GHOST review card is one parked in review past the stuck timeout with nobody owning its merge lane.
+  The literal read meant that on a renamed board it was never found: no merger, no session, and no
+  timeout ever firing against it.
+
+  THE OBSERVABLE IS CHOSEN CAREFULLY. `isMergeLaneOwned` is called once per surviving candidate, AFTER
+  the read and the per-card verdict — earlier on this branch I positioned this same spy UPSTREAM of the
+  guard I was testing and it passed with the fix reverted. Here it sits downstream of both, which is the
+  whole difference.
+
+  `taskStuckTimeoutMs` must be set and `columnMovedAt` ancient, or the card is filtered out by the
+  timeout rather than by lane, and the case would pass reverted for the wrong reason.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function ghostFixture(column: string) {
+    const ghost = {
+      ...shippedCard(),
+      id: "FN-GHOST",
+      column,
+      columnMovedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([ghost]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isMergeLaneOwned = vi.fn(async () => true); // owned -> no kick-back, so nothing else has to be stubbed
+    Object.assign(manager, { isMergeLaneOwned });
+    return { manager, isMergeLaneOwned };
+  }
+
+  it("evaluates a ghost review card on a RENAMED review lane", async () => {
+    const { manager, isMergeLaneOwned } = ghostFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverGhostReviewTasks();
+
+    expect(isMergeLaneOwned).toHaveBeenCalledWith("FN-GHOST");
+  });
+
+  it("does not treat a long-idle card outside the review lanes as a ghost", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    idle in the HOLD lane is just queued — kicking it back would be the sweep inventing work.
+    */
+    const { manager, isMergeLaneOwned } = ghostFixture(RENAMED_VOCAB.hold);
+
+    await manager.recoverGhostReviewTasks();
+
+    expect(isMergeLaneOwned).not.toHaveBeenCalled();
+  });
 });
