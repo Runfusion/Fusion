@@ -58,7 +58,7 @@ describe("a FloatingWindow's accessible name never restates its role", () => {
   nothing, reporting success while covering zero. The negative cases matter more than the positive
   ones — each is a real string in this codebase that must NOT be flagged.
   */
-  it.each([
+  it.each<[source: string, shouldFlag: boolean, why: string]>([
     ["ariaLabel={`Settings dialog`}", true, "trailing role word in a template literal"],
     ['ariaLabel="Git Manager dialog"', true, "trailing role word in a plain string"],
     ["ariaLabel={`Node details modal`}", true, "'modal' is equally redundant"],
