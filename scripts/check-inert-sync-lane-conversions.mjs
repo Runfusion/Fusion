@@ -267,7 +267,38 @@ if (risen.length > 0) {
   process.exit(1);
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:35:
+AN UNRECORDED DROP NOW FAILS, matching the sibling ratchet `check-lane-wiring.mjs`.
+
+This warned and exited 0, which left the allowance stale-high and the ratchet SLACK. Measured, and
+the example is mine: #3065 replaced three `to === parked.complete || to === parked.archived` guards
+with `parked.terminal.has(to)` and took the count 20 -> 18. I did not re-record, nothing failed, and
+`main` then carried a baseline of 20 against a real count of 18 — TWO FREE SLOTS in the gate whose
+entire purpose is to stop this class growing. Someone could add two new inert conversions and the
+build would stay green.
+
+A ratchet that only tightens on request does not ratchet. `check-lane-wiring` already exits 1 here
+and says why; this is the same rule for the same reason, so the two gates cannot drift in how
+seriously they take their own ledger.
+
+NOT EVERY RATCHET SHOULD DO THIS, and the counter-example is worth naming so nobody "fixes" it to
+match. `check-fnxc-future-dates` deliberately AUTO-TIGHTENS and exits 0, because its population moves
+on its own: "is this stamp in the future" is answered against TODAY, so every date boundary the runner
+crosses converts future stamps into past ones and the count falls with NO code change and NO author to
+fix it. Drop-fails there guarantees a red gate on some later day, and did.
+
+The distinction is whether a drop has an AUTHOR. This count only moves when someone edits a guard, so
+there is always someone holding the diff that caused it — which is exactly who should re-record. (That
+file's header says "both sibling ratchets reached the same conclusion"; measured today,
+`check-lane-wiring` exits 1 on a stale-high baseline, so that parenthetical is inaccurate about at
+least one sibling. Its own reasoning for ITSELF is sound and stands.)
+*/
 if (total < (baseline.total ?? 0)) {
-  console.log(`\ninert-sync-lane: total fell ${baseline.total} -> ${total}. Re-record with --update-baseline.`);
+  console.error(`\ninert-sync-lane: total fell ${baseline.total} -> ${total}.`);
+  console.error("\nGood news — but re-record the baseline in the SAME commit, or the allowance stays");
+  console.error("high and the gate silently accepts that many NEW inert conversions:\n");
+  console.error("  node scripts/check-inert-sync-lane-conversions.mjs --update-baseline\n");
+  process.exit(1);
 }
 process.exit(0);
