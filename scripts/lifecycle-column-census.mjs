@@ -277,8 +277,31 @@ if (json) {
 } else {
   console.log(`lifecycle-column-census: scanned ${files.length} source files\n`);
   console.log(`  COLUMN guards (the backlog):   ${summary.totals.column}`);
-  console.log(`  ROLE comparisons (not guards): ${summary.totals.role}`);
-  console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-23:57 (these two are NOT a second backlog — do not convert them):
+  Both classify by RECEIVER, not by the literal. A legacy column id appearing next to a role- or
+  status-named receiver is a DIFFERENT DOMAIN that happens to share vocabulary with the old board.
+  Measured samples from the current tree:
+
+      outcome === "archived"     packages/cli/src/commands/task.ts          a task OUTCOME
+      type    === "done"         .../routes/register-chat-routes.ts         a chat MESSAGE TYPE
+      kind    === "done"         .../cli-agent/telemetry-hub.ts             a telemetry KIND
+      status  === "archived"     packages/cli/src/commands/goals.ts         a GOAL's status
+      status  === "in-progress"  packages/cli/src/commands/mission.ts       a MISSION's status
+
+  None is a task column, so none has a workflow lane to resolve against. "Converting" a goal's
+  `status === "archived"` to a column trait does not remove a legacy id — it asks the wrong object for
+  a lane it does not have, and the resulting bug is invisible on the default board for the same reason
+  every inert conversion is.
+
+  Why this needs saying where the numbers PRINT rather than only in the classifier: the two counts sit
+  directly under the backlog with larger values (12 and 185 against a backlog of 0). A worker told to
+  drive a census down, finding the column line at zero, has two bigger numbers in front of them and
+  "(not guards)" alone does not explain why they are off-limits. The label states the verdict; this
+  states the reason.
+  */
+  console.log(`  ROLE comparisons (NOT backlog — agent/chat/telemetry receivers, not columns): ${summary.totals.role}`);
+  console.log(`  STATUS comparisons (NOT backlog — goal/mission/step status, not columns): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
   /*
   FNXC:LifecycleColumnCensus 2026-08-01-01:40:
