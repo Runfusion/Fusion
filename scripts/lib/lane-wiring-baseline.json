@@ -15,7 +15,6 @@
     "packages/dashboard/app/hooks/useBlockerFanout.ts": 1,
     "packages/cli/src/commands/dashboard-tui/app.tsx": 1,
     "packages/cli/src/commands/dashboard-tui/bucket-mapping.ts": 1,
-    "packages/cli/src/extension.ts": 1,
     "plugins/fusion-plugin-dependency-graph/src/GraphTaskNode.tsx": 1,
     "plugins/fusion-plugin-even-realities-glasses/src/routes/board-routes.ts": 1
   }

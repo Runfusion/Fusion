@@ -1819,7 +1819,30 @@ export default function kbExtension(pi: ExtensionAPI) {
         store.updateTask all exhibit identical behavior.
         */
         const normalizedNodeId = normalizeNullableStringInput(params.nodeId);
-        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-12:20:
+        Supply this task's resolved WIP and COMPLETE lanes — without them the guard does not fire.
+
+        `validateNodeOverrideChange` defaults `wipColumns` to `{"in-progress"}`, so on a board whose
+        WIP lane is named anything else `wipColumns.has(task.column)` is false and the mid-flight
+        check passes. An operator could then change the node override on a RUNNING task, which is
+        precisely what that guard exists to refuse (see its own note in node-override-guard.ts).
+
+        The guard's options doc says "Both callers supply them" and assumes a CLI tool has no cheap
+        IR access. Neither held here: this is a third caller, and it is an async handler that has
+        already awaited `store.getTask`, so one more resolve is the same cost `resolveTaskLifecycleColumns`
+        is already paid for elsewhere in this file (the linked-lineage label at ~1239).
+
+        Passed as present-but-conditionally-valued rather than a conditional argument: an omitted
+        set keeps the documented legacy default, and only this shape is visible to
+        scripts/lib/lane-wiring-census.mjs, which matches an object-literal argument and cannot see a
+        ternary. This site was a known-unwired entry in that gate's baseline.
+        */
+        const nodeOverrideLifecycle = await resolveTaskLifecycleColumns(store, task.id);
+        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null, {
+          wipColumns: nodeOverrideLifecycle?.wip ? new Set([nodeOverrideLifecycle.wip]) : undefined,
+          completeColumns: nodeOverrideLifecycle?.complete ? new Set([nodeOverrideLifecycle.complete]) : undefined,
+        });
         if (!validation.allowed) {
           return {
             content: [{ type: "text", text: validation.message ?? "Node override change blocked" }],
