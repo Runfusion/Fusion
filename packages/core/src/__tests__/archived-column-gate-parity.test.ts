@@ -113,6 +113,34 @@ NOT CONVERTED HERE, and deliberately: the gate requires all three encodings to m
 conversion is one coordinated change with its inventories updated in the same commit. This supplies
 the classification that change needs; it does not pre-empt it.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-23:55 (SCOPING — the choice is not 52-or-nothing):
+"Convert all three encodings" and "declare `archived` non-renameable" are the two options offered, and
+both sound enormous because 52 sites are counted as one lump. They are not one lump: the sites answer
+TWO DIFFERENT QUESTIONS, and only one of them is a lane question.
+
+  LANE:  "is this row resting in the board's archive lane?" — renameable, must resolve.
+  STATE: "did Fusion archive this row?" — the marker `archiveTask` writes, NOT renameable.
+
+`async-maintenance.ts` already draws that line and marks its site DELIBERATE-LITERAL: "the STATE
+marker here, not a lane... a card merely sitting in a workflow's archived-TRAIT lane is live work and
+must not be collected." Converting that site would be a BUG, not progress.
+
+MEASURED, on the SQL half this file calls the hard part — 8 Drizzle sites across 7 files:
+  FOUR already have a `store` in scope and could take a resolved set with no signature change:
+      branch-group-ops.ts        clearNearDuplicateReferencesToImpl(store, ...)
+      branch-and-pr-entities.ts  findRecentTasksByContentFingerprintImpl(store, ...)   [2 sites]
+      task-mutation-ops.ts       cleanupArchivedTasksImpl(store)
+  FOUR need one parameter each, the optional-lane-set shape used throughout this program:
+      async-lifecycle.ts    liveLineageChildFilter(parentId, projectId?)
+      async-search.ts       liveSearchPredicate(includeArchived, projectId?)
+      async-self-healing.ts listSoftDeletedColumnDriftCandidates(db, ...)
+      store.ts              the revert-lookup conditions (already holds `this.asyncLayer`)
+
+That is not "threading a resolver into the persistence layer". It is four call sites that already have
+what they need plus four one-parameter widenings — before the triage above removes the STATE sites
+from the count. (Two of the four "already have a store" sites turned out to be STATE on inspection;
+the triage note above is the authority, this is the reachability survey that preceded it.)
+
 FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (one wrong reason for picking the cheap option, removed):
 The second option looks like it has already been taken — `trait-types.ts` annotates the flag
 "RESTRICTED (built-in only)", which reads as "a custom board cannot have its own archive lane". It does
