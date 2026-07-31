@@ -440,13 +440,15 @@ mechanism, and the mechanisms split cleanly by method:
 | 3 | provenance verifies by `ir.id`, which builtins lack | reading a **comment** | **no — filed as an issue, closed as wrong** |
 | 4 | two test harnesses cannot answer a selection query | instrumented isolation | **yes** |
 
-The two derived from reading were wrong. The one derived from a comment was wrong in the most
+Mechanism 1, derived from reading, was wrong outright; mechanism 2, derived from reading plus a
+single test run, held only partly — the arm is scoped as claimed, but that scoping was not what made
+the conversion fail. Neither reading-derived claim survived intact. The one derived from a comment was wrong in the most
 expensive way: the text quoted was historical prose explaining code that had been REMOVED, sitting
 directly above a paragraph saying so. A rationale was read as an implementation.
 
 **The isolation that settled it took three runs and about a minute:**
 
-```
+```text
 flag only, no conversion             8 passed   -> the orphan arm is not the cause
 flag + conversion                    5 failed   -> the conversion is
 same, with a realistic mock store    8 passed   -> the mock was the cause
@@ -471,8 +473,11 @@ kept being wrong.
 Once the harness was the suspect rather than the code, a class fell out: **a test that stubs a reader
 which is broken in production proves the call site's logic while being unable to see that production
 resolves nothing.** Eight files stubbed `resolveTaskWorkflowIrSync`. Auditing them — delete the stub,
-see whether the suite still discriminates — found one masking a live defect, four redundant, one
-legitimate.
+see whether the suite still discriminates — classified six: one masking a live defect, four redundant,
+one legitimate. The other two are unaccounted for in this write-up — the outcomes were not recorded
+at the time, and inventing a classification now would be the same unearned confidence this document
+is about. Either eight is the wrong total or two audits went unrecorded; whoever re-runs the audit
+should treat the six as the only claim it supports.
 
 The distinguishing property is narrow, and worth stating because the obvious generalisation fails:
 the reader must return something **incorrect**, not merely **unused**. `getTaskWorkflowSelection` is
