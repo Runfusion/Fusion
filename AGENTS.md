@@ -357,6 +357,7 @@ Note: the embedded main-content views Workflows (`_WorkflowEditorView`), Import 
 
 ## FNXC_LOG comments:
    - Please whenever you're working on a codebase. I want you to add comments describing the date of the change (must be in this format yyyy-MM-dd-hh:mm) and describing the requirements or the change in requirements that made you implement certain functionality.
+   - **Take the timestamp from `date -u`, not your local clock.** `check-fnxc-future-dates` validates against UTC, so a stamp written from a clock behind UTC is a FUTURE stamp the moment UTC rolls over — and `pnpm lint` passes locally, because the local date agrees with what you wrote. It surfaces only as a red `main` for everybody else. This cost the fleet four separate breakages in one day (`scheduler.ts`, a scheduler PG test, and `task-update.ts` twice, by different authors); every one was a real time on the wrong day. The gate also rejects an impossible clock time, so an hour above 23 or a minute above 59 fails for a different reason.
    - I want you to write FNXC:Area-of-product in front of all your comments so they can be grepped.
    - Most of this should be written as jsdocs but you can add short comments around for the important variables and more complex parts of the codebase.
    - The idea is to encode the requiements of the system (especially software behavior, UX, and important technical decisions) into the code so it's clearer later why a certain piece of code was written.
