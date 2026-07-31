@@ -226,6 +226,9 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
   }
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase — FLAGGED AND LEFT COUNTED):
+  DELIBERATE-LITERAL — marked so it is no longer merely flagged. The note below already decided this
+  stays; it said so in prose, which the census cannot read, so the site kept reading as backlog and
+  every later pass re-derived the same answer. The marker moves it to `deliberateByFile`.
   A pure formatter over `Pick<Task, "column">` — no store, no task id, and its output PRINTS the column
   name for a human reader. Same class as `github-tracking-comments.ts:165` and
   `in-process-runtime`'s duration helpers: threading a resolution into a string builder to pick a word is
