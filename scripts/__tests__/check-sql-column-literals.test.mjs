@@ -21,14 +21,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import ts from "typescript";
 
-import { COMPARISON, comparisonWeight, literalText } from "../check-sql-column-literals.mjs";
+import { COMPARISON, comparisonWeight, literalText, collectStringConsts } from "../check-sql-column-literals.mjs";
 
 /** Count forbidden comparisons the way the scanner does: over decoded literal text. */
 function hits(source) {
   const sf = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  /* The scanner resolves same-file constants before matching; the harness must too, or these tests
+     would exercise a scanner that does not exist. */
+  const consts = collectStringConsts(sf);
   let total = 0;
   const visit = (node) => {
-    const text = literalText(node);
+    const text = literalText(node, consts);
     if (text !== null) {
       COMPARISON.lastIndex = 0;
       /* Weighted exactly as the scanner counts: an IN list of two legacy ids is two sites. */
@@ -220,4 +223,54 @@ test("IS / IS NOT are caught", () => {
 
 test("IS DISTINCT FROM a NON-legacy id is not matched", () => {
   assert.equal(hits("const q = sql`${t.column} IS DISTINCT FROM 'shipped'`;"), 0);
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:20:
+A LANE ID HOISTED INTO A CONST IS THE SAME DEFECT AS AN INLINE ONE.
+
+Both shapes below were MISSED by the shipped scanner: a non-column interpolation collapsed to the NUL
+sentinel, so the predicate dissolved before the matcher ran. Hoisting a repeated string to a named
+const reads as a cleanup, which makes it the likeliest way one of these gets rewritten.
+
+The negatives are the harder half. Resolving constants too eagerly double-counts SQL fragments that
+are already counted where they are written — the analytics files jumped 3->6 that way, which looked
+like a genuine find. Only BARE lane ids are resolved, and `sqlFragmentArray` below is the case that
+pins it.
+*/
+test("a legacy lane id hoisted into a const is counted", () => {
+  assert.equal(hits('const LANE = "done";\nconst q = sql`WHERE "column" = ${LANE}`;'), 1);
+});
+
+test("a hoisted const ARRAY is counted once per legacy id", () => {
+  assert.equal(
+    hits('const LANES = ["in-progress", "in-review"];\nconst q = sql`WHERE "column" IN (${sql.join(LANES)})`;'),
+    2,
+  );
+});
+
+test("the wrapper call around the const does not matter (inArray, as const)", () => {
+  assert.equal(
+    hits('const LANES = ["done"] as const;\nconst q = sql`WHERE "column" IN (${inArray(t.column, LANES)})`;'),
+    1,
+  );
+});
+
+test("a const of NON-legacy lane ids is not counted", () => {
+  assert.equal(hits('const LANES = ["drafting", "shipped"];\nconst q = sql`WHERE "column" IN (${sql.join(LANES)})`;'), 0);
+});
+
+test("a lane list produced by a resolver call is not counted", () => {
+  assert.equal(
+    hits('const LANES = resolveProjectColumnsForRoles(store, ["wip"]);\nconst q = sql`WHERE "column" IN (${sql.join(LANES)})`;'),
+    0,
+  );
+});
+
+test("an array of SQL FRAGMENTS is counted at its elements, never twice via the join", () => {
+  /* The double-count regression: each fragment is already a site where it is written. Resolving the
+     const re-injected it into the outer template, doubling every analytics query. */
+  const source = 'const CLAUSES = [`t."column" = \'done\'`, `t.deletedAt IS NULL`];\n'
+    + 'const q = sql`SELECT * FROM t WHERE ${CLAUSES.join(" AND ")}`;';
+  assert.equal(hits(source), 1);
 });

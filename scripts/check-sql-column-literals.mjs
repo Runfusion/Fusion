@@ -215,13 +215,94 @@ it is the thing a reader checks instead of the code.
 */
 const COLUMN_PROPERTY = /(?:(?:^|\.)column|\[\s*["'`]column["'`]\s*\])[!?]*$/;
 
-export function literalText(node) {
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-22:30:
+A LITERAL HOISTED INTO A NAMED CONST IS THE SAME DEFECT, and the span scan could not see it.
+
+    const LANE = "done";
+    sql`... WHERE "column" = ${LANE}`
+
+    const LANES = ["in-progress", "in-review"];
+    sql`... WHERE "column" IN (${sql.join(LANES)})`
+
+Both bind a query to the legacy vocabulary exactly as an inline 'done' does. Neither was counted: an
+interpolation that is not a column reference became the NUL sentinel, so the predicate dissolved
+before the matcher ever ran.
+
+THIS IS THE SHAPE A CLEANUP PRODUCES. Hoisting a repeated string to a named const reads as tidying,
+and is the most likely way one of these gets rewritten — the gate would go quiet on a file that
+changed only in punctuation, which is the failure this scanner has now had three times (the static
+span join, the element-access column reference, and this).
+
+The array form is not hypothetical: IN ('in-progress','in-review') was the live workflow-analytics
+defect, and hoisting that list is the obvious tidy-up.
+
+Found by mutation with shapes deliberately NOT in mind when the scanner was written, after arguing in
+#2979 that ratchets should be probed that way on the day they ship. Two of three probes got through.
+
+SCOPE: same-file const declarations holding a string or an array of strings. Cross-file imports are
+NOT resolved — that needs a type checker and a program-wide pass, and the honest boundary is worth
+more than a half-resolution that reads as coverage. A constant imported from another module is still
+invisible, and --list output is where that gets audited, not this comment.
+*/
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:05:
+ONLY BARE LANE IDS ARE RESOLVED, and this restriction is load-bearing rather than cautious.
+
+The first version resolved any string-valued const. Several analytics files build their queries as
+`const completedClauses = [`t."column" = 'done'`, ...]` and then interpolate `clauses.join(" AND ")`
+— those elements are SQL FRAGMENTS that the scanner already counts where they are written, so
+resolving them re-injected each one into the outer template and counted it a second time. The three
+analytics files jumped from 3/3/1 to 6/5/2 with no new defect anywhere: pure double counting, and it
+read exactly like a real find.
+
+A hoisted lane id is a bare token — `done`, `in-progress`. Anything carrying quotes, spaces or SQL
+punctuation is a fragment, already covered at its own site, and must not be resolved here.
+*/
+const BARE_LANE_ID = /^[A-Za-z0-9_-]+$/;
+
+export function collectStringConsts(sf) {
+  const consts = new Map();
+  const unwrap = (n) => (n && (ts.isAsExpression(n) || ts.isParenthesizedExpression(n)) ? unwrap(n.expression) : n);
+  const isStr = (n) => ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n);
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const init = unwrap(node.initializer);
+      if (isStr(init) && BARE_LANE_ID.test(init.text)) consts.set(node.name.text, [init.text]);
+      else if (ts.isArrayLiteralExpression(init)) {
+        const elements = init.elements.map(unwrap);
+        if (elements.length > 0 && elements.every((e) => isStr(e) && BARE_LANE_ID.test(e.text))) {
+          consts.set(node.name.text, elements.map((e) => e.text));
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return consts;
+}
+
+/**
+ * The SQL text an interpolation stands in for, when it resolves to a known constant.
+ * Any identifier in the expression is a candidate, so sql.join(LANES) and inArray(x, LANES) resolve
+ * the same way a bare ${LANES} does — the wrapper call does not change the vocabulary.
+ */
+function resolvedSpanText(expression, consts) {
+  for (const identifier of expression.match(/[A-Za-z_$][\w$]*/g) ?? []) {
+    const values = consts.get(identifier);
+    if (values) return values.map((value) => `'${value}'`).join(",");
+  }
+  return null;
+}
+
+export function literalText(node, consts = new Map()) {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isTemplateExpression(node)) {
     const parts = [node.head.text];
     for (const span of node.templateSpans) {
       const expression = span.expression.getText().trim();
-      parts.push(COLUMN_PROPERTY.test(expression) ? '"column"' : "\u0000");
+      if (COLUMN_PROPERTY.test(expression)) parts.push('"column"');
+      else parts.push(resolvedSpanText(expression, consts) ?? "\u0000");
       parts.push(span.literal.text);
     }
     return parts.join("");
@@ -248,9 +329,10 @@ function scan() {
   for (const file of walk(PACKAGES)) {
     const source = readFileSync(file, "utf8");
     const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const consts = collectStringConsts(sf);
     let hits = 0;
     const visit = (node) => {
-      const text = literalText(node);
+      const text = literalText(node, consts);
       if (text !== null) {
         COMPARISON.lastIndex = 0;                         // a /g regex carries state between calls
         for (const match of text.match(COMPARISON) ?? []) {
