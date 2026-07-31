@@ -213,6 +213,37 @@ function hasDeliberateMarker(sourceFile, node) {
     if (ranges.some((range) => fullText.slice(range.pos, range.end).includes(DELIBERATE_MARKER))) {
       return true;
     }
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-19:10:
+    A TERNARY ARM'S OWN MARKER WAS INVISIBLE, which is the position people actually use.
+
+        flags
+          ? flags.hold === true
+          /* DELIBERATE-LITERAL — the no-metadata fallback. *\/
+          : column === "in-progress";
+
+    That comment sits before the `:` token, so it is the COLON's leading trivia, not the arm
+    expression's — `getLeadingCommentRanges` at the arm's full start never sees it. The ancestor walk
+    does not help either: the next ancestor is the ConditionalExpression, whose own leading comments
+    are somewhere else entirely.
+
+    Measured before fixing: `in-review-stall.ts` carried a marker in exactly this position and stayed
+    on the backlog, and the only way to clear it was to restructure the code into a named set. That
+    is the tool dictating shape rather than reading intent — and a marker that silently does nothing
+    trains people to stop marking.
+
+    Scoped to the span between the previous arm (or the condition) and this one, so it cannot pick up
+    a comment belonging to anything else.
+    */
+    const parent = current.parent;
+    if (parent && ts.isConditionalExpression(parent)) {
+      const previousEnd = current === parent.whenFalse ? parent.whenTrue.end
+        : current === parent.whenTrue ? parent.condition.end
+        : undefined;
+      if (previousEnd !== undefined && fullText.slice(previousEnd, current.getStart()).includes(DELIBERATE_MARKER)) {
+        return true;
+      }
+    }
     current = current.parent;
   }
   return false;
