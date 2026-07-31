@@ -51,7 +51,7 @@ function renamedIr(): WorkflowIr {
   } as unknown as WorkflowIr;
 }
 
-function createStore(tasks: Record<string, unknown>[] = []) {
+function createStore(tasks: Record<string, unknown>[] = [], ir: WorkflowIr = renamedIr()) {
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
   const selection = { workflowId: WF, stepIds: [] };
   const listTasks = vi.fn(async (opts?: { column?: string }) =>
@@ -73,8 +73,8 @@ function createStore(tasks: Record<string, unknown>[] = []) {
     getCompletionHandoffAcceptedMarker: vi.fn().mockResolvedValue(null),
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
-    getWorkflowDefinition: vi.fn(async () => ({ ir: renamedIr() })),
-    resolveTaskWorkflowIrSync: vi.fn(() => renamedIr()),
+    getWorkflowDefinition: vi.fn(async () => ({ ir })),
+    resolveTaskWorkflowIrSync: vi.fn(() => ir),
   } as unknown as TaskStore;
 
   return {
@@ -130,8 +130,9 @@ function createAgentStore(agents: Record<string, unknown>[], freshRun: unknown =
 function createScheduler(
   tasks: Record<string, unknown>[] = [],
   options: Record<string, unknown> = {},
+  ir: WorkflowIr = renamedIr(),
 ) {
-  const { store, emit, listTasks } = createStore(tasks);
+  const { store, emit, listTasks } = createStore(tasks, ir);
   const scheduler = new Scheduler(store, options as never);
   const schedule = vi.spyOn(scheduler, "schedule").mockResolvedValue(undefined);
   (scheduler as unknown as { running: boolean }).running = true;
@@ -191,6 +192,32 @@ describe("scheduler event handlers under a renamed hold column", () => {
 
       const queried = listTasks.mock.calls.map((c) => (c[0] as { column?: string } | undefined)?.column);
       expect(queried).not.toContain("todo");
+      expect(queried).toContain("drafting");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-12:40:
+    THE SECOND COMPLETE LANE. The guard above used to ask `to === parked.complete`, and
+    `resolveLifecycleColumns` answers FIRST MATCH PER ROLE — so on a board that declares two
+    complete-trait columns, a blocker finishing in the second one reconciled nothing and its
+    dependents waited forever on a blocker that was already done.
+
+    That arity difference is invisible on a single-lane board, which is why the sibling case above
+    passes either way and this one is needed to hold the membership shape in place.
+    */
+    it("treats a SECOND complete-trait column as terminal, not just the first", async () => {
+      const twoCompleteLanes = renamedIr();
+      (twoCompleteLanes as unknown as { columns: Record<string, unknown>[] }).columns.push({
+        id: "released", name: "released", traits: [{ trait: "complete" }],
+      });
+
+      const dependent = task({ id: "FN-DEP", column: "drafting", dependencies: ["FN-BLOCK"], blockedBy: "FN-BLOCK" });
+      const blocker = task({ id: "FN-BLOCK", column: "released" });
+      const { emit, listTasks } = createScheduler([dependent, blocker], {}, twoCompleteLanes);
+
+      await emit("task:moved", { task: blocker, from: "building", to: "released", source: "engine" });
+
+      const queried = listTasks.mock.calls.map((c) => (c[0] as { column?: string } | undefined)?.column);
       expect(queried).toContain("drafting");
     });
   });

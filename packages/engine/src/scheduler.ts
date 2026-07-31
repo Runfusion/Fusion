@@ -409,13 +409,39 @@ terminal cleanup never ran. None of those error; they simply stop happening. One
 event, reusing the SAME sync path and the SAME fail-soft legacy defaults, so event ordering and
 unresolvable-workflow behaviour are both unchanged.
 */
-function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string } {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-12:30:
+`terminal` is a MEMBERSHIP set, and it is not the same question as `complete`/`archived`.
+
+`resolveLifecycleColumns` answers FIRST MATCH PER ROLE — the right shape for "where should this card
+be moved to", the wrong shape for "did this card just reach a finished lane". A workflow may declare
+more than one complete-trait column (a merged lane and a shipped lane, say); `to === parked.complete`
+sees only the first and silently skips the rest.
+
+Seeded with the legacy ids. For an INCLUSION that is safe in the direction that matters: a superset
+makes the reconciliation below run on a move it would otherwise ignore, which costs one extra query
+and cannot wrongly withhold work. (Seeding a REFUSAL is the bug — see `node-override-guard.ts`.)
+
+Same sync IR path and same fail-soft legacy default as the single-column answers, so event ordering
+and unresolvable-workflow behaviour are unchanged.
+*/
+function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
   const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
+  const legacyTerminal: ReadonlySet<string> = new Set([legacy.complete, legacy.archived]);
   try {
-    const l = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
-    return { hold: l?.hold ?? legacy.hold, intake: l?.intake ?? legacy.intake, wip: l?.wip ?? legacy.wip, review: l?.review ?? legacy.review, complete: l?.complete ?? legacy.complete, archived: l?.archived ?? legacy.archived };
+    const ir = store.resolveTaskWorkflowIrSync(taskId);
+    const l = resolveLifecycleColumns(ir);
+    return {
+      hold: l?.hold ?? legacy.hold,
+      intake: l?.intake ?? legacy.intake,
+      wip: l?.wip ?? legacy.wip,
+      review: l?.review ?? legacy.review,
+      complete: l?.complete ?? legacy.complete,
+      archived: l?.archived ?? legacy.archived,
+      terminal: new Set([...legacyTerminal, ...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")]),
+    };
   } catch {
-    return legacy;
+    return { ...legacy, terminal: legacyTerminal };
   }
 }
 
@@ -989,7 +1015,7 @@ export class Scheduler {
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a terminal completion column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
-      if (to === parked.complete || to === parked.archived) {
+      if (parked.terminal.has(to)) {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
@@ -1068,7 +1094,7 @@ export class Scheduler {
         } else {
           this.recentEngineTodoRequeues.delete(task.id);
         }
-      } else if (to === parked.review || to === parked.complete || to === parked.archived) {
+      } else if (to === parked.review || parked.terminal.has(to)) {
         this.recentEngineTodoRequeues.delete(task.id);
         if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
           void this.store.updateTask(task.id, {
@@ -1085,7 +1111,7 @@ export class Scheduler {
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
-      if (to === parked.complete || to === parked.hold) {
+      if (parked.terminal.has(to) || to === parked.hold) {
         schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
