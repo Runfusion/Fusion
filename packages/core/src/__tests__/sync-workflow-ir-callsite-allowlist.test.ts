@@ -11,6 +11,19 @@ FNXC:WorkflowLifecycleColumns 2026-07-31-18:00 (fleet — stop the inert-convers
 PostgreSQL-cutover stub that answers `undefined` unconditionally, so the resolver always takes its
 `!workflowId` branch. Its return type is non-optional, so no caller can detect the substitution.
 
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (CORRECTION — this note named ONE blocker; there are
+TWO, and I am the author of several of the notes elsewhere that repeat the same undercount):
+Fixing the selection reader alone would NOT un-inert this path for the boards this program exists
+for. `resolveTaskWorkflowIrSyncImpl` loads a CUSTOM workflow's IR through `store.db.prepare(...)`,
+and `TaskStore.db` (`dbImpl`, task-id-integrity.ts) is an UNCONDITIONAL throw with no mode branch —
+so that read always throws into the surrounding `catch` and always yields the default IR. A built-in
+workflow could resolve once the selection reader works; a CUSTOM one never can, and a renamed lane
+is by definition a custom workflow.
+A third constraint bounds the fix's shape: multiple nodes run their own engines against ONE shared
+PostgreSQL (`docs/multi-project.md`), so a node-local sync cache of the selection goes stale when
+another node writes one — confidently wrong, which is worse than today's uniformly-wrong default.
+All three are proved and kept honest by `sync-workflow-ir-second-blocker.test.ts`.
+
 That makes it the most dangerous tool in this conversion program. A guard written as
 
     resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id))?.hold
