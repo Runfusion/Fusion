@@ -272,7 +272,7 @@ describe("MilestoneSliceInterviewModal", () => {
         targetTitle="Milestone 1"
       />,
     );
-    const modal = container.querySelector(".planning-modal");
+    const modal = document.querySelector(".planning-modal");
 
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
