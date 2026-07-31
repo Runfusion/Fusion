@@ -1,4 +1,5 @@
 import type { PluginContext, Task } from "@fusion/core";
+import { columnsWithFlag, resolveReviewColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { listPipelineStages } from "../session/stage-registry.js";
 import { createCeTaskWithLink } from "./ce-task.js";
 import {
@@ -41,8 +42,55 @@ import {
  * is needed for correctness.
  */
 
-/** Columns that mean "this stage's board work is finished" → advance the pipeline. */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:30:
+DELIBERATE-LITERAL — the no-IR fallback for the pipeline's "this stage is finished" test.
+
+Retained so a task whose workflow cannot be resolved behaves exactly as before. It is no longer the
+decision: gating advancement on these ids alone meant `allTerminal` was FALSE FOREVER on a board
+whose review and completion lanes are renamed, so the pipeline never advanced a stage, never created
+its outbound task, and sat `running` indefinitely. Nothing errors — it reads as work that has not
+finished, which is why it could sit unnoticed.
+*/
 const TERMINAL_COLUMNS = new Set(["in-review", "done"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-04:35:
+"Finished for pipeline purposes" is a ROLE question, resolved against the task's OWN workflow.
+
+The set below means complete OR review — the comment at its declaration says a stage is done when its
+board work reaches either. Resolved per task rather than board-wide because a column id is meaningful
+only relative to its workflow, and a CE pipeline can span several.
+
+Falls back to the legacy pair whenever the IR cannot be resolved or declares neither trait, so an
+unconverted board and a resolution failure both keep the previous behaviour rather than stalling on
+an empty set — which would be the same defect wearing a different cause.
+
+EXPORTED because it is the whole decision. Left private it could only be reached through a full
+reconcile fixture (pipeline state + links + board tasks), and the half that actually needed proving
+is that a renamed board resolves to its own lanes through this store.
+*/
+export async function isStageTerminalColumn(
+  taskStore: PluginContext["taskStore"],
+  task: Task,
+): Promise<boolean> {
+  try {
+    const ir = await resolveWorkflowIrForTask(taskStore, task.id);
+    if (ir) {
+      /* `resolveReviewColumns` is the documented review SET — mergeOrchestration ∪ mergeBlocker ∪
+         humanReview — so a board that splits those across a merge lane and a human lane is covered
+         without this site re-deriving the union and drifting from it. */
+      const terminal = new Set<string>([
+        ...columnsWithFlag(ir, "complete"),
+        ...resolveReviewColumns(ir),
+      ]);
+      if (terminal.size > 0) return terminal.has(task.column);
+    }
+  } catch {
+    /* fall through to the documented legacy pair */
+  }
+  return TERMINAL_COLUMNS.has(task.column);
+}
 
 export interface ReconcileResult {
   /** Queue entries drained this sweep. */
@@ -150,7 +198,8 @@ export class CeReconciler {
     // Advancement rule: every EXISTING current-stage board task has reached a
     // terminal column (board-authoritative read). Partial completion keeps it
     // running; deleted tasks are excluded above rather than counted as blocking.
-    const allTerminal = existing.every((t) => TERMINAL_COLUMNS.has(t.column));
+    const terminalFlags = await Promise.all(existing.map((t) => isStageTerminalColumn(this.ctx.taskStore, t)));
+    const allTerminal = terminalFlags.every(Boolean);
     if (!allTerminal) {
       // Still running on the board — make sure our status reflects that and stop.
       if (state.status !== "running") {
