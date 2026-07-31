@@ -4139,6 +4139,92 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-13:40:
+    The other two resolvers in this sweep, both UNCOVERED on the #3115 map. Each is blinded and
+    measured separately, because this sweep's own dependency test proved a single case can pin one
+    resolver and leave its sibling green.
+    */
+    it("SKIPS a card resting in a RENAMED terminal lane", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-TERMINAL",
+          column: "shipped",
+          paused: false,
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-terminal",
+          branch: "fusion/FN-TERMINAL",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-terminal.json",
+          steps: [{ status: "done" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      /* A finished card is not this sweep's business; keyed on the id it was reconciled every pass. */
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("does NOT clear metadata for a merge-active card in a RENAMED review lane (FN-5256)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-REVIEW-LIVE",
+          column: "checking",
+          paused: false,
+          /* Not a merge-active status, so the review half of the guard must hold the card. */
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-review-live",
+          branch: "fusion/FN-REVIEW-LIVE",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-review-live.json",
+          steps: [{ status: "in-progress" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
     it("does NOT clear worktree metadata for a scopeOverride in-review task mid-step (status: null)", async () => {
       const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
       mockedExistsSync.mockReturnValue(false);
