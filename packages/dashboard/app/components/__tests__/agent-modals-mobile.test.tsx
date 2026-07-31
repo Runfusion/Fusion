@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import fs from "node:fs";
-import path from "node:path";
 import { AgentDetailView } from "../AgentDetailView";
 import { AgentGenerationModal } from "../AgentGenerationModal";
 import { AgentImportModal } from "../AgentImportModal";
@@ -203,13 +201,30 @@ describe("agent modal mobile CSS structure", () => {
   });
 
   describe("AgentDetailView", () => {
-    it("overlay and modal have mobile-targetable classes", async () => {
+    /*
+    FNXC:ModalTouchGeometry 2026-07-30-18:20:
+    THE SCRIM IS FLOATINGWINDOW'S NOW — this asserts the panel, not a local overlay.
+
+    This case demanded `.agent-detail-overlay`, which no component renders: FN-8619 migrated Agent
+    Detail onto `FloatingWindow`, whose `modal` host owns the scrim
+    (`.floating-window-overlay--modal`). `AgentDetailView.core.test.tsx:97` already asserts the
+    class is ABSENT, so the suite was asserting both sides of the same fact and one of them had to
+    be red.
+
+    The panel class is what this file is actually for: `.agent-detail-modal` is live and is what the
+    mobile `@media` block in AgentDetailView.css targets. The overlay half is dropped rather than
+    re-pointed at `.floating-window-overlay` — that would only re-assert FloatingWindow's own
+    contract, which FloatingWindow.test.tsx already covers, and would say nothing about Agent
+    Detail being mobile-targetable.
+    */
+    it("modal panel keeps its mobile-targetable class", async () => {
       render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(document.querySelector(".agent-detail-overlay")).toBeTruthy();
         expect(document.querySelector(".agent-detail-modal")).toBeTruthy();
       });
+      // The retired local scrim must stay retired; its CSS is dead and tracked in #2915.
+      expect(document.querySelector(".agent-detail-overlay")).toBeNull();
     });
 
     it("tabs have scrollable container class", async () => {
@@ -293,10 +308,20 @@ describe("agent modal mobile CSS structure", () => {
   });
 
   describe("AgentGenerationModal", () => {
-    it("overlay and dialog classes exist", () => {
+    /*
+    FNXC:ModalTouchGeometry 2026-07-30-18:20:
+    `.agent-dialog-overlay` belongs to NewAgentDialog, NOT to this modal.
+
+    That class is still live — `NewAgentDialog.tsx:415` renders it — which is why the stale
+    expectation here looked plausible. But AgentGenerationModal was migrated onto `FloatingWindow`
+    with `modal` (AgentGenerationModal.tsx:162), so its scrim is
+    `.floating-window-overlay--modal` and it never emits the local overlay. Asserted explicitly
+    because "modal blocks the app beneath it" is a real contract worth pinning per FN-8619.
+    */
+    it("dialog renders inside the shared modal scrim", () => {
       render(<AgentGenerationModal isOpen={true} onClose={vi.fn()} onGenerated={vi.fn()} />);
 
-      expect(document.querySelector(".agent-dialog-overlay")).toBeTruthy();
+      expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
       expect(document.querySelector(".agent-dialog")).toBeTruthy();
     });
 
