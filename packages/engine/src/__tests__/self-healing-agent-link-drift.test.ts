@@ -200,4 +200,65 @@ describe("FN-4296: self-healing agent link drift", () => {
     expect((agentStore as any).syncExecutionTaskLink).toHaveBeenCalledTimes(1);
     manager.stop();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-19:20:
+  #3078 converted this sweep's terminal check to the role pair and merged before any test covered it.
+  Measured then: with the conversion reverted, all 204 self-healing tests still passed — every case in
+  this file uses `done`/`archived`, where the literal is correct, so none of them could see it.
+
+  What the literal cost on a renamed board: a durable agent stayed LINKED to a finished task forever.
+  The agent is not free to pick up new work while it is linked, so the drift this sweep exists to
+  clear is exactly the drift it stopped clearing.
+  */
+  const RENAMED_IR = {
+    version: "v2", id: "custom:renamed", nodes: [], edges: [],
+    columns: [
+      { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function buildRenamedManager(agents: Agent[], tasks: Record<string, Task | null>) {
+    const store = {
+      getTask: vi.fn(async (taskId: string) => tasks[taskId] ?? null),
+      recordRunAuditEvent: vi.fn(async () => {}),
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+    } as any;
+    const agentStore = {
+      listAgents: vi.fn(async (filter?: { includeEphemeral?: boolean }) =>
+        filter?.includeEphemeral === false ? agents.filter((a) => !isEphemeralAgent(a)) : agents),
+      getActiveHeartbeatRun: vi.fn(async () => null),
+      updateAgentState: vi.fn(async (agentId: string, state: Agent["state"]) => {
+        const agent = agents.find((candidate) => candidate.id === agentId);
+        if (agent) agent.state = state;
+      }),
+      syncExecutionTaskLink: vi.fn(async (agentId: string, taskId?: string) => {
+        const agent = agents.find((candidate) => candidate.id === agentId);
+        if (agent) agent.taskId = taskId;
+      }),
+    } as unknown as AgentStore;
+    return new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+  }
+
+  it("clears a durable agent linked to a task in a RENAMED complete lane", async () => {
+    const agents = [makeAgent("agent-1", "FN-9")];
+    const manager = buildRenamedManager(agents, { "FN-9": { id: "FN-9", column: "shipped" } as Task });
+
+    await manager.recoverDriftedAgentTaskLinks();
+
+    expect(agents[0].taskId).toBeUndefined();
+    manager.stop();
+  });
+
+  it("leaves a durable agent linked to a task still in a RENAMED wip lane", async () => {
+    /* The sweep must narrow, not widen: an agent on live work keeps its link. */
+    const agents = [makeAgent("agent-1", "FN-8")];
+    const manager = buildRenamedManager(agents, { "FN-8": { id: "FN-8", column: "building" } as Task });
+
+    await manager.recoverDriftedAgentTaskLinks();
+
+    expect(agents[0].taskId).toBe("FN-8");
+    manager.stop();
+  });
 });
