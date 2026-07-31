@@ -770,4 +770,68 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:45 (the query-filter class, eighteenth sweep):
+  `recoverInProgressLimbo` frees a card holding a wip slot with NO worktree, NO branch and no step
+  started — nothing is running and nothing will. The literal read meant that on a renamed board it was
+  never found, so the card kept its slot forever and denied that capacity to work that could run.
+
+  Observable is `getFalsePositiveRequeueSignal`, a private method called once per stranded candidate. It
+  runs BEFORE any lease or git work, so the assertion needs no fixture beyond the card itself.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  it("frees a slot-holding limbo card on a RENAMED wip lane", async () => {
+    const limbo = {
+      ...shippedCard(),
+      id: "FN-LIMBO",
+      column: RENAMED_VOCAB.wip,
+      worktree: null,
+      branch: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([limbo]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const signal = vi.fn(() => ({ reason: "executor-active", metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: signal,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverInProgressLimbo();
+
+    expect(signal).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-LIMBO" }), expect.anything());
+  });
+
+  it("ignores a limbo-shaped card sitting in the RENAMED hold lane", async () => {
+    /*
+    Non-vacuous companion: a card with no worktree and no branch is the NORMAL shape in a hold lane —
+    that is what a queued card looks like. Without this, a read returning every column would make the
+    sweep reclaim cards that were never holding a slot at all.
+    */
+    const queued = {
+      ...shippedCard(),
+      id: "FN-LIMBO",
+      column: RENAMED_VOCAB.hold,
+      worktree: null,
+      branch: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([queued]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const signal = vi.fn(() => ({ reason: "executor-active", metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: signal,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverInProgressLimbo();
+
+    expect(signal).not.toHaveBeenCalled();
+  });
 });
