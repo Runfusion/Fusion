@@ -428,6 +428,58 @@ Two corollaries worth keeping:
   are the same shape — they need the emitter-side / async-threading work, not another conversion pass.
   `--claims` now marks sync-resolver files as inert-risk and keeps them out of the start-here list.
 
+## A blocker described four times, wrong twice: instrument before you file
+
+One `triage.ts` site sat flagged as unconvertible for four cycles. Each cycle produced a confident
+mechanism, and the mechanisms split cleanly by method:
+
+| # | claimed mechanism | derived from | held? |
+|---|---|---|---|
+| 1 | merged intake/hold vocabularies | reading | no |
+| 2 | the orphan arm is scoped to `source === "selection"` | reading + one test run | partly |
+| 3 | provenance verifies by `ir.id`, which builtins lack | reading a **comment** | **no — filed as an issue, closed as wrong** |
+| 4 | two test harnesses cannot answer a selection query | instrumented isolation | **yes** |
+
+The two derived from reading were wrong. The one derived from a comment was wrong in the most
+expensive way: the text quoted was historical prose explaining code that had been REMOVED, sitting
+directly above a paragraph saying so. A rationale was read as an implementation.
+
+**The isolation that settled it took three runs and about a minute:**
+
+```
+flag only, no conversion             8 passed   -> the orphan arm is not the cause
+flag + conversion                    5 failed   -> the conversion is
+same, with a realistic mock store    8 passed   -> the mock was the cause
+```
+
+That is the whole technique: change one variable at a time and let the suite answer. It was available
+from cycle one.
+
+### Why this is not just "test more"
+
+Every wrong mechanism was *plausible*, *specific*, and *consistent with the code as read*. Plausibility
+is what made them dangerous — each one was good enough to write down, publish, and act on. The failure
+mode is not sloppiness; it is that a careful reading of a large file feels like evidence and is not.
+
+The tell is grammatical: **if a claim can be written without running anything, it has not been tested.**
+Statements like "this cannot be converted because X" are hypotheses. Statements like "reverting X fails
+these 3 of 8 cases" are measurements. This document is full of the second kind because the first kind
+kept being wrong.
+
+### The corollary that found real bugs
+
+Once the harness was the suspect rather than the code, a class fell out: **a test that stubs a reader
+which is broken in production proves the call site's logic while being unable to see that production
+resolves nothing.** Eight files stubbed `resolveTaskWorkflowIrSync`. Auditing them — delete the stub,
+see whether the suite still discriminates — found one masking a live defect, four redundant, one
+legitimate.
+
+The distinguishing property is narrow, and worth stating because the obvious generalisation fails:
+the reader must return something **incorrect**, not merely **unused**. `getTaskWorkflowSelection` is
+also degraded under PostgreSQL, and stubbing it masks nothing, because the resolver simply prefers the
+async twin and both answer the same. Measured: 120 files stub it; adding the async twin to the
+highest-signal one changed nothing.
+
 ## The rule that produced every fix above
 
 **A green guard is evidence only once you have watched it go red.**
