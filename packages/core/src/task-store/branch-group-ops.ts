@@ -20,6 +20,7 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 
 export async function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): Promise<void> {
     /*
@@ -77,10 +78,24 @@ export async function clearNearDuplicateReferencesToImpl(store: TaskStore, canon
      */
     const layer = store.asyncLayer!;
     const table = schema.project.tasks;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    LANE. This clears near-duplicate markers pointing at a canonical that is still LIVE; a finished
+    canonical's markers are handled elsewhere. Against the literals a renamed board found no live
+    rows at all, so stale markers survived — and the header above says stale markers alter operator
+    decisions, which is why the PG path mirrors the legacy store here rather than treating it as
+    optional.
+
+    Additive and legacy-seeded: an unconverted board builds the same two `ne`s it built before.
+    */
+    const liveCanonicalLanes = await resolveProjectColumnsForRoles(store, ["complete", "archived"])
+      .catch(() => undefined);
+    const finishedExclusions = liveCanonicalLanes && liveCanonicalLanes.size > 0
+      ? [...liveCanonicalLanes].map((lane) => ne(table.column, lane))
+      : [ne(table.column, "archived"), ne(table.column, "done")];
     const conditions = [
       isNull(table.deletedAt),
-      ne(table.column, "archived"),
-      ne(table.column, "done"),
+      ...finishedExclusions,
       sql`${table.sourceMetadata}->>'nearDuplicateOf' = ${canonicalId}`,
     ];
     if (layer.projectId) conditions.push(eq(table.projectId, layer.projectId));

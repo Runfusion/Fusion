@@ -31,6 +31,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MoveTaskInternalOptions, MoveTaskOptions, storeLog } from "../store.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 
 export async function getBranchGroupImpl(store: TaskStore, id: string): Promise<BranchGroup | null> {
     // FNXC:RuntimeWorkflowAsync 2026-06-24-16:21:
@@ -434,8 +435,23 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
       sql`${schema.project.tasks.sourceMetadata}->>'contentFingerprint' = ${trimmedFingerprint}`,
       sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
     ];
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    LANE. The content-fingerprint duplicate guard runs at CREATE time; against the literal a renamed
+    board left archived cards in the candidate set, so a new task could be refused as a duplicate of
+    one the operator had already filed away. Additive and legacy-seeded.
+    */
     if (!includeArchived) {
-      conditions.push(ne(schema.project.tasks.column, "archived"));
+      const fingerprintArchivedLanes = await resolveProjectColumnsForRoles(store, ["archived"])
+        .catch(() => undefined);
+      /* The fallback stays a literal `ne(..., "archived")` EXPRESSION, not a string in an array: the
+         parity gate counts Drizzle predicates by scanning for exactly that shape, and collapsing it
+         into data drops the SQL encoding's count while the TS and raw encodings hold — which is the
+         divergence that gate exists to catch. It caught this. */
+      const fingerprintExclusions = fingerprintArchivedLanes && fingerprintArchivedLanes.size > 0
+        ? [...fingerprintArchivedLanes].map((lane) => ne(schema.project.tasks.column, lane))
+        : [ne(schema.project.tasks.column, "archived")];
+      conditions.push(...fingerprintExclusions);
     }
     /*
     FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
@@ -463,11 +479,18 @@ export async function findRecentTasksBySourceParentTaskIdImpl(
   const windowMs = Math.max(1, Math.min(dayMs, Math.trunc(options?.windowMs ?? dayMs)));
   const cutoffIso = new Date(Date.now() - windowMs).toISOString();
     const layer = store.asyncLayer!;
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: LANE — recent LIVE siblings; a finished sibling is
+     not a candidate. Additive and legacy-seeded, so an unconverted board is unchanged. */
+  const siblingFinishedLanes = await resolveProjectColumnsForRoles(store, ["complete", "archived"])
+    .catch(() => undefined);
+  const siblingFinishedExclusions = siblingFinishedLanes && siblingFinishedLanes.size > 0
+    ? [...siblingFinishedLanes].map((lane) => ne(schema.project.tasks.column, lane))
+    : [ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done")];
   const rows = await layer.db.select().from(schema.project.tasks).where(and(
     isNull(schema.project.tasks.deletedAt), taskProjectScope(layer),
     eq(schema.project.tasks.sourceParentTaskId, parentId),
     sql`${schema.project.tasks.createdAt} >= ${cutoffIso}`,
-    ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done"),
+    ...siblingFinishedExclusions,
   )).orderBy(asc(schema.project.tasks.createdAt));
   return rows.map((row) => store.rowToTask(store.pgRowToTaskRow(row as unknown as Record<string, unknown>)));
 }

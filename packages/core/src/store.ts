@@ -1121,10 +1121,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     Scope by asyncLayer.projectId so a revert task from another project cannot match.
     */
     const layer = this.asyncLayer!;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    "Is there an OPEN undo task for this source?" is a LANE question — a finished one must not render
+    as an active affordance. Against the literals a renamed board matched neither lane, so a
+    done/archived prior undo attempt kept surfacing as open. Same defect the dashboard-side twin had
+    (`taskRevert.ts`, #3129); this is the store-side query behind it.
+
+    Additive: the resolved sets are legacy-seeded and fall back to the literals, so an unconverted
+    board builds byte-identical SQL and the parity gate's encodings stay in step.
+    */
+    const revertFinishedLanes = await resolveProjectColumnsForRoles(this, ["complete", "archived"])
+      .catch(() => undefined);
+    const revertFinishedExclusions = revertFinishedLanes && revertFinishedLanes.size > 0
+      ? [...revertFinishedLanes].map((lane) => ne(schema.project.tasks.column, lane))
+      : [ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done")];
     const conditions = [
       isNull(schema.project.tasks.deletedAt),
-      ne(schema.project.tasks.column, "archived"),
-      ne(schema.project.tasks.column, "done"),
+      ...revertFinishedExclusions,
       sql`${schema.project.tasks.sourceMetadata}->>'revertOf' = ${trimmedId}`,
     ];
     if (layer.projectId) {
