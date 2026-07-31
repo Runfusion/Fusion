@@ -3446,7 +3446,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         limitMs: timeoutMs,
         status: task?.status ?? null,
       });
-      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
+        if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && (wedgedReviewColumns?.has(task.column) ?? false)) {
         try {
           this.options.enqueueMerge?.(activeId);
         } catch (enqueueErr: unknown) {
@@ -12897,6 +12897,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return 0;
     }
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:15:
+    WIP u REVIEW u FINISHED — deliberately NOT intake/hold.
+
+    The literal list this replaces was `in-progress, in-review, done, archived`, and the omission of
+    `todo` is the whole point of the sweep: an agent still running against a card that fell back to a
+    WAITING lane is exactly the drift being recovered. My first conversion added intake/hold and
+    swallowed that case — `self-healing.test.ts` "recovers durable running agents linked to todo
+    tasks" caught it immediately.
+    */
+    const inactiveAgentLifecycleColumns = await resolveProjectColumnsForRoles(
+      this.store,
+      ["countsTowardWip", ...REVIEW_ROLES, "complete", "archived"],
+    );
+
     const now = Date.now();
     const recoveredAgentIds = new Set<string>();
     const runningAgents = await agentStore.listAgents({ state: "running", includeEphemeral: true });
@@ -12907,7 +12922,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       const linkedTask = await this.store.getTask(agent.taskId);
-      if (linkedTask && (linkedTask.column === "in-progress" || linkedTask.column === "in-review" || linkedTask.column === "done" || linkedTask.column === "archived")) {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:55: resolved LIFECYCLE membership — this skip covers
+         every column an agent may legitimately be linked to, so a renamed board dropped the whole set
+         and the sweep treated live agents as orphaned. */
+      if (linkedTask && inactiveAgentLifecycleColumns.has(linkedTask.column)) {
         continue;
       }
 
@@ -12950,6 +12968,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       return 0;
     }
 
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-06:05: resolved once per sweep — see the guard below. */
+    const driftedFinishedColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
+
     const now = Date.now();
     const clearedAgentIds = new Set<string>();
     const durableAgents = await agentStore.listAgents({ includeEphemeral: false });
@@ -12969,7 +12990,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!linkedTask) {
         shouldClear = true;
         reason = "linked task missing";
-      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+        /* Resolved FINISHED membership — the drifted-link recovery must recognise a renamed
+           complete/archive lane as terminal. */
+        } else if (driftedFinishedColumns.has(linkedTask.column)) {
         shouldClear = true;
         reason = `linked task in terminal column ${linkedTask.column}`;
       } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
@@ -14564,6 +14587,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private async cleanupStaleTempMergeWorktrees(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:55: resolved once per sweep — see the guard below. */
+      const tempWorktreeFinishedColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
       if (settings.worktrunk?.enabled === true) {
         log.debug("[self-healing] temp-dir sweep: worktrunk enabled — AI merge clean-room worktrees use Fusion's dedicated clean-room root, proceeding with native sweep");
       }
@@ -14607,7 +14632,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (task.column === "done" || task.column === "archived") {
+                  /* FNXC:WorkflowResolvedColumns 2026-07-31-05:55: resolved FINISHED membership — a temp
+                     merge worktree belonging to a card in a renamed complete/archive lane is just as
+                     stale as one in `done`. */
+                  if (tempWorktreeFinishedColumns.has(task.column)) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }
