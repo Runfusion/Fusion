@@ -383,3 +383,43 @@ describe("GraphTaskNode", () => {
     expect(boardCard.querySelector(".card-title")?.textContent).toBe(graphCard.querySelector(".card-title")?.textContent);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-15:30:
+THE INVARIANT: a stalled card in the board's OWN wip lane reads as stuck, not as healthily running.
+
+`isTaskStuck` was called without its `columnFlags` argument, so `isWipColumnRole` fell back to the
+literal `in-progress`. On a renamed board no graph card could ever be stuck — and because `isStuck`
+gates `isActive`, a wedged card rendered with the ACTIVE styling instead: the graph said "running"
+about a task that had not moved in hours, while the main board showed the same card as stuck.
+
+That asymmetry between two views of one task is the whole defect, and it is what this pins.
+
+Reverted (the 4th argument dropped, or the flags not threaded from the host context), the first case
+gets the `--active` class back and fails.
+*/
+describe("stuck detection on a renamed board", () => {
+  const STALE_MS = 120_000;
+
+  function stalledCard() {
+    return createTask({
+      column: "building",
+      status: "executing",
+      updatedAt: new Date(Date.now() - STALE_MS).toISOString(),
+    } as Partial<Task>);
+  }
+
+  it("treats a stalled card in a RENAMED wip lane as stuck, not active", () => {
+    const props = createProps(stalledCard());
+    render(<GraphTaskNode {...props} taskColumnFlags={{ countsTowardWip: true }} />);
+
+    expect(screen.getByTestId("graph-task-node-FN-TEST").className).not.toContain("graph-task-node--active");
+  });
+
+  it("still reads a legacy in-progress card as active when it is fresh", () => {
+    const props = createProps(createTask({ column: "in-progress", status: "executing", updatedAt: new Date().toISOString() } as Partial<Task>));
+    render(<GraphTaskNode {...props} />);
+
+    expect(screen.getByTestId("graph-task-node-FN-TEST").className).toContain("graph-task-node--active");
+  });
+});

@@ -368,6 +368,11 @@ export function MainContent({
           context={{
             projectId: currentProject?.id,
             tasks: pluginContextTasks,
+            /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the same per-task trait map `renderTaskCard`
+               below already uses. A plugin view that draws its OWN card (the dependency graph imports
+               `TaskCard` directly) is a third producer that neither #3025 fix could reach, because this
+               context exposed nothing about the board's vocabulary. */
+            columnFlagsByTaskId,
             workflowSteps,
             subscribePluginEvents,
             openTaskDetail: openPluginTaskDetail,

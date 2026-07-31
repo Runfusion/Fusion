@@ -1,4 +1,5 @@
 import type { CSSProperties, ComponentProps, HTMLAttributes } from "react";
+import type { TraitFlags } from "@fusion/core";
 import type { GraphPosition } from "./types.js";
 import { useNodeDrag } from "./hooks/useNodeDrag.js";
 import { TaskCard } from "@fusion/dashboard/app/components/TaskCard";
@@ -30,6 +31,22 @@ type TaskCardBridgeProps = Pick<
 >;
 
 export interface GraphTaskNodeProps extends TaskCardBridgeProps, Pick<HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave" | "onClick"> {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-15:30:
+  This card's OWN resolved column traits, threaded from the host's plugin view context.
+
+  Two defects close here, both from this component having no access to the board's vocabulary:
+    - `isTaskStuck` was called without its `columnFlags` argument, so `isWipColumnRole` fell back to
+      the literal and NO card in the graph was ever shown stuck on a renamed board — while the same
+      card showed stuck correctly on the main board. That asymmetry was the tell.
+    - The `TaskCard` rendered below is a THIRD producer of unflagged cards, after the two #3025 fixed.
+      It bypasses `renderTaskCard` entirely by importing the component directly, so a host-side fix
+      could not reach it; every role helper inside it read the legacy ids.
+
+  Optional, and absent means legacy: the host omits the map for remote rows and off-board columns, and
+  the degraded answer there is the documented literal rather than "this board has no such lane".
+  */
+  taskColumnFlags?: Partial<TraitFlags>;
   style?: CSSProperties;
   position: GraphPosition;
   scale: number;
@@ -52,6 +69,7 @@ function getStatusLabel(status?: string): string {
 }
 
 export function GraphTaskNode({
+  taskColumnFlags,
   style,
   position,
   scale,
@@ -69,7 +87,7 @@ export function GraphTaskNode({
   const { task, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs, onOpenDetail } = taskCardProps;
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
   /*
   FNXC:PluginLifecycleColumns 2026-07-30-03:40 (U11 #2515 audit):
   Keyed on `column === "triage"`, this went permanently FALSE for default-lineage
@@ -154,7 +172,7 @@ export function GraphTaskNode({
           <span className="graph-task-active-indicator-text">{getStatusLabel(task.status)}</span>
         </div>
       ) : null}
-      <TaskCard {...taskCardProps} onOpenDetail={() => {}} disableDrag={true} />
+      <TaskCard {...taskCardProps} taskColumnFlags={taskColumnFlags} onOpenDetail={() => {}} disableDrag={true} />
     </div>
   );
 }

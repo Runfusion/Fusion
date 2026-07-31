@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Task } from "@fusion/core";
+import type { Task, TraitFlags } from "@fusion/core";
 import { GraphTaskNode } from "./GraphTaskNode.js";
 import { GraphToolbar } from "./GraphToolbar.js";
 import { GraphEdges } from "./edges.js";
@@ -19,6 +19,8 @@ const NARROW_VIEWPORT_WIDTH = 768;
 export interface DependencyGraphProps {
   tasks: Task[];
   projectId?: string;
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: per-task resolved column traits from the host. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Partial<TraitFlags>>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDetail?: (task: Task) => void;
   addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
@@ -41,6 +43,7 @@ const POINTER_MOVE_THRESHOLD = 4;
 export function DependencyGraph({
   tasks,
   projectId,
+  columnFlagsByTaskId,
   onOpenTaskDetail,
   onOpenDetail,
   addToast,
@@ -471,6 +474,7 @@ export function DependencyGraph({
                     key={node.task.id}
                     task={node.task}
                     projectId={projectId}
+                    taskColumnFlags={columnFlagsByTaskId?.get(node.task.id)}
                     isSelected={selectedTaskId === node.task.id}
                     style={{ minHeight: `${NODE_HEIGHT}px`, left: `${position.x}px`, top: `${position.y}px` }}
                     position={position}

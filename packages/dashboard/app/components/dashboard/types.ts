@@ -19,6 +19,7 @@ import type {
   TaskDetail,
   ThemeMode,
   WorkflowStep,
+  TraitFlags,
 } from "@fusion/core";
 import type {
   AiSessionSummary,
@@ -68,7 +69,11 @@ export interface MainContentProps {
   columns not on the current board, where the consumer degrades to the documented legacy names
   rather than guessing.
   */
-  columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; archived?: boolean; intake?: boolean; hold?: boolean }>;
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: widened to the flags the map REALLY carries. It is
+     built from `workflow.columns.find(...).flags` (App.tsx `footerColumnFlagsByTaskId`), so the four-flag
+     declaration was a narrower view than the value — and `countsTowardWip`, which the wip predicates
+     need, was invisible to any consumer typed through here. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Partial<TraitFlags>>;
   showBackendConnectionErrorPage: boolean;
   projectsError: string | null;
   t: TFunction;

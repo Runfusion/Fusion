@@ -9,7 +9,7 @@
  * and `react`. Do NOT import dashboard components, hooks, or CSS here.
  */
 import type { ReactNode } from "react";
-import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
+import type { Task, TaskDetail, TraitFlags, WorkflowStep } from "@fusion/core";
 
 /**
  * Tab identifiers for the task detail modal. Mirrors the dashboard's local enum.
@@ -37,6 +37,26 @@ export interface PluginDashboardViewContext {
   openTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   /** Open a project-relative file in the dashboard's built-in file viewer. */
   openFile: (path: string, options?: { workspace?: string; line?: number; col?: number }) => void;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-15:30:
+  The board's resolved column traits, per task id — so a plugin view that draws its OWN card is not
+  forced back onto the legacy ids.
+
+  #3025 fixed the two producers that go through `renderTaskCard`. A plugin that imports `TaskCard`
+  directly is a THIRD producer, and it could not be fixed the same way: this context exposed `tasks`
+  and nothing about the board's vocabulary, so every role helper inside a plugin-drawn card, and
+  every trait predicate a plugin calls, fell back to the literal.
+
+  `Partial<TraitFlags>` rather than the dashboard's `ExecutorColumnFlags`, because this module is
+  deliberately importable by external plugin builds and may only reference `@fusion/core` and `react`
+  (see the header). The runtime value is the same object either way — the map is built from
+  `workflow.columns.find(...).flags`.
+
+  Optional and absent-means-legacy, matching how the host already treats remote rows and off-board
+  columns: a consumer degrades to the documented legacy names rather than reading "resolved and
+  empty" as "this board has no such lane".
+  */
+  columnFlagsByTaskId?: ReadonlyMap<string, Partial<TraitFlags>>;
   renderTaskCard?: (task: Task | TaskDetail) => ReactNode;
   addToast?: (message: string, type?: PluginToastType) => void;
   /**

@@ -12,6 +12,9 @@ export function DependencyGraphDashboardView({ context }: { context?: PluginDash
     tasks: context?.tasks ?? [],
     projectId: context?.projectId,
     workflowStepNameLookup: createWorkflowStepNameLookup(context?.workflowSteps),
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: the board's resolved traits, now that the host
+       context carries them. Absent (remote rows, older host) degrades to the legacy ids as before. */
+    columnFlagsByTaskId: context?.columnFlagsByTaskId,
     onOpenDetail: context?.openTaskDetail as ((task: Task | TaskDetail) => void) | undefined,
   });
 }
