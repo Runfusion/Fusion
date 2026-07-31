@@ -1949,6 +1949,55 @@ describe("SelfHealingManager", () => {
       expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("agent-keep", "active");
       managerWithAgents.stop();
     });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
+    `agentLinkTerminalColumns` was UNCOVERED on the #3115 map. The case above uses `todo` and
+    `in-progress`, so the terminal skip is never the deciding branch.
+
+    An earlier attempt of mine put the card in a renamed WIP lane and stayed green when blinded —
+    correctly, because that card is caught by the wip∪review set first and the terminal resolver never
+    decides anything. The card has to rest in a renamed COMPLETE lane for this guard to be the one
+    that matters.
+
+    What the literal costs: a finished task's agent is not skipped, so the sweep unlinks an agent from
+    a task that completed normally — churn on a row that needed no repair, and a lost link if the
+    agent was about to be reused.
+    */
+    it("skips an agent whose task rests in a RENAMED complete lane", async () => {
+      const now = Date.now();
+      const agents: Agent[] = [
+        { id: "agent-done", state: "running", taskId: "FN-SHIPPED", updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+      ];
+      const getTask = vi.fn(async () => ({ id: "FN-SHIPPED", column: "shipped" } as Task));
+      const agentStore = {
+        listAgents: vi.fn(async () => agents),
+        getActiveHeartbeatRun: vi.fn(async () => null),
+        updateAgentState: vi.fn(async () => undefined),
+        syncExecutionTaskLink: vi.fn(async () => undefined),
+      } as unknown as AgentStore;
+      const store = createMockStore({ getTask });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        id: "custom:renamed",
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      const managerWithAgents = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      await managerWithAgents.recoverAgentsRunningOnInactiveTasks();
+
+      /* The unlink is the action this guard prevents; asserting it is what discriminates. */
+      expect(agentStore.syncExecutionTaskLink).not.toHaveBeenCalled();
+      managerWithAgents.stop();
+    });
   });
 
   describe("recoverStaleHeartbeatRuns", () => {
