@@ -564,8 +564,18 @@ describe("the baseline can always be re-recorded", () => {
       const claimed = out.slice(out.indexOf("CLAIMED by an open PR"), out.indexOf("UNCLAIMED:"));
       expect(claimed).toContain(target);
       expect(claimed).toContain("#9999");
-      /* And it must LEAVE that file out of the start-here list, which is the half that matters. */
-      expect(out.slice(out.indexOf("UNCLAIMED:"))).not.toContain(`  ${target}\n`);
+      /* And it must LEAVE that file out of the start-here list, which is the half that matters.
+
+      FNXC:LifecycleColumnCensus 2026-07-31-10:55 (u12 — this slice was UNBOUNDED and read the wrong section):
+      `slice(indexOf("UNCLAIMED:"))` ran to END OF OUTPUT, so it also covered the SYNC-RESOLVED section
+      printed after the unclaimed block — and that section legitimately lists `scheduler.ts`. The bug was
+      latent while the top remaining file was something else; it became a hard failure the moment the
+      backlog shrank enough for `scheduler.ts` (2 guards) to become `topRemainingFile()`, which is a state
+      every conversion moves toward. Bounded to the unclaimed block's own terminator so it measures the
+      claim/unclaim split it names, not whatever the report prints next. */
+      const unclaimedBlock = out.slice(out.indexOf("UNCLAIMED:"), out.indexOf("A touched file is not proof"));
+      expect(unclaimedBlock).not.toBe("");
+      expect(unclaimedBlock).not.toContain(`  ${target}\n`);
     });
 
     /*
