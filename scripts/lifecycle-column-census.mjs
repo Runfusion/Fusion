@@ -177,6 +177,57 @@ if (!json) {
   }
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-20:10 (fleet — the census could not see an INERT conversion):
+
+`resolveTaskWorkflowIrSync` returns the DEFAULT workflow IR for every task in production (PostgreSQL
+mode's sync selection reader answers `undefined` unconditionally; see
+`sync-workflow-ir-callsite-allowlist.test.ts` and `postgres/sync-workflow-ir-is-always-default.pg.test.ts`).
+
+A guard whose lane comes from that resolver behaves EXACTLY as the literal it replaced — but this
+census scored it as converted, so the backlog fell while nothing changed in production. The call-site
+allow-list stops that class GROWING; it does not stop it COUNTING, because an allow-listed site still
+looks converted from here.
+
+MEASURED when added: `scheduler.ts` holds 10 guards fed by its allow-listed sync resolver, all already
+subtracted from the backlog by earlier PRs. Two conversions of mine were in this class and only one was
+caught — by the ratchet, not by this tool.
+
+A WARNING, not a subtraction: attributing individual guards to the resolver needs dataflow this parser
+does not do, so the honest output is "this file contains a sync call site, so conversions in it may be
+inert" rather than a precise number that would be wrong the other way.
+*/
+if (!json) {
+  const SYNC_RESOLVER = "resolveTaskWorkflowIrSync";
+  const syncCall = new RegExp(SYNC_RESOLVER + "\\s*\\??\\.?\\s*\\(");
+  const remainingByFile = new Map(summary.byFile);
+  const suspect = [];
+  /* Every censused file, not only those with remaining guards: a file converted ENTIRELY through the
+     sync resolver has zero remaining literals and would otherwise be invisible — the case most worth
+     surfacing, because it reads as 100% done and is inert. */
+  for (const file of files) {
+    let source;
+    try {
+      source = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    if (!syncCall.test(source)) continue;
+    suspect.push({ file, count: remainingByFile.get(file) ?? 0 });
+  }
+  if (suspect.length > 0) {
+    suspect.sort((a, b) => b.count - a.count || a.file.localeCompare(b.file));
+    console.log("\n  SYNC-RESOLVED files (conversions here may be INERT): " + suspect.length);
+    console.log("  `" + SYNC_RESOLVER + "` answers with the DEFAULT workflow in production, so a guard");
+    console.log("  resolved through it behaves exactly as the literal did. Counts are REMAINING literals;");
+    console.log("  a count of 0 is the WORST case, not the best — the file reads as fully converted.");
+    for (const entry of suspect.slice(0, 10)) {
+      console.log("    " + String(entry.count).padStart(4) + "  " + entry.file);
+    }
+    if (suspect.length > 10) console.log("    … and " + (suspect.length - 10) + " more");
+  }
+}
+
 if (compare) {
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-30-23:05:
