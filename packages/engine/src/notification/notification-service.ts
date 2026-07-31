@@ -1239,12 +1239,18 @@ export class NotificationService {
   happen in `handleTaskUpdated`, which would then pay it on every task update, so it wants the same
   gate-placement judgement applied to the sites above rather than a mechanical pass.
 
-  Left counted, with no exemption marker, so the census keeps pointing here.
+  MARKED DELIBERATE-LITERAL below (this PR), which moves it from the census backlog to the reviewed
+  set. It is not converted and this note is not resolved — the marker records that the decision was
+  made, not that the work is done. Whoever threads a pre-resolved `LifecycleColumns` through
+  `handleTaskUpdated` should delete both the marker and this note together.
   */
   private isManualMergeHold(task: Task): boolean {
-    /* DELIBERATE-LITERAL — see the note above: resolving here forces the await into
-       `handleTaskUpdated`, which `task-wedge-notification.test.ts` proves drops an operator
-       notification when a re-wedge arrives close behind a recovery. */
+    /* DELIBERATE-LITERAL — see the note above: this method and its only caller
+       (`classifyWorkflowTransitionNotification`) are SYNC, reached from the `handleTaskUpdated`
+       listener the store invokes as `(task: Task): void`. Resolving a lane here makes that whole
+       chain async, turning a synchronous listener body into fire-and-forget and reordering
+       notification classification against every other `task:updated` handler — a behaviour change to
+       notification ordering rather than a column conversion. */
     if (task.column !== "in-review") {
       return false;
     }
