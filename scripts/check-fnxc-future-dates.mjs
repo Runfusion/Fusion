@@ -112,8 +112,16 @@ if (baseline === null || typeof baseline !== "object" || Array.isArray(baseline)
   process.exit(1);
 }
 for (const [file, count] of Object.entries(baseline)) {
-  if (!Number.isInteger(count) || count < 0) {
-    console.error(`[check-fnxc-future-dates] baseline entry "${file}" must be a non-negative integer, got ${JSON.stringify(count)}`);
+  /*
+  FNXC:FnxcStampHygiene 2026-07-30-23:55 (#2941 review): SAFE integer, not just integer.
+
+  `Number.isInteger(9007199254740992)` is true, but that value is past 2^53-1 where JavaScript stops
+  distinguishing adjacent integers — so it compares greater than any count this scanner can produce and
+  silently disables the ratchet for that file. A validator whose purpose is "this baseline cannot be
+  neutered by a bad edit" has to reject the value that neuters it most completely.
+  */
+  if (!Number.isSafeInteger(count) || count < 0) {
+    console.error(`[check-fnxc-future-dates] baseline entry "${file}" must be a non-negative safe integer, got ${JSON.stringify(count)}`);
     process.exit(1);
   }
 }
