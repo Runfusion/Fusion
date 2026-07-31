@@ -401,9 +401,32 @@ Module-scope, takes only a `Task`, and has no flags to consult. Converting it me
 resolved flags through a pure duration helper or resolving a workflow inside it — the same shape flagged
 at `project-engine.ts:2555` and `github-tracking-comments.ts:165`. Left counted so the census keeps
 pointing at the class rather than at me having decided it away.
+
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 — THAT BLOCKER HAS SINCE EXPIRED, and the evidence is in
+this file.
+
+"Has no flags to consult" was true when written and is not true now. `taskColumnFlags` is a prop of
+this component, destructured and already consumed by `isWipColumnRole` / `isReviewColumnRole` a few
+hundred lines below, and `TaskContextMenuColumnFlags` carries `complete`. The sibling duration helpers
+here were threaded for exactly this reason — `getTotalAgentActiveMs` carries the note "THREADED SO THE
+CONVERSION IS NOT INERT". This helper has ONE caller, inside the component, where the flags are in
+scope.
+
+So the threading the note called prohibitive is already done; only this helper was left behind. The
+flags are OPTIONAL and the legacy id remains the fallback (`isCompleteColumnRole`), so a caller without
+resolved flags behaves exactly as before.
+
+WHAT THE LITERAL COST: on a board whose complete lane is renamed, `task.column === "done"` matched
+nothing, so a finished card showed its execution time WITHOUT the completion timestamp — the "done N
+ago" half of the label simply never appeared. Cosmetic, but only visible on renamed boards, which is
+why nobody reported it.
+
+A DECAYED DEFERRAL, recorded as such: this program's learnings say a deferral's stated blocker is a
+claim that ages like any measurement. Mine aged out in one day, and I re-read it twice this week and
+took it at face value both times.
 */
-function getInReviewCompletionMs(task: Task): number | null {
-  return task.column === "done" ? getDoneCompletionMs(task) : null;
+function getInReviewCompletionMs(task: Task, columnFlags?: TaskContextMenuColumnFlags): number | null {
+  return isCompleteColumnRole(columnFlags, task.column) ? getDoneCompletionMs(task) : null;
 }
 
 function getMergeElapsedMs(task: Task, nowMs: number): number | null {
@@ -1838,7 +1861,7 @@ function TaskCardComponent({
       return null;
     }
 
-    const completionMs = getInReviewCompletionMs(task);
+    const completionMs = getInReviewCompletionMs(task, taskColumnFlags);
     if (completionMs == null) {
       return {
         label: elapsedLabel,
@@ -1853,7 +1876,12 @@ function TaskCardComponent({
       title: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
       ariaLabel: t("tasks.executionTimeCompleted", "Execution time {{elapsed}}. Completed {{completedAt}}", { elapsed: elapsedLabel, completedAt }),
     };
-  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs]);
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: `taskColumnFlags` joins the deps because this memo
+     now READS it. Flags arrive asynchronously (the board resolves workflows after first paint), so a
+     card that renders before they load and re-renders after would otherwise keep the pre-flag answer
+     — the memo's inputs would be unchanged. This repo has no `react-hooks/exhaustive-deps` rule, so
+     nothing would have flagged the omission. */
+  }, [task.column, task.status, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, task.firstExecutionAt, task.cumulativeActiveMs, task.cumulativePlanningMs, task.planningStartedAt, task.executionStartedAt, task.executionCompletedAt, timeIndicatorNowMs, taskColumnFlags]);
 
   const lifecycleDates = useMemo(() => {
     const created = formatCompactLifecycleDate(task.createdAt, locale, new Date(lifecycleNowMs));

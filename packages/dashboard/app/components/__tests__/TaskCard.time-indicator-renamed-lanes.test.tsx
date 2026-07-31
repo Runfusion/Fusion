@@ -88,3 +88,91 @@ describe("the card time indicator under a renamed board vocabulary", () => {
     expect(hasDuration(container as unknown as HTMLElement)).toBe(false);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+THE COMPLETION HALF OF THE SAME LABEL, which the cases above do not reach.
+
+`getInReviewCompletionMs` gated on `task.column === "done"`, so on a board with a renamed completion
+lane a finished card rendered its execution time WITHOUT the "done N ago" suffix — the label appears,
+just permanently missing half of itself. That is why nobody reported it: the card does not look
+broken, it looks like a card whose completion time has not been recorded.
+
+The deferral note on that helper said it had "no flags to consult". That was true when written and
+expired within a day: `taskColumnFlags` is a prop of this component, the sibling duration helpers in
+that file were threaded for exactly this purpose, and this helper's single caller sits inside the
+component where the flags are in scope.
+
+DIFFERENTIAL BY CONSTRUCTION: `shipped` collides with no legacy id, so a surviving `=== "done"` cannot
+pass by luck, and the control below pins that the default vocabulary still works.
+*/
+function finishedTaskIn(column: string): Task {
+  return {
+    ...runningTaskIn(column),
+    executionCompletedAt: "2026-06-01T00:30:00.000Z",
+    columnMovedAt: "2026-06-01T00:30:00.000Z",
+    updatedAt: "2026-06-01T00:30:00.000Z",
+  } as unknown as Task;
+}
+
+/*
+SCOPED TO `.card-time-indicator`, and it took two wrong probes to get here — both caught by controls
+and by mutation rather than by reading the code.
+
+  1. `textContent` matched nothing: the completion time lands in the indicator's `title` /
+     `aria-label`, never in visible text. The CONTROL failed too, which is the signature of a broken
+     probe rather than a broken fix.
+  2. `innerHTML` on the whole card matched ALWAYS: the lifecycle-dates footer renders its own
+     "Completed <date>" line, and that path resolves the complete lane CORRECTLY already. So the probe
+     was reading a different, already-converted feature. Mutation exposed it — reverting the fix left
+     all six green.
+
+Querying the indicator element and reading its `title` is the only assertion that can distinguish the
+two, which is the whole point of the test.
+*/
+const completionTitle = (root: HTMLElement) =>
+  root.querySelector(".card-time-indicator")?.getAttribute("title") ?? "";
+const hasCompletionSuffix = (root: HTMLElement) => /Completed/i.test(completionTitle(root));
+
+describe("the card completion timestamp under a renamed board vocabulary", () => {
+  /* Control: the legacy `done` lane renders the completion suffix with no flags supplied. */
+  it("default vocabulary: a card in `done` shows when it completed", () => {
+    const { container } = render(
+      <TaskCard task={finishedTaskIn("done")} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(hasCompletionSuffix(container as unknown as HTMLElement)).toBe(true);
+  });
+
+  /* The defect: `shipped` matched no legacy id, so the completion half never rendered. */
+  it("renamed vocabulary: a card whose traits say COMPLETE shows when it completed", () => {
+    const { container } = render(
+      <TaskCard
+        task={finishedTaskIn("shipped")}
+        taskColumnFlags={{ complete: true }}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(hasCompletionSuffix(container as unknown as HTMLElement)).toBe(true);
+  });
+
+  /*
+  The paired negative: resolving traits must not stamp a completion time on a card that has not
+  finished. A renamed WIP card is still running, so the suffix must stay absent — otherwise the fix
+  trades a missing timestamp for a false one.
+  */
+  it("renamed vocabulary: a running card in the WIP lane shows no completion time", () => {
+    const { container } = render(
+      <TaskCard
+        task={runningTaskIn("building")}
+        taskColumnFlags={{ countsTowardWip: true }}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(hasCompletionSuffix(container as unknown as HTMLElement)).toBe(false);
+  });
+});
