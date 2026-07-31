@@ -20,7 +20,7 @@ import {
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
   isWorkspaceTask,
   resolveColumnFlags,
-  BUILTIN_CODING_WORKFLOW_IR,
+  resolveDefaultWorkflowIr,
   mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
   parseWorkflowIr,
@@ -1127,7 +1127,26 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         const def = workflowId
           ? await projectStore.getWorkflowDefinition(workflowId)
           : undefined;
-        const ir = def?.ir ?? BUILTIN_CODING_WORKFLOW_IR;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+        THE NO-SELECTION FALLBACK IS THE CURRENT DEFAULT, NOT THE LEGACY CONSTANT.
+
+        `BUILTIN_CODING_WORKFLOW_IR` is the legacy monolithic IR (`builtin:legacy-coding`);
+        `resolveDefaultWorkflowIr()` is the catalog's actual default. Post-U11 they DIFFER:
+
+            default  todo, in-progress, in-review, done, archived        (planning merged into todo)
+            legacy   triage, todo, in-progress, in-review, done, archived
+
+        So a task with no selection row rendered a `triage` column the real default no longer
+        declares — the TUI board showed a lane the board does not have.
+
+        This is the same drift `builtin-workflows.ts` records as already fixed for the move-path
+        resolvers: `prepareWorkflowMovePolicyPreflightImpl` resolved through the catalog while
+        `resolveTaskWorkflowIrForMove` used the raw constant, and a no-selection task produced two
+        different workflow signatures ("workflow move policy preflight is stale"). Both were routed
+        through the shared helper so the default could not drift again; this surface was missed.
+        */
+        const ir = def?.ir ?? resolveDefaultWorkflowIr();
         columns = ir.version === "v2" ? ir.columns : [];
         workflowIrCache.set(workflowId, columns);
       }
@@ -3306,9 +3325,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                     const def = selection?.workflowId
                       ? await projectStore.getWorkflowDefinition(selection.workflowId)
                       : undefined;
+                    /* Same no-selection fallback as the column resolution above: the catalog default,
+                       not the legacy constant. Here it decides which `fields` render as card chips,
+                       so the legacy IR showed a different chip set for unselected tasks. */
                     const ir = def
                       ? (typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir)
-                      : BUILTIN_CODING_WORKFLOW_IR;
+                      : resolveDefaultWorkflowIr();
                     const fields = ir.version === "v2" ? (ir.fields ?? []) : [];
                     const chips: Array<{ label: string; value: string }> = [];
                     for (const field of fields) {
