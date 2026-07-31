@@ -232,6 +232,39 @@ describe("ExecutorStatusBar", () => {
       expect(statusBar).toHaveTextContent("FN-002 · 5 todo");
     });
 
+    it("shows the overlap bottleneck on a RENAMED board", () => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:58:
+      The board above renamed and nothing else. Without resolved traits the fan-out counts
+      `overlapBlockedTodoCount` against the literal `todo`, which no card is in, so the segment this
+      test asserts never rendered — the bottleneck existed and the bar stayed silent about it.
+      */
+      const tasks = [
+        makeTask("FN-010", "building", { columnMovedAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }),
+        makeTask("FN-101", "drafting", { blockedBy: "FN-010" }),
+        makeTask("FN-102", "drafting", { blockedBy: "FN-010" }),
+        makeTask("FN-103", "drafting", { blockedBy: "FN-010" }),
+        makeTask("FN-104", "drafting", { blockedBy: "FN-010" }),
+        makeTask("FN-105", "drafting", { blockedBy: "FN-010" }),
+      ];
+      const columnFlagsByTaskId = new Map(tasks.map((task) => [
+        task.id,
+        task.column === "building" ? { countsTowardWip: true } : { hold: true },
+      ]));
+
+      render(
+        <ExecutorStatusBar
+          tasks={tasks}
+          columnFlagsByTaskId={columnFlagsByTaskId}
+          staleHighFanoutBlockerAgeThresholdMs={60 * 60 * 1000}
+        />,
+      );
+
+      const statusBar = screen.getByRole("status");
+      expect(statusBar).toHaveTextContent("Overlap queue");
+      expect(statusBar).toHaveTextContent("FN-010 · 5 todo");
+    });
+
     it("does not show overlap queue summary for ordinary chains below threshold", () => {
       const tasks = [
         makeTask("FN-500", "in-progress"),
