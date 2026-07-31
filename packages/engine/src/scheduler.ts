@@ -2230,6 +2230,19 @@ export class Scheduler {
       membership — wip cards without a worktree yet still reserve (they are about to acquire), and
       terminal lanes are excluded because their retained worktrees are cleanup-owned, not capacity.
       */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-20:55 (u12 — the ratchet caught this, correctly):
+      DELIBERATE-LITERAL — the unresolvable-workflow default. The trait path above is the real answer;
+      this arm is reached only when `columnFlagsForTask` returns undefined, i.e. the task's workflow
+      could not be read at all, and it then gives the same answer the pre-trait code gave.
+
+      Recorded rather than converted because there is nothing to convert TO: a task with no readable
+      workflow has no resolved lane, and treating it as non-terminal would count a finished card's
+      retained worktree against live capacity — the opposite of what the surrounding fix does.
+
+      Marker sits in the DECLARATION's leading comments, not inline: markers are read from a node's
+      leading comments, so a mid-expression one attaches to the wrong node and is silently ignored.
+      */
       const isTerminalColumnTask = (task: Task): boolean => {
         const flags = columnFlagsForTask(task);
         if (flags) return flags.complete === true || flags.archived === true;
