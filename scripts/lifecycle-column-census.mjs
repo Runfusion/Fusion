@@ -109,14 +109,39 @@ let files;
    rather than as the "file not found" the caller would expect. (#3230 review — coderabbitai.) */
 const injectedList = CENSUS_FILE_LIST?.split(/[,\n]/).map((f) => f.trim()).filter(Boolean);
 try {
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-23:05 (the census could not see a file until it was committed):
+  `git ls-files` lists TRACKED files only, so a brand-new file was invisible to this census until the
+  author ran `git add`. Measured: a new `packages/engine/src/probe-helper.ts` containing a plain
+  `task.column === "in-review"` scored 0 while untracked, and flipped the ratchet to exit 1 the moment
+  it was staged.
+
+  That is backwards for the one moment the number is actually consulted. A worker adds a helper, runs
+  the census to check their work, reads 0, and commits — and the guard surfaces later, in someone
+  else's CI run, attributed to a push rather than to the edit that introduced it.
+
+  `--others --exclude-standard` adds untracked-but-not-ignored files. It changes nothing in CI (there
+  is nothing untracked there) and nothing for the tracked backlog; it only makes the local reading
+  agree with the one CI will produce after the commit. Ignored files stay excluded, so build output
+  and `dist/` do not leak into the count.
+
+  Note the deliberate scope difference from `check-inert-sync-lane-conversions`, which walks the
+  filesystem with `readdirSync` and therefore always saw untracked files. The two instruments
+  disagreeing on WHICH FILES EXIST is how one probe can be caught by one and missed by the other
+  (#3252) — that discrepancy cost a full investigation to attribute, so the scopes are aligned here.
+  */
+  const PATHSPECS = "'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx' 'plugins/*/src/**/*.ts' 'plugins/*/src/**/*.tsx'";
   files = injectedList !== undefined ? injectedList : execSync(
-    "git ls-files 'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx' 'plugins/*/src/**/*.ts' 'plugins/*/src/**/*.tsx'",
+    `git ls-files --cached --others --exclude-standard ${PATHSPECS}`,
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   )
     .split("\n")
     .map((f) => f.trim())
     .filter(Boolean)
     .filter((f) => !f.includes("__tests__") && !/\.(test|spec)\.tsx?$/.test(f));
+  /* A path can be listed by both --cached and --others in some index states; counting it twice would
+     double every guard in it. */
+  files = [...new Set(files)];
 } catch (err) {
   // FAIL CLOSED: if the file list cannot be produced, nothing has been checked.
   console.error(`lifecycle-column-census: could not list files — ${err?.message ?? err}`);
