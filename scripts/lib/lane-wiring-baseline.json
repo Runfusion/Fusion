@@ -8,8 +8,6 @@
     "packages/core/src/task-store/branch-group-ops.ts": 1,
     "packages/core/src/task-store/moves.ts": 5,
     "packages/engine/src/auto-merge-finalization.ts": 1,
-    "packages/engine/src/merger-ai.ts": 1,
-    "packages/engine/src/merger.ts": 1,
     "packages/engine/src/planner-overseer.ts": 1,
     "packages/engine/src/project-engine.ts": 1,
     "packages/engine/src/restart-recovery-coordinator.ts": 3,
