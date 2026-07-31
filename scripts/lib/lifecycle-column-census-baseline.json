@@ -1,7 +1,13 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
+<<<<<<< HEAD
     "packages/engine/src/self-healing.ts": 138,
+=======
+    "packages/engine/src/self-healing.ts": 40,
+    "packages/engine/src/scheduler.ts": 12,
+    "packages/engine/src/executor.ts": 7,
+>>>>>>> bf30037f85 (fleet(engine): convert reconcileTaskWorktreeMetadata's lane guards (46 -> 40))
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/executor.ts": 4,
     "packages/engine/src/restart-recovery-coordinator.ts": 4,

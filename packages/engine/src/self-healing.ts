@@ -5278,6 +5278,11 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:40: resolved once per sweep; the three guards below
+         ask finished / wip / review membership against these sets. */
+      const worktreeFinishedColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
+      const worktreeWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const worktreeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const branchMap = await getRegisteredWorktreeBranchMap(this.options.rootDir);
       // FN-5256: macOS git surfaces realpath-normalized worktree paths (/private/var/...)
@@ -5298,7 +5303,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-05:40: resolved FINISHED membership — a card in a
+           renamed complete/archive lane must be skipped here just as `done`/`archived` were. */
+        if (!options?.includeTaskIds?.has(task.id) && worktreeFinishedColumns.has(task.column)) {
           continue;
         }
 
@@ -5335,8 +5342,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          && !worktreeWipColumns.has(task.column)
+          && (!worktreeReviewColumns.has(task.column) || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
@@ -5364,7 +5371,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        /* Resolved ACTIVE membership (wip u review): clearing a live card's worktree yanks it from a
+           running shell, so a renamed active lane must be recognised here too. */
+        if (worktreeWipColumns.has(task.column) || worktreeReviewColumns.has(task.column)) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",
