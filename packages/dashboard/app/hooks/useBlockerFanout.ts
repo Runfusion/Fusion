@@ -122,8 +122,21 @@ export function useBlockerFanout(
   tasks: Task[],
   options: UseBlockerFanoutOptions = {},
 ): Map<string, BlockerFanoutEntry> {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:45:
+  `columnFlagsByTaskId` MUST be a dependency, or the whole seam is inert on the board.
+
+  The board builds its trait index from `boardWorkflows`, which is null until an async fetch
+  resolves — so the FIRST computation always runs against an empty map and takes the documented
+  legacy fallback. When the index populates, neither `tasks` nor the threshold has changed, so a
+  memo keyed on those two never recomputes and the pre-load answer survives for the life of the
+  mount. Threaded end to end, correctly typed, and never arriving.
+
+  This repo has no `react-hooks/exhaustive-deps` rule, so a stale dep array here is invisible to
+  lint and a disable directive for that rule fails CI. The list is maintained by hand.
+  */
   return useMemo(
     () => computeBlockerFanoutMap(tasks, options),
-    [tasks, options.staleHighFanoutAgeThresholdMs],
+    [tasks, options.staleHighFanoutAgeThresholdMs, options.columnFlagsByTaskId],
   );
 }
