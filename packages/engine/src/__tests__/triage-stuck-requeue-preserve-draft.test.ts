@@ -112,6 +112,18 @@ function createMutableStore(initialTask: Task, settings: Partial<Settings> = {},
       currentTask = { ...currentTask, ...updates, updatedAt: "2026-06-27T00:01:00.000Z" } as Task;
       return currentTask;
     }),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    Same gap as `triage.test.ts` (fixed in #3189): this mock defined neither selection reader, so
+    `resolveWorkflowIrForTaskWithProvenance` THREW calling them and took its catch branch — the
+    "could not ask" shape, which a production store never presents.
+
+    It is why converting `recoverApprovedTask` to the async resolver appeared to break these five
+    cases. Measured: with the readers present and answering `undefined` (the real "no selection row"
+    answer), all 8 pass WITH the conversion. The 5 failures were the harness, not a semantics change.
+    */
+    getTaskWorkflowSelection: vi.fn(() => undefined),
+    getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
     moveTask: vi.fn(async (_id: string, column: Task["column"]) => {
       currentTask = { ...currentTask, column, status: null } as Task;
       return currentTask;

@@ -305,6 +305,7 @@ export interface ResolvedWorkflowIr {
   source: WorkflowIrResolutionSource;
   /** The selected id, absent when guessed. */
   workflowId?: string;
+  selectionAbsent?: boolean;
 }
 
 export async function resolveWorkflowIrForTaskWithProvenance(
@@ -322,7 +323,7 @@ export async function resolveWorkflowIrForTaskWithProvenance(
     return { ir: defaultCodingWorkflowIr(), source: "default" };
   }
   if (!workflowId) {
-    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default" };
+    return { ir: await resolveWorkflowIrById(store, "builtin:coding", irCache), source: "default", selectionAbsent: true };
   }
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-30-13:20 (PR #2618 review — greptile P1):

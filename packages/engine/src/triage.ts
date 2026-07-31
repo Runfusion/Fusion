@@ -1272,7 +1272,7 @@ export class TriageProcessor {
     is compatibility, not a second source of truth — once a row is re-homed the
     resolved lane is what matches.
     */
-    const lanes = resolvePlannerLanes(this.store, task.id);
+    const lanes = await resolvePlannerLanesForTaskAsync(this.store, task.id);
     /*
     FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:50 (PR #2593 review — greptile P1):
     The legacy acceptance is SCOPED to an ORPHANED `triage` row — one whose workflow
@@ -1306,7 +1306,8 @@ export class TriageProcessor {
     finalizes a plan in someone's custom lane.
     */
     const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
-    const declaresLegacyTriage = resolved.source === "selection"
+    const workflowIsKnown = resolved.source === "selection" || resolved.selectionAbsent === true;
+    const declaresLegacyTriage = workflowIsKnown
       ? workflowHasColumn(resolved.ir, "triage")
       : true;
     /*
