@@ -11003,6 +11003,45 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:10:
+  `reclaimArchivedColumns` was UNCOVERED on the #3115 map: blinding it back to the id `archived` leaves
+  all 825 self-healing tests green, because no fixture here puts a card in a renamed archive lane.
+
+  This guard SKIPS archived cards — their branches belong to archive cleanup, not to branch reclaim.
+  Keyed on the id, a card filed in a renamed archive lane fails the skip and this sweep DELETES its
+  branch (`git branch -D`), which is not recoverable from the task row.
+  */
+  it("does not reclaim the branch of a card filed in a RENAMED archive lane", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "vault", checkedOutBy: null, userPaused: false, worktree: null, branch: null },
+    ]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
+        ],
+      },
+    }]);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("0\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    /* The branch survives: deleting it is not recoverable from the task row. */
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
+  });
+
   it("does not delete branch with unique commits", async () => {
     (store.listTasks as any).mockResolvedValueOnce([
       { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null },
