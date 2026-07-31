@@ -11984,18 +11984,48 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async auditNoCommitsExpectedCandidates(): Promise<number> {
     try {
-      const inReviewTasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-15:30 (the query-filter class, twenty-eighth sweep):
+      Audits cards that finished every step but pushed NO commits — either a legitimately commit-free task
+      that never declared itself so, or work that silently produced nothing. The literal read meant that on
+      a renamed board only the `no_commits` ERROR path fed the audit, so a card sitting quietly in a
+      renamed review lane with zero commits and no error was never flagged.
+
+      The lane verdict below converts with it; the failed-task read beside it is already lane-independent.
+      */
+      const noCommitsColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const noCommitsById = new Map<string, Task>();
+      for (const column of noCommitsColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) noCommitsById.set(entry.id, entry);
+      }
+      const inReviewTasks = [...noCommitsById.values()];
       const allTasks = await this.store.listTasks({ slim: true });
       const failedTasks = allTasks.filter((task) => task.status === "failed");
       const candidateMap = new Map<string, Task>();
       for (const task of [...inReviewTasks, ...failedTasks]) {
         candidateMap.set(task.id, task);
       }
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). Covers the failed-task rows too,
+         which arrive from the lane-independent read above. */
+      const noCommitsLanes = new Map<string, Set<string>>();
+      for (const entry of candidateMap.values()) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          noCommitsLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(noCommitsColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          noCommitsLanes.set(entry.id, new Set(noCommitsColumns));
+        }
+      }
       const candidates = [...candidateMap.values()].filter((task) => {
         if (task.noCommitsExpected === true) return false;
         if (task.steps.length === 0 || !task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
         const noCommitsError = typeof task.error === "string" && /no_commits/i.test(task.error);
-        return task.column === "in-review" || noCommitsError;
+        return (noCommitsLanes.get(task.id) ?? noCommitsColumns).has(task.column) || noCommitsError;
       });
 
       if (candidates.length === 0) return 0;
