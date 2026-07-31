@@ -450,7 +450,7 @@ function mergeParkedColumns(
 }
 
 /*
-FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet):
+FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (fleet):
 The ASYNC twin. The sync one below cannot answer for a custom workflow in production, so any guard that
 can reach this one must.
 
@@ -477,7 +477,7 @@ async function resolveTaskParkedColumns(store: TaskStore, taskId: string): Promi
       archived,
       terminal: new Set([complete, archived]),
       /*
-      FNXC:WorkflowResolvedColumns 2026-08-01-02:05 (fleet):
+      FNXC:WorkflowResolvedColumns 2026-07-31-02:05 (fleet):
       The wake set UNIONS the legacy ids rather than replacing them, and that is load-bearing rather
       than defensive. Post-U11 the default lineage has no `triage` column, so a RESOLVED answer returns
       `intake: "todo"` where the old inert path fell back to `"triage"`. Converting without the union
@@ -1268,7 +1268,7 @@ export class Scheduler {
             schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on unpause: ${error instanceof Error ? error.message : String(error)}`);
           });
         }
-        /* FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet): the answer only gates `schedule()`,
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (fleet): the answer only gates `schedule()`,
            which is async and fire-and-forget, so resolving it properly costs nothing observable. */
         void (async () => {
           const unpausedParked = await resolveTaskParkedColumns(this.store, task.id);
@@ -1299,7 +1299,7 @@ export class Scheduler {
         this.planningTaskIds.add(task.id);
       } else if (this.planningTaskIds.has(task.id)) {
         this.planningTaskIds.delete(task.id);
-        /* FNXC:WorkflowResolvedColumns 2026-08-01-01:40 (fleet): as with the unpause wake above, the
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (fleet): as with the unpause wake above, the
            answer only gates `schedule()`. The `planningTaskIds.delete` stays SYNCHRONOUS — it is the
            edge-trigger bookkeeping, and deferring it would let a second update re-enter this branch. */
         void (async () => {
