@@ -13304,11 +13304,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverNoProgressNoTaskDoneFailures(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-16:05 (the query-filter class, twenty-ninth sweep):
+      A wip card the executor failed for "no fn_task_done" that made NO step progress and left no git
+      work — nothing to salvage, so it is safe to requeue. The literal read meant that on a renamed board
+      it was never requeued, so a card that produced nothing sat failed while still holding its wip slot.
+
+      The per-card verdict below converts with it. No second pair; verified with the derived ratchet
+      from #2879.
+      */
+      const noProgressColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const noProgressById = new Map<string, Task>();
+      for (const column of noProgressColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) noProgressById.set(entry.id, entry);
+      }
+      const tasks = [...noProgressById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const noProgressLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          noProgressLanes.set(entry.id, source === "default" ? new Set(noProgressColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
+        } catch {
+          noProgressLanes.set(entry.id, new Set(noProgressColumns));
+        }
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
 
       const candidates = tasks.filter((task) =>
-        task.column === "in-progress" &&
+        (noProgressLanes.get(task.id) ?? noProgressColumns).has(task.column) &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
         !task.paused &&
