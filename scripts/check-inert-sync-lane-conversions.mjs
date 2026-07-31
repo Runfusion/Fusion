@@ -63,8 +63,16 @@ const BASELINE_PATH = join(REPO, "scripts", "lib", "inert-sync-lane-baseline.jso
 /** The reader whose selection lookup is unconditionally `undefined` under PostgreSQL. */
 const SYNC_IR_READER = "resolveTaskWorkflowIrSync";
 
-/** Role fields a lifecycle resolution hands back. A guard on any of these is a lane guard. */
-const ROLE_FIELDS = new Set(["hold", "intake", "wip", "review", "complete", "archived", "plannerColumn", "mergedPlanningColumn"]);
+/** Role fields a lifecycle resolution hands back. A guard on any of these is a lane guard.
+ *
+ * FNXC:LifecycleColumnCensus 2026-07-31-16:05 (second evasion, found the same way as the first):
+ * `terminal` is a SET of lane ids rather than one id, and it is here because PR #3065 rewrote
+ * `to === parked.complete || to === parked.archived` into `parked.terminal.has(to)`. That is a real
+ * bug fix — a board may declare more than one complete-trait column — but the answer is still sourced
+ * from the same sync resolver, so the guard is exactly as inert while ceasing to be a `===`
+ * comparison. Counting only comparisons, this check would have watched its own subject shrink and
+ * called it progress. */
+const ROLE_FIELDS = new Set(["hold", "intake", "wip", "review", "complete", "archived", "plannerColumn", "mergedPlanningColumn", "terminal", "lanes", "columns"]);
 
 function sourceFiles(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -143,12 +151,24 @@ function countInertGuards(sf, locals, sources) {
     return undefined;
   };
   const visit = (node) => {
+    /* `to === parked.review` — one lane id, compared. */
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
       if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
         const hit = consumesLocal(node.left) ?? consumesLocal(node.right);
         if (hit) {
           hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, expr: hit });
+        }
+      }
+    }
+    /* `parked.terminal.has(to)` — a SET of lane ids, tested for membership. Same source, same
+       inertness, no comparison node anywhere. See the note on ROLE_FIELDS. */
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const method = node.expression.name.getText(sf);
+      if (method === "has" || method === "includes") {
+        const hit = consumesLocal(node.expression.expression);
+        if (hit) {
+          hits.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, expr: `${hit}.${method}(...)` });
         }
       }
     }
