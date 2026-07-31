@@ -1277,7 +1277,7 @@ export class Scheduler {
          hottest write path (26 emit sites against 7, measured), not a signature change here. */
       if (task.column === "in-progress") this.failedTaskIds.add(task.id);
         /*
-        FNXC:MissionReconciliation 2026-08-01-00:00:
+        FNXC:MissionReconciliation 2026-07-31-22:00:
         In-place failure parks do not emit task:moved, but they release the
         task's durable symbol lock. Reconcile any mission-linked failure update
         so the roadmap records withheld provenance without fabricating completion.

@@ -2309,7 +2309,7 @@ export class InProcessRuntime
   private async drainWorkflowContinuations(): Promise<void> {
     if (this.workflowContinuationDrainActive || this.status !== "active") return;
     /*
-    FNXC:EnginePause 2026-08-01-00:20:
+    FNXC:EnginePause 2026-07-31-22:20:
     A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
     this gate the drain would re-dispatch it on the next tick and the graph would bounce
     suspend→dispatch→suspend forever while paused — and worse, dispatch genuinely new work under
