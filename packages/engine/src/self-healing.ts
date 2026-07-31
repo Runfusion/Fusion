@@ -9747,9 +9747,35 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "done", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:05 (the query-filter class, thirty-first sweep):
+      Repairs the merge metadata of a card that already reached the COMPLETE lane — the commit sha an
+      operator sees, and that later reconcilers trust. The literal read meant that on a renamed board a
+      done card's metadata was never repaired, so a completed task could keep pointing at a commit that
+      is not the one that landed.
+
+      `complete` only, NOT the terminal union: an ARCHIVED card is out of scope here, and widening to
+      TERMINAL_ROLES would start repairing metadata on rows nobody is reading — a behaviour change
+      wearing a conversion's clothes.
+      */
+      const doneMetaColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+      const doneMetaById = new Map<string, Task>();
+      for (const column of doneMetaColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) doneMetaById.set(entry.id, entry);
+      }
+      const tasks = [...doneMetaById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const doneMetaLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          doneMetaLanes.set(entry.id, source === "default" ? new Set(doneMetaColumns) : new Set(columnsWithFlag(ir, "complete")));
+        } catch {
+          doneMetaLanes.set(entry.id, new Set(doneMetaColumns));
+        }
+      }
       const candidates = tasks.filter((task) => {
-        if (task.column !== "done" || task.paused) return false;
+        if (!(doneMetaLanes.get(task.id) ?? doneMetaColumns).has(task.column) || task.paused) return false;
         if (task.mergeDetails?.commitSha) return true;
         return Boolean(task.baseCommitSha);
       });
