@@ -11704,10 +11704,39 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverMisclassifiedFailures(): Promise<number> {
     try {
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-13:20 (the query-filter class, twenty-fifth sweep):
+      A task the executor parked `failed` for "no fn_task_done" whose steps are ALL actually done — the
+      failure is a misclassification, not real. The literal read meant that on a renamed board the error
+      was never cleared, so finished work stayed visibly failed and never entered normal review.
+
+      The per-card verdict below converts with it. No second pair: nothing else in this sweep is
+      lane-gated (verified with the derived ratchet from #2879, not by eye).
+      */
+      const misclassifiedColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const misclassifiedById = new Map<string, Task>();
+      for (const column of misclassifiedColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) misclassifiedById.set(entry.id, entry);
+      }
+      const tasks = [...misclassifiedById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const misclassifiedLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          misclassifiedLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(misclassifiedColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          misclassifiedLanes.set(entry.id, new Set(misclassifiedColumns));
+        }
+      }
 
       const misclassified = tasks.filter((t) =>
-        t.column === "in-review" &&
+        (misclassifiedLanes.get(t.id) ?? misclassifiedColumns).has(t.column) &&
         !t.paused &&
         t.status === "failed" &&
         isNoTaskDoneFailure(t) &&
