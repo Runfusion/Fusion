@@ -84,10 +84,21 @@ function stripComments(source: string): string[] {
   return out;
 }
 
+/*
+Files with a DEDICATED ratchet of their own are skipped here, not double-allowlisted.
+
+`self-healing.ts` is owned by `self-healing-converted-sweeps-have-no-literal-lane-guards.test.ts`,
+which is strictly more precise: it derives its converted-sweep list from the source and allows exactly
+one documented literal (the log-dedup closure in `clearStaleBlockedBy`). Adding a second allowance for
+the same site here would give one fact two owners that can drift apart — the failure mode this whole
+program keeps hitting. One file, one ratchet.
+*/
+const OWNED_ELSEWHERE = new Set(["self-healing.ts"]);
+
 /** Engine sources, excluding tests. Shallow by design — the class lives in the big lane files. */
 function engineSources(): string[] {
   return readdirSync(SRC)
-    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts"))
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts") && !OWNED_ELSEWHERE.has(name))
     .map((name) => join(SRC, name));
 }
 
