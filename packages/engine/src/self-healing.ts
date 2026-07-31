@@ -3446,7 +3446,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         limitMs: timeoutMs,
         status: task?.status ?? null,
       });
-      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && task.column === "in-review") {
+      if (task && allowsAutoMergeProcessing(task, settings) && !task.paused && wedgedReviewColumns!.has(task.column)) {
         try {
           this.options.enqueueMerge?.(activeId);
         } catch (enqueueErr: unknown) {
@@ -4487,6 +4487,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async reclaimStaleActiveBranches(): Promise<number> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an archived card must not have its branch reclaimed, whatever that lane is named. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const reclaimArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
@@ -4531,7 +4533,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!derivedTaskId) continue;
 
         const task = taskById.get(derivedTaskId.toUpperCase());
-        if (!task || task.column === "archived" || task.checkedOutBy || task.userPaused) continue;
+        if (!task || reclaimArchivedColumns.has(task.column) || task.checkedOutBy || task.userPaused) continue;
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.debug(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;
@@ -5059,13 +5061,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async reconcileInReviewBranchRebind(options?: { includeTaskIds?: Set<string> }): Promise<RebindResult> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): branch rebind targets cards resting in the board's own review lane. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const rebindReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     const result: RebindResult = { repaired: 0, outcomes: [] };
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      const tasks = allTasks.filter((task) => rebindReviewColumns.has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,
@@ -5396,6 +5400,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async autoReboundPausedScopeDecayDetailed(options?: { ignoreAgeGate?: boolean }): Promise<{ count: number; reboundedIds: string[] }> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): scope decay rebounds a card that is EXECUTING. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const scopeDecayWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return { count: 0, reboundedIds: [] };
 
@@ -5414,7 +5420,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
     const reboundedIds: string[] = [];
     for (const task of tasks) {
-      if (task.column !== "in-progress" || task.paused !== true) continue;
+      if (!scopeDecayWipColumns.has(task.column) || task.paused !== true) continue;
       if (SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS.has(task.pausedReason ?? "")) continue;
       const followerCount = followersByHolder.get(task.id) ?? 0;
       if (followerCount <= 0) continue;
@@ -6171,8 +6177,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     let recovered = 0;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster):
+    The holder must be EXECUTING and the blocked dependency must be WAITING — both resolved.
+
+    Keyed on the literals this sweep could not fire at all on a renamed board: no holder matched
+    `in-progress`, so the loop body never ran and a stale file-scope lease blocking an unmet dependency
+    was never cleared. The deadlock it exists to break simply persisted.
+    */
+    const leaseWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+    const leaseHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
     for (const holder of tasks) {
-      if (holder.column !== "in-progress") continue;
+      if (!leaseWipColumns.has(holder.column)) continue;
       if (holder.paused === true || holder.userPaused === true) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
@@ -6191,7 +6207,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           deadlockEvidence = "stale-overlap-blocker";
           break;
         }
-        if (dependency.column !== "todo") continue;
+        if (!leaseHoldColumns.has(dependency.column)) continue;
         const dependencyScope = await getFilteredFileScope(dependency.id);
         if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
         if (pathsOverlap(holderScope, dependencyScope)) {
@@ -6310,10 +6326,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
 
     const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+    const completedBlockedHoldColumns = await resolveProjectColumnsForRoles(this.store, ["hold"]);
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== "todo") continue;
+      /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): a completed-but-blocked
+         card is parked in the board's HOLD lane, not necessarily one named `todo`. Keyed on the literal
+         this sweep skipped every card on a renamed board, so work whose blocker had cleared stayed
+         parked instead of advancing to review. */
+      if (!completedBlockedHoldColumns.has(snapshot.column)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -6410,8 +6431,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       : undefined;
 
     let recovered = 0;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster):
+    REVIEW_ROLES, not the literal: a card whose declared dependencies are still unmet must be rebounded
+    from whichever lane this board reviews in. Keyed on `in-review` the sweep never matched a renamed
+    board, so a card sat in review with unmet dependencies and no rebound.
+    */
+    const unmetDepReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.deletedAt) continue;
+      if (!unmetDepReviewColumns.has(task.column) || task.deletedAt) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
@@ -11246,7 +11274,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== "in-review") return false;
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an approved-but-stranded AI merge commit is recovered from the review lane. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const strandedReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+    if (!strandedReviewColumns.has(task.column)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -12914,6 +12944,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async recoverDriftedAgentTaskLinks(): Promise<number> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): a drifted agent link pointing at a FINISHED card. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const driftedTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
     const agentStore = this.options.agentStore;
     if (!agentStore) {
       return 0;
@@ -12938,7 +12970,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!linkedTask) {
         shouldClear = true;
         reason = "linked task missing";
-      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+      } else if (driftedTerminalColumns.has(linkedTask.column)) {
         shouldClear = true;
         reason = `linked task in terminal column ${linkedTask.column}`;
       } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
@@ -14531,6 +14563,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * Safety is bounded by age gates plus active-session checks.
    */
   private async cleanupStaleTempMergeWorktrees(): Promise<number> {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): a temp merge worktree whose owning task has finished. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    const mergeTempTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
     try {
       const settings = await this.store.getSettings();
       if (settings.worktrunk?.enabled === true) {
@@ -14576,7 +14610,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             if (taskId) {
               try {
                 const task = await this.store.getTask(taskId);
-                if (task.column === "done" || task.column === "archived") {
+                if (mergeTempTerminalColumns.has(task.column)) {
                   ageGateMs = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
                   cleanupReason = "done-task-stale";
                 }
