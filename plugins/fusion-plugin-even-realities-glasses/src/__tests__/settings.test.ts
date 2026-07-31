@@ -42,14 +42,38 @@ describe("settings accessors", () => {
     expect(getPollingIntervalMs({ pollingIntervalSeconds: Number.NaN })).toBe(30000);
   });
 
-  it("filters notify columns and falls back when invalid", () => {
-    expect(getNotifyColumns({ notifyOnColumns: ["todo", " nope ", "in-review", 4] })).toEqual(["todo", "in-review"]);
-    expect(getNotifyColumns({ notifyOnColumns: ["nope"] })).toEqual(["in-review"]);
+  /*
+  FNXC:PluginLifecycleColumns 2026-07-30-23:40:
+  THE INVARIANT: a lane name the operator typed is theirs to choose, not ours to veto.
+
+  These two cases previously asserted the opposite — that a column outside the legacy five is
+  "invalid" and gets replaced. That assumption dates to the plugin's original commits (FN-3738 /
+  FN-3970), when the five ids WERE the whole vocabulary; it is not a deliberate contract anyone
+  defended later, and it is now the defect: `notifyOnColumns` is a free-text array, so an operator on
+  a renamed board types `checking`, it is filtered to nothing, and the fallback `in-review` matches no
+  card — notifications silently never fire while the setting looks configured.
+
+  Structural rejection is still asserted, because that part was always right: non-strings, blanks and
+  whitespace-only entries are not lane names. What is gone is rejection on VOCABULARY.
+
+  Reverted, the first two expectations below fail — `["checking","shipped"]` comes back as
+  `["in-review"]`, and `backlog` comes back as `todo`.
+  */
+  it("keeps the operator's own lane names instead of substituting a legacy fallback", () => {
+    expect(getNotifyColumns({ notifyOnColumns: ["checking", "shipped"] })).toEqual(["checking", "shipped"]);
+    expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "backlog" })).toBe("backlog");
   });
 
-  it("validates quick capture column", () => {
+  it("still rejects entries that are not lane names at all, and still trims", () => {
+    expect(getNotifyColumns({ notifyOnColumns: ["todo", " spaced ", "", "   ", 4] })).toEqual(["todo", "spaced"]);
+    expect(getNotifyColumns({ notifyOnColumns: [] })).toEqual(["in-review"]);
+    expect(getNotifyColumns({ notifyOnColumns: "not-an-array" })).toEqual(["in-review"]);
+    expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "   " })).toBe("todo");
+  });
+
+  it("still accepts the legacy ids", () => {
+    expect(getNotifyColumns({ notifyOnColumns: ["todo", "in-review"] })).toEqual(["todo", "in-review"]);
     expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "done" })).toBe("done");
-    expect(getQuickCaptureColumn({ quickCaptureDefaultColumn: "bad-column" })).toBe("todo");
   });
 
   it("respects explicit boolean for agent actions", () => {
