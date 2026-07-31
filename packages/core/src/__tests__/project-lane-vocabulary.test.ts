@@ -9,10 +9,14 @@ impossible one for a read:
 
     await store.listTasks({ column: "in-review" })   // there is no task to resolve from yet
 
-#2800 measured the consequence: `self-healing.ts` alone issues 49 such reads, and on a renamed board
+#2800 measured the consequence: `self-healing.ts` alone issued 49 such reads, and on a renamed board
 every one returns an EMPTY array, so the sweep never executes. The census scores the comparison
 INSIDE the loop, not the query above it — so converting those comparisons drops a count while the
 loop body stays unreachable. In that file the census total is not a floor; it is misleading.
+
+The 49 is dated, not fixed: 37 as of this writing, and falling as the fleet converts them. Regenerate
+with `node scripts/lifecycle-column-census.mjs --json` (`queryByFile`, `queryRoles`) rather than
+trusting the figure — an un-reproducible count is how a comment starts lying about another file.
 
 WHAT THIS MODULE IS FOR. It gives the query class one shared answer instead of each site inventing
 its own. I wrote this logic once inline for the legacy auto-merge stamp backfill; a second copy is

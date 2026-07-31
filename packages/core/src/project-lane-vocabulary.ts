@@ -8,10 +8,16 @@ and the wrong shape for a QUERY, because a query runs before any task is in hand
 
     await store.listTasks({ column: "in-review" })   // ← nothing to resolve from
 
-`#2800` measured the cost: `self-healing.ts` alone issues 49 such reads, and on a board whose lanes
+`#2800` measured the cost: `self-healing.ts` alone issued 49 such reads, and on a board whose lanes
 are renamed every one returns an EMPTY array, so the sweep it feeds never executes. The census scores
 the comparison inside the loop, not the query above it, so converting those comparisons drops a count
 and changes nothing an operator can observe — the loop body was already unreachable.
+
+That 49 is a MEASUREMENT WITH A DATE, not a constant: it was 37 at the time of writing and falls as
+the fleet converts them. Reproduce rather than trust it —
+`node scripts/lifecycle-column-census.mjs --json` reports `queryByFile` and `queryRoles`. Quoting a
+hand-counted figure with no way to regenerate it is how a note starts lying about another file, which
+this program has now corrected twice in comments that were true when written.
 
 Fixing a query needs a different answer: not "this task's lane" but "every column ANY workflow in this
 project declares for this role". That is what this module returns, and it is deliberately shared

@@ -395,11 +395,24 @@ MOVE-TARGET resolvers, kept beside `resolveTaskLifecycleColumns` because they an
 for the other half of a conversion.
 
 The lifecycle-column census is an AST scan for COMPARISONS, so a `moveTask` DESTINATION — a call
-argument — is invisible to it. 51 such destinations exist in production; 22 deliberately pass
-`recoveryRehome: true` (the #1411 legacy safe-landing escape, which must not be converted), and the rest
-are rejected outright on a board that does not declare the target now that U12 hoisted the
-`workflowHasColumn` check out of its dead flag-gated branch. See
+argument — is invisible to it. A share of those deliberately pass `recoveryRehome: true` (the #1411
+legacy safe-landing escape, which must not be converted); the rest are rejected outright on a board
+that does not declare the target, now that U12 hoisted the `workflowHasColumn` check out of its dead
+flag-gated branch. See
 `docs/solutions/architecture-patterns/hardcoded-movetask-destinations-are-census-invisible.md`.
+
+THE COUNTS THAT USED TO BE HERE ARE GONE ON PURPOSE. This note read "51 such destinations exist in
+production; 22 deliberately pass `recoveryRehome: true`". Both were true when measured and neither is
+now — the program has been converting them since — and unlike the census totals there is no command
+that regenerates these, so the figures could only rot. A comment that states an un-reproducible count
+about other files is a comment that will eventually lie; the shape is what matters here, and the
+current numbers are one grep away:
+
+    grep -rnE 'moveTask\([^,]+, *"(todo|in-progress|in-review|done|archived|triage)"' packages \
+      --include='*.ts' | grep -v __tests__
+
+(approximate — it sees single-line call sites only, which is precisely why it was never a total worth
+pinning in prose).
 
 Both fall back to the legacy id: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
 throwing, so a board whose workflow cannot be read behaves exactly as before.
