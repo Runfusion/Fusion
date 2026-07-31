@@ -2253,8 +2253,22 @@ export async function getTerminalTaskEvidence(
   third deferral of mine to dissolve on inspection, which is why the premise is now recorded next to
   the fix rather than in a note claiming it cannot be done.
   */
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-11:30 (fleet phase — RECLASSIFICATION, not a conversion):
+  DELIBERATE-LITERAL — these two ids are the FALLBACK ARM of the three-state rule, not backlog.
+
+  `terminalColumns` undefined means the caller could not resolve lanes; the legacy id is then the only
+  answer that keeps this query working, exactly as it did before lanes existed. Converting them would
+  delete the fallback and make an unresolvable caller return nothing — the census counts the literal,
+  but the literal IS the design.
+
+  Marked rather than converted because every fleet pass re-derives this and leaves it, and an unmarked
+  correct site is indistinguishable from owed work in `byFile`. The marker moves it to
+  `deliberateByFile`, which is what the count should mean.
+  */
   const isComplete = (column: string) =>
     terminalColumns?.complete ? terminalColumns.complete.has(column) : column === "done";
+  /* DELIBERATE-LITERAL — same fallback arm as `isComplete` above; see the note there. */
   const isArchived = (column: string) =>
     terminalColumns?.archived ? terminalColumns.archived.has(column) : column === "archived";
 
