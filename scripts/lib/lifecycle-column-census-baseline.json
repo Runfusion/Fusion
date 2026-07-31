@@ -1,7 +1,6 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 17,
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/executor.ts": 4,
     "packages/engine/src/restart-recovery-coordinator.ts": 4,
@@ -33,6 +32,7 @@
     "packages/engine/src/ephemeral-worker-manager.ts": 1,
     "packages/engine/src/merger.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
+    "packages/engine/src/self-healing.ts": 1,
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
