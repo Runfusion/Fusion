@@ -254,3 +254,75 @@ describe("self-healing pause-abort router column vocabulary", () => {
       .toBe("node-requeue");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet — task:moved fan-out vocabulary):
+The fan-out routed on five literals. On a renamed board all of it went inert at once — the board-stall
+counter stopped counting, in-review rebind stopped firing, completed-task reconciliation stopped running
+— and none of that fails a test, because the move itself still happens.
+
+The sync/async split below is asserted deliberately. The counter MUST increment synchronously:
+`runBoardStallAutoRecoverySweep` makes its own recovery moves and then reads the counter in the same
+pass, so an increment deferred behind an await is read as a stale zero and a real recovery is reported
+as unrecovered. That is not hypothetical — it is what board-stall-auto-recovery.test.ts caught when this
+conversion first put the whole listener behind one await.
+*/
+describe("self-healing task:moved fan-out column vocabulary", () => {
+  type FanoutInternals = {
+    resolveMoveFanoutColumnsSync(taskId: string): { wip: ReadonlySet<string>; review: ReadonlySet<string>; complete: ReadonlySet<string>; archived: ReadonlySet<string>; hold: ReadonlySet<string> };
+    handleTaskMovedFanout(task: Task, from: string, to: string): Promise<void>;
+    reconcileInReviewBranchRebind: unknown;
+    reconcileCompletedTask: unknown;
+  };
+
+  function syncStoreFor(ir?: WorkflowIr): TaskStore {
+    return {
+      ...storeFor(ir),
+      resolveTaskWorkflowIrSync: vi.fn(() => ir),
+    } as unknown as TaskStore;
+  }
+
+  it("resolves every fan-out lane from a renamed board", () => {
+    const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;
+    const c = manager.resolveMoveFanoutColumnsSync("FN-9200");
+    expect(c.wip.has("building")).toBe(true);
+    expect(c.review.has("signoff")).toBe(true);
+    expect(c.complete.has("shipped")).toBe(true);
+    expect(c.hold.has("backlog")).toBe(true);
+  });
+
+  it("keeps legacy ids when the store cannot resolve synchronously", () => {
+    const manager = managerFor(storeFor(undefined)) as unknown as FanoutInternals;
+    const c = manager.resolveMoveFanoutColumnsSync("FN-9200");
+    expect(c.wip.has("in-progress")).toBe(true);
+    expect(c.review.has("in-review")).toBe(true);
+    expect(c.complete.has("done")).toBe(true);
+  });
+
+  it("fires the in-review rebind for a move into a RENAMED review lane", async () => {
+    const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;
+    const rebind = vi.fn(async () => undefined);
+    manager.reconcileInReviewBranchRebind = rebind;
+    manager.reconcileCompletedTask = vi.fn(async () => undefined);
+    await manager.handleTaskMovedFanout(task("FN-9200", "signoff"), "building", "signoff");
+    expect(rebind).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles completion across RENAMED review -> complete and complete -> archived", async () => {
+    const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;
+    const reconcile = vi.fn(async () => undefined);
+    manager.reconcileInReviewBranchRebind = vi.fn(async () => undefined);
+    manager.reconcileCompletedTask = reconcile;
+    await manager.handleTaskMovedFanout(task("FN-9200", "shipped"), "signoff", "shipped");
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reconcile completion on an unrelated renamed move", async () => {
+    const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;
+    const reconcile = vi.fn(async () => undefined);
+    manager.reconcileInReviewBranchRebind = vi.fn(async () => undefined);
+    manager.reconcileCompletedTask = reconcile;
+    await manager.handleTaskMovedFanout(task("FN-9200", "building"), "backlog", "building");
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+});
