@@ -7,6 +7,7 @@ import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
 import type { Toast, ToastType } from "../hooks/useToast";
 import { ModalErrorBoundary } from "./ErrorBoundary";
 import { TaskDetailModal } from "./TaskDetailModal";
+import type { BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { GitHubImportModal } from "./GitHubImportModal";
 import { SubtaskBreakdownModal } from "./SubtaskBreakdownModal";
 import { ScriptsModal } from "./ScriptsModal";
@@ -42,6 +43,8 @@ function prefetchSettingsModal() {
 interface AppModalsProps {
   projectId?: string;
   tasks: Task[];
+  /* Per-task lifecycle traits, forwarded to Task Detail's blocker fan-out. */
+  columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
   projects: ProjectInfo[];
   currentProject: ProjectInfo | null;
   addToast: (message: string, type?: ToastType) => void;
@@ -103,6 +106,7 @@ interface AppModalsProps {
 export function AppModals({
   projectId,
   tasks,
+  columnFlagsByTaskId,
   projects,
   currentProject,
   addToast,
@@ -320,6 +324,7 @@ export function AppModals({
             task={detailTask}
             projectId={projectId}
             tasks={tasks}
+            columnFlagsByTaskId={columnFlagsByTaskId}
             onClose={closeDetailWithNav}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}

@@ -1021,6 +1021,42 @@ describe("TaskDetailModal", () => {
     expect(screen.getByText("File scope overlap blocker: FN-OVER (stale)")).toBeInTheDocument();
   });
 
+  it("counts the overlap blockedBy summary using the board's OWN lane names", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:35:
+    The case below renamed and nothing else. Without resolved traits the count is taken against the
+    literal `todo`, which no card is in, so this line read "blocking 0 todo task(s)" while two cards
+    were in fact blocked. The dependent LIST stayed correct throughout (core builds it without
+    consulting lanes), which is what made the wrong number easy to miss.
+    */
+    const tasks = [
+      makeTask({ id: "FN-B", column: "building" }),
+      makeTask({ id: "FN-1", column: "drafting", blockedBy: "FN-B" }),
+      makeTask({ id: "FN-2", column: "drafting", blockedBy: "FN-B" }),
+    ];
+    const columnFlagsByTaskId = new Map(tasks.map((task) => [
+      task.id,
+      task.column === "building" ? { countsTowardWip: true } : { hold: true },
+    ]));
+
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ id: "FN-B", column: "building" })}
+        tasks={tasks}
+        columnFlagsByTaskId={columnFlagsByTaskId}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("FN-B is blocking 2 todo task(s) via blockedBy overlap")).toBeInTheDocument();
+  });
+
   it("shows overlap blockedBy summary in Blocking section", () => {
     render(
       <TaskDetailModal

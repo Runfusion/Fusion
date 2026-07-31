@@ -72,7 +72,7 @@ import type { SessionTerminalMode, SessionTerminalPosture } from "./SessionTermi
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
-import { MAX_AUTO_MERGE_RETRIES, computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
+import { MAX_AUTO_MERGE_RETRIES, computeBlockerFanoutMap, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import type { TFunction } from "i18next";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
@@ -363,6 +363,8 @@ export interface TaskDetailModalProps {
   task: Task | TaskDetail;
   projectId?: string;
   tasks?: Task[];
+  /* Per-task lifecycle traits for the blocker fan-out; see the useMemo that consumes it. */
+  columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
@@ -722,6 +724,7 @@ export function TaskDetailContent({
   task,
   projectId,
   tasks = [],
+  columnFlagsByTaskId,
   onOpenDetail,
   onMoveTask,
   onDeleteTask,
@@ -3700,7 +3703,21 @@ export function TaskDetailContent({
       return bNum - aNum;
     });
 
-  const blockerFanoutMap = useMemo(() => computeBlockerFanoutMap(tasks), [tasks]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (third fan-out surface):
+  Without resolved traits this classified against `todo`/`in-review`/`done`, so on a renamed board
+  the "blocking N todo task(s)" line counted zero and the `stale` marker on each blocking dependent
+  was decided against lanes the operator does not use. The dependent LIST itself is lane-independent
+  (core pushes `dependentIds` unconditionally), which is why the modal still looked broadly right —
+  only the count and the staleness were wrong.
+
+  Optional: a card with no entry keeps the documented legacy fallback, so the remote-node case and
+  the pre-load window are byte-identical.
+  */
+  const blockerFanoutMap = useMemo(
+    () => computeBlockerFanoutMap(tasks, columnFlagsByTaskId ? { columnFlagsByTaskId } : {}),
+    [tasks, columnFlagsByTaskId],
+  );
   const blockingEntry = blockerFanoutMap.get(task.id);
   const blockingDependents = useMemo(() => {
     if (!blockingEntry) return [] as Array<{ id: string; label: string; stale: boolean }>;

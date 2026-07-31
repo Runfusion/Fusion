@@ -2199,6 +2199,7 @@ function AppInner() {
       <AppModals
         projectId={currentProject?.id}
         tasks={tasks}
+        columnFlagsByTaskId={footerColumnFlagsByTaskId}
         projects={projects}
         currentProject={currentProject}
         addToast={addToast}
