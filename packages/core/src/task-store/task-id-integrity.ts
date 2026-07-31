@@ -436,7 +436,23 @@ export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Pro
     
     const layer = store.asyncLayer!;
     const live = await getLiveTaskColumn(layer.db, id, layer.projectId);
-    // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-00:20 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+    `getLiveTaskColumn` NORMALIZES — it returns the string "archived" for an archived row AND for a
+    soft-deleted one, which is why the line below it distinguishes `null` separately. So this compares
+    against that function's RETURN VOCABULARY, not against a column id, and converting it to an
+    archived-role read would keep passing on the built-in board and start FAILING on a renamed one: a
+    soft-deleted task would report as not-archived.
+
+    Same class as the migration marker in `plugin-store.ts` and the document guards in
+    `comments-ops.ts` — a legacy id that is a protocol value rather than a lane. Marked so the backlog
+    stops claiming a conversion is owed here; see
+    docs/solutions/architecture-patterns/the-archived-literal-is-usually-a-sentinel-not-a-column.md.
+
+    The sibling `isTaskArchivedImpl` above reads `cached?.column`, which IS a board lane and remains
+    counted — it is real debt, blocked on resolving lanes from a sync path with no store.
+    */
     if (live === "archived") return true;
     if (live !== null) return false;
     return isTaskIdPresentInArchivedTasksTableAsyncImpl(store, id);
