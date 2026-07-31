@@ -127,6 +127,27 @@ async function cleanupTriageFixtureRoot(rootDir: string | undefined): Promise<vo
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   let store: Partial<TaskStore>;
   store = {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    THE MOCK MUST BE ABLE TO ANSWER "no selection" — it could not even be ASKED.
+
+    Neither `getTaskWorkflowSelection` nor its async twin was defined here, so
+    `resolveWorkflowIrForTaskWithProvenance` threw calling them and took its CATCH branch, reporting
+    `source: "default"` in the sense of "the lookup failed". Production stores always expose both
+    readers, so that shape cannot occur there — every case in this file was exercising a store that
+    does not exist.
+
+    It matters because `triage.ts`'s post-U11 intake recovery gates on that provenance: a failed
+    lookup correctly refuses to claim a workflow lacks `triage`, so the orphan arm stayed off and the
+    recovery depended on `resolvePlannerLanes` FAILING and falling back to legacy ids. Measured in
+    #3141: converting that site to the async resolver failed 13 cases against this harness, and I
+    twice mistook that for a production constraint.
+
+    Returning `undefined` models the real "no selection row" answer — the store CAN be asked and says
+    there is none — which is the case a pre-U11 row actually presents.
+    */
+    getTaskWorkflowSelection: vi.fn(() => undefined),
+    getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     createTask: vi.fn(),
