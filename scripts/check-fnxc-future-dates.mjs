@@ -123,10 +123,37 @@ for (const [file, count] of Object.entries(found)) {
   const allowed = baseline[file] ?? 0;
   if (count > allowed) problems.push(`  ${file}: ${count} future-dated FNXC stamp(s), baseline allows ${allowed}`);
 }
-/* A DROP fails too: a corrected file must not leave a slot the surface can regrow into. */
+/*
+FNXC:FnxcStampHygiene 2026-07-30-23:20 (#2941 CI red — a ratchet whose own measurement moves with the
+clock): A DROP TIGHTENS, IT DOES NOT FAIL.
+
+I copied the drop-fails rule from the SQL ratchet without noticing that this population is not stable
+the way that one is. "Is this stamp in the future" is answered against TODAY, so every date boundary
+the runner crosses converts some future stamps into past ones and the count falls ON ITS OWN — no code
+change involved. With drop-fails that guarantees a red gate on some later day, and it fired within
+hours: the baseline was recorded at 2026-07-30 local while CI runs in UTC, already 2026-07-31.
+
+Both sibling ratchets reached the same conclusion for the ordinary reason (the drop is rarely the
+failing author's to fix). Here it is stronger still: nobody CAUSED the drop, so there is no author to
+fix it. The ceiling follows the count down, says what it lowered, and exits 0; the RISE check — the
+actual purpose, "no NEW future-dated stamp" — is untouched and still fails hard.
+
+The rewritten baseline must be committed to take effect; in CI the write is discarded with the runner,
+which is why the gate goes green rather than silently banking a stale allowance.
+*/
+const tightened = [];
 for (const [file, allowed] of Object.entries(baseline)) {
   const count = found[file] ?? 0;
-  if (count < allowed) problems.push(`  ${file}: ${count} now, baseline still allows ${allowed} — re-record it (--update-baseline)`);
+  if (count < allowed) tightened.push(`  ${file}: ${allowed} -> ${count}`);
+}
+if (tightened.length > 0) {
+  for (const [file, allowed] of Object.entries(baseline)) {
+    const count = found[file] ?? 0;
+    if (count < allowed) { if (count === 0) delete baseline[file]; else baseline[file] = count; }
+  }
+  writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
+  console.log(`[check-fnxc-future-dates] baseline TIGHTENED for ${tightened.length} file(s):`);
+  for (const line of tightened.sort()) console.log(line);
 }
 
 if (problems.length > 0) {
