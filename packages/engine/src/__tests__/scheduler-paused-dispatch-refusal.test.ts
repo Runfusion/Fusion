@@ -55,9 +55,15 @@ That is why both were deleted rather than merged into one. A cleanup that cannot
 clean anything is not a safety net; it is a claim the file cannot back, and it misreports which
 layer owns temp lifetime.
 
-If a future review flags this again: check where `tmpdir()` actually points before adding an
-`afterEach`. If the redirect is ever removed, cleanup belongs in the shared setup for every test —
-not re-added file by file.
+SCOPED TO THIS FILE, deliberately. The sink is reclaimed on process exit (plus the globalTeardown
+sweep of WORKER_ROOT), NOT between tests — so fixtures do accumulate inside it for the life of the
+worker. This file mints exactly four, which is immaterial. A file that mints them in a loop has a
+real reason to keep its own `afterEach`: bounding PEAK disk during a run is a benefit the
+exit-time sweep does not provide. Do not read this note as "per-file temp cleanup is always
+redundant" — that is a different claim, and it is false.
+
+If a future review flags this again: check where `tmpdir()` actually points, and how many fixtures
+the file creates, before adding an `afterEach`.
 */
 
 function makeTask(overrides: Partial<Task> = {}): Task {
