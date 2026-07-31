@@ -172,6 +172,23 @@ import {
 
 
 const log = createLogger("self-healing");
+
+/*
+DELIBERATE-LITERAL — the no-metadata fallback for dependency satisfaction, mirroring
+`isLegacyDependencySatisfied` in scheduler.ts (reviewed there 2026-07-30-20:40).
+
+Reached ONLY when `resolveDependencySatisfactionColumns` left a dependency unmapped, i.e. its workflow
+could not be read at all. DELETING these literals does not "finish the conversion" — it makes an
+unresolvable dependency read as never-satisfied, which blocks its dependent forever. That is strictly
+worse than the legacy behaviour it would replace.
+
+Hoisted to module scope so the marker sits in the node's LEADING comments, which is where the census
+looks; inline in the conditional it was attached to the wrong node and scored as three unconverted
+guards (86 -> 89 on #2883).
+*/
+function isDependencySatisfiedWithoutWorkflowMetadata(column: string): boolean {
+  return column === "done" || column === "archived" || column === "in-review";
+}
 const worktreeMetadataReconcileLog = createLogger("worktree-metadata-reconcile");
 /*
 FNXC:EngineDiagnostics 2026-07-26-10:25:
@@ -4678,8 +4695,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             const columns = depSatisfaction.get(depId);
             const satisfied = columns
               ? columns.terminal.has(dep.column) || columns.review.has(dep.column)
-              /* DELIBERATE-LITERAL — the no-metadata fallback, matching isLegacyDependencySatisfied. */
-              : dep.column === "done" || dep.column === "archived" || dep.column === "in-review";
+              : isDependencySatisfiedWithoutWorkflowMetadata(dep.column);
             if (!satisfied) unresolvedDeps.push(depId);
           }
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
