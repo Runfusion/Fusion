@@ -54,10 +54,27 @@ test("PLUGIN_AUTHORING TOC includes top-level dashboard views and anchors align 
   const tocMatch = doc.match(/## Table of Contents\n\n([\s\S]*?)\n---/);
   assert.ok(tocMatch, "Table of Contents block should exist");
 
-  const tocLines = tocMatch[1]
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  /*
+  FNXC:PluginAuthoringDocs 2026-07-31-18:20:
+  NESTED TOC entries are legal Markdown, and this parser rejected them by flattening indentation away.
+
+  `- [Theming & Overlay Layering for Dashboard Views](...)` sits indented under item 8 — an ordinary
+  sub-entry. The old code trimmed every line first and then required ALL of them to match the
+  top-level `N. [title](#anchor)` shape, so adding a perfectly valid sub-entry turned this assertion
+  red on `main`, and it has been red since.
+
+  Indentation is the discriminator, so it is read BEFORE trimming. Sub-entries are still required to
+  be well-formed links — they are simply not top-level sections and do not participate in the
+  numbering or the count. A malformed TOP-LEVEL line still fails exactly as before, which is the guard
+  this test exists to be.
+  */
+  const rawTocLines = tocMatch[1].split("\n").filter((line) => line.trim());
+  const subEntries = rawTocLines.filter((line) => /^\s+/.test(line));
+  for (const line of subEntries) {
+    assert.ok(/^\s+-\s+\[.+\]\(#.+\)$/.test(line.replace(/\s+$/, "")), `Invalid nested TOC line: ${line}`);
+  }
+
+  const tocLines = rawTocLines.filter((line) => !/^\s/.test(line)).map((line) => line.trim());
 
   const tocEntries = tocLines.map((line) => {
     const m = line.match(/^(\d+)\.\s+\[(.+)\]\(#(.+)\)$/);
