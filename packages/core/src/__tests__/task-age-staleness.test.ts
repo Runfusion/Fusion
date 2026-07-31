@@ -206,4 +206,33 @@ describe("age staleness resolves its lanes by ROLE", () => {
     // With a 1ms wip warning and a ~999h review warning, only the wip threshold can produce critical.
     expect(wipSignal?.level).toBe("critical");
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  CHARACTERIZATION, and it is honest about being one: this pins the value the signal already emitted.
+
+  `TaskAgeStalenessSignal.column` was typed `"in-progress" | "in-review"` and filled through a cast
+  whose comment said "the guard above proves `column` is one of these two legacy ids". That stopped
+  being true when the guard was converted to compare against the RESOLVED wip/review lanes — from then
+  on the cast asserted the opposite of what the guard established, while the runtime happily passed the
+  renamed id through.
+
+  So widening the type changes NO behaviour, and no runtime test can differentiate it; the thing that
+  differentiates is `tsc`. Under the old narrow type a consumer writing `signal.column === "building"`
+  got a compile error telling them the comparison was impossible — the type actively taught the wrong
+  invariant. This case exists so the value is at least pinned, and so a future narrowing has something
+  to break against besides a type error nobody sees until they hit it.
+
+  The `as never` casts on the fixtures below are the same shape and stay: `ColumnId` is a union with a
+  `string & {}` member, and these are deliberately ids no board declares.
+  */
+  it("reports the RENAMED lane id it matched, not a legacy one", () => {
+    const signal = getTaskAgeStalenessSignal(
+      { ...baseTask, column: "building" as never, columnMovedAt: STALE_MOVED_AT },
+      { now: NOW, lifecycle: RENAMED },
+    );
+
+    expect(signal).toBeDefined();
+    expect(signal?.column).toBe("building");
+  });
 });
