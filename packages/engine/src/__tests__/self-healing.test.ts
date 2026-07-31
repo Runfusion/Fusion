@@ -11671,6 +11671,79 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       manager.stop();
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-22:15:
+    Both of this sweep's resolvers were UNCOVERED on the #3115 coverage map: blinding either
+    `leaseWipColumns` or `leaseHoldColumns` back to its legacy id leaves all 825 self-healing tests
+    green, because every fixture above uses `in-progress` / `todo`, where the literals are correct.
+
+    What that costs on a renamed board: the holder scan matches no card and the dependency scan
+    matches no card, so a stale file-scope lease blocking a real dependency is never rebounded. The
+    dependent stays `overlapBlockedBy` forever behind a holder that is not coming back — a deadlock
+    the sweep exists to break, silently not broken.
+    */
+    it("rebounds a stale lease when holder and dependency rest in RENAMED wip and hold lanes", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "building", dependencies: ["FN-D"], worktree: "/tmp/wt-h" }),
+        makeTask({ id: "FN-D", column: "drafting", status: "queued", overlapBlockedBy: "FN-H" }),
+      ], {
+        "FN-H": ["packages/engine/src/scheduler.ts"],
+        "FN-D": ["packages/engine/src/scheduler.ts"],
+      });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          ],
+        },
+      }]);
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test" });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      /* The dependent is released rather than left blocked behind a holder that is not coming back. */
+      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      manager.stop();
+    });
+
+    it("rebounds an overlapping RENAMED-hold dependency with no stale-blocker marker", async () => {
+      /*
+      The hold half. The case above sets `overlapBlockedBy`, which short-circuits at the
+      stale-overlap-blocker branch BEFORE the hold membership is consulted — measured: blinding
+      `leaseHoldColumns` leaves it green. Without the marker the sweep must fall through to
+      "is this dependency waiting in a hold lane and overlapping my scope?", which is the guard
+      `leaseHoldColumns` actually feeds.
+      */
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H2", column: "building", dependencies: ["FN-D2"], worktree: "/tmp/wt-h2" }),
+        makeTask({ id: "FN-D2", column: "drafting", status: "queued" }),
+      ], {
+        "FN-H2": ["packages/engine/src/scheduler.ts"],
+        "FN-D2": ["packages/engine/src/scheduler.ts"],
+      });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          ],
+        },
+      }]);
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test" });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H2", expect.anything(), expect.objectContaining({ recoveryRehome: true }));
+      manager.stop();
+    });
+
     it("rebounds an overlapping todo dependency even before a stale blocker marker is stamped", async () => {
       const { store, manager } = setup([
         makeTask({ id: "FN-H", column: "in-progress", dependencies: ["FN-D"] }),
