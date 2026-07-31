@@ -35,10 +35,33 @@ that survives a writer on a different host.
 
 This file exists so the next person to attempt the unblock reads all three before starting, instead
 of shipping a selection cache and discovering the second read at integration time.
+
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:55 (the emitter route works for `task:moved` and does NOT
+generalise to `task:updated` — measured, before someone does the obvious follow-on):
+#3109 solved this class for `task:moved` by having the EMITTER resolve lanes once and carry them on
+the payload. It is the right fix there and it retired several flags within a day. The obvious next
+step is to do the same for `task:updated`, which is where the remaining sync-listener guards live
+(`scheduler.ts`'s mission-failure and PR-monitoring guards, `triage.ts`'s planning-evacuation guard).
+
+The cost profile is opposite, and that is why #3109's justification does not transfer. Measured on
+this tree: 7 `task:moved` emit sites versus 26 `task:updated` sites across ten files. #3109 could
+argue the resolution away because a move "is already async and already post-commit, so the resolution
+costs one IR read on a transition that has just done database work". `task:updated` fires on every log
+append, comment, artifact write and steering message — `audit-ops.ts`'s logEntry fast path is one of
+them, and it exists precisely to avoid re-reading the task. An IR read per emit there is a regression
+on the hottest write path in the system.
+
+Partial coverage does not rescue it either, and `triage.ts` is the reason: its evacuation handler
+reacts to ANY `task:updated` carrying a column — it explicitly tolerates partial payloads — so it
+needs lanes on essentially every emit or it keeps its literal fallback anyway.
+
+So the remaining `task:updated` guards are NOT one commit behind #3109. Unblocking them wants either a
+cached lane answer the emitter can attach for free, or the sync reader described above. Recorded so
+the follow-on is a decision rather than a surprise.
 */
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "../../../..");
@@ -87,6 +110,41 @@ describe("the sync workflow-IR path is blocked twice, not once", () => {
     expect(source("packages/core/src/store.ts")).toContain("resolveTaskWorkflowIrSync");
     expect(source("packages/core/src/__tests__/sync-workflow-ir-callsite-allowlist.test.ts"))
       .toContain("resolveTaskWorkflowIrSync");
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-23:55:
+  The emitter route's cost argument, pinned as a ratio rather than prose. #3109 justified resolving an
+  IR per `task:moved` because a move has just done database work; `task:updated` fires on every log
+  append and comment, so the same change there is a hot-path regression. If these counts ever converge
+  the trade-off changes and the note above should be re-read.
+  */
+  it("`task:updated` has far more emit sites than `task:moved`, which is why the emitter route does not generalise", () => {
+    const countEmits = (event) => {
+      const files = new Set();
+      let total = 0;
+      const walk = (dir) => {
+        for (const entry of readdirSync(dir)) {
+          const path = join(dir, entry);
+          if (statSync(path).isDirectory()) {
+            if (entry === "__tests__" || entry === "node_modules" || entry === "dist") continue;
+            walk(path);
+          } else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) {
+            const hits = (readFileSync(path, "utf8").match(new RegExp(`emit\\("${event}"`, "g")) ?? []).length;
+            if (hits > 0) { files.add(path); total += hits; }
+          }
+        }
+      };
+      walk(join(REPO_ROOT, "packages/core/src"));
+      return { total, files: files.size };
+    };
+
+    const moved = countEmits("task:moved");
+    const updated = countEmits("task:updated");
+
+    expect(moved.total).toBeGreaterThan(0);
+    /* The ratio is the point, not the exact numbers — those move with ordinary work. */
+    expect(updated.total).toBeGreaterThan(moved.total * 2);
   });
 
   /*
