@@ -269,35 +269,18 @@ conversion first put the whole listener behind one await.
 */
 describe("self-healing task:moved fan-out column vocabulary", () => {
   type FanoutInternals = {
-    resolveMoveFanoutColumnsSync(taskId: string): { wip: ReadonlySet<string>; review: ReadonlySet<string>; complete: ReadonlySet<string>; archived: ReadonlySet<string>; hold: ReadonlySet<string> };
     handleTaskMovedFanout(task: Task, from: string, to: string): Promise<void>;
     reconcileInReviewBranchRebind: unknown;
     reconcileCompletedTask: unknown;
   };
 
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-19:20 (fleet): plain async store — the sync resolver this
+     used to exercise was deleted as a production no-op (PG mode always answers with the default IR). */
   function syncStoreFor(ir?: WorkflowIr): TaskStore {
-    return {
-      ...storeFor(ir),
-      resolveTaskWorkflowIrSync: vi.fn(() => ir),
-    } as unknown as TaskStore;
+    return storeFor(ir);
   }
 
-  it("resolves every fan-out lane from a renamed board", () => {
-    const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;
-    const c = manager.resolveMoveFanoutColumnsSync("FN-9200");
-    expect(c.wip.has("building")).toBe(true);
-    expect(c.review.has("signoff")).toBe(true);
-    expect(c.complete.has("shipped")).toBe(true);
-    expect(c.hold.has("backlog")).toBe(true);
-  });
 
-  it("keeps legacy ids when the store cannot resolve synchronously", () => {
-    const manager = managerFor(storeFor(undefined)) as unknown as FanoutInternals;
-    const c = manager.resolveMoveFanoutColumnsSync("FN-9200");
-    expect(c.wip.has("in-progress")).toBe(true);
-    expect(c.review.has("in-review")).toBe(true);
-    expect(c.complete.has("done")).toBe(true);
-  });
 
   it("fires the in-review rebind for a move into a RENAMED review lane", async () => {
     const manager = managerFor(syncStoreFor(RENAMED_WITH_REVIEW)) as unknown as FanoutInternals;

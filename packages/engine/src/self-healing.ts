@@ -986,45 +986,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   working lane, which is the same population the WIP cap governs. A board declaring a second working lane
   outside the cap should not have exits from it counted as board progress.
   */
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-15:20 (fleet):
-  The synchronous twin of `resolveMoveFanoutColumnsFor`, for the one caller that cannot await: the
-  board-stall counter, whose increment must be visible to a sweep already in progress.
-
-  `resolveTaskWorkflowIrSync` is the same seam `scheduler.ts` uses for its own sync lane resolution. A
-  store that does not implement it, or a workflow that will not resolve, yields the legacy ids — the
-  degraded answer every resolver in this file gives, and the one that keeps the counter counting rather
-  than silently flat-lining board-stall detection.
-  */
-  private resolveMoveFanoutColumnsSync(taskId: string): {
-    wip: ReadonlySet<string>;
-    review: ReadonlySet<string>;
-    complete: ReadonlySet<string>;
-    archived: ReadonlySet<string>;
-    hold: ReadonlySet<string>;
-  } {
-    const wip = new Set<string>(["in-progress"]);
-    const review = new Set<string>(["in-review"]);
-    const complete = new Set<string>(["done"]);
-    const archived = new Set<string>(["archived"]);
-    const hold = new Set<string>(["todo"]);
-    try {
-      const ir = this.store.resolveTaskWorkflowIrSync?.(taskId);
-      if (ir) {
-        for (const id of columnsWithFlag(ir, "countsTowardWip")) wip.add(id);
-        for (const id of columnsWithFlag(ir, "mergeOrchestration")) review.add(id);
-        for (const id of columnsWithFlag(ir, "humanReview")) review.add(id);
-        const lifecycle = resolveLifecycleColumns(ir);
-        if (lifecycle?.complete) complete.add(lifecycle.complete);
-        if (lifecycle?.archived) archived.add(lifecycle.archived);
-        if (lifecycle?.hold) hold.add(lifecycle.hold);
-      }
-    } catch {
-      /* degraded: the legacy ids alone, matching the async siblings' catch */
-    }
-    return { wip, review, complete, archived, hold };
-  }
-
   private async resolveMoveFanoutColumnsFor(
     taskId: string,
     cache: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
@@ -1622,10 +1583,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     and resolve asynchronously.
     */
     this.taskMovedFanoutListener = ({ task, from, to }) => {
-      const sync = this.resolveMoveFanoutColumnsSync(task.id);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-19:20 (fleet — NOT CONVERTED, and deliberately left counted):
+      I converted this to `resolveTaskWorkflowIrSync` earlier in this stack and that was WRONG. In
+      PostgreSQL mode — the shipped backend — `getTaskWorkflowSelectionImpl` returns undefined
+      unconditionally, so the sync resolver always answers with the DEFAULT workflow and the guard
+      behaves exactly as this literal does (`workflow-definitions.ts`; asserted by
+      `sync-workflow-ir-is-always-default.pg.test.ts`). A cosmetic conversion is worse than an honest
+      literal: the census counts the site as done and nobody looks again.
+
+      Async is not available either. The increment must be visible to `runBoardStallAutoRecoverySweep`,
+      which performs its own recovery moves and then reads this counter IN THE SAME PASS — deferring it
+      behind any await makes the sweep read a stale zero and report a real recovery as unrecovered
+      (board-stall-auto-recovery.test.ts catches it, 4 failures).
+
+      Buffering the raw move for the sweep to classify asynchronously is the shape that satisfies both,
+      and I attempted it: it changes which moves get counted across sweep boundaries and broke the same
+      suite. It needs the board-stall window's reset/ownership semantics worked out, which is a
+      behaviour change with its own acceptance criteria, not a lane conversion. FLAGGED, left counted.
+      */
       if (
-        sync.wip.has(from)
-        && (sync.hold.has(to) || sync.review.has(to) || sync.complete.has(to) || sync.archived.has(to))
+        from === "in-progress"
+        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.
