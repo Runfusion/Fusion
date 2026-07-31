@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 25,
+    "packages/engine/src/self-healing.ts": 11,
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/executor.ts": 4,
     "packages/core/src/task-store/moves.ts": 2,

@@ -5347,6 +5347,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:30:
+      Three resolved MEMBERSHIP sets for this sweep's three lane questions, resolved once through the
+      ASYNC helper (this method is async; nothing here needs the inert sync IR path).
+
+      All three are EXCLUSIONS — "skip a finished card", "skip an active card", "do not treat an
+      active card as scope-override-safe". Legacy seeding is safe in that direction: a superset skips
+      MORE, and skipping is this sweep's no-op. The opposite direction — a seeded set widening a
+      REFUSAL — is the documented hazard and does not apply here.
+      */
+      const worktreeFinishedColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
+      const worktreeWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const worktreeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
       const branchMap = await getRegisteredWorktreeBranchMap(this.options.rootDir);
       // FN-5256: macOS git surfaces realpath-normalized worktree paths (/private/var/...)
       // while task.worktree may be persisted as the symlinked path. Compare on realpath
@@ -5366,7 +5379,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        if (!options?.includeTaskIds?.has(task.id) && worktreeFinishedColumns.has(task.column)) {
           continue;
         }
 
@@ -5403,8 +5416,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          && !worktreeWipColumns.has(task.column)
+          && (!worktreeReviewColumns.has(task.column) || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
@@ -5432,7 +5445,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        if (worktreeWipColumns.has(task.column) || worktreeReviewColumns.has(task.column)) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",
@@ -7402,6 +7415,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reconcileOrphanedPendingStepResults(): Promise<number> {
     try {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:35:
+      Resolved WIP MEMBERSHIP for the two executor-owned skips below. Both are EXCLUSIONS — a card in
+      an implementation lane is executor-owned and this sweep must not touch it — so a legacy-seeded
+      superset skips more, which is this sweep's no-op. Keyed on the `in-progress` literal, a renamed
+      board let this sweep rewrite pending step results out from under a live executor.
+      */
+      const orphanedStepWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const pageSize = 500;
       let offset = 0;
       let recovered = 0;
@@ -7422,14 +7443,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
           // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+          if (orphanedStepWipColumns.has(task.column)) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+          if (!fresh || fresh.userPaused === true || orphanedStepWipColumns.has(fresh.column)) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
@@ -9861,13 +9882,25 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       const now = Date.now();
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-17:40: resolved once per sweep — see the guard below. */
+      const preExecLiveColumns = await resolveProjectColumnsForRoles(
+        this.store,
+        ["intake", "hold", "countsTowardWip", ...REVIEW_ROLES, "complete"],
+      );
       const parked = await this.store.listTasks({ slim: true });
       const candidates = parked.filter((task) => {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
         if (task.firstExecutionAt || task.executionStartedAt) return false;
-        // Columns where a card is active or queued to become active.
-        if (task.column === "todo" || task.column === "in-progress" || task.column === "in-review" || task.column === "done") return false;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
+        Columns where a card is active or queued to become active — resolved MEMBERSHIP, replacing
+        the four-id literal. This is an EXCLUSION from a destructive sweep, so a legacy-seeded
+        superset excludes MORE and can only be conservative; the literal's failure mode was the
+        dangerous direction, treating a live card on a renamed board as pre-execution and removing
+        its worktree.
+        */
+        if (preExecLiveColumns.has(task.column)) return false;
         /*
         WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
         needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
@@ -14276,6 +14309,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       this.options.evictStaleTriageProcessing?.();
 
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
+      Resolved WAITING membership for the two peer-progress counts below. The question is "are OTHER
+      queued cards moving while this refinement card starves", so it must include every lane a card
+      can wait in — hold and intake. Keyed on `todo` alone, a renamed board counted zero peers and
+      the starvation escalation never fired.
+      */
+      const starvedWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
       const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
@@ -14299,7 +14340,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === "todo" &&
+          starvedWaitingColumns.has(peer.column) &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -14320,7 +14361,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === "todo" &&
+            starvedWaitingColumns.has(peer.column) &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
