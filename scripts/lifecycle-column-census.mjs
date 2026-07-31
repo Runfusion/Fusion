@@ -198,7 +198,7 @@ if (json) {
   console.log(`  STATUS comparisons (not guards): ${summary.totals.status}`);
   console.log(`  DELIBERATE-LITERAL (reviewed): ${summary.totals.deliberate}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-23:51:
+  FNXC:LifecycleColumnCensus 2026-08-01-01:40:
   Reported BESIDE the backlog, not subtracted from it. A fallback literal is still a literal and should go
   when the trait path becomes unconditional — but it is an ALREADY-CONVERTED site's documented degradation,
   not unconverted work, and a batch worker told to convert it would delete the only answer available to a
@@ -229,7 +229,7 @@ if (json) {
   */
   console.log(`  QUERY filters (column: "<legacy>"): ${summary.properties.query}`);
   /*
-  FNXC:LifecycleColumnCensus 2026-07-31-23:54:
+  FNXC:LifecycleColumnCensus 2026-08-01-04:00:
   The split, because the single number reads as "dead reads to convert" and most of it is not.
   Measured while converting this class: outside `self-healing.ts` the read-shaped sites are
   convertible; the rest are soft-delete TOMBSTONE writes and synthetic in-memory literals, and
