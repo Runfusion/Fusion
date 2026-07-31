@@ -39,6 +39,16 @@ deliberate, are both real decisions with real blast radius. Neither is a fleet c
 templates are worse again: one of them is a hand-written `SELECT` string, so its comparison is not even
 a Drizzle expression that could take a bound value without rewriting the query.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (one wrong reason for picking the cheap option, removed):
+The second option looks like it has already been taken — `trait-types.ts` annotates the flag
+"RESTRICTED (built-in only)", which reads as "a custom board cannot have its own archive lane". It does
+not mean that. The restriction is over trait REGISTRATION: `trait-registry.ts` rejects a NON-BUILTIN
+(plugin-defined) trait that declares `archived` or `complete` (R22). A custom WORKFLOW may put the
+built-in `archived` trait on a column with any id, and the trait system resolves it — proved in
+`archived-lane-is-renameable-today.test.ts`. So option two is a capability REMOVAL that would silently
+break any board that has already renamed its archive lane, not the documentation of a constraint that
+already exists. That does not decide between the options; it removes a wrong reason for the cheap one.
+
 SO THIS FILE IS THE GUARD, NOT THE FIX. It fails when any of the three encodings stops matching its
 audited inventory below — which is exactly what a well-intentioned partial conversion does.
 
