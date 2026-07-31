@@ -62,6 +62,20 @@ export async function addCommentImpl(store: TaskStore, id: string, text: string,
     {
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-31-01:45 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+      `getLiveTaskColumn` normalizes — it manufactures "archived" for an archived row AND a
+      soft-deleted one, and returns null for a missing task, which is why the next line tests null
+      separately. This compares that protocol vocabulary, not a column id, so an archived-role read
+      would keep passing on the built-in board and start FAILING on a renamed one: a soft-deleted
+      task's comments would become writable.
+
+      LAST OF THE FAMILY. Every consumer of this helper now carries the same marker — `audit-ops.ts`,
+      `async-comments-attachments.ts` (five sites), `task-artifacts-ops.ts` (two) and this one. What
+      remains counted is the helper's OWN `row.column === "archived"` classifier, which reads a real
+      column and is the one line where a conversion is genuinely owed (#2820).
+      */
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
