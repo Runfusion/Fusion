@@ -134,4 +134,59 @@ pgDescribe("team analytics under a renamed board vocabulary", () => {
 
     expect(team.totals.tasksCompleted).toBe(1);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-20:55:
+  THE OTHER HALF OF THE PAIR. `completeLanes` (asserted above) and `activeLanes` are declared two
+  lines apart in `aggregateTeamAnalytics`; every case above asserts only `totals.tasksCompleted`, so
+  the in-flight query `activeLanes` feeds was never observed. Blinding `activeLanes` back to
+  `["in-progress","in-review"]` left this whole file green while blinding `completeLanes` failed it —
+  one resolver pinned, its neighbour not, in a file named for exactly this concern.
+
+  A per-agent `tasksInProgress: 0` beside a nonzero completed count and real token spend is the same
+  wrong-but-plausible shape the header describes: an agent that looks idle while it is working.
+
+  TWO THINGS HAVE TO BE RIGHT, and this asserts both. The SQL must ASK for the board's real wip lane
+  (`activeLanes`), and `buildTeamAnalytics` must RECOGNISE the row it gets back — it classifies via
+  `isWipColumnRole(query.columnFlagsByName?.get(columnName), columnName)`, which without flags falls
+  back to `columnName === "in-progress"` and drops a renamed lane it already fetched. Supplying
+  `columnFlagsByName` is therefore part of the caller contract, not test scaffolding: widening the
+  query alone would still report zero.
+  */
+  const RENAMED_WIP_FLAGS = new Map([
+    ["building", { countsTowardWip: true, humanReview: false, complete: false, archived: false, intake: false, hold: false, mergeBlocker: false }],
+  ]);
+
+  it("default vocabulary: an in-flight task is counted as in-progress", async () => {
+    await seedAgentWork("done", "in-progress");
+
+    const team = await aggregateTeamAnalytics(Object.assign(h.layer(), { projectId: "p1" }), RANGE, h.store());
+
+    expect(team.agents.find((agent) => agent.agentId === "agent-1")?.tasksInProgress).toBe(1);
+  });
+
+  it("renamed vocabulary: an in-flight task in the RENAMED wip lane is counted as in-progress", async () => {
+    await seedRenamedWorkflow();
+    await seedAgentWork("shipped", "building");
+
+    const team = await aggregateTeamAnalytics(
+      Object.assign(h.layer(), { projectId: "p1" }),
+      { ...RANGE, columnFlagsByName: RENAMED_WIP_FLAGS as never },
+      h.store(),
+    );
+
+    expect(team.agents.find((agent) => agent.agentId === "agent-1")?.tasksInProgress).toBe(1);
+  });
+
+  it("both vocabularies report the SAME in-flight count — no column-id literal survives on this path", async () => {
+    await seedRenamedWorkflow();
+    await seedAgentWork("shipped", "building");
+    const renamed = await aggregateTeamAnalytics(
+      Object.assign(h.layer(), { projectId: "p1" }),
+      { ...RANGE, columnFlagsByName: RENAMED_WIP_FLAGS as never },
+      h.store(),
+    );
+
+    expect(renamed.agents.find((agent) => agent.agentId === "agent-1")?.tasksInProgress).toBe(1);
+  });
 });
