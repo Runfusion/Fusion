@@ -8292,7 +8292,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (!timeoutMs || timeoutMs <= 0) return 0;
 
       const now = Date.now();
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-12:40 (the query-filter class, twenty-fourth sweep):
+      A review card whose STEPS are not finished — it reached review on a graph failure, not on completed
+      work. The literal read meant that on a renamed board it was never requeued, so the card sat in
+      review claiming to be done while its own steps said otherwise.
+
+      The per-card verdict below converts with it. The triple-proof is NOT lane-gated in this sweep, so
+      there is no second pair to convert — checked deliberately, because that is the defect #2916 found
+      one sweep over and the self-audit found five of in another.
+      */
+      const staleIncompleteColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const staleIncompleteById = new Map<string, Task>();
+      for (const column of staleIncompleteColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) staleIncompleteById.set(entry.id, entry);
+      }
+      const tasks = [...staleIncompleteById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const staleIncompleteLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          staleIncompleteLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(staleIncompleteColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          staleIncompleteLanes.set(entry.id, new Set(staleIncompleteColumns));
+        }
+      }
       /*
        * FNXC:WorkflowLifecycle 2026-06-29-11:27:
        * Restart recovery must not leave errored review-column cards with unfinished
@@ -8301,7 +8331,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
        * progress preserved instead of waiting for the stale timeout.
        */
       const staleIncomplete = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (staleIncompleteLanes.get(task.id) ?? staleIncompleteColumns).has(task.column) &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         (!task.status || task.status === "failed") &&
