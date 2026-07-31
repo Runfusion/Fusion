@@ -29,6 +29,24 @@ vi.mock("../../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
   fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
   fetchTasks: (...args: unknown[]) => mockFetchTasks(...args),
+  /*
+  FNXC:ResearchViewTests 2026-08-01-00:30:
+  This factory REPLACES the whole `../../api` module, so every import anywhere in the rendered tree
+  must appear here or it resolves to undefined. `fetchBoardWorkflows` reached this file indirectly —
+  the task modals ResearchView opens import it — and its absence failed four cases with
+  `No "fetchBoardWorkflows" export is defined on the "../../api" mock`, none of which are about board
+  workflows.
+
+  Returns the flag-OFF payload the server sends when multi-lane boards are disabled, which is the
+  shape these cases already assume: no board metadata, legacy rendering, and the consumers'
+  `.then()` handlers take their empty-state path rather than a fabricated workflow list.
+  */
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({
+    flagEnabled: false,
+    defaultWorkflowId: "",
+    workflows: [],
+    taskWorkflowIds: {},
+  }),
 }));
 
 vi.mock("lucide-react", async (importOriginal) => {
