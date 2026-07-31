@@ -41,6 +41,32 @@ shape the rule actually prescribes, which is the worst possible subset to miss.
 */
 const STAMP = /FNXC:[A-Za-z0-9_-]+\s+(\d{4}-\d{2}-\d{2})/g;
 
+/*
+FNXC:FnxcStampHygiene 2026-07-30-21:40:
+THE HOUR WAS NEVER VALIDATED, so `2026-07-30-25:30` passed this gate.
+
+`STAMP` captures only the date, and the future check compares that capture alone — a stamp could
+carry any `hh:mm` at all. Four stamps on `main` already read `-24:40` or `-24:00`, and a fifth
+`-25:30` arrived with the next PR. AGENTS.md specifies `yyyy-MM-dd-hh:mm`, where `hh` is a clock
+hour, and the whole point of the stamp is to make the FNXC record a readable chronology; a time that
+cannot exist quietly costs it that.
+
+Counted per file alongside the future-dated population rather than as a separate gate, because it is
+the same defect class — a stamp that does not describe a real moment — and one ratchet is cheaper to
+keep honest than two.
+*/
+const STAMP_TIME = /FNXC:[A-Za-z0-9_-]+\s+\d{4}-\d{2}-\d{2}-(\d{2}):(\d{2})/g;
+
+/** Hours 00-23, minutes 00-59. Returns the count of stamps whose clock time cannot exist. */
+function impossibleClockTimes(source) {
+  let bad = 0;
+  STAMP_TIME.lastIndex = 0;
+  for (const match of source.matchAll(STAMP_TIME)) {
+    if (Number(match[1]) > 23 || Number(match[2]) > 59) bad += 1;
+  }
+  return bad;
+}
+
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
@@ -87,6 +113,7 @@ function scan() {
       STAMP.lastIndex = 0;
       let hits = 0;
       for (const match of source.matchAll(STAMP)) if (match[1] > today) hits += 1;
+      hits += impossibleClockTimes(source);
       if (hits > 0) counts[relative(REPO, file).split("\\").join("/")] = hits;
     }
   }

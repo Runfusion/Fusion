@@ -26,7 +26,7 @@ function columnLabel(column: ColumnId): string {
 }
 
 /*
-FNXC:CliBoardVocabulary 2026-07-30-24:40:
+FNXC:CliBoardVocabulary 2026-07-30-23:40:
 The lanes `fn task list` prints, derived from the CARDS rather than from the legacy enum.
 
 `runTaskList` iterated the six-id `COLUMNS` constant and filtered `t.column === col`, so a task in a
@@ -633,7 +633,7 @@ export async function runTaskList(projectName?: string) {
   }
 
   /*
-  FNXC:CliBoardVocabulary 2026-07-30-24:40:
+  FNXC:CliBoardVocabulary 2026-07-30-23:40:
   Iterate the columns the BOARD has, not the legacy six — a renamed card was not printed AT ALL.
 
   This loop ran `for (const col of COLUMNS)` and filtered `t.column === col`, so any task in a

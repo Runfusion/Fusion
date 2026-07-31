@@ -15,7 +15,7 @@ import { findLaneAcceptingFunctions, findUnwiredCallSites } from "./lib/lane-wir
 const ROOT = process.cwd();
 const BASELINE = join(ROOT, "scripts/lib/lane-wiring-baseline.json");
 /*
-FNXC:WorkflowLifecycleColumns 2026-07-30-24:00:
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:00:
 `packages/dashboard/app` and `plugins` are scanned, and `.tsx` counts — their absence was the
 blind spot the OLDER guard already learned about and this one re-opened.
 

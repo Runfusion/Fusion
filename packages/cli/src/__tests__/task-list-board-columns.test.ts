@@ -1,5 +1,5 @@
 /*
-FNXC:CliBoardVocabulary 2026-07-30-24:40:
+FNXC:CliBoardVocabulary 2026-07-30-23:40:
 THE INVARIANT: `fn task list` prints every card, whatever its board calls the lane.
 
 `runTaskList` iterated the six-id `COLUMNS` constant and filtered `t.column === col`, so a card in a
