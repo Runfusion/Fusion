@@ -218,7 +218,11 @@ pgDescribe("activity log parity (PostgreSQL)", () => {
   */
   it("finds duration events on a board whose review and complete lanes are renamed", async () => {
     const store = h.store();
-    const projectId = store.getAsyncLayer()!.projectId!;
+    /* Same derivation as the rest of this file: the tasks/activity tables partition on the
+       `__legacy_unscoped__` sentinel when the layer carries no project id, so asserting `!` here
+       would write `projectId: undefined` on an unscoped harness and the query would match nothing.
+       I hit exactly that in #2886 and fixed it there; this one happened to work, which is worse. */
+    const projectId = h.layer().projectId ?? "__legacy_unscoped__";
     await store.createWorkflowDefinition({
       name: "Renamed review and complete",
       ir: {
