@@ -899,4 +899,71 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (the query-filter class, sweeps thirty-three and -four):
+  The two WORKSPACE sweeps. A workspace task lands PER-REPO, so its failure modes are its own: a
+  partial land leaves some repos merged and some not, and a finished one leaves per-repo worktrees on
+  disk. Both were bounded by literal reads, so on a renamed board neither ran — the partial land never
+  finished, and the disk was never reclaimed.
+
+  `isWorkspaceTaskLive` is what the partial-land sweep calls once per surviving candidate, before any
+  git or disk work — the private-seam technique, so no workspace fixture is needed.
+
+  REVERT CHECKS, both measured, each alone:
+    - partial-land literal read + verdict restored -> that case fails, the card is never listed
+    - orphaned-worktree literal read restored -> that case fails, the done card is never listed
+  */
+  function workspaceCard(id: string, column: string): Task {
+    return {
+      ...shippedCard(),
+      id,
+      column,
+      workspaceRepos: [{ path: "repo-a" }],
+      workspaceWorktrees: { "repo-a": { worktreePath: "/tmp/ws/repo-a" } },
+      mergeDetails: {},
+    } as unknown as Task;
+  }
+
+  it("re-enqueues a partially-landed workspace task on a RENAMED review lane", async () => {
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSPARTIAL", RENAMED_VOCAB.review)]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isWorkspaceTaskLive = vi.fn(() => ({ live: true, livePaths: ["/tmp/ws/repo-a"] }));
+    Object.assign(manager, { isWorkspaceTaskLive, emitWorkspacePartialLandNoAction: vi.fn(async () => undefined) });
+
+    await manager.reconcileWorkspacePartialLands();
+
+    expect(isWorkspaceTaskLive).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WSPARTIAL" }));
+  });
+
+  it("does not re-enqueue a workspace task still in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: a workspace task in wip has not started landing, so there is no partial land
+    to finish — the comment at the site says execution-stage reconcilers own that lane.
+    */
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSPARTIAL", RENAMED_VOCAB.wip)]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isWorkspaceTaskLive = vi.fn(() => ({ live: true, livePaths: ["/tmp/ws/repo-a"] }));
+    Object.assign(manager, { isWorkspaceTaskLive, emitWorkspacePartialLandNoAction: vi.fn(async () => undefined) });
+
+    await manager.reconcileWorkspacePartialLands();
+
+    expect(isWorkspaceTaskLive).not.toHaveBeenCalled();
+  });
+
+  it("cleans orphaned workspace worktrees for a card on a RENAMED complete lane", async () => {
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSDONE", RENAMED_VOCAB.complete)]);
+    const listTasksSpy = (store as unknown as { listTasks: ReturnType<typeof vi.fn> }).listTasks;
+    listTasksSpy.mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileOrphanedWorkspaceWorktrees();
+
+    /*
+    The sweep's disk work is guarded by `isPathActive` and real fs checks, so the honest observable is
+    that it ASKED for the board's own complete lane at all — nothing downstream vetoes on lane here
+    (the only filter is `isWorkspaceTask`), which is what makes a query assertion sound rather than lazy.
+    */
+    const queried = listTasksSpy.mock.calls.map(([options]) => (options as { column?: string })?.column);
+    expect(queried).toContain(RENAMED_VOCAB.complete);
+  });
 });
