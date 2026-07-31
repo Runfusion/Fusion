@@ -67,6 +67,53 @@ describe("task wedge notifications", () => {
     await service.stop();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:50 (fleet):
+  Clearing a wedge episode asks "has the card moved on?", which was four column literals. On a renamed
+  board none matched, so a RECOVERED card never cleared its episode and the operator kept an alert for
+  work that had already progressed — and, because the stale episode stays active, the NEXT genuine wedge
+  is refused its claim and never announced at all.
+
+  The board below recovers into `backlog` (hold). The assertion is the second message: with the literals
+  it never arrives, because the first episode was never resolved.
+  */
+  it("clears a wedge episode when the card recovers into a RENAMED hold lane", async () => {
+    const RENAMED_IR = {
+      version: "v2",
+      name: "renamed-notify",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Signoff", traits: [{ trait: "merge" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [],
+      edges: [],
+    };
+    const { store, service, sendMessageOnce, task } = fixture();
+    /* `resolveProjectColumnsForRoles` unions lanes across the PROJECT's workflows, so the fake needs
+       `listWorkflowDefinitions` — the per-task selection readers alone leave it resolving nothing. */
+    Object.assign(store, {
+      getTaskWorkflowSelection: () => ({ workflowId: "custom:renamed", stepIds: [] }),
+      getTaskWorkflowSelectionAsync: async () => ({ workflowId: "custom:renamed", stepIds: [] }),
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+      listWorkflowDefinitions: async () => [{ id: "custom:renamed", ir: RENAMED_IR }],
+    });
+
+    await service.start();
+    store.emit(task({ column: "signoff" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+
+    // Recovered into the board's own hold lane — the episode must close.
+    /* status stays "failed" ON PURPOSE: the status disjunct (`status !== "failed"`) would otherwise
+       satisfy hasProgressed on its own and the column term would never decide anything. */
+    store.emit(task({ status: "failed", error: undefined, column: "backlog", updatedAt: "2026-07-22T12:02:00.000Z" }));
+    // Wedged again: only claimable if the previous episode actually cleared.
+    store.emit(task({ column: "signoff", updatedAt: "2026-07-22T12:03:00.000Z" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    await service.stop();
+  });
+
   it("does not re-deliver an unchanged durable episode after service restart", async () => {
     const { store, service, sendNotification, sendMessageOnce, task } = fixture();
     await service.start();
