@@ -325,7 +325,7 @@ export async function clearStaleExecutionStartBranchReferencesImpl(store: TaskSt
 
 export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLineageReferences?: boolean }): Promise<Task[]> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    FNXC:WorkflowLifecycleColumns 2026-07-30-05:00:
     "Archive all done" archived NOTHING on a renamed board.
 
     `listTasks({ column })` filters in the store, so this read returned an empty array and the button
@@ -361,7 +361,7 @@ export async function archiveAllDoneImpl(store: TaskStore, options?: { removeLin
 }
 
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-02-16:25 (fleet: the UNARCHIVE destination):
+FNXC:WorkflowLifecycleColumns 2026-07-30-16:25 (fleet: the UNARCHIVE destination):
 WHERE A RESTORED CARD LANDS is three lifecycle decisions in four lines, and all three were literals:
   - no usable pre-archive column -> the COMPLETE lane (a restored card with no history is finished work);
   - it was mid-flight (wip or review) -> the HOLD lane, because its worktree and session are long gone;
@@ -382,7 +382,7 @@ export async function resolveUnarchiveTargetColumnImpl(
   taskId?: string,
 ): Promise<Column> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-19:10 (PR #2742 review — greptile P1, and this is the THIRD time
+    FNXC:WorkflowLifecycleColumns 2026-07-30-19:10 (PR #2742 review — greptile P1, and this is the THIRD time
     I have made this exact mistake in one session):
     `?? legacyId` IS ONLY CORRECT WHEN THE RESOLVER RETURNED NOTHING. My first version wrote
     `lifecycle?.complete ?? "done"` and `lifecycle?.hold ?? "todo"`, so a workflow that resolves but declares
@@ -413,7 +413,7 @@ export async function resolveUnarchiveTargetColumnImpl(
     const archivedColumn = lifecycle?.archived ?? "archived";
 
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-19:45 (found by my OWN test, and it is a bigger defect than the
+    FNXC:WorkflowLifecycleColumns 2026-07-30-19:45 (found by my OWN test, and it is a bigger defect than the
     one I came here to fix):
     `isColumn` TESTS THE CLOSED LEGACY ENUM, so on a renamed board it rejects every declared column id — and
     this branch then treats a perfectly good pre-archive column as "unusable" and restores the card to the
@@ -453,7 +453,7 @@ export async function readPreArchiveColumnFromTaskFileImpl(store: TaskStore, dir
       const raw = await readFile(join(dir, "task.json"), "utf-8");
       const parsed = JSON.parse(raw) as { preArchiveColumn?: unknown };
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-19:55 (the same `isColumn` defect, one function over):
+      FNXC:WorkflowLifecycleColumns 2026-07-30-19:55 (the same `isColumn` defect, one function over):
       `isColumn` TESTS THE CLOSED LEGACY ENUM, so a renamed board's stored `preArchiveColumn` was DROPPED on
       read — the restore then saw `undefined` and treated the card as having no usable history. Two legacy-enum
       gates in one path, both upstream of the lane comparisons I came here to convert.
@@ -473,7 +473,7 @@ export async function readPreArchiveColumnFromTaskFileImpl(store: TaskStore, dir
 
 export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string): Promise<void> {
     /*
-    FNXC:WorkflowLifecycleColumns 2026-08-02-16:10 (fleet: the archive/complete writer):
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:10 (fleet: the archive/complete writer):
     THE GUARD, THE WRITE AND THE EVENT are one decision and now share one snapshot. This function writes
     `task.column` DIRECTLY (it is the store's own finaliser, not a moveTask caller), so a literal here is not
     caught by moveTask's unknown-column validation the way every converted call site is — it silently persists
@@ -657,7 +657,7 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       /*
-      FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      FNXC:LifecycleColumnCensus 2026-07-30-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
       This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
       "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
@@ -704,7 +704,7 @@ export async function deleteTaskCommentImpl(store: TaskStore, id: string, commen
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       /*
-      FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      FNXC:LifecycleColumnCensus 2026-07-30-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
       This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
       "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
