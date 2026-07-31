@@ -5955,9 +5955,23 @@ export class TaskExecutor {
       return;
     }
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-19:20 (a MISSED PAIR, the class #2879 ratcheted):
+    `listWipLaneTasks()` above already resolves the wip lane by role. This filter did not — it re-asserted
+    the literal `in-progress` on the rows that read returned, so on a renamed board the read found the
+    orphans and the filter dropped every one.
+
+    That is the worse half of the pattern: the read looks converted, the census counts only the
+    comparison, and the sweep silently does nothing. Here it means orphaned tasks are NEVER resumed after
+    a crash or restart — the one path that recovers them.
+
+    The rows come from a `listTasks({ column })` per resolved column, so a row is in that column by
+    definition; the re-assert only ever had value as a stale-snapshot guard, which membership preserves.
+    */
+    const wipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
     const tasks = await this.listWipLaneTasks();
     const inProgress = tasks.filter(
-      (t) => t.column === "in-progress" && !t.deletedAt && !this.executing.has(t.id) && !t.paused,
+      (t) => wipColumns.has(t.column) && !t.deletedAt && !this.executing.has(t.id) && !t.paused,
     );
 
     if (inProgress.length === 0) return;

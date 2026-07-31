@@ -217,3 +217,66 @@ describe("resume lanes come from the task's own workflow", () => {
     });
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-19:30 (a MISSED PAIR in resumeOrphaned):
+`listWipLaneTasks()` already resolved the wip lane by role, and the filter beneath it did NOT — it
+re-asserted the literal `in-progress` on the rows that read returned. So on a renamed board the read
+found the orphans and the filter discarded every one.
+
+That is the worse half of this pattern and the reason the sibling structural test was not enough: the
+read looks converted, the census scores only the comparison, and the sweep silently does nothing. The
+consequence here is that orphaned tasks are NEVER resumed after a crash or restart — the single path
+that recovers them — and the failure surfaces only once an operator is already investigating a crash.
+
+`isTaskWorkComplete` is the first thing done per surviving task, before any dispatch, worktree probing
+or git, so it is the observable that needs no live registry.
+
+REVERT CHECK, measured: with the filter back on `t.column === "in-progress"`, this fails — the renamed
+card is dropped and the sweep returns before touching it.
+*/
+describe("resumeOrphaned filters by the board's OWN wip lane, not the literal", () => {
+  function orphanHarness(column: string) {
+    const { store, executor } = harness(RENAMED_IR);
+    const task = {
+      id: "FN-ORPHAN-RESUME",
+      column,
+      title: "orphaned by a restart",
+      description: "",
+      dependencies: [],
+      steps: [{ id: "s1", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-07-30T00:00:00.000Z",
+      updatedAt: "2026-07-30T00:00:00.000Z",
+    };
+    const widened = store as unknown as Record<string, unknown>;
+    widened.getSettings = async () => ({ globalPause: false, enginePaused: false });
+    widened.listTasks = vi.fn(async (options?: { column?: string }) =>
+      (options?.column === undefined || options.column === column ? [task] : []));
+    widened.listWorkflowDefinitions = async () => [{ ir: RENAMED_IR }];
+    const isTaskWorkComplete = vi.fn(() => true);
+    Object.assign(executor, { isTaskWorkComplete, recoverCompletedTask: vi.fn(async () => undefined) });
+    return { executor, isTaskWorkComplete };
+  }
+
+  it("reaches an orphan sitting in the RENAMED wip lane", async () => {
+    const { executor, isTaskWorkComplete } = orphanHarness("building");
+
+    await executor.resumeOrphaned();
+
+    expect(isTaskWorkComplete).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ORPHAN-RESUME" }));
+  });
+
+  it("does not resume a card outside the wip lane", async () => {
+    /*
+    Non-vacuous companion: a card in the board's REVIEW lane is not an orphaned execution — it has no
+    session to resume, and re-dispatching it would restart finished work.
+    */
+    const { executor, isTaskWorkComplete } = orphanHarness("checking");
+
+    await executor.resumeOrphaned();
+
+    expect(isTaskWorkComplete).not.toHaveBeenCalled();
+  });
+});
