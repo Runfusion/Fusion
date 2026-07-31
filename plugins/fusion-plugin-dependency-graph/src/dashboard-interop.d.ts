@@ -7,7 +7,10 @@ declare module "@fusion/dashboard/app/utils/taskStuck" {
      renamed board while the same card showed stuck correctly on the main board. */
   export function isTaskStuck(
     task: Task,
-    taskStuckTimeoutMs?: number,
+    /* FNXC:PluginInteropDrift 2026-07-31-07:50: positionally REQUIRED in the real signature
+       (`number | undefined`), not optional — a mirror that is merely approximate is the drift this
+       file already caused once. Found by check-plugin-interop-drift. */
+    taskStuckTimeoutMs: number | undefined,
     lastFetchTimeMs?: number,
     columnFlags?: Partial<TraitFlags>,
   ): boolean;
