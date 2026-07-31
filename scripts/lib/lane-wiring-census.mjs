@@ -143,6 +143,34 @@ export function findLaneAcceptingFunctions(files) {
   return accepting;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
+`{ … } satisfies SomeContext` IS an options bag — a bare `isObjectLiteralExpression` check says no.
+
+`satisfies` (and `as`, and parentheses) wrap the literal in another node, so the plain check reported
+a fully-wired call as unwired. That is not hypothetical: #2956 wired four `getInReviewStalledSignal`
+call sites in `reads.ts` and annotated each with `satisfies InReviewStalledContext`, and the census
+counted every one of them as missing its lane argument.
+
+The bug predates the named-type arm but was INVISIBLE behind it: functions typed by an interface were
+never detected, so their call sites were never inspected and the false positives never surfaced.
+Fixing detection exposed six of them at once, which is how this was found.
+
+A census that reports correct code as unwired is worse than one that misses cases — it inflates the
+baseline with sites nobody can "fix", and the first person to check one learns the number is noise.
+*/
+function unwrapObjectLiteral(node) {
+  let current = node;
+  while (
+    ts.isSatisfiesExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isObjectLiteralExpression(current) ? current : null;
+}
+
 /** Call sites of those functions that pass none of the accepted lane arguments. */
 export function findUnwiredCallSites(files, accepting) {
   const unwired = [];
@@ -152,9 +180,11 @@ export function findUnwiredCallSites(files, accepting) {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const accepted = accepting.get(node.expression.text);
         if (accepted) {
-          const passesOption = node.arguments.some((arg) =>
-            ts.isObjectLiteralExpression(arg)
-            && arg.properties.some((p) => p.name && ts.isIdentifier(p.name) && accepted.names.has(p.name.text)));
+          const passesOption = node.arguments.some((arg) => {
+            const bag = unwrapObjectLiteral(arg);
+            return bag !== null
+              && bag.properties.some((p) => p.name && ts.isIdentifier(p.name) && accepted.names.has(p.name.text));
+          });
           const passesPositional = [...accepted.positions].some((index) => node.arguments.length > index);
           const passes = passesOption || passesPositional;
           if (!passes) {

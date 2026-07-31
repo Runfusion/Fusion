@@ -13,7 +13,11 @@ code is written:
 
 The consequence was not academic. The census shipped unable to detect #2956 — the first case listed
 in its own header — and re-introducing that defect left it reporting "none added". Fixing the
-detector moved the honest count from 10 unwired call sites across 8 files to 24 across 15.
+detector moved the honest count from 10 unwired call sites across 8 files to 18 across 14.
+
+The first draft of that fix reported 24, because detecting these functions also exposed a SECOND bug
+(the `satisfies` case below) that had been hidden while they were invisible: six of those "new" hits
+were correct code. Both fixes ship together, or the baseline records six sites nobody can act on.
 
 Fixtures rather than the live tree: a test asserting counts over real source would fail every time
 someone legitimately wires or adds a call site, which is the churn the baseline exists to absorb.
@@ -57,6 +61,26 @@ describe("the lane-wiring census recognises how lane arguments are actually decl
     `);
     const unwired = findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
     expect(unwired.map((hit) => hit.fn)).toEqual(["getSignal"]);
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:25:
+  `satisfies` must not hide a wired call. #2956 annotated four wired `reads.ts` call sites with
+  `satisfies InReviewStalledContext`, and a bare `isObjectLiteralExpression` check reported every one
+  as unwired — the wrapper node is not the literal. Six false positives, all in correct code.
+
+  This case exists because a census that flags correct code inflates its own baseline with entries
+  nobody can act on, and the first person to check one stops trusting the number.
+  */
+  it("treats a `satisfies`-annotated options bag as wired", () => {
+    const files = fixture(`
+      export interface StallContext { reviewColumns?: ReadonlySet<string>; }
+      export function getSignal(task: string, context: StallContext = {}): string { return task; }
+      export function wired() {
+        return getSignal("a", { reviewColumns: new Set<string>() } satisfies StallContext);
+      }
+    `);
+    expect(findUnwiredCallSites(files, findLaneAcceptingFunctions(files))).toEqual([]);
   });
 
   it("still detects the inline type-literal and positional spellings", () => {
