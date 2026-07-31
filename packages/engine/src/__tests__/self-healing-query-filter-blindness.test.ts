@@ -899,4 +899,59 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:15 (the query-filter class, twenty-sixth sweep):
+  `recoverBranchMisboundInReviewTasks` detects a review card whose BRANCH TIP is bound to a different
+  task's work. The literal read meant that on a renamed board the misbinding was never detected, so the
+  card would merge — or refuse to — against a branch that is not its own.
+
+  Observable is `resolveSelfHealingMergeTarget`, private and called once per candidate, so the assertion
+  sits downstream of both halves without a git fixture.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function misboundFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-MISBOUND",
+      column,
+      branch: "fusion/FN-MISBOUND",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: resolveTarget,
+      isBranchTipMisboundToTask: vi.fn(async () => ({ rejection: null, branchTip: "abc1234" })),
+    });
+    return { manager, resolveTarget };
+  }
+
+  it("checks branch binding for a card on a RENAMED review lane", async () => {
+    const { manager, resolveTarget } = misboundFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverBranchMisboundInReviewTasks();
+
+    expect(resolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-MISBOUND" }),
+      expect.anything(),
+      "recover-branch-misbound-in-review",
+    );
+  });
+
+  it("does not check branch binding for a card in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: a card still in wip legitimately owns a moving branch tip — checking it here
+    would flag normal in-progress work as misbound.
+    */
+    const { manager, resolveTarget } = misboundFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverBranchMisboundInReviewTasks();
+
+    expect(resolveTarget).not.toHaveBeenCalled();
+  });
 });
