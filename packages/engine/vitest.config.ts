@@ -200,6 +200,28 @@ export default defineConfig({
             same number.
             */
             "src/__tests__/legacy-column-literal-census.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-31-23:59:
+            THE MOVE-TARGET RATCHET BELONGS HERE FOR THE SAME REASON THE CENSUS RATCHET ABOVE DOES,
+            and the argument is stronger for this one.
+
+            The census counts COMPARISONS; a move target is an ARGUMENT, so nothing above sees it. And
+            the failure mode is harder than a stale guard's: `moveTaskInternal` REJECTS a target the
+            workflow does not declare (`TransitionRejectionError: unknown-column`), so a regression
+            here THROWS on a renamed board instead of degrading — in recovery paths, which are the
+            ones that run when something has already gone wrong.
+
+            Outside the gate this repeats the pattern this program keeps paying for: a correct signal
+            that fires in a non-blocking run while the PR merges anyway. That happened to my own
+            #3114 this week — `check-inert-sync-lanes` flagged it correctly and it landed regardless.
+
+            Admission evidence, on the same terms as the entries around it: pure computation over one
+            `git ls-files` plus file reads. No store, no network, no timers, no subprocess beyond that
+            one call. Deterministic by construction — same tree, same counts. Measured 509ms / 508ms
+            across runs, 12 tests, after memoising the corpus scan (it was 800ms when each case
+            re-read every file).
+            */
+            "src/__tests__/no-legacy-move-targets.test.ts",
             "src/__tests__/merger-merge-lifecycle.test.ts",
             "src/__tests__/merger-conflict-resolution.test.ts",
             "src/__tests__/merger-diff-scope.test.ts",

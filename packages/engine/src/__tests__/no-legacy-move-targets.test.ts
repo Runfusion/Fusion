@@ -72,7 +72,19 @@ function stripComments(source: string): string {
     .replace(/\/\/[^\n]*/g, "");
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+MEMOISED for gate admission. Each case called this independently and every call re-read the whole
+corpus, so the scan ran five times for one tree: measured 660ms of the suite's 800ms. The tree cannot
+change mid-run, so the repeat reads bought nothing.
+
+This matters because the gate's admission bar is about cost and determinism, and a guard that is
+gratuitously slow is a guard someone eventually moves back out of the gate.
+*/
+let countsCache: Record<string, number> | undefined;
+
 function countByFile(): Record<string, number> {
+  if (countsCache) return countsCache;
   const counts: Record<string, number> = {};
   for (const file of sourceFiles()) {
     let source: string;
@@ -84,6 +96,7 @@ function countByFile(): Record<string, number> {
     const hits = stripComments(source).match(MOVE_TARGET);
     if (hits && hits.length > 0) counts[file] = hits.length;
   }
+  countsCache = counts;
   return counts;
 }
 
