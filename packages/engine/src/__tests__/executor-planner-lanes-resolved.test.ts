@@ -333,3 +333,32 @@ describe("a workflow with no WIP lane is refused, not promoted to an invented co
     expect(h.moves).toEqual([["FN-STRANDED", "building"]]);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-05:30 (fleet — the payload path had no coverage):
+#3137 made `isBackwardMoveOutOfPlanning` prefer the lanes the emitter puts on `task:moved`, with the
+sync reader kept as the degraded fallback. The fallback path is well covered above; the PAYLOAD path
+was not covered at all, so nothing held the preference in place.
+
+These two pass lanes that match NO legacy id and NO default-board id, so they exercise the payload and
+nothing else: the sync reader cannot see `queued` or `shipped`. Drop the payload preference and both
+fail.
+*/
+describe("backward-move classification reads the emitter's lanes", () => {
+  type Internals = {
+    isBackwardMoveOutOfPlanning(id: string, from: string, to: string, lanes: unknown): boolean;
+  };
+  const RENAMED_PAYLOAD = { hold: "backlog", intake: "queued", wip: "building", review: "checking", complete: "shipped" };
+
+  it("treats a withdrawal from a renamed planner lane to a non-lifecycle column as backward", () => {
+    const h = harness(undefined, "backlog");
+    expect((h.executor as unknown as Internals)
+      .isBackwardMoveOutOfPlanning("FN-STRANDED", "queued", "icebox", RENAMED_PAYLOAD)).toBe(true);
+  });
+
+  it("does NOT treat a forward move into the renamed complete lane as backward", () => {
+    const h = harness(undefined, "backlog");
+    expect((h.executor as unknown as Internals)
+      .isBackwardMoveOutOfPlanning("FN-STRANDED", "queued", "shipped", RENAMED_PAYLOAD)).toBe(false);
+  });
+});
