@@ -13358,7 +13358,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-14:45 (the query-filter class, twenty-seventh sweep):
+      THE NOTE BELOW SAID THIS WAS UNFIXABLE. It called the literal query "unfixable without a
+      project-level lane resolution before the read" — which is precisely what
+      `resolveProjectColumnsForRoles` provides; it did not exist when that note was written. The wiring
+      below was therefore doing real work only for boards whose review lane still happens to be called
+      `in-review`. Fully renamed boards never reached it.
+      */
+      const missingWtColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const missingWtById = new Map<string, Task>();
+      for (const column of missingWtColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) missingWtById.set(entry.id, entry);
+      }
+      const tasks = [...missingWtById.values()];
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-02-20:20 (PR #2745 review — greptile P1: "recovery lanes are not
       wired", and it is right):
@@ -13373,9 +13386,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       workflow (the common partial-rename case) and for the merge-active variant.
       */
       const recoveryIrCache = new Map<string, WorkflowIr>();
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-14:50 (the ARITY trap, same seam):
+      These classifiers take a MEMBERSHIP set, and `resolveTaskLifecycleColumns().review` is the FIRST
+      column per role — so a board declaring more than one review column contributed only one of them and
+      a card sitting in the others read as not-in-review. `columnsWithFlag` over the three review roles is
+      the membership answer; the legacy id stays unioned for a board mid-rename.
+      */
       const reviewColumnsFor = async (taskId: string): Promise<ReadonlySet<string>> => {
-        const lifecycle = await resolveTaskLifecycleColumns(this.store, taskId, recoveryIrCache);
-        return new Set([lifecycle?.review ?? "in-review", "in-review"]);
+        const columns = new Set<string>(["in-review"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, recoveryIrCache);
+          if (ir) {
+            for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) columns.add(id);
+          }
+        } catch { /* degraded: the legacy id above still answers */ }
+        return columns;
       };
       const candidateChecks = await Promise.all(tasks.map(async (task) => {
         const reviewColumns = await reviewColumnsFor(task.id);
