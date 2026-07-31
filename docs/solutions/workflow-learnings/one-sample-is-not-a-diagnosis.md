@@ -46,6 +46,38 @@ The failure is not carelessness. Each story was plausible, mechanistic, and cons
 evidence available. That is precisely what makes it dangerous: a diagnosis that explains the one data
 point you have feels finished.
 
+## The second measurement, concretely
+
+"Take a second measurement of a different kind" is easy to nod at and hard to act on at 2am. The one
+that settled every case above is cheap: **enumerate recent CI runs and compute a per-file failure
+rate.**
+
+```bash
+for r in $(gh run list --workflow <full-suite-id> --branch main --limit 14 \
+            --json databaseId,conclusion -q '[.[]|select(.conclusion=="failure")][0:7][].databaseId'); do
+  printf "%s: " "$r"
+  gh run view "$r" --log-failed | grep -aE "FAIL" \
+    | grep -aoE "(src|app)/[a-zA-Z0-9/_.-]+\.test\.tsx?" | sort -u | tr '\n' ' '
+  echo
+done
+```
+
+Seven runs was enough to separate three populations that look identical from one local run:
+
+| rate on CI | meaning | action |
+|---|---|---|
+| 7/7 | consistent, real | fix it — or diagnose and hand off with evidence |
+| 1/7 | intermittent | flake or race; two in one subsystem is a product-race smell |
+| 0/7 (fails only locally) | environment | fix your sandbox, change nothing in the repo |
+
+The third row is the one that keeps catching people. **Three separate local failures in a single
+session were all 0/7 on CI** — a model-routes test that hung offline, a component test with four
+failing cases, and a set of assertions I was ready to call a regression. Each felt like a finding.
+
+Note the asymmetry in cost: acting on a 0/7 by quarantining deletes coverage that works everywhere
+else, while acting on a 7/7 by investigating costs an hour. When unsure which row you are in, the
+cheap move is always more samples from the *other* environment.
+
 ## Tells worth memorising
 
 | observation | tempting story | check first |
