@@ -6033,33 +6033,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       for (const task of blockedTasks) candidates.set(task.id, task);
       for (const task of queuedDependencyTasks) candidates.set(task.id, task);
 
-      for (const [taskId, lastLoggedBlockerId] of this.preservedQueuedOverlapLogged) {
-        const memoTask = taskById.get(taskId);
-        const memoHasActiveOverlapBlocker = memoTask
-          ? await hasActiveFileScopeOverlapBlocker(memoTask, memoTask.overlapBlockedBy)
-          : false;
-        if (
-          !candidates.has(taskId)
-          /*
-          FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (FLAGGED AND LEFT COUNTED):
-          This sits in a log-dedup closure defined BEFORE the per-referenced-task lane prefetch below, so
-          the resolved sets are not in scope here and tsc says so. Hoisting the prefetch above the closure
-          is not available either — it is keyed on `candidates`, which this closure helps build.
-
-          Left as the literal rather than restructured: the closure only decides whether to re-log an
-          already-logged blocker, so the degraded answer costs a duplicate log line on a renamed board, not
-          a wrong lifecycle decision. Restructuring a sweep's control flow to convert a logging guard is
-          the wrong trade.
-          */
-          || memoTask?.column !== "todo"
-          || memoTask.status !== "queued"
-          || memoTask.overlapBlockedBy !== lastLoggedBlockerId
-          || !memoHasActiveOverlapBlocker
-        ) {
-          this.clearPreservedQueuedOverlapMemo(taskId);
-        }
-      }
-
       /*
       FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch-engine — every lane question here is about ANOTHER task):
       This method classifies why a BLOCKER or a DEPENDENCY is no longer blocking, and those rows routinely
@@ -6108,6 +6081,51 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         complete: new Set(["done"]), archived: new Set(["archived"]),
         hold: new Set(["todo"]), review: new Set(["in-review"]),
       };
+
+      for (const [taskId, lastLoggedBlockerId] of this.preservedQueuedOverlapLogged) {
+        const memoTask = taskById.get(taskId);
+        const memoHasActiveOverlapBlocker = memoTask
+          ? await hasActiveFileScopeOverlapBlocker(memoTask, memoTask.overlapBlockedBy)
+          : false;
+        if (
+          !candidates.has(taskId)
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (FLAGGED AND LEFT COUNTED):
+          This sits in a log-dedup closure defined BEFORE the per-referenced-task lane prefetch below, so
+          the resolved sets are not in scope here and tsc says so. Hoisting the prefetch above the closure
+          is not available either — it is keyed on `candidates`, which this closure helps build.
+
+          Left as the literal rather than restructured: the closure only decides whether to re-log an
+          already-logged blocker, so the degraded answer costs a duplicate log line on a renamed board, not
+          a wrong lifecycle decision. Restructuring a sweep's control flow to convert a logging guard is
+          the wrong trade.
+          */
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-31-12:10 (u12 — CONVERTED; the stated blocker was not real):
+          The prior note said the resolved sets could not be in scope because the lane prefetch is keyed on
+          `candidates`, "which this closure helps build". Measured: this loop does not build `candidates` —
+          it is fully populated two statements above (`blockedTasks` then `queuedDependencyTasks`) and this
+          loop only CLEARS memo entries. So the prefetch was hoistable, and it now sits above.
+
+          Reaching this clause already proves the id is a candidate: `!candidates.has(taskId)` is the first
+          arm of the same `||` chain, so short-circuit means we only ask the lane question for ids the
+          prefetch covered (`referencedIds.add(task.id)` for every candidate). `lanesOf` still falls back to
+          the legacy set, so an unresolvable workflow answers exactly as the literal did.
+
+          `|| !memoTask` is explicit rather than implied: `memoTask?.column !== "todo"` was ALSO the undefined
+          check, and tsc narrowed the clauses after it on that basis. Dropping it silently broke the
+          narrowing (TS18048 on `memoTask.status`), so the undefined arm is now stated on its own line.
+          */
+          || !memoTask
+          || !lanesOf(taskId).hold.has(memoTask.column)
+          || memoTask.status !== "queued"
+          || memoTask.overlapBlockedBy !== lastLoggedBlockerId
+          || !memoHasActiveOverlapBlocker
+        ) {
+          this.clearPreservedQueuedOverlapMemo(taskId);
+        }
+      }
+
 
       for (const task of candidates.values()) {
         const blockerId = task.blockedBy;

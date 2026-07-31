@@ -1,8 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
-    "packages/engine/src/self-healing.ts": 1
+    "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1
   },
   "deliberateByFile": {
     "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 6,

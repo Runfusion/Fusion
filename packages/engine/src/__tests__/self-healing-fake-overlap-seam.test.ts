@@ -225,6 +225,44 @@ describe("SelfHealingManager stale-blocker cleanup on a RENAMED board", () => {
     manager.stop();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-12:25 (u12 — the log-dedup memo, on a renamed hold lane):
+  `clearStaleBlockedBy` remembers which overlap blocker it already logged per task so a sweep every few
+  seconds does not repeat the same line forever. The memo was retained only while the card sat in a
+  column matching the literal `todo`, so on a renamed board it was dropped on EVERY sweep and the
+  "still blocked by file scope overlap" line was re-logged each time.
+
+  Drives the sweep TWICE, because a single pass cannot observe a dedup memo at all.
+  */
+  it("does not re-log the same overlap blocker on a renamed HOLD lane", async () => {
+    const staleBlocker = makeTask("FN-DONE-BLOCKER", { column: "shipped" });
+    const overlapBlocker = makeTask("FN-ACTIVE-OVERLAP", { column: "building" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "drafting",
+      status: "queued",
+      blockedBy: staleBlocker.id,
+      overlapBlockedBy: overlapBlocker.id,
+      dependencies: [staleBlocker.id],
+    });
+    const { store } = createRenamedBoardStore([staleBlocker, overlapBlocker, dependent]);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+    });
+
+    await manager.clearStaleBlockedBy();
+    await manager.clearStaleBlockedBy();
+
+    const overlapLogs = vi.mocked(store.logEntry).mock.calls.filter(
+      ([, message]) => typeof message === "string" && message.includes("still blocked by file scope overlap"),
+    );
+    /* Pre-fix this was 2: `memoTask?.column !== "todo"` was true for `drafting`, so the memo was
+       cleared after the first sweep and the second re-logged the identical line. */
+    expect(overlapLogs).toHaveLength(1);
+
+    manager.stop();
+  });
+
   it("preserves an overlap blocker resting in a RENAMED review column", async () => {
     /* The review half of the predicate, which takes a different branch (worktree + status). */
     const staleBlocker = makeTask("FN-DONE-BLOCKER", { column: "shipped" });
