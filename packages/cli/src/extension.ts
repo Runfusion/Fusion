@@ -2451,16 +2451,25 @@ export default function kbExtension(pi: ExtensionAPI) {
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
       });
       
-      // Move to todo column
+      /*
+      FNXC:TaskRetry 2026-07-31-23:59 (the SECOND instance of the review finding on #3152):
+      A reviewer caught the chat `fn_task_retry` tool resolving its move target while still reporting
+      `"todo"` in the log, the response text and `details.newColumn`. This CLI retry had the identical
+      gap — same PR, same conversion, same three unconverted report sites — so it is fixed with it
+      rather than waiting for the same comment on the next surface.
+
+      Resolve once, then use that value everywhere the operator or a downstream tool reads it.
+      */
       // FNXC:ToolPermissionGates 2026-07-26-13:55: user-facing retry move carries the user/hard-cancel source (Move-Task contract).
-      await store.moveTask(params.id, await fusionCore.resolveReboundTargetForTask(store, params.id), { moveSource: "user" });
-      
+      const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+      await store.moveTask(params.id, retryTarget, { moveSource: "user" });
+
       // Log the retry action
-      await store.logEntry(params.id, "Retry requested via Fusion extension", "Task reset to todo for retry");
-      
+      await store.logEntry(params.id, "Retry requested via Fusion extension", `Task reset to ${retryTarget} for retry`);
+
       return {
-        content: [{ type: "text", text: `Retried ${params.id} → todo (failure state cleared)` }],
-        details: { taskId: params.id, newColumn: 'todo' },
+        content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (failure state cleared)` }],
+        details: { taskId: params.id, newColumn: retryTarget },
       };
     },
   });

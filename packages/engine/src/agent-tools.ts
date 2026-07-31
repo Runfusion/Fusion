@@ -3206,9 +3206,21 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }
         await store.updateTask(params.id, { status: null, error: null });
-        await store.moveTask(params.id, await fusionCore.resolveReboundTargetForTask(store, params.id));
-        await store.logEntry(params.id, "Retry requested via chat tool", "Task reset to todo for retry");
-        return { content: [{ type: "text" as const, text: `Retried ${params.id} → todo` }], details: { taskId: params.id, newColumn: "todo" } };
+        /*
+        FNXC:TaskRetry 2026-07-31-23:59 (review finding on #3152 — the move resolved, the REPORT did not):
+        The rebound target is resolved once and reused for the move, the log line, the response text
+        and `details.newColumn`. Converting only the `moveTask` argument left three places still
+        naming `"todo"`, so on a renamed board the card correctly landed in (say) `backlog` while the
+        operator and the task log were both told it went to `todo` — a lie that is worse than the
+        original literal, because the original at least agreed with itself.
+
+        `details.newColumn` is the one that travels: it is machine-readable output other tooling can
+        act on, so a wrong value there is not merely cosmetic.
+        */
+        const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+        await store.moveTask(params.id, retryTarget);
+        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`);
+        return { content: [{ type: "text" as const, text: `Retried ${params.id} → ${retryTarget}` }], details: { taskId: params.id, newColumn: retryTarget } };
       } catch (err: unknown) {
         return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
