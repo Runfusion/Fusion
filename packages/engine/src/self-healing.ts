@@ -13588,10 +13588,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-16:35 (the query-filter class, thirtieth sweep):
+      A review card failed for "no fn_task_done" that DID make step progress — real work exists, so it is
+      retried rather than discarded. The literal read meant that on a renamed board the retry never fired,
+      so partially-completed work was parked failed with its retry budget untouched: the budget exists
+      precisely to avoid losing that work, and it was never spent.
+
+      The per-card verdict below converts with it. No second pair; verified with the derived ratchet
+      from #2879.
+      */
+      const partialColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const partialById = new Map<string, Task>();
+      for (const column of partialColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) partialById.set(entry.id, entry);
+      }
+      const tasks = [...partialById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const partialLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          partialLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(partialColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          partialLanes.set(entry.id, new Set(partialColumns));
+        }
+      }
 
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (partialLanes.get(task.id) ?? partialColumns).has(task.column) &&
         allowsAutoMergeProcessing(task, settings) &&
         task.status === "failed" &&
         isNoTaskDoneFailure(task) &&
