@@ -63,7 +63,30 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/store.ts": 1,
   "packages/core/src/task-merge.ts": 2,
   "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
-  "packages/core/src/task-store/async-comments-attachments.ts": 8,
+  /*
+  FNXC:ArchivedGateParity 2026-07-31-22:10:
+  8 -> 5 after #2886, AND THE COUNT MOVED WITHOUT THE BEHAVIOUR MOVING. Read this before trusting it.
+
+  #2886 fixed a real bug (the archived-document guards failed in OPPOSITE directions on a renamed
+  lane) by replacing three `column === "archived"` comparisons with `isArchivedLane(column,
+  archivedColumns)`. The AST scan counts raw comparisons, so the tally dropped and this file went red
+  on main — the ratchet noticing the TypeScript half move, which is what it is for.
+
+  What it is NOT is three sites converted. `archivedColumns` is an OPTIONAL parameter defaulting to
+  `LEGACY_ARCHIVED_LANES = new Set(["archived"])`, and MEASURED: no caller anywhere in packages/core
+  or packages/engine passes it. Every call therefore resolves to the same literal it replaced, so the
+  behaviour is byte-identical and the resolved path is dead code today.
+
+  That matters for the header's split-brain argument above. The danger it describes — the TypeScript
+  half resolving the role while the SQL halves still compare the string — is NOT live here, precisely
+  because the resolved half is unwired. It becomes live the moment a caller threads real lanes in
+  without the SQL sides moving too. The Drizzle and raw-sql inventories are unchanged and still pass.
+
+  So this number now means "5 raw comparisons remain" and NOT "3 sites are done". Wiring
+  `archivedColumns` is the unfinished half, and doing it in isolation is the split brain this file
+  exists to catch. Flagged on #2886.
+  */
+  "packages/core/src/task-store/async-comments-attachments.ts": 5,
   "packages/core/src/task-store/audit-ops.ts": 1,
   "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
   "packages/core/src/task-store/lifecycle-ops.ts": 1,
