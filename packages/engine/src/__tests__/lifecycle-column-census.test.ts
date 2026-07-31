@@ -22,6 +22,7 @@ import {
   stripComments,
   summarize,
   mixedVocabularyFiles,
+  hasDeferralNote,
 } from "../../../../scripts/lib/lifecycle-column-census.mjs";
 
 function census(source: string) {
@@ -833,4 +834,68 @@ describe("the ratchet follows the count down", () => {
     expect(run1.code).toBe(1);
     expect(run1.out).toContain("column-guard count ROSE");
   }, 30_000);
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-10:50 (u12 — the rule that decides where the fleet is sent):
+`hasDeferralNote` is what splits the backlog into "debt with a written reason" and "work nobody has
+examined", and the census's default output now states a CONVERSION QUEUE EMPTY verdict from it. A
+rule that only ever answers "deferred" would report the queue empty forever and silently stop the
+fleet; a rule that only ever answers "unexamined" would send workers at sites whose owner wrote down
+why they must not move (the #3108 -> #3114 -> #3126 sequence, three PRs). So it is pinned in BOTH
+directions, and the window boundary is pinned exactly — 40 lines above the guard, not the guard's line.
+*/
+describe("the deferral-note rule the queue-empty verdict is computed from", () => {
+  const guardLine = (noteOffsetAbove: number, note: string): { lines: string[]; line: number } => {
+    const lines = Array.from({ length: 60 }, () => "// filler");
+    const line = 55; // 1-indexed line of the guard
+    lines[line - 1 - noteOffsetAbove] = note;
+    return { lines, line };
+  };
+
+  it("flags a guard whose deferral note sits within the 40-line window", () => {
+    const { lines, line } = guardLine(5, "// DELIBERATE-LITERAL — a sentinel, not a board lane.");
+
+    expect(hasDeferralNote(lines, line)).toBe(true);
+  });
+
+  it("does NOT flag a guard with no note — this is what keeps the queue from reading empty forever", () => {
+    const lines = Array.from({ length: 60 }, () => "// ordinary comment, no deferral language");
+
+    expect(hasDeferralNote(lines, 55)).toBe(false);
+  });
+
+  it("does NOT reach a note further above than the window", () => {
+    // 41 lines above is outside [line-41, line); this pins the boundary rather than the neighbourhood.
+    const { lines, line } = guardLine(41, "// FLAGGED AND LEFT COUNTED");
+
+    expect(hasDeferralNote(lines, line)).toBe(false);
+  });
+
+  it("reaches a note exactly at the window edge", () => {
+    const { lines, line } = guardLine(40, "// FLAGGED AND LEFT COUNTED");
+
+    expect(hasDeferralNote(lines, line)).toBe(true);
+  });
+
+  it("does not count a note BELOW the guard as deferring it", () => {
+    const lines = Array.from({ length: 60 }, () => "// filler");
+    lines[56] = "// DELIBERATE-LITERAL — belongs to the NEXT guard, not this one.";
+
+    expect(hasDeferralNote(lines, 55)).toBe(false);
+  });
+
+  it("recognises the phrasings the real tree actually uses", () => {
+    // Each is verbatim from a site currently counted as deferred; a regex edit that drops one
+    // silently converts that file into fleet work.
+    for (const note of [
+      "FNXC:WorkflowResolvedColumns (fleet phase — FLAGGED AND LEFT COUNTED):",
+      "(fleet — FLAGGED, deliberately NOT converted):",
+      "(audited — DEAD SYNC PATH, do not convert):",
+      "DELIBERATE-LITERAL: a SENTINEL, not a board lane.",
+      "a conversion here would be inert",
+    ]) {
+      expect(hasDeferralNote([note, "const x = 1;"], 2), note).toBe(true);
+    }
+  });
 });
