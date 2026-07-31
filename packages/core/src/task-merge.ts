@@ -360,6 +360,22 @@ QUERY was also a literal, so the unwired check was unreachable and therefore unn
 sweep's query ACTIVATES it — the sweep starts finding renamed-board cards and this then declines every
 one. Optional, so no caller changes behaviour until it passes the set.
 */
+/*
+DELIBERATE-LITERAL — the review-eligible SENTINEL, reviewed 2026-07-30-18:20.
+
+NOT a lifecycle column. `getTaskHardMergeBlocker` answers "is this card blocked by anything other than
+where it sits?", and its callers are recovery paths for work that has ALREADY LANDED — a merge-confirmed
+card whose graph crashed can be resting in any column. They pass this sentinel so the identity check is
+satisfied by construction and the real blockers (paused / blocking status / incomplete steps / failed
+pre-merge steps) remain the sole deciders.
+
+Named and exported because two recovery paths were spelling it independently, and one of them
+(`project-engine.ts`) forgot to and instead passed the card's own column — which on a renamed board
+parked already-merged work as `failed` with "Merge confirmed but finalization blocked: task is in
+'signoff', must be in 'in-review'". One name, one meaning, one place to find it.
+*/
+export const REVIEW_ELIGIBLE_SENTINEL_COLUMN = "in-review";
+
 export function getTaskHardMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,
   options: { reviewColumns?: ReadonlySet<string> } = {},

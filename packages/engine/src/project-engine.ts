@@ -43,7 +43,7 @@ import {
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
   resolveWipTargetForTask,
-  resolveReboundTargetForTask,
+  resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
 import { execFile } from "node:child_process";
@@ -3585,6 +3585,21 @@ export class ProjectEngine {
               } // end !isWorkspaceTask reachability gate (B2): workspace tasks skip the root-cwd commitSha check
               const blockerReason = getTaskHardMergeBlocker({
                 ...(task as Task),
+                /*
+                FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (this parked ALREADY-MERGED work as failed):
+                The spread carries the task's REAL column, and no `reviewColumns` was supplied, so
+                getTaskHardMergeBlocker's identity check ran against the literal `in-review`. On a board
+                whose review lane is renamed that returned `task is in 'signoff', must be in 'in-review'`
+                and the branch below parked the card FAILED with "Merge confirmed but finalization
+                blocked" — for work that had already landed.
+
+                Fixed the way the sibling recovery path in auto-merge-finalization.ts already does it,
+                and for the reason recorded there: `"in-review"` is the review-eligible SENTINEL for this
+                helper, not a lifecycle column, so a merge-confirmed card evaluates the same blocker set
+                on a custom workflow as on the builtin one. The column identity of an already-landed card
+                is not what this check is for — paused / error / incomplete steps still apply.
+                */
+                column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
                 // Merge-confirmed tasks have already landed. Treat stale merge
                 // in-flight statuses as soft state to clear during finalization,
                 // not hard blockers that park an otherwise confirmed merge as failed.

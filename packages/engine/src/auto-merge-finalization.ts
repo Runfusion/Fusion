@@ -1,4 +1,5 @@
-import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore } from "@fusion/core";
+import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore, REVIEW_ELIGIBLE_SENTINEL_COLUMN
+} from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
 
 /*
@@ -252,7 +253,7 @@ export async function finalizeProvenAutoMergeTask({
     NOT re-keyed to the merge-orchestration column so custom workflows evaluate the
     same review-eligible blocker set as builtin.
     */
-    column: "in-review",
+    column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
     paused: false,
     status: latest.status === "merging" || latest.status === "merging-pr" || latest.status === "queued" ? undefined : latest.status,
     error: undefined,
