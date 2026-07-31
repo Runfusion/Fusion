@@ -21,7 +21,7 @@ while auditing a program whose entire subject is defects that hide behind green 
 
 | what happened | what it looked like | what it was |
 |---|---|---|
-| `git stash --keep-index` swept the new test file out of the tree | "45 passed" | the pre-existing count; the new test never ran |
+| `git stash --keep-index` swept the new **untracked** test file out of the tree (it stashes tracked, unstaged changes and, with `-u`, untracked ones — an unstaged new file is not protected by `--keep-index`) | "45 passed" | the pre-existing count; the new test never ran |
 | a blinding script hit an unmapped role and `sys.exit(2)` with **no message**; `&&` skipped the check, `;` let the run proceed | "375/375 green under blinding" | nothing was blinded — the run was against unmodified source |
 | a gate piped to `tail -1`, which printed a blank line | "gate ran, no complaints" | exit code 1; the FNXC stamp check had failed and CI caught it later |
 
@@ -40,12 +40,16 @@ It is worse under automation, where output is piped, filtered, and skimmed. `| t
 ## Rules
 
 **1. Assert the exit code, not the absence of text.** `rc=$?` immediately after the command, before
-any pipe. A pipeline's exit status is the *last* stage's, so `cmd | tail -1` reports `tail`'s
-success, never `cmd`'s.
+any pipe. A pipeline's exit status is the *last* stage's by default, so `cmd | tail -1` reports
+`tail`'s success, never `cmd`'s. (`set -o pipefail` changes that, and `PIPESTATUS`/`pipestatus`
+exposes each stage — but neither is on by default in the shells these commands are pasted into, so
+the rule stands unless you have explicitly enabled it.)
 
 **2. Confirm the run did the work.** A test run must report a plausible file/test COUNT — "Test Files
-1 passed" when you expected 16 is a finding, not a pass. `No test files found` exits non-zero and is
-easy to mistake for a failing test.
+1 passed" when you expected 16 is a finding, not a pass. The exact strings quoted here are **Vitest's**
+(`Test Files N passed`, `No test files found`, which exits non-zero and is easy to mistake for a
+failing test); other runners word it differently, so match on the count you expected rather than on
+the phrasing.
 
 **3. A tool that can no-op must say what it did.** Print the substitution and its location, and fail
 loudly on the paths where it cannot act. A silent `exit 2` is indistinguishable from success once

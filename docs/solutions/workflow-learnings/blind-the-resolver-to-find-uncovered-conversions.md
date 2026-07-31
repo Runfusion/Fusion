@@ -9,7 +9,11 @@ applies_when: deciding whether a lane conversion is actually protected by a test
 # Blind the resolver: the only way to know a conversion is covered
 
 See also [silence-is-not-success](./silence-is-not-success.md) — every wrong reading this method
-produced came from a run that never happened rather than from the blind itself.
+produced came from the RUN, never from the blind itself. Two kinds: a run that never happened (the
+swept test file, the silent `exit 2`), and a run that happened but could not measure anything (a
+harness that made the blind unobservable, a suite that never reached the blinded site — both below).
+Absent output and invalid output read identically at a glance, which is why the rules there are about
+confirming what a run actually did rather than about whether it printed a failure.
 
 Sibling to [a-falling-count-is-not-evidence](./a-falling-count-is-not-evidence.md), which records that
 a metric moving is not proof the system moved. This one records the **positive** procedure: how to
