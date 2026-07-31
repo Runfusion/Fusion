@@ -51,6 +51,29 @@ export function destinationLiterals(expr) {
     return [...destinationLiterals(expr.whenTrue), ...destinationLiterals(expr.whenFalse)];
   }
   if (ts.isParenthesizedExpression(expr)) return destinationLiterals(expr.expression);
+  /*
+  FNXC:MoveTargetRatchet 2026-07-31-19:25 (u12 — CAST yes, FALLBACK deliberately no):
+  Columns are typed `ColumnId`, so `moveTask(id, "done" as ColumnId)` is the NATURAL spelling wherever
+  the parameter is nominally typed. It was invisible until now, which left the gate weakest exactly
+  where this codebase is most likely to write a literal.
+
+  `??` / `||` / `&&` are NOT unwrapped, and that is a decision rather than an omission. I added them,
+  ran the tree, and they flagged this:
+
+      moveTask(id, (await resolveTaskLifecycleColumns(store, id))?.complete ?? "done", ...)
+
+  which is the fail-soft idiom the whole conversion programme is built on — resolve, and fall back to
+  the legacy id when the workflow is unreadable, exactly as the role helpers degrade. A gate that
+  demands a DELIBERATE-LITERAL marker on every safe fallback teaches people to sprinkle markers, and a
+  marker applied by habit is how the next real literal walks through.
+
+  So the legacy id AFTER `??` is the SAFE shape and stays unflagged; a legacy id as the WHOLE
+  destination is the unsafe one and is caught. If a fallback ever needs auditing it wants its own
+  report, not this ratchet's exit code.
+  */
+  if (ts.isAsExpression(expr) || ts.isSatisfiesExpression?.(expr) || ts.isTypeAssertionExpression?.(expr)) {
+    return destinationLiterals(expr.expression);
+  }
   return [];
 }
 
