@@ -400,12 +400,22 @@ this conversion rather than losing the wake entirely.
    defers everything after it to a microtask and reorders handlers relative to a
    synchronous emitter. A file split must not change event ordering, so the
    resolution uses the store's sync IR path. */
-function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string } {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-10:10 (fleet: scheduler lifecycle roles):
+Widened from {hold,intake} to the full role set. The listeners below ask the same "which lane is
+this?" question about wip, review and the terminal columns, and answered it with literals — so on
+a renamed board PR monitoring never started or stopped, failure bookkeeping never recorded, and
+terminal cleanup never ran. None of those error; they simply stop happening. One resolution per
+event, reusing the SAME sync path and the SAME fail-soft legacy defaults, so event ordering and
+unresolvable-workflow behaviour are both unchanged.
+*/
+function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string } {
+  const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
   try {
-    const lifecycle = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
-    return { hold: lifecycle?.hold ?? "todo", intake: lifecycle?.intake ?? "triage" };
+    const l = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
+    return { hold: l?.hold ?? legacy.hold, intake: l?.intake ?? legacy.intake, wip: l?.wip ?? legacy.wip, review: l?.review ?? legacy.review, complete: l?.complete ?? legacy.complete, archived: l?.archived ?? legacy.archived };
   } catch {
-    return { hold: "todo", intake: "triage" };
+    return legacy;
   }
 }
 
@@ -932,13 +942,13 @@ export class Scheduler {
       }
       // PR Monitoring
       if (this.options.prMonitor) {
-        if (to === "in-review" && task.prInfo) {
+        if (to === parked.review && task.prInfo) {
           // Start monitoring existing PR
           const repo = getCurrentRepo(this.store.getRootDir());
           if (repo) {
             this.options.prMonitor.startMonitoring(task.id, repo.owner, repo.repo, task.prInfo);
           }
-        } else if (from === "in-review" && to !== "in-review") {
+        } else if (from === parked.review && to !== parked.review) {
           // If task has a closed/merged PR, drain buffered comments before
           // stopping monitoring (drainComments needs the tracked PR to still exist)
           if (task.prInfo && (task.prInfo.status === "closed" || task.prInfo.status === "merged")) {
@@ -979,7 +989,7 @@ export class Scheduler {
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a terminal completion column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
-      if (to === "done" || to === "archived") {
+      if (to === parked.complete || to === parked.archived) {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
@@ -1052,13 +1062,13 @@ export class Scheduler {
         }
       }
 
-      if (from === "in-progress" && to === parked.hold) {
+      if (from === parked.wip && to === parked.hold) {
         if (source === "engine") {
           this.recentEngineTodoRequeues.set(task.id, task.columnMovedAt ?? new Date().toISOString());
         } else {
           this.recentEngineTodoRequeues.delete(task.id);
         }
-      } else if (to === "in-review" || to === "done" || to === "archived") {
+      } else if (to === parked.review || to === parked.complete || to === parked.archived) {
         this.recentEngineTodoRequeues.delete(task.id);
         if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
           void this.store.updateTask(task.id, {
@@ -1075,7 +1085,7 @@ export class Scheduler {
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
-      if (to === "done" || to === parked.hold) {
+      if (to === parked.complete || to === parked.hold) {
         schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
