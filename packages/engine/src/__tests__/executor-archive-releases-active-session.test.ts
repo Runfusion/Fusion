@@ -319,3 +319,75 @@ describe("workflow graph column boundaries do not abort their own run", () => {
     expect(abortSpy).toHaveBeenCalledOnce();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:20:
+THE SAME RELEASE, ON A BOARD THAT DOES NOT CALL ITS ARCHIVE LANE `archived`.
+
+The branch above was keyed on the `archived` literal, so on a renamed board the archive transition
+fell through to the narrower `from === wip` arm — or to no arm at all — and the registry entry leaked
+exactly as it did before FN-7717, for the same downstream cost: a successor task cannot acquire the
+same session path.
+
+#3109 made `task:moved` carry the emitter-resolved lanes, so the guard reads the answer off the
+payload with NO await. That matters here specifically: this listener's disposal bookkeeping is written
+in the handler's own tick and read by the NEXT event's prologue (the FN-5256 fast-bounce path), so a
+guard that had to await could not be used without reopening that race.
+
+The paired negative is the load-bearing half. `done`/`in-review` deliberately keep their merge leases
+across the transition (FN-6736 / Phase C-D), so a resolved-lane guard must not start releasing them —
+a conversion that released on every terminal-ish lane would satisfy the positive and break the
+guarantee this file already protects.
+*/
+describe("archive release follows the board's own archive lane", () => {
+  beforeEach(() => activeSessionRegistry.clear());
+  afterEach(() => activeSessionRegistry.clear());
+
+  /** Archive lane `filed`, wip `building` — the shape `moves.ts` now puts on the payload. */
+  const RENAMED_LANES = { hold: "drafting", intake: "inbox", wip: "building", review: "checking", complete: "shipped", archived: "filed" };
+
+  it("releases a held session when the card moves into a RENAMED archive lane", async () => {
+    const { executor, store } = makeExecutor();
+
+    (executor as any).setActiveWorkflowStepSession("TASK-RENAMED", {}, SHARED_ROOT);
+    expect(activeSessionRegistry.pathsForTask("TASK-RENAMED").length).toBe(1);
+
+    store.emit("task:moved", {
+      task: { id: "TASK-RENAMED", column: "filed" } as never,
+      from: "drafting", to: "filed", source: "user", lanes: RENAMED_LANES,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(activeSessionRegistry.pathsForTask("TASK-RENAMED")).toEqual([]);
+  });
+
+  it("does NOT release a session when the card moves into the board's own COMPLETE lane", async () => {
+    const { executor, store } = makeExecutor();
+
+    (executor as any).setActiveWorkflowStepSession("TASK-KEEP", {}, SHARED_ROOT);
+    expect(activeSessionRegistry.pathsForTask("TASK-KEEP").length).toBe(1);
+
+    /* `shipped` is complete, not archived: the merge lease must survive, exactly as `done` does. */
+    store.emit("task:moved", {
+      task: { id: "TASK-KEEP", column: "shipped" } as never,
+      from: "checking", to: "shipped", source: "engine", lanes: RENAMED_LANES,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(activeSessionRegistry.pathsForTask("TASK-KEEP").length).toBe(1);
+  });
+
+  /*
+  The fail-soft case. `lanes` is optional — an emit path that cannot resolve sends none — and the
+  guard must then behave exactly as it did before #3109 rather than matching nothing.
+  */
+  it("falls back to the legacy id when the emitter sent no lanes", async () => {
+    const { executor, store } = makeExecutor();
+
+    (executor as any).setActiveWorkflowStepSession("TASK-LEGACY", {}, SHARED_ROOT);
+    store.emit("task:moved", { task: makeTask("TASK-LEGACY"), from: "todo", to: "archived", source: "user" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(activeSessionRegistry.pathsForTask("TASK-LEGACY")).toEqual([]);
+  });
+});
