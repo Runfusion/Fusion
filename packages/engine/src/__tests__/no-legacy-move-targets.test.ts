@@ -40,18 +40,20 @@ const LEGACY = "(?:todo|triage|in-progress|in-review|done|archived)";
 const MOVE_TARGET = new RegExp(`moveTask\\s*\\(\\s*[^,()]+,\\s*["']${LEGACY}["']`, "g");
 
 /*
-Files that still hold literal targets, with the count each is allowed. `self-healing.ts` is absent
-because it is now zero — the whole point of the change this guards.
+Files that still hold literal targets, with the count each is allowed.
+
+EMPTY, and that is the end state rather than a starting one: every `moveTask` call in the tree now
+resolves its target. It was populated when this guard was written — `cli/src/extension.ts`,
+`core/task-store/branch-and-pr-entities.ts`, `dashboard/src/server.ts` and `engine/agent-tools.ts`
+each held one — and the stale-allowance case below is what forced this map to be emptied when those
+four were converted in the same change. Leaving the entries behind would have left four slots open
+for the class to regrow through while the guard stayed green.
+
+A NOTE FOR WHOEVER ADDS ONE. If a call genuinely cannot resolve its target, record it here with a
+comment saying why, rather than widening the matcher. The failure this guards is not "a literal
+appears" — it is `TransitionRejectionError: unknown-column` thrown at runtime on a renamed board.
 */
-const ALLOWED: Record<string, number> = {
-  "packages/cli/src/extension.ts": 1,
-  "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
-  /* One CALL. An earlier raw scan counted 2 here by matching the interface DECLARATION
-     (`moveTask(taskId: string, column: "todo", …)`) as a call site — the stale-allowance case below
-     caught that, which is what it is for. */
-  "packages/dashboard/src/server.ts": 1,
-  "packages/engine/src/agent-tools.ts": 1,
-};
+const ALLOWED: Record<string, number> = {};
 
 function sourceFiles(): string[] {
   return execFileSync(
@@ -87,13 +89,28 @@ function countByFile(): Record<string, number> {
 
 describe("moveTask targets resolve the board's own lane", () => {
   /*
-  ANTI-VACUITY. A scan that silently matched nothing would pass forever, including after `moveTask`
-  is renamed or this glob stops resolving. Prove the corpus is real and the matcher still finds the
-  sites the allow-list documents.
+  ANTI-VACUITY, and its first version was self-defeating: it asserted the scan finds at least one
+  offender, which can only hold while the defect exists. Converting the last four sites turned it red
+  — the guard failing precisely because the tree became correct.
+
+  A clean tree is the expected end state, so the proof has to be that the scan REACHES the right code
+  rather than that it finds something wrong in it. Two independent legs, both of which break if the
+  glob stops resolving or `moveTask` is renamed: the corpus is a real file list, and files that
+  genuinely call `moveTask` are inside it. The matcher itself is covered by the case table below.
   */
-  it("scans a real corpus and still finds the allow-listed sites", () => {
-    expect(sourceFiles().length).toBeGreaterThan(200);
-    expect(Object.keys(countByFile()).length).toBeGreaterThan(0);
+  it("scans a real corpus that still reaches the moveTask call sites", () => {
+    const files = sourceFiles();
+    expect(files.length).toBeGreaterThan(200);
+
+    const callers = files.filter((file) => {
+      try {
+        return /moveTask\s*\(/.test(stripComments(readFileSync(resolve(REPO_ROOT, file), "utf8")));
+      } catch {
+        return false;
+      }
+    });
+    expect(callers.length).toBeGreaterThan(5);
+    expect(callers).toContain("packages/engine/src/self-healing.ts");
   });
 
   /* The matcher is covered, because the scan is only as good as it: each case is a real shape. */

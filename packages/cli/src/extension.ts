@@ -2453,7 +2453,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       
       // Move to todo column
       // FNXC:ToolPermissionGates 2026-07-26-13:55: user-facing retry move carries the user/hard-cancel source (Move-Task contract).
-      await store.moveTask(params.id, 'todo', { moveSource: "user" });
+      await store.moveTask(params.id, await fusionCore.resolveReboundTargetForTask(store, params.id), { moveSource: "user" });
       
       // Log the retry action
       await store.logEntry(params.id, "Retry requested via Fusion extension", "Task reset to todo for retry");

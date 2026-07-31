@@ -627,7 +627,7 @@ export async function updateTaskImpl(store: TaskStore,
           throw new Error(validation.message);
         }
         if (validation.requiresFinalize) {
-          await store.moveTask(id, "done", {
+          await store.moveTask(id, (await resolveTaskLifecycleColumns(store, id))?.complete ?? "done", {
             moveSource: "engine",
             recoveryRehome: true,
             preserveProgress: true,
