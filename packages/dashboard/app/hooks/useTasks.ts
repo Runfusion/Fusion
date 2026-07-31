@@ -9,6 +9,7 @@ import { clearCache, readCache, readCacheSavedAt, SWR_CACHE_KEYS, SWR_TASKS_MAX_
 import { pushTrace } from "../utils/dashboardTraceBuffer";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { isLikelyTabSuspensionError } from "./visibilitySuspension";
+import { isIntakeColumnRole, isHoldColumnRole, type ColumnRoleFlags } from "../utils/columnRoles";
 
 const loggedTaskCacheHitProjects = new Set<string>();
 /*
@@ -183,9 +184,32 @@ INTAKE lane before showing anything, so the extra timestamps are filtered downst
 */
 const PLANNER_ACTIVITY_COLUMN_IDS = new Set(["triage", "todo"]);
 
-function addRecentPlannerActivityForFreshAgentLog(task: Task, entry: AgentLogActivityEvent): Task {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-03:45:
+THE STAMP MISSED RENAMED INTAKE LANES ENTIRELY, which the note above does not cover.
+
+That note argues over-stamping is harmless because every consumer re-checks for an INTAKE lane
+before showing anything. True, and it only protects against false POSITIVES. On a board whose intake
+and hold lanes are renamed, `{triage, todo}` matches nothing, so no stamp is ever written — and a
+correct downstream role check has nothing to filter. The planning border and pulsing badge never
+appear while the planner is actively working the card.
+
+Resolved traits win; the legacy pair stays as the no-flags fallback, so an unconverted caller and the
+remote-node path are byte-identical. Intake OR hold, mirroring what the pair meant: pre-merge
+`triage` was intake and post-merge `todo` is the hold lane.
+*/
+function isPlannerActivityLane(task: Task, flags: ColumnRoleFlags | undefined): boolean {
+  if (!flags) return PLANNER_ACTIVITY_COLUMN_IDS.has(task.column);
+  return isIntakeColumnRole(flags, task.column) || isHoldColumnRole(flags, task.column);
+}
+
+function addRecentPlannerActivityForFreshAgentLog(
+  task: Task,
+  entry: AgentLogActivityEvent,
+  flags: ColumnRoleFlags | undefined,
+): Task {
   if (
-    !PLANNER_ACTIVITY_COLUMN_IDS.has(task.column)
+    !isPlannerActivityLane(task, flags)
     || task.status === "planning"
     || entry.agent !== PLANNER_AGENT_ROLE
     || !hasFreshAgentLog(task, entry)
@@ -274,6 +298,14 @@ function mergeIncomingTask(current: Task, incoming: Task): Task {
 }
 
 export interface UseTasksOptions {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:40:
+  Resolves a task's own column traits, so the planner-activity stamp below is a ROLE question.
+
+  Supplied by App from the board-workflow payload. Absent (remote nodes, pre-load) the stamp falls
+  back to the legacy id pair, which is the behaviour that shipped.
+  */
+  resolveColumnFlags?: (task: Task) => ColumnRoleFlags | undefined;
   /** 
    * When provided, fetches tasks only for this project.
    * SSE events from other project contexts are ignored.
@@ -295,6 +327,7 @@ export interface UseTasksOptions {
 
 export function useTasks(options?: UseTasksOptions) {
   const projectId = options?.projectId;
+  const resolveColumnFlags = options?.resolveColumnFlags;
   const searchQuery = options?.searchQuery;
   const sseEnabled = options?.sseEnabled ?? true;
   /*
@@ -967,7 +1000,7 @@ export function useTasks(options?: UseTasksOptions) {
         let changed = false;
         const next = prev.map((task) => {
           const cleared = clearInReviewStallForFreshAgentLog(task, entry);
-          const updated = addRecentPlannerActivityForFreshAgentLog(cleared, entry);
+          const updated = addRecentPlannerActivityForFreshAgentLog(cleared, entry, resolveColumnFlags?.(cleared));
           if (updated !== task) changed = true;
           return updated;
         });

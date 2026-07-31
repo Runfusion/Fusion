@@ -540,14 +540,36 @@ function AppInner() {
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
   const taskSseEnabled = taskView === "board" || taskView === "list";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:50:
+  HOISTED above `useTasks` so its planner-activity stamp can be a role question.
+
+  The board-workflow payload is the only per-task trait source on this screen, and it depends on
+  `projectId` alone — nothing about tasks — so reading it first is safe. `useTasks` previously gated
+  that stamp on the literal `{triage, todo}` pair, which matches nothing on a renamed board, so the
+  planning border and pulsing badge never appeared while the planner was working the card.
+
+  REMOTE NODES GET NO FLAGS, deliberately: their rows belong to another store, so local
+  board-workflow metadata must never be applied to their ids — the same rule the footer index below
+  already follows. They keep the legacy fallback.
+  */
+  const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
+  const resolveTaskColumnFlagsForActivity = useCallback((task: Task) => {
+    if (isRemote || !footerBoardWorkflows) return undefined;
+    const workflowId = footerBoardWorkflows.taskWorkflowIds[task.id] ?? footerBoardWorkflows.defaultWorkflowId;
+    return footerBoardWorkflows.workflows
+      .find((workflow) => workflow.id === workflowId)
+      ?.columns.find((column) => column.id === task.column)?.flags;
+  }, [footerBoardWorkflows, isRemote]);
+
   const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
       sseEnabled: taskSseEnabled,
+      resolveColumnFlags: resolveTaskColumnFlagsForActivity,
     }
   );
-  const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
   const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const footerColumnFlagsByTaskId = useMemo(() => {
     const index = new Map<string, ExecutorColumnFlags>();
