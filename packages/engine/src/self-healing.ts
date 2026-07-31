@@ -1243,9 +1243,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   this. (Distinct from `isWorkspaceTaskLive`, which probes the session REGISTRY; this probes the
   task ROW lifecycle.)
   */
-  private isWorkspaceOwnerLive(owner: Task | null | undefined): boolean {
+  private isWorkspaceOwnerLive(owner: Task | null | undefined, completeColumns: ReadonlySet<string>): boolean {
     if (!owner) return false; // not found / deleted → terminal.
-    if (owner.column === "done") return false;
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (fleet): required, not optional-with-a-fallback —
+       an optional set silently restores the literal at the one call site that forgets it, and this
+       predicate decides whether a LIVE owner's lease gets reclaimed. */
+    if (completeColumns.has(owner.column)) return false;
     if (owner.status === "failed") return false;
     return true;
   }
@@ -1480,6 +1483,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     graceMs: number;
     activeHeartbeatTaskIds: Set<string>;
     lastActivityMs: number | null;
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (fleet): the caller has already resolved this lane
+       set to reach here (`lanesOfReclaim(task.id).wip`), so threading it in costs nothing and keeps the
+       two in agreement — a second, independently-resolved set is how a guard drifts from its gate. */
+    wipColumns: ReadonlySet<string>;
   }): { phantom: boolean; metadata: Record<string, unknown> } {
     const normalizedId = task.id.toUpperCase();
     const agentPresent = options.activeHeartbeatTaskIds.has(normalizedId);
@@ -1512,7 +1519,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     };
 
     return {
-      phantom: task.column === "in-progress"
+      phantom: options.wipColumns.has(task.column)
         && worktreeExists
         && options.executionAgeMs !== null
         && options.executionAgeMs > safeAgeMs
@@ -4067,6 +4074,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             const executionAgeMs = Number.isFinite(executionStartedAtMs) ? Math.max(0, nowMs - executionStartedAtMs) : null;
             const lastActivityMs = await this.getRecentRunAuditActivityAgeMs(task, nowMs);
             const phantomBinding = this.isPhantomExecutorBinding(task, {
+              wipColumns: lanesOfReclaim(task.id).wip,
               executionAgeMs,
               graceMs: STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS,
               activeHeartbeatTaskIds: activeTaskIds,
@@ -7539,6 +7547,18 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // audit event (needsOperatorBypass). This sweep takes no auto-merge-dependent action.
       const settings = await this.store.getSettings().catch(() => undefined);
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (fleet):
+      Executor-owned rows are skipped because resume is deferred at startup and liveness is unprovable
+      here. Asked by id that skip matched nothing on a renamed board, so this sweep would REWRITE a live
+      executor's pending step results to `failed`.
+
+      Project union: a paged board-wide sweep, so per-task resolution is one IR read per row. Both the
+      page filter and the post-re-read verify use this one set — they must agree, or the sweep selects a
+      row and then declines to act on it with nothing logged.
+      */
+      const executorOwnedColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+
       const isSessionLive = (taskId: string): boolean => {
         const livePaths = activeSessionRegistry.pathsForTask(taskId);
         return livePaths.some((path) => activeSessionRegistry.isPathActive(path))
@@ -7552,14 +7572,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
           // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+          if (executorOwnedColumns.has(task.column)) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+          if (!fresh || fresh.userPaused === true || executorOwnedColumns.has(fresh.column)) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
@@ -9938,7 +9958,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const owner = await this.store.getTask(entry.taskId).catch(() => null);
           const ownerColumn = owner?.column ?? "deleted";
           // Only a DEMONSTRABLY TERMINAL owner's lease is reclaimed (review C fix).
-          if (this.isWorkspaceOwnerLive(owner)) continue;
+          if (this.isWorkspaceOwnerLive(owner, await resolveProjectColumnsForRoles(this.store, ["complete"]))) continue;
 
           activeSessionRegistry.unregisterPath(entry.path);
           await createRunAuditor(this.store, {
