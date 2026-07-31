@@ -42,6 +42,7 @@ import {appendConfigurationRevision, createConfigurationRevision, getConfigurati
 import {readProjectConfig, writeProjectConfig} from "./async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -955,7 +956,7 @@ export async function registerArtifactImpl(store: TaskStore, input: ArtifactCrea
         FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
         Artifact row insert is PostgreSQL-only via insertArtifactRowAsync.
         */
-        return insertArtifactRowAsync(store.asyncLayer!, input, stored);
+        return insertArtifactRowAsync(store.asyncLayer!, input, stored, await resolveArchivedLanes(store));
       } catch (error) {
         if (stored.absolutePath) {
           await unlink(stored.absolutePath).catch(() => undefined);

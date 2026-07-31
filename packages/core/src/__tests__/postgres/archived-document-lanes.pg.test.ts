@@ -104,6 +104,48 @@ pgDescribe("archived-document guards resolve the board's archived lane", () => {
     ).rejects.toThrow(/read-only/);
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+  THE SENTINEL ITSELF, not just the two guards that read a row directly.
+
+  #2886 fixed `upsertTaskDocument` and `publishArchivedTaskDocumentAddition`, which read `task.column`
+  from their own `select`. Everything ELSE in this area routes through `getLiveTaskColumn`, which
+  MANUFACTURES the string "archived" — a dozen comparisons across five files trust it. Keyed on the
+  literal, that function reported a live row in a renamed archived lane as LIVE, so the gates that
+  hide an archived card's artifacts and document LISTINGS never closed.
+
+  Fixing those dozen comparisons individually would have been wrong twice over: they are sentinels,
+  and the defect was in the producer.
+
+  ARTIFACTS, not `getTaskDocument`. My first version asserted that reading a document returns
+  undefined for an archived card, and it failed — `getTaskDocument` gates on `column === null`, i.e.
+  existence only. Reading an archived card's document is ALLOWED by design; the read-only contract is
+  about writes. The premise was wrong, not the code, which is the fourth time this session that
+  suspecting my own fixture first would have been quicker. `getArtifacts` is one of the five sites
+  that genuinely consumes the sentinel (`column === null || column === "archived"`).
+
+  REVERT PROOF, measured: restore `row.column === "archived"` in `getLiveTaskColumn` and this fails —
+  the artifact list is returned for a card the board shows as archived.
+  */
+  it("hides artifacts behind the SENTINEL for a card in a renamed archived lane", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "Archived into a renamed lane, then listed" });
+    await store.registerArtifact({
+      type: "document",
+      title: "spec",
+      description: "inline body",
+      content: "body",
+      authorId: "agent-1",
+      authorType: "agent",
+      taskId: task.id,
+    });
+    expect(await store.getArtifacts(task.id)).toHaveLength(1);
+
+    await parkInRenamedArchivedLane(task.id);
+
+    expect(await store.getArtifacts(task.id)).toEqual([]);
+  });
+
   it("does NOT treat a live card as archived just because a lane is named vault", async () => {
     // The guard must still let real work through — rejecting everything would be its own bug.
     const store = h.store();

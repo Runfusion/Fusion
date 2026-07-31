@@ -36,6 +36,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DependencyCycleError, TaskDeletedError, TombstonedTaskResurrectionError, coreLog, detectDependencyCycle, storeLog } from "../store.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function trackDeferredTaskCreatedWorkImpl(store: TaskStore, work: () => Promise<void>): Promise<void> {
     if (store.closing) return Promise.resolve();
@@ -451,7 +452,7 @@ getLiveTaskColumn, plus cold archive.archived_tasks presence.
 export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Promise<boolean> {
     
     const layer = store.asyncLayer!;
-    const live = await getLiveTaskColumn(layer.db, id, layer.projectId);
+    const live = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
     // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
     if (live === "archived") return true;
     if (live !== null) return false;

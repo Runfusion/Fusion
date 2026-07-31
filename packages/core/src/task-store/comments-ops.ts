@@ -21,7 +21,7 @@ import "../builtin-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {resolveLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
-import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async-comments-attachments.js";
 
 /*
@@ -61,7 +61,7 @@ export function resolvePostCommentRetriageDecision(input: {
 export async function addCommentImpl(store: TaskStore, id: string, text: string, author: string = "user", options?: { skipRefinement?: boolean; source?: "user" | "agent" | "github-review" | "github-review-comment"; externalId?: string; reviewState?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED"; }, runContext?: RunMutationContext,): Promise<Task> {
     {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -326,7 +326,12 @@ FNXC:WorkflowLifecycleColumns 2026-07-30-23:40:
 Shared by both document paths so the "is this card archived?" answer cannot differ between the write
 guard and the publication guard — one saying yes while the other says no is how a card ends up both
 read-only and un-publishable.
-*/
+
+FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+The helper that used to live here now lives in `project-lane-vocabulary.ts` and is imported. It grew a
+THIRD caller (`getLiveTaskColumn`, whose sentinel a dozen sites compare against), and three private
+copies of one fact is how the disagreement above happens at scale rather than between two functions.
+The analysis below is unchanged and still governs the shape.
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-31-03:35 (#2886 review — greptile P1, "project-wide lanes
 misclassify tasks"): THE FINDING IS RIGHT AND THE OBVIOUS FIX IS A WORSE TRADE. Measured, not argued.
@@ -355,13 +360,6 @@ distinguished from "selection resolved to the default", i.e. the provenance form
 Sized here rather than faked, because swapping one defect for a larger one would have looked like
 progress and dropped a guard count.
 */
-async function resolveArchivedLanes(store: TaskStore): Promise<ReadonlySet<string> | undefined> {
-  try {
-    return await resolveProjectColumnsForRoles(store, ["archived"]);
-  } catch {
-    return undefined;
-  }
-}
 
 export async function publishArchivedTaskDocumentAdditionImpl(
   store: TaskStore,

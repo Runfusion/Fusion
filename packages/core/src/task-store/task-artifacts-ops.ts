@@ -33,6 +33,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { storeLog } from "../store.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function listWorkflowWorkItemsForTaskSyncImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[] } = {}): WorkflowWorkItem[] {
     const conditions = ["taskId = ?"];
@@ -654,7 +655,7 @@ export async function addSteeringCommentImpl(store: TaskStore, id: string, text:
 export async function updateTaskCommentImpl(store: TaskStore, id: string, commentId: string, text: string): Promise<Task> {
     {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -688,7 +689,7 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
 export async function deleteTaskCommentImpl(store: TaskStore, id: string, commentId: string): Promise<Task> {
     {
       const layer = store.asyncLayer!;
-      const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -782,24 +783,24 @@ export async function getArtifactImpl(store: TaskStore, id: string): Promise<Art
  */
 export async function updateArtifactImpl(store: TaskStore, id: string, updates: { title?: string; description?: string; content?: string }): Promise<Artifact> {
         const layer = store.asyncLayer!;
-    const updated = await updateArtifactRowAsync(layer, id, updates);
+    const updated = await updateArtifactRowAsync(layer, id, updates, await resolveArchivedLanes(store));
     store.emit("artifact:updated", updated);
     return updated;
 }
 
 export async function getArtifactsImpl(store: TaskStore, taskId: string): Promise<Artifact[]> {
         const layer = store.asyncLayer!;
-    return getArtifactsAsync(layer.db, taskId, layer.projectId);
+    return getArtifactsAsync(layer.db, taskId, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentsImpl(store: TaskStore, taskId: string): Promise<TaskDocument[]> {
         const layer = store.asyncLayer!;
-    return listTaskDocumentsAsync(layer.db, taskId, layer.projectId);
+    return listTaskDocumentsAsync(layer.db, taskId, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentImpl(store: TaskStore, taskId: string, key: string): Promise<TaskDocument | null> {
         const layer = store.asyncLayer!;
-    return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId);
+    return getTaskDocumentAsync(layer.db, taskId, key, layer.projectId, await resolveArchivedLanes(store));
 }
 
 export async function getTaskDocumentRevisionsImpl(store: TaskStore,
@@ -815,7 +816,7 @@ export async function getTaskDocumentRevisionsImpl(store: TaskStore,
     to preserve that ordering exactly, then apply the optional LIMIT.
     */
         const layer = store.asyncLayer!;
-    const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId);
+    const rows = await getTaskDocumentRevisionsAsync(layer.db, taskId, key, layer.projectId, await resolveArchivedLanes(store));
     const sorted = [...rows].sort((a, b) => b.revision - a.revision);
     const mapped = sorted.map((row) => store.rowToTaskDocumentRevision(row));
     return options?.limit !== undefined ? mapped.slice(0, Math.max(0, options.limit)) : mapped;
@@ -831,7 +832,7 @@ export async function deleteTaskDocumentImpl(store: TaskStore, taskId: string, k
     only live tasks so a present task implies deletedAt == null.
     */
         const layer = store.asyncLayer!;
-    await deleteTaskDocumentAsync(layer, taskId, key);
+    await deleteTaskDocumentAsync(layer, taskId, key, await resolveArchivedLanes(store));
     const task = await store.getTask(taskId);
     if (task) {
       store.emit("task:updated", task);

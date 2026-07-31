@@ -17,6 +17,7 @@ import "../builtin-traits.js";
 import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskActivityLogEntryLimit} from "../task-store/comments.js";
 import {readTaskRow, updateTaskColumns} from "../task-store/async-persistence.js";
 import { getLiveTaskColumn } from "./async-comments-attachments.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -123,7 +124,7 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       if (runContext) {
         {
           const layer = store.asyncLayer!;
-          const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+          const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
           /*
           FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — SENTINEL, do NOT convert):
           `getLiveTaskColumn` MANUFACTURES the string "archived" for an archived-or-soft-deleted

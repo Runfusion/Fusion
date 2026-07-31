@@ -130,3 +130,29 @@ export const REVIEW_ROLES = ["mergeOrchestration", "mergeBlocker", "humanReview"
 
 /** "Finished either way" — the pair `resolveTerminalColumns` answers for a single task. */
 export const TERMINAL_ROLES = ["complete", "archived"] as const;
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-04:10:
+ONE archived-lane answer, shared, because the alternative is callers disagreeing.
+
+`getLiveTaskColumn` manufactures the string "archived" for an archived-or-soft-deleted parent, and a
+dozen call sites across five files compare against that sentinel. The sentinel is only correct if the
+function that PRODUCES it recognises the board's archived lane — keyed on the literal it does not, so
+on a renamed board a live row in `vault` is reported as live and every downstream gate opens.
+
+Fixing that means every caller supplies the same lane set. `comments-ops.ts` grew a private copy of
+this helper with #2886; a second copy is how two readers of one fact start to disagree, which is the
+mistake `resolveProjectColumnsForRoles`' own header warns about. Promoted here so there is one.
+
+Best-effort by contract: an unresolvable workflow returns undefined and every caller falls back to
+the legacy id, which is exactly the behaviour before any of this.
+*/
+export async function resolveArchivedLanes(
+  store: ProjectLaneVocabularyStore,
+): Promise<ReadonlySet<string> | undefined> {
+  try {
+    return await resolveProjectColumnsForRoles(store, ["archived"]);
+  } catch {
+    return undefined;
+  }
+}
