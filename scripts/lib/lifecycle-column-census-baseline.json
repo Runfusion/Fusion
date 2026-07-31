@@ -3,7 +3,6 @@
   "byFile": {
     "packages/engine/src/self-healing.ts": 22,
     "packages/engine/src/executor.ts": 4,
-    "packages/core/src/task-store/project-store-ops.ts": 2,
     "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/engine/src/auto-merge-finalization.ts": 2,
     "packages/engine/src/scheduler.ts": 2,
@@ -31,6 +30,7 @@
     "packages/core/src/task-merge.ts\u0000archived": 2,
     "packages/core/src/task-merge.ts\u0000done": 2,
     "packages/core/src/task-merge.ts\u0000in-review": 2,
+    "packages/core/src/task-store/project-store-ops.ts\u0000in-review": 2,
     "packages/core/src/task-store/task-artifacts-ops.ts\u0000archived": 2,
     "packages/dashboard/app/components/TaskCard.tsx\u0000todo": 2,
     "packages/dashboard/app/components/TaskCard.tsx\u0000triage": 2,

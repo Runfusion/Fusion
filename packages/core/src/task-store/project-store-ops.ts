@@ -515,6 +515,11 @@ It is the SQLite-mode twin. The live path is `dequeueMergeQueueOnColumnExitInTra
 throws in PostgreSQL backend mode, so a renamed board never gets far enough to be mis-dequeued.
 
 Converting it would mean threading a lane set into a function whose first statement cannot execute.
+DELIBERATE-LITERAL — marked, not merely described. The audit note below already said "do not
+convert", but a prose note is invisible to the census, so this stayed in `byFile` as apparent debt
+and the next fleet pass re-derives the same conclusion. The marker moves it to `deliberateByFile`,
+which is where a reviewed-and-kept literal belongs.
+
 Recorded instead, so the census entry is not mistaken for unconverted debt — and so that whoever
 finally deletes the sync SQLite residue can take this with it.
 */
