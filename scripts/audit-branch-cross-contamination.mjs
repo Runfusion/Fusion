@@ -97,12 +97,24 @@ function parseCommits(raw) {
 }
 
 /** Pure analysis over injected task rows ({ id, title, branch, baseCommitSha, columnName }). */
+/*
+FNXC:OperatorScriptLaneAssumptions 2026-07-31-10:15:
+`scannedColumns` reports what was ACTUALLY scanned, instead of asserting a fixed list.
+
+This field was the literal array `["triage","todo","in-progress","in-review"]` — a claim, not an
+observation. It was printed in the report regardless of what the query returned, so on a renamed
+board it stated coverage the audit did not have. That is the one thing keeping a silent audit
+honest, so it must be derived rather than declared.
+
+Derived from the rows themselves: whatever lanes came back are the lanes examined, whether or not
+this script has heard of them.
+*/
 export function analyzeBranchCrossContamination({ projectRoot = process.cwd(), taskRows }) {
   const report = {
     generatedAt: new Date().toISOString(),
     projectRoot,
     scannedTaskCount: taskRows.length,
-    scannedColumns: ["triage", "todo", "in-progress", "in-review"],
+    scannedColumns: [...new Set(taskRows.map((row) => row.columnName).filter(Boolean))].sort(),
     taintedTaskCount: 0,
     missingBranchCount: 0,
     tasks: [],
@@ -178,13 +190,37 @@ export async function auditBranchCrossContamination({ projectRoot = process.cwd(
   const backend = await openBackend(projectRoot);
   let taskRows;
   try {
-    const { asyncLayer, sql } = backend;
-    taskRows = rowsOf(await asyncLayer.db.execute(sql`
+    const { core, store, asyncLayer, sql } = backend;
+    /*
+    FNXC:OperatorScriptLaneAssumptions 2026-07-31-10:15:
+    Exclude the board's FINISHED lanes rather than allowlisting four legacy active ones.
+
+    The query said `"column" IN ('triage','todo','in-progress','in-review')`. On a board whose lanes
+    are named anything else that matches NOTHING, so the audit scans zero rows and reports zero
+    contamination — a clean bill of health from a scan that never happened. `triage` is in that list
+    too, a lane U11 (#2515) deleted.
+
+    Inverted so the default is the safe one: an unrecognised lane is active work by assumption and IS
+    audited; only lanes that genuinely mean finished drop out. An allowlist fails closed (skip
+    everything unknown), a denylist fails open (look at it), and for an audit looking at one extra
+    finished branch is a far smaller error than auditing nothing.
+
+    Filtered in JS rather than by building a dynamic SQL exclusion: it keeps ONE place deciding what
+    "finished" means, and it removes the last raw-SQL lane literal from this file — the shape the
+    sibling gate could not see until #3000 widened it to `scripts/`.
+    */
+    const terminalLanes = store && core.resolveProjectColumnsForRoles
+      ? await core.resolveProjectColumnsForRoles(store, core.TERMINAL_ROLES).catch(() => undefined)
+      : undefined;
+    /* DELIBERATE-LITERAL — the degraded default when the lanes could not be resolved. */
+    const isFinished = (column) => (terminalLanes ? terminalLanes.has(column) : column === "done" || column === "archived");
+    const allRows = rowsOf(await asyncLayer.db.execute(sql`
       SELECT id, title, branch, base_commit_sha AS "baseCommitSha", "column" AS "columnName"
       FROM project."tasks"
-      WHERE deleted_at IS NULL AND "column" IN ('triage','todo','in-progress','in-review')
+      WHERE deleted_at IS NULL
       ORDER BY id
     `));
+    taskRows = allRows.filter((row) => !isFinished(row.columnName));
   } finally {
     await backend.shutdown().catch(() => {});
   }

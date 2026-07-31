@@ -50,3 +50,44 @@ test("flags branch as tainted when foreign task commits are present", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/*
+FNXC:OperatorScriptLaneAssumptions 2026-07-31-10:15:
+THE INVARIANT: the audit reports the lanes it ACTUALLY scanned, never a fixed claim.
+
+`scannedColumns` was the literal `["triage","todo","in-progress","in-review"]`, printed regardless of
+what the query returned. Paired with a query that allowlisted those same four ids, a renamed board
+produced a report asserting coverage of four lanes it had not looked at — and zero contamination,
+which reads as a clean bill of health rather than as a scan that never happened.
+
+That self-disclosure is the only thing standing between this audit and a silent wrong answer, so it
+has to be an observation. Reverted, the first case reports the four legacy ids for a board that has
+none of them.
+*/
+test("scannedColumns reports the board's real lanes, not a fixed legacy claim", () => {
+  const report = analyzeBranchCrossContamination({
+    projectRoot: "/nonexistent",
+    taskRows: [
+      { id: "FN-1", title: "a", branch: null, baseCommitSha: null, columnName: "building" },
+      { id: "FN-2", title: "b", branch: null, baseCommitSha: null, columnName: "backlog" },
+    ],
+  });
+
+  assert.deepEqual(report.scannedColumns, ["backlog", "building"]);
+  assert.equal(report.scannedTaskCount, 2);
+});
+
+test("reports each scanned lane once, and nothing at all for an empty board", () => {
+  const rows = ["todo", "todo", "in-progress"].map((columnName, i) => ({
+    id: `FN-${i + 10}`, title: "t", branch: null, baseCommitSha: null, columnName,
+  }));
+
+  assert.deepEqual(
+    analyzeBranchCrossContamination({ projectRoot: "/nonexistent", taskRows: rows }).scannedColumns,
+    ["in-progress", "todo"],
+  );
+  assert.deepEqual(
+    analyzeBranchCrossContamination({ projectRoot: "/nonexistent", taskRows: [] }).scannedColumns,
+    [],
+  );
+});
