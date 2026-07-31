@@ -361,6 +361,7 @@ sweep's query ACTIVATES it — the sweep starts finding renamed-board cards and 
 one. Optional, so no caller changes behaviour until it passes the set.
 */
 /*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:10:
 DELIBERATE-LITERAL — the review-eligible SENTINEL, reviewed 2026-07-30-18:20.
 
 NOT a lifecycle column. `getTaskHardMergeBlocker` answers "is this card blocked by anything other than
@@ -375,6 +376,32 @@ parked already-merged work as `failed` with "Merge confirmed but finalization bl
 'signoff', must be in 'in-review'". One name, one meaning, one place to find it.
 */
 export const REVIEW_ELIGIBLE_SENTINEL_COLUMN = "in-review";
+
+/*
+FNXC:WorkflowMerge 2026-07-30-21:25 (#2964 review — coderabbitai, "normalize `queued` before the
+sentinel blocker check"): ONE SPELLING OF "TRANSIENT ON ALREADY-LANDED WORK", NOT TWO.
+
+`mergeConfirmed` means the branch HAS landed. The statuses below are in-flight bookkeeping the graph
+never got to clear, so on a merge-confirmed card they are soft state to drop — not hard blockers that
+park finished work `failed`.
+
+Extracted because the two finalization paths were spelling the set independently and had already
+DIVERGED: `auto-merge-finalization.ts` cleared `queued`, `project-engine.ts` cleared only the two
+`merging*` values. `queued` is a BLOCKING status (`SCHEDULER_TRANSIENT_STATUSES`), so a merge-confirmed
+card the scheduler had queued reached the blocker check with it intact and got parked `failed` — the
+same "already-landed work parked failed" bug this change fixes for renamed columns, surviving one layer
+down. Same failure shape as the sentinel above, same remedy: one name, one meaning.
+*/
+export const MERGE_CONFIRMED_TRANSIENT_STATUSES: ReadonlySet<string> = new Set([
+  "merging",
+  "merging-pr",
+  "queued",
+]);
+
+/** Status a merge-confirmed card should be judged on: transient in-flight bookkeeping cleared. */
+export function clearMergeConfirmedTransientStatus(status: string | undefined): string | undefined {
+  return status !== undefined && MERGE_CONFIRMED_TRANSIENT_STATUSES.has(status) ? undefined : status;
+}
 
 export function getTaskHardMergeBlocker(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults">,

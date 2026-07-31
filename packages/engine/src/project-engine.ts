@@ -43,7 +43,8 @@ import {
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
   resolveWipTargetForTask,
-  resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN
+  resolveReboundTargetForTask, REVIEW_ELIGIBLE_SENTINEL_COLUMN,
+  clearMergeConfirmedTransientStatus,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
 import { execFile } from "node:child_process";
@@ -3604,7 +3605,7 @@ export class ProjectEngine {
                 // in-flight statuses as soft state to clear during finalization,
                 // not hard blockers that park an otherwise confirmed merge as failed.
                 paused: false,
-                status: task.status === "merging" || task.status === "merging-pr" ? undefined : task.status,
+                status: clearMergeConfirmedTransientStatus(task.status),
                 error: undefined,
               });
               if (blockerReason) {

@@ -1,4 +1,5 @@
-import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore, REVIEW_ELIGIBLE_SENTINEL_COLUMN
+import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore, REVIEW_ELIGIBLE_SENTINEL_COLUMN,
+  clearMergeConfirmedTransientStatus,
 } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
 
@@ -255,7 +256,7 @@ export async function finalizeProvenAutoMergeTask({
     */
     column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
     paused: false,
-    status: latest.status === "merging" || latest.status === "merging-pr" || latest.status === "queued" ? undefined : latest.status,
+    status: clearMergeConfirmedTransientStatus(latest.status),
     error: undefined,
   });
   if (hardBlocker) {

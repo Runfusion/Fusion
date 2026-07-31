@@ -1131,6 +1131,8 @@ export {
   getTaskMergeBlocker,
   getTaskHardMergeBlocker,
   REVIEW_ELIGIBLE_SENTINEL_COLUMN,
+  MERGE_CONFIRMED_TRANSIENT_STATUSES,
+  clearMergeConfirmedTransientStatus,
   getTaskCompletionBlocker,
   getLatestFailedPreMergeReviewStep,
   isTaskReadyForMerge,

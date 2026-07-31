@@ -23,7 +23,7 @@ REVERT CHECK, measured: pass the renamed column instead of the sentinel and the 
 that string.
 */
 import { describe, expect, it } from "vitest";
-import { getTaskHardMergeBlocker } from "@fusion/core";
+import { getTaskHardMergeBlocker, clearMergeConfirmedTransientStatus } from "@fusion/core";
 import type { Task } from "@fusion/core";
 
 /** A merge-confirmed card as finalization sees it: landed, steps done, transient status cleared. */
@@ -52,6 +52,44 @@ describe("merge-confirmed finalization does not park landed work as failed", () 
     const blocker = getTaskHardMergeBlocker(mergeConfirmedCard("signoff"));
 
     expect(blocker).toBe("task is in 'signoff', must be in 'in-review'");
+  });
+
+  /*
+  FNXC:WorkflowMerge 2026-07-30-21:35 (#2964 review — coderabbitai): THE SECOND HALF OF THE SAME BUG.
+
+  The two finalization paths normalized transient status independently and diverged:
+  auto-merge-finalization cleared `queued`, project-engine did not. `queued` BLOCKS
+  (`SCHEDULER_TRANSIENT_STATUSES`), so a merge-confirmed card the scheduler had queued reached the
+  blocker check with it intact and was parked `failed` — already-landed work, same as the column bug,
+  one layer down. Asserted through the shared helper both paths now call, so a future third caller
+  cannot re-diverge silently.
+  */
+  it.each(["merging", "merging-pr", "queued"])(
+    "clears transient status %s on a merge-confirmed card, so finalization is not blocked",
+    (status) => {
+      expect(clearMergeConfirmedTransientStatus(status)).toBeUndefined();
+
+      const blocker = getTaskHardMergeBlocker({
+        ...mergeConfirmedCard("signoff"),
+        column: "in-review",
+        status: clearMergeConfirmedTransientStatus(status),
+      } as unknown as Task);
+
+      expect(blocker).toBeUndefined();
+    },
+  );
+
+  it("does NOT clear a genuinely blocking status — the paired negative", () => {
+    /* Without this, a helper that returned undefined unconditionally would pass the cases above. */
+    expect(clearMergeConfirmedTransientStatus("stuck-killed")).toBe("stuck-killed");
+
+    const blocker = getTaskHardMergeBlocker({
+      ...mergeConfirmedCard("signoff"),
+      column: "in-review",
+      status: clearMergeConfirmedTransientStatus("stuck-killed"),
+    } as unknown as Task);
+
+    expect(blocker).toBeDefined();
   });
 
   it("still reports real blockers on a landed card", () => {
