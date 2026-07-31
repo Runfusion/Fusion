@@ -35,7 +35,7 @@ multi-column query option plus a resolved union across live workflows — a shar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { resolveLifecycleColumns } from "@fusion/core";
+import { getTaskHardMergeBlocker, resolveLifecycleColumns } from "@fusion/core";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-04:40:
@@ -50,6 +50,17 @@ console.error does NOT work here — vitest installs its own console interceptor
 line appears in the run output while the spy records nothing (it did, and read as "no warn emitted").
 Mocking the logger module captures the call itself, one level below the console.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-18:40 (batch fold):
+`isBranchAheadOfBase` is a STATIC named import that shells out to git, so it is mocked rather than spied —
+the ESM binding is resolved before a spy could replace it.
+*/
+const isBranchAheadOfBase = vi.fn(async () => ({ aheadCount: 0 }));
+vi.mock("../self-healing-branch.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../self-healing-branch.js")>();
+  return { ...actual, isBranchAheadOfBase: (...args: unknown[]) => isBranchAheadOfBase(...args as []) };
+});
+
 const selfHealingWarn = vi.fn();
 vi.mock("../logger.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../logger.js")>();
@@ -76,6 +87,7 @@ vi.mock("../run-audit.js", async (importOriginal) => {
   };
 });
 
+import { createRunAuditor } from "../run-audit.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { executingTaskLock } from "../active-session-registry.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
@@ -118,6 +130,10 @@ function productionFaithfulStore(tasks: Task[]) {
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
     logEntry: vi.fn(async () => undefined),
+    getAgentLogs: vi.fn(async () => []),
+    parseFileScopeFromPrompt: vi.fn(async () => []),
+    recordRunAuditEvent: vi.fn(async () => undefined),
+    getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
   }) as unknown as TaskStore & EventEmitter;
   return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
@@ -152,7 +168,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(lifecycle?.complete).toBe(RENAMED_VOCAB.complete);
     expect(lifecycle?.complete).not.toBe("done");
   });
-
   it("the done-integrity sweep now asks for the board's OWN complete lane (was: KNOWN DEFECT)", async () => {
     /*
     `reconcileDoneTaskIntegrity` opens with `listTasks({ column: "done", slim: true })` and then
@@ -179,7 +194,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.complete }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "done" }));
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (#2838 review — greptile P1):
 
@@ -223,7 +237,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(warned).toContain("done-task integrity sweep");
     expect(warned).toContain("FN-BLIND");
   });
-
   it("proves the fake is what hides it: an ignoring `listTasks` hands the sweep rows production would not", async () => {
     /*
     The control, and the reason a green self-healing suite is not evidence that self-healing runs. This
@@ -250,7 +263,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const { store } = productionFaithfulStore([card]);
     expect(await store.listTasks({ column: "done" as never })).toHaveLength(0);
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-17:20 (#2838 review — greptile P1):
   THE PROJECT UNION IS FOR THE QUERY, NEVER FOR THE PER-CARD VERDICT.
@@ -316,7 +328,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(store.getSettings).not.toHaveBeenCalled();
     expect((await store.getTask("FN-WIP"))?.mergeDetails?.commitSha).toBeUndefined();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-17:50 (#2838 review — greptile P1, second round):
   THE GUESSED-WORKFLOW PATH. `resolveWorkflowIrForTask` returns the BUILT-IN IR when a task names no
@@ -359,7 +370,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* Accepted as a candidate: the sweep reached `getSettings`, which it only does with a non-empty list. */
     expect(store.getSettings).toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (the query-filter class, second sweep):
   `recoverAlreadyMergedReviewTasks` rescues a card whose merge ACTUALLY SUCCEEDED but is parked in review
@@ -389,7 +399,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* The legacy id is still asked for — the project union keeps mid-rename rows reachable. */
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-18:50 (#2838 review — greptile P1, same class as the
   done-integrity sweep):
@@ -441,7 +450,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(warned).toContain("already-merged review rescue");
     expect(warned).toContain("FN-UNRESOLVED");
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-19:20 (the query-filter class, third sweep):
   `recoverStuckMergeDeadlocks` reads FOUR lanes: the review lane for its candidates, and intake/hold/wip
@@ -476,7 +484,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.hold }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.wip }));
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-19:50 (the query-filter class, fourth sweep):
   `recoverInterruptedMergingTasks` rescues a task interrupted mid-merge — status still `merging`, no live
@@ -509,7 +516,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-20:20 (the query-filter class, fifth sweep):
   `recoverMergeableReviewTasks` re-enqueues a card that is genuinely ready to merge. Its read was the
@@ -554,7 +560,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     /* Not just "the query asked" — the card survived the blocker and was acted on. */
     expect(enqueueMerge).toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-21:20 (the query-filter class, sixth sweep — activation check
   run FIRST this time):
@@ -597,7 +602,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(recoverFailedPreMergeStep).toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-22:00 (the query-filter class, seventh sweep):
   `finalizeNoOpReviewTasks` finalises a task whose branch has NO commits ahead of base — a genuine no-op
@@ -640,7 +644,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
     expect(aheadCheck).toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (the query-filter class, eighth sweep):
   `recoverCompletionHandoffLimbo` clears a task falsely marked completion-handoff-exhausted while the
@@ -689,7 +692,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(pastBlocker).toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-06:15 (the query-filter class, fifteenth sweep):
   `recoverMergedReviewTasks` finalizes a task whose merge is CONFIRMED but which never reached the
@@ -727,7 +729,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
       "recover-merged-review",
     );
   });
-
   it("ignores a merge-confirmed card sitting in the RENAMED wip lane", async () => {
     /*
     Non-vacuous companion: without it, a read returning every column would satisfy the case above. This
@@ -752,7 +753,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(resolveTarget).not.toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-09:45 (the query-filter class, twenty-first sweep):
   `recoverStaleMergingStatus` clears a `merging`/`merging-pr` stamp left on a review card with no live
@@ -781,7 +781,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).toHaveBeenCalledWith("FN-STALESTAMP", expect.objectContaining({ status: null }));
   });
-
   it("does not clear a merge stamp on a card outside the RENAMED review lanes", async () => {
     /*
     Non-vacuous companion: without it, a read returning every column would satisfy the case above. A
@@ -801,7 +800,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-04:35 (the query-filter class, fourteenth sweep):
   `recoverForeignOnlyContaminatedInReviewTasks` classifies a branch that carries ONLY foreign commits and
@@ -834,7 +832,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-FOREIGN" }));
   });
-
   it("does not classify a card whose lane is neither review nor wip on a RENAMED board", async () => {
     /*
     Non-vacuous companion: without it, a read returning every column would satisfy the case above. Same
@@ -855,7 +852,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-05:50 (#2891 review P1 — the card the sweep disowned):
   `resolveWorkflowIrForTask` does not fail; it SUBSTITUTES the built-in IR. So a card whose workflow
@@ -899,7 +895,282 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:58 (the query-filter class, tenth sweep):
+  `recoverPostDoneNonContinuableWedge` clears a `failed` status on a task that finished every step and
+  was then wedged only because a post-done session continuation hit a non-continuable error. Its literal
+  read meant a renamed board's card stayed failed forever with all work done.
 
+  THE ONE SWEEP WHERE BOTH HALVES ARE PROVABLE. Its outcome — updateTask clearing `status`/`error` — is
+  downstream of the read AND of the getTaskHardMergeBlocker wired in the same change, and nothing on the
+  path needs git. Contrast the orphan-only sweep, where the blocker sits behind two git calls and only
+  candidacy could be asserted.
+
+  REVERT CHECKS, both measured, each run alone:
+    - literal read restored              -> fails, the card is never listed
+    - `{ reviewColumns: wedgeLanes }` dropped -> fails, the blocker judges the renamed lane as
+      not-a-review-lane and the sweep declines the card it just found
+  */
+  it("clears a post-done wedge on a RENAMED board, and the blocker judges the card's own lanes", async () => {
+    const wedged = {
+      ...shippedCard(),
+      id: "FN-WEDGE",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      steps: [{ id: "s1", status: "done" }],
+      log: [
+        { action: "Task marked done by agent", outcome: "" },
+        { action: "", outcome: "cannot continue from message role: assistant" },
+      ],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([wedged]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverPostDoneNonContinuableWedge();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-WEDGE", expect.objectContaining({ status: null, error: null }));
+  });
+  it("does not clear a wedge for a card sitting in a lane that is NOT a review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read that returned every column would satisfy the case above.
+    Same renamed board, same wedged card — only its lane changes.
+    */
+    const wedged = {
+      ...shippedCard(),
+      id: "FN-WEDGE-WIP",
+      column: RENAMED_VOCAB.wip,
+      status: "failed",
+      steps: [{ id: "s1", status: "done" }],
+      log: [
+        { action: "Task marked done by agent", outcome: "" },
+        { action: "", outcome: "cannot continue from message role: assistant" },
+      ],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([wedged]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverPostDoneNonContinuableWedge();
+
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:50 (the query-filter class, eleventh sweep):
+  `clearStaleBlockedBy` is the sweep that unsticks a card still pointing at a blocker that has since
+  finished. Its BODY was already lane-resolved — per-referenced-task lanes, a shared IR cache, legacy ids
+  unioned, all of it — and none of that ran, because the three reads above it asked for the literal
+  `todo`/`in-progress`/`in-review`. A textbook case of the class this file exists for: the expensive half
+  was converted and delivered nothing while the cheap half above it stayed literal.
+
+  Three reads, not one union: the buckets are treated DIFFERENTLY downstream (hold cards seed the
+  queued-dependency pass; review cards are exempted when paused), so each card is classified against its
+  own workflow after the union read.
+
+  REVERT CHECK, measured: with the three literal reads restored, this fails — the blocked card is never
+  listed, so its stale `blockedBy` is never cleared.
+  */
+  it("clears a stale blockedBy on a RENAMED board once the blocker has landed", async () => {
+    const blocker = { ...shippedCard(), id: "FN-BLOCKER", column: RENAMED_VOCAB.complete } as Task;
+    const blocked = {
+      ...shippedCard(),
+      id: "FN-STUCK",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-BLOCKER",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([blocker, blocked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).clearStaleBlockedBy();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-STUCK", expect.objectContaining({ blockedBy: null }));
+  });
+  it("leaves blockedBy alone while the blocker is still in flight on a RENAMED board", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared every blockedBy it found would satisfy the
+    case above. Same board, same pair — only the blocker's lane changes.
+    */
+    const blocker = { ...shippedCard(), id: "FN-BLOCKER", column: RENAMED_VOCAB.wip } as Task;
+    const blocked = {
+      ...shippedCard(),
+      id: "FN-STUCK",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-BLOCKER",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([blocker, blocked]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).clearStaleBlockedBy();
+
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (the query-filter class, twelfth sweep):
+  `reclaimSelfOwnedBranchConflicts` frees a task whose OWN worktree is holding its OWN branch hostage —
+  a conflict no other sweep resolves. Three literal reads plus three lane guards in the body, so both
+  halves convert together: widening the read alone would admit renamed-board cards and then mis-decide
+  every one, since the phantom-binding check, the blocked-hold skip and the review triple-proof are each
+  keyed on lane.
+
+  ONE ASSERTION COVERS BOTH HALVES. `isPhantomExecutorBinding` runs only for a card that (a) the read
+  found and (b) the wip-lane guard accepted. Two private seams are stubbed to reach it —
+  `getFalsePositiveRequeueSignal` for the live-execution signal, and the binding check itself — which is
+  the same technique used above for the orphan sweep, and avoids a git/fs fixture entirely.
+
+  REVERT CHECKS, both measured, each run alone:
+    - literal reads restored          -> fails, the card is never listed
+    - guard back to `task.column === "in-progress"` -> fails, the renamed wip lane does not match, so the
+      sweep falls through to the no-action path
+  */
+  it("reclaims a self-owned branch conflict on a RENAMED wip lane, guard included", async () => {
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-SELFCONFLICT",
+      column: RENAMED_VOCAB.wip,
+      branch: "fusion/FN-SELFCONFLICT",
+      worktree: "/tmp/worktrees/FN-SELFCONFLICT",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-SELFCONFLICT" }),
+      expect.anything(),
+    );
+  });
+  it("does not evaluate a phantom binding for a card sitting in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a guard matching every column would satisfy the case above. Same
+    board, same card, same stubs — only its lane changes, and the review lane must not take the wip path.
+    */
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-SELFCONFLICT",
+      column: RENAMED_VOCAB.review,
+      paused: true,
+      pausedReason: "branch-conflict-unrecoverable",
+      branch: "fusion/FN-SELFCONFLICT",
+      worktree: "/tmp/worktrees/FN-SELFCONFLICT",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:50 (review P1 on #2879 — the hazard the conversion CREATED):
+  The three literal reads were disjoint BY CONSTRUCTION: one column each, so a card could not appear
+  twice. Resolved reads are not. A custom workflow may put more than one queried role flag on the SAME
+  column — here `hold` beside `wip`, a lane that both parks work and counts as work — and that column is
+  returned by two reads.
+
+  Concatenating the buckets then hands the loop the same STALE SNAPSHOT twice. Not a wasted iteration:
+  the second pass reads `branch`/`worktree` from state captured before the first pass mutated anything,
+  so a worktree already reclaimed is reclaimed again against state that no longer exists.
+
+  REVERT CHECK, measured: with the dedupe removed, this fails with 2 calls instead of 1.
+  */
+  it("processes a multi-role column ONCE, not once per role", async () => {
+    const multiRoleIr = {
+      ...RENAMED_IR,
+      columns: RENAMED_IR.columns.map((column) =>
+        column.id === RENAMED_VOCAB.hold
+          ? { ...column, traits: [...column.traits, { trait: "wip", config: { limitSetting: "maxConcurrent", countPending: true } }] }
+          : column,
+      ),
+    } as typeof RENAMED_IR;
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-MULTIROLE",
+      column: RENAMED_VOCAB.hold,
+      branch: "fusion/FN-MULTIROLE",
+      worktree: "/tmp/worktrees/FN-MULTIROLE",
+      executionStartedAt: "2026-07-30T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stuck]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: multiRoleIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: multiRoleIr } : undefined)),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    /* Returns the real shape, not null: the sweep reads `.phantom` straight off it, so a null stub throws and aborts the loop after ONE card — which silently capped the multi-role count at 1 in both states. */
+    const isPhantomExecutorBinding = vi.fn(() => ({ phantom: false, metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: vi.fn(() => ({ reason: "executor-active", metadata: {} })),
+      getRecentRunAuditActivityAgeMs: vi.fn(async () => 0),
+      isPhantomExecutorBinding,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(isPhantomExecutorBinding).toHaveBeenCalledTimes(1);
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (the query-filter class, thirteenth sweep):
+  `reconcileCompletedTask` releases everything blocked on a task that just completed. Three literal reads
+  meant that on a renamed board it released NOTHING — every dependent stayed blocked on work that had
+  already finished. This is the most visible form of the class: the board simply stops moving, with no
+  error and no log line saying why.
+
+  The dependency-satisfaction guard converts in the same change, resolved PER DEPENDENCY: a dependency
+  routinely belongs to a different workflow than the card waiting on it.
+
+  REVERT CHECK, measured: with the three literal reads restored, this fails — the dependent is never
+  listed, so its `blockedBy` is never cleared.
+  */
+  it("releases a dependent on a RENAMED board when its blocker completes", async () => {
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-DONE",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, waiting]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
+  });
+  it("does not release a dependent blocked on a DIFFERENT task", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared every blockedBy it found would satisfy the
+    case above. Same board, same shape — only the blocker id differs.
+    */
+    const finished = { ...shippedCard(), id: "FN-DONE", column: RENAMED_VOCAB.complete } as Task;
+    const waiting = {
+      ...shippedCard(),
+      id: "FN-WAITING",
+      column: RENAMED_VOCAB.wip,
+      blockedBy: "FN-SOMEONE-ELSE",
+      dependencies: [],
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([finished, waiting]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileCompletedTask("FN-DONE");
+
+    expect(updateTask).not.toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
+  });
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-04:10 (the P1 raised on #2879, same hazard in this sweep):
   Resolved reads can return ONE column for TWO roles, so a dependent lands in two buckets and the release
@@ -937,7 +1208,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
       .filter(([id, patch]) => id === "FN-WAITING" && (patch as { blockedBy?: unknown }).blockedBy === null);
     expect(clearingWrites).toHaveLength(1);
   });
-
   /*
   FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (#2883 review — "overbroad dependency satisfaction"):
   A dependency is satisfied when it reaches a TERMINAL lane or a REVIEW lane, and review here means
@@ -990,5 +1260,910 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     // Its dependency is still merging, so the card is RE-POINTED at it rather than released.
     expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: "FN-MIDMERGE" }));
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:45 (the query-filter class, sixteenth sweep):
+  A card that reached a terminal lane while still carrying `merging`/`merging-pr` holds the MERGER QUEUE.
+  Two literal reads meant that on a renamed board the stale status was never cleared, so one finished
+  card blocked every task queued behind it — the widest blast radius in this series, since the damage is
+  not confined to the stranded card.
+
+  REVERT CHECK, measured: with the literal reads restored, this fails — the card is never listed, so its
+  stale status is never cleared and the queue stays blocked.
+  */
+  it("clears a stale merging status on a RENAMED terminal lane", async () => {
+    const stale = {
+      ...shippedCard(),
+      id: "FN-STALEMERGE",
+      column: RENAMED_VOCAB.complete,
+      status: "merging",
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([stale]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileStaleMergerStatus();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-STALEMERGE", expect.objectContaining({ status: null }));
+  });
+  it("leaves a card with no stale merging status alone", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep that cleared the status of everything it found would
+    satisfy the case above. Same board, same terminal lane — only the status differs.
+    */
+    const settled = { ...shippedCard(), id: "FN-SETTLED", column: RENAMED_VOCAB.complete, status: null } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([settled]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileStaleMergerStatus();
+
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:15 (the query-filter class, seventeenth sweep):
+  `recoverCompletedTasks` rescues a task whose steps are ALL done but whose session died before the
+  executor could hand it to review. The literal read meant that on a renamed board it was never found:
+  finished implementation work sat in the wip lane with no session and nothing to move it on.
+
+  The observable is the injected `recoverCompletedTask` callback — called once per rescued card, with no
+  git anywhere on the path, so it sits downstream of both the read and the per-card verdict.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-progress"` -> fails, the renamed wip lane does not match
+  */
+  it("rescues a step-complete card stranded on a RENAMED wip lane", async () => {
+    const stranded = {
+      ...shippedCard(),
+      id: "FN-STRANDED",
+      column: RENAMED_VOCAB.wip,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([stranded]);
+    const recoverCompletedTask = vi.fn(async () => true);
+
+    await new SelfHealingManager(store, { rootDir: "/repo", recoverCompletedTask }).recoverCompletedTasks();
+
+    expect(recoverCompletedTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-STRANDED" }));
+  });
+  it("does not rescue a step-complete card that already reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. Same
+    board, same finished card — only its lane changes, and a card already in review needs no rescue.
+    */
+    const alreadyMoved = {
+      ...shippedCard(),
+      id: "FN-STRANDED",
+      column: RENAMED_VOCAB.review,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([alreadyMoved]);
+    const recoverCompletedTask = vi.fn(async () => true);
+
+    await new SelfHealingManager(store, { rootDir: "/repo", recoverCompletedTask }).recoverCompletedTasks();
+
+    expect(recoverCompletedTask).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-07:45 (the query-filter class, eighteenth sweep):
+  `recoverInProgressLimbo` frees a card holding a wip slot with NO worktree, NO branch and no step
+  started — nothing is running and nothing will. The literal read meant that on a renamed board it was
+  never found, so the card kept its slot forever and denied that capacity to work that could run.
+
+  Observable is `getFalsePositiveRequeueSignal`, a private method called once per stranded candidate. It
+  runs BEFORE any lease or git work, so the assertion needs no fixture beyond the card itself.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  it("frees a slot-holding limbo card on a RENAMED wip lane", async () => {
+    const limbo = {
+      ...shippedCard(),
+      id: "FN-LIMBO",
+      column: RENAMED_VOCAB.wip,
+      worktree: null,
+      branch: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([limbo]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const signal = vi.fn(() => ({ reason: "executor-active", metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: signal,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverInProgressLimbo();
+
+    expect(signal).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-LIMBO" }), expect.anything());
+  });
+  it("ignores a limbo-shaped card sitting in the RENAMED hold lane", async () => {
+    /*
+    Non-vacuous companion: a card with no worktree and no branch is the NORMAL shape in a hold lane —
+    that is what a queued card looks like. Without this, a read returning every column would make the
+    sweep reclaim cards that were never holding a slot at all.
+    */
+    const queued = {
+      ...shippedCard(),
+      id: "FN-LIMBO",
+      column: RENAMED_VOCAB.hold,
+      worktree: null,
+      branch: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([queued]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const signal = vi.fn(() => ({ reason: "executor-active", metadata: {} }));
+    Object.assign(manager, {
+      getFalsePositiveRequeueSignal: signal,
+      emitFalsePositiveRequeueNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverInProgressLimbo();
+
+    expect(signal).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:15 (the query-filter class, nineteenth sweep):
+  `recoverOrphanedExecutions` takes NO lifecycle action — it emits `task:orphan-detected-no-action` so an
+  operator can see a wip card with no live session behind it. The literal read meant that on a renamed
+  board the event was never emitted, so the one signal pointing at an orphaned execution was silently
+  absent. What this restores is visibility, not a repair.
+
+  The observable is therefore the AUDITOR construction, which happens once per detected candidate.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column !== "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  it("emits the orphan-detected signal for a card on a RENAMED wip lane", async () => {
+    const orphan = {
+      ...shippedCard(),
+      id: "FN-ORPHANEXEC",
+      column: RENAMED_VOCAB.wip,
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([orphan]);
+    (createRunAuditor as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanedExecutions();
+
+    expect(createRunAuditor).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: "FN-ORPHANEXEC", phase: "recover-orphaned-executions" }),
+    );
+  });
+  it("does not emit the orphan signal for a card already in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    in review is not an orphaned EXECUTION — it has no slot and no session to be missing.
+    */
+    const reviewing = {
+      ...shippedCard(),
+      id: "FN-ORPHANEXEC",
+      column: RENAMED_VOCAB.review,
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([reviewing]);
+    (createRunAuditor as unknown as ReturnType<typeof vi.fn>).mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverOrphanedExecutions();
+
+    expect(createRunAuditor).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ phase: "recover-orphaned-executions" }),
+    );
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:45 (the query-filter class, twentieth sweep):
+  `reattachOrphanedAssignedExecutions` reattaches a DURABLE AGENT to a task it is still assigned to but
+  has stopped executing. The literal read meant that on a renamed board the reattach never fired, so the
+  card sat assigned-but-idle — visibly owned by an agent that had gone quiet, which is worse than
+  unassigned because the board says someone is on it.
+
+  Observable is the injected `resumeAssignedTaskForAgent`, called once per agent with orphaned work.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "in-progress"` -> fails, the renamed wip lane is skipped
+  */
+  function reattachFixture(column: string) {
+    const assigned = {
+      ...shippedCard(),
+      id: "FN-REATTACH",
+      column,
+      assignedAgentId: "agent-1",
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([assigned]);
+    const resumeAssignedTaskForAgent = vi.fn(async () => undefined);
+    const agentStore = {
+      getAgent: vi.fn(async () => ({ id: "agent-1" })),
+      getActiveHeartbeatRun: vi.fn(async () => null),
+    };
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      agentStore: agentStore as never,
+      resumeAssignedTaskForAgent,
+    });
+    return { manager, resumeAssignedTaskForAgent };
+  }
+  it("reattaches an idle assigned agent on a RENAMED wip lane", async () => {
+    const { manager, resumeAssignedTaskForAgent } = reattachFixture(RENAMED_VOCAB.wip);
+
+    await manager.reattachOrphanedAssignedExecutions();
+
+    expect(resumeAssignedTaskForAgent).toHaveBeenCalledWith("agent-1");
+  });
+  it("does not reattach an agent whose card already reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. An
+    assigned card in review has finished its execution — resuming it would restart completed work.
+    */
+    const { manager, resumeAssignedTaskForAgent } = reattachFixture(RENAMED_VOCAB.review);
+
+    await manager.reattachOrphanedAssignedExecutions();
+
+    expect(resumeAssignedTaskForAgent).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-10:25 (the query-filter class, twenty-second sweep):
+  A GHOST review card is one parked in review past the stuck timeout with nobody owning its merge lane.
+  The literal read meant that on a renamed board it was never found: no merger, no session, and no
+  timeout ever firing against it.
+
+  THE OBSERVABLE IS CHOSEN CAREFULLY. `isMergeLaneOwned` is called once per surviving candidate, AFTER
+  the read and the per-card verdict — earlier on this branch I positioned this same spy UPSTREAM of the
+  guard I was testing and it passed with the fix reverted. Here it sits downstream of both, which is the
+  whole difference.
+
+  `taskStuckTimeoutMs` must be set and `columnMovedAt` ancient, or the card is filtered out by the
+  timeout rather than by lane, and the case would pass reverted for the wrong reason.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function ghostFixture(column: string) {
+    const ghost = {
+      ...shippedCard(),
+      id: "FN-GHOST",
+      column,
+      columnMovedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([ghost]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isMergeLaneOwned = vi.fn(async () => true); // owned -> no kick-back, so nothing else has to be stubbed
+    Object.assign(manager, { isMergeLaneOwned });
+    return { manager, isMergeLaneOwned };
+  }
+  it("evaluates a ghost review card on a RENAMED review lane", async () => {
+    const { manager, isMergeLaneOwned } = ghostFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverGhostReviewTasks();
+
+    expect(isMergeLaneOwned).toHaveBeenCalledWith("FN-GHOST");
+  });
+  it("does not treat a long-idle card outside the review lanes as a ghost", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    idle in the HOLD lane is just queued — kicking it back would be the sweep inventing work.
+    */
+    const { manager, isMergeLaneOwned } = ghostFixture(RENAMED_VOCAB.hold);
+
+    await manager.recoverGhostReviewTasks();
+
+    expect(isMergeLaneOwned).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-11:00 (the query-filter class, twenty-third sweep):
+  `recoverTransientMergeFailures` refunds the retry budget for a merge that failed for a TRANSIENT reason
+  and burned all its retries. The literal read meant that on a renamed board the refund never happened,
+  so a card that failed on a network blip or a provider fault stayed failed permanently — visibly failed
+  to the operator, with no visible cause.
+
+  The error string is a REAL signature (`classifyTransientMergeError` matches "ACP turn failed"), not
+  invented prose. An unrecognised string is filtered out one line later and the case would pass with the
+  fix reverted — the same trap that produced the post-done wedge fixture's first failure.
+
+  Observable is the injected `requeueForAutoMerge`, called once per recovered card.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function transientFixture(column: string) {
+    const failed = {
+      ...shippedCard(),
+      id: "FN-TRANSIENT",
+      column,
+      status: "failed",
+      mergeRetries: 99,
+      error: "ACP turn failed while merging",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([failed]);
+    const requeueForAutoMerge = vi.fn(async () => true);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo", requeueForAutoMerge });
+    return { manager, requeueForAutoMerge };
+  }
+  it("refunds a transient merge failure on a RENAMED review lane", async () => {
+    const { manager, requeueForAutoMerge } = transientFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverTransientMergeFailures();
+
+    expect(requeueForAutoMerge).toHaveBeenCalled();
+  });
+  it("does not refund a transient failure for a card outside the review lanes", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A
+    failed card in the wip lane has not reached merge at all — there is no merge budget to refund.
+    */
+    const { manager, requeueForAutoMerge } = transientFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverTransientMergeFailures();
+
+    expect(requeueForAutoMerge).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-12:45 (the query-filter class, twenty-fourth sweep):
+  `recoverStaleIncompleteReviewTasks` requeues a review card whose STEPS are not finished — it reached
+  review on a graph failure, not on completed work. The literal read meant that on a renamed board it was
+  never requeued: the card sat in review claiming to be done while its own steps said otherwise.
+
+  Observable is `evaluateBackwardMoveTripleProof`, private and called once per candidate BEFORE the move,
+  so no git fixture is needed. `taskStuckTimeoutMs` is set and a step left non-terminal, or the card is
+  filtered out for reasons unrelated to lanes.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function staleIncompleteFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-INCOMPLETE",
+      column,
+      status: "failed",
+      steps: [{ id: "s1", status: "in-progress" }],
+      columnMovedAt: "2020-01-01T00:00:00.000Z",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    Object.assign(store, {
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, taskStuckTimeoutMs: 60_000 })),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+    return { manager, proof };
+  }
+  it("requeues a step-incomplete card on a RENAMED review lane", async () => {
+    const { manager, proof } = staleIncompleteFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverStaleIncompleteReviewTasks();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-INCOMPLETE" }), expect.anything());
+  });
+  it("leaves a step-incomplete card in the RENAMED wip lane alone", async () => {
+    /*
+    Non-vacuous companion: a card with unfinished steps in the WIP lane is not stale — it is simply being
+    worked on. A read returning every column would requeue live work.
+    */
+    const { manager, proof } = staleIncompleteFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverStaleIncompleteReviewTasks();
+
+    expect(proof).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-13:25 (the query-filter class, twenty-fifth sweep):
+  `recoverMisclassifiedFailures` clears a failure the executor parked for "without calling fn_task_done"
+  on a task whose steps are ALL actually done — the failure is a misclassification, not real work left
+  undone. The literal read meant that on a renamed board it was never cleared, so finished work stayed
+  visibly failed and never entered normal review.
+
+  The error string must contain the REAL phrase `isNoTaskDoneFailure` matches. Invented prose is filtered
+  out one line later and the case would pass with the fix reverted — the same trap as #2916's fixture.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function misclassifiedFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-MISCLASS",
+      column,
+      status: "failed",
+      error: "Agent finished without calling fn_task_done",
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    return productionFaithfulStore([card]);
+  }
+  it("clears a misclassified failure on a RENAMED review lane", async () => {
+    const { store, updateTask } = misclassifiedFixture(RENAMED_VOCAB.review);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverMisclassifiedFailures();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-MISCLASS", expect.objectContaining({ status: null, error: null }));
+  });
+  it("does not clear the same failure for a card in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    still in wip has not handed off, so clearing its failure would hide a live problem.
+    */
+    const { store, updateTask } = misclassifiedFixture(RENAMED_VOCAB.wip);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverMisclassifiedFailures();
+
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:15 (the query-filter class, twenty-sixth sweep):
+  `recoverBranchMisboundInReviewTasks` detects a review card whose BRANCH TIP is bound to a different
+  task's work. The literal read meant that on a renamed board the misbinding was never detected, so the
+  card would merge — or refuse to — against a branch that is not its own.
+
+  Observable is `resolveSelfHealingMergeTarget`, private and called once per candidate, so the assertion
+  sits downstream of both halves without a git fixture.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function misboundFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-MISBOUND",
+      column,
+      branch: "fusion/FN-MISBOUND",
+      mergeDetails: {},
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: resolveTarget,
+      isBranchTipMisboundToTask: vi.fn(async () => ({ rejection: null, branchTip: "abc1234" })),
+    });
+    return { manager, resolveTarget };
+  }
+  it("checks branch binding for a card on a RENAMED review lane", async () => {
+    const { manager, resolveTarget } = misboundFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverBranchMisboundInReviewTasks();
+
+    expect(resolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-MISBOUND" }),
+      expect.anything(),
+      "recover-branch-misbound-in-review",
+    );
+  });
+  it("does not check branch binding for a card in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: a card still in wip legitimately owns a moving branch tip — checking it here
+    would flag normal in-progress work as misbound.
+    */
+    const { manager, resolveTarget } = misboundFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverBranchMisboundInReviewTasks();
+
+    expect(resolveTarget).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:55 (the query-filter class, twenty-seventh sweep):
+  `recoverMissingWorktreeReviewFailures` requeues a review card failed because its worktree was gone when
+  the session tried to start. Its per-candidate lane wiring was already in place — and a note at the site
+  called the literal QUERY above it "unfixable without a project-level lane resolution before the read".
+  `resolveProjectColumnsForRoles` is that resolution; it did not exist when the note was written. So the
+  wiring only ever helped boards whose review lane still happened to be named `in-review`.
+
+  The error string uses a REAL prefix from MISSING_WORKTREE_SESSION_PREFIXES; invented prose is rejected
+  by `isMissingWorktreeSessionStartFailure` and the case would pass with the fix reverted.
+
+  REVERT CHECK, measured: with the literal read restored, this fails — the card is never listed.
+  */
+  it("requeues a missing-worktree review failure on a RENAMED review lane", async () => {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOWT",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/gone",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMissingWorktreeReviewFailures();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOWT" }), expect.anything());
+  });
+  it("resolves the review lanes as a MEMBERSHIP set, not just the first one", async () => {
+    /*
+    The arity half. The per-candidate set was built from `resolveTaskLifecycleColumns().review`, which is
+    the FIRST column per role — so on a board declaring a separate merge lane beside its human-review
+    lane, a card in the second one read as not-in-review and was skipped. This drives exactly that board.
+
+    REVERT CHECK, measured: with the set back to `new Set([lifecycle?.review ?? "in-review", "in-review"])`
+    this fails — the card in the second review column is never classified as recoverable.
+    */
+    const splitReviewIr = {
+      ...RENAMED_IR,
+      columns: [
+        ...RENAMED_IR.columns,
+        { id: "merging", name: "Merging", traits: [{ trait: "merge" }] },
+      ],
+    } as typeof RENAMED_IR;
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOWT2",
+      column: "merging",
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/gone",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: splitReviewIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: splitReviewIr } : undefined)),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMissingWorktreeReviewFailures();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOWT2" }), expect.anything());
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:40 (the query-filter class, twenty-eighth sweep):
+  `auditNoCommitsExpectedCandidates` flags a card that finished every step and pushed NO commits — either
+  a legitimately commit-free task nobody declared as such, or work that silently produced nothing.
+
+  The literal read meant that on a renamed board only the `no_commits` ERROR path fed the audit, so a card
+  sitting quietly in a renamed review lane with zero commits and no error was never flagged. The sweep
+  did not go dead — it went half-blind, which is harder to notice.
+
+  REVERT CHECK, measured: with the literal read and verdict restored, this fails — the card contributes
+  nothing, because it has no `no_commits` error to be caught by the other arm.
+  */
+  it("flags a zero-commit card on a RENAMED review lane with no error text", async () => {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOCOMMITS",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      error: null,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    isBranchAheadOfBase.mockClear();
+
+    const flagged = await new SelfHealingManager(store, { rootDir: "/repo" }).auditNoCommitsExpectedCandidates();
+
+    expect(isBranchAheadOfBase).toHaveBeenCalled();
+    expect(flagged).toBe(1);
+  });
+  it("does not flag a zero-commit card that already declared noCommitsExpected", async () => {
+    /*
+    Non-vacuous companion: without it, a sweep flagging every zero-commit card it found would satisfy the
+    case above. Same board, same lane — only the declaration differs, which is the whole point of the flag.
+    */
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOCOMMITS",
+      column: RENAMED_VOCAB.review,
+      status: null,
+      error: null,
+      noCommitsExpected: true,
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    isBranchAheadOfBase.mockClear();
+
+    const flagged = await new SelfHealingManager(store, { rootDir: "/repo" }).auditNoCommitsExpectedCandidates();
+
+    expect(isBranchAheadOfBase).not.toHaveBeenCalled();
+    expect(flagged).toBe(0);
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:10 (the query-filter class, twenty-ninth sweep):
+  `recoverNoProgressNoTaskDoneFailures` requeues a wip card the executor failed for "no fn_task_done"
+  that made NO step progress and left no git work — nothing to salvage, so requeueing is safe. The
+  literal read meant that on a renamed board it was never requeued: a card that produced nothing sat
+  failed while still holding its wip slot.
+
+  Observable is `hasRecoverableGitWork`, private and called once per candidate before any requeue, so no
+  git fixture is needed. The error string carries the REAL phrase `isNoTaskDoneFailure` matches.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  function noProgressFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOPROGRESS",
+      column,
+      status: "failed",
+      error: "Agent finished without calling fn_task_done",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const hasRecoverableGitWork = vi.fn(async () => true); // true -> sweep leaves it alone, so nothing else needs stubbing
+    Object.assign(manager, { hasRecoverableGitWork });
+    return { manager, hasRecoverableGitWork };
+  }
+  it("considers a no-progress failure on a RENAMED wip lane", async () => {
+    const { manager, hasRecoverableGitWork } = noProgressFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverNoProgressNoTaskDoneFailures();
+
+    expect(hasRecoverableGitWork).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOPROGRESS" }));
+  });
+  it("does not consider the same failure once the card reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: a card in review has handed off; requeueing it from here would undo a
+    completed hand-off rather than rescue a stalled one.
+    */
+    const { manager, hasRecoverableGitWork } = noProgressFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverNoProgressNoTaskDoneFailures();
+
+    expect(hasRecoverableGitWork).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (the query-filter class, thirtieth sweep):
+  `recoverPartialProgressNoTaskDoneFailures` retries a review card failed for "no fn_task_done" that DID
+  make step progress. Real work exists, so the sweep spends a retry rather than discarding it. The
+  literal read meant that on a renamed board the retry never fired: partially-completed work was parked
+  failed with its retry budget untouched — a budget that exists precisely to avoid losing that work.
+
+  A step must be `done` (hasStepProgress) while another is not, or the card is filtered out by
+  `isTaskWorkComplete` for a reason unrelated to lanes.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function partialFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-PARTIAL",
+      column,
+      status: "failed",
+      error: "Agent finished without calling fn_task_done",
+      steps: [{ id: "s1", status: "done" }, { id: "s2", status: "pending" }],
+      columnMovedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+    return { manager, proof };
+  }
+  it("retries a partial-progress failure on a RENAMED review lane", async () => {
+    const { manager, proof } = partialFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverPartialProgressNoTaskDoneFailures();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-PARTIAL" }), expect.anything());
+  });
+  it("does not retry the same failure while the card is still in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: a card still in wip has not finished its attempt, so spending a retry from
+    here would burn the budget on work that is still running.
+    */
+    const { manager, proof } = partialFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverPartialProgressNoTaskDoneFailures();
+
+    expect(proof).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (the query-filter class, thirty-first sweep):
+  `recoverDoneTaskMergeMetadata` repairs the merge metadata of a card that already reached the COMPLETE
+  lane — the commit sha an operator sees, and that later reconcilers trust. The literal read meant that
+  on a renamed board a done card's metadata was never repaired, so a completed task could keep pointing
+  at a commit that is not the one that landed.
+
+  Scoped to `complete`, NOT the terminal union: an archived card is out of scope, and widening to
+  TERMINAL_ROLES would start repairing rows nobody reads — a behaviour change wearing a conversion's
+  clothes. The companion case pins that.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "done"` -> fails, the renamed complete lane is filtered out
+  */
+  function doneMetaFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-DONEMETA",
+      column,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const findLandedTaskCommit = vi.fn(async () => null);
+    Object.assign(manager, { findLandedTaskCommit });
+    return { manager, findLandedTaskCommit };
+  }
+  it("repairs merge metadata on a RENAMED complete lane", async () => {
+    const { manager, findLandedTaskCommit } = doneMetaFixture(RENAMED_VOCAB.complete);
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(findLandedTaskCommit).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-DONEMETA" }));
+  });
+  it("does not touch a card in the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    still in review has not landed, so "repairing" its merge metadata would invent an answer.
+    */
+    const { manager, findLandedTaskCommit } = doneMetaFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    expect(findLandedTaskCommit).not.toHaveBeenCalled();
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (the query-filter class, sweeps thirty-three and -four):
+  The two WORKSPACE sweeps. A workspace task lands PER-REPO, so its failure modes are its own: a
+  partial land leaves some repos merged and some not, and a finished one leaves per-repo worktrees on
+  disk. Both were bounded by literal reads, so on a renamed board neither ran — the partial land never
+  finished, and the disk was never reclaimed.
+
+  `isWorkspaceTaskLive` is what the partial-land sweep calls once per surviving candidate, before any
+  git or disk work — the private-seam technique, so no workspace fixture is needed.
+
+  REVERT CHECKS, both measured, each alone:
+    - partial-land literal read + verdict restored -> that case fails, the card is never listed
+    - orphaned-worktree literal read restored -> that case fails, the done card is never listed
+  */
+  function workspaceCard(id: string, column: string): Task {
+    return {
+      ...shippedCard(),
+      id,
+      column,
+      workspaceRepos: [{ path: "repo-a" }],
+      workspaceWorktrees: { "repo-a": { worktreePath: "/tmp/ws/repo-a" } },
+      mergeDetails: {},
+    } as unknown as Task;
+  }
+  it("re-enqueues a partially-landed workspace task on a RENAMED review lane", async () => {
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSPARTIAL", RENAMED_VOCAB.review)]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isWorkspaceTaskLive = vi.fn(() => ({ live: true, livePaths: ["/tmp/ws/repo-a"] }));
+    Object.assign(manager, { isWorkspaceTaskLive, emitWorkspacePartialLandNoAction: vi.fn(async () => undefined) });
+
+    await manager.reconcileWorkspacePartialLands();
+
+    expect(isWorkspaceTaskLive).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WSPARTIAL" }));
+  });
+  it("does not re-enqueue a workspace task still in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: a workspace task in wip has not started landing, so there is no partial land
+    to finish — the comment at the site says execution-stage reconcilers own that lane.
+    */
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSPARTIAL", RENAMED_VOCAB.wip)]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const isWorkspaceTaskLive = vi.fn(() => ({ live: true, livePaths: ["/tmp/ws/repo-a"] }));
+    Object.assign(manager, { isWorkspaceTaskLive, emitWorkspacePartialLandNoAction: vi.fn(async () => undefined) });
+
+    await manager.reconcileWorkspacePartialLands();
+
+    expect(isWorkspaceTaskLive).not.toHaveBeenCalled();
+  });
+  it("cleans orphaned workspace worktrees for a card on a RENAMED complete lane", async () => {
+    const { store } = productionFaithfulStore([workspaceCard("FN-WSDONE", RENAMED_VOCAB.complete)]);
+    const listTasksSpy = (store as unknown as { listTasks: ReturnType<typeof vi.fn> }).listTasks;
+    listTasksSpy.mockClear();
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).reconcileOrphanedWorkspaceWorktrees();
+
+    /*
+    The sweep's disk work is guarded by `isPathActive` and real fs checks, so the honest observable is
+    that it ASKED for the board's own complete lane at all — nothing downstream vetoes on lane here
+    (the only filter is `isWorkspaceTask`), which is what makes a query assertion sound rather than lazy.
+    */
+    const queried = listTasksSpy.mock.calls.map(([options]) => (options as { column?: string })?.column);
+    expect(queried).toContain(RENAMED_VOCAB.complete);
+  });
+});
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (#2867 review — greptile, "hard-blocker wiring remains
+untested"):
+
+THE WIRING, TESTED AT THE SEAM RATHER THAN THROUGH THE SWEEP.
+
+`recoverAlreadyMergedReviewTasks` calls `getTaskHardMergeBlocker(..., { reviewColumns: await
+ownReviewLanesForAlreadyMerged(task) })`. The sweep test above stops at candidacy, and the note there
+defended the gap as "type-checked and identical to a shape proven elsewhere". Type-checking cannot see
+it: `reviewColumns` is an OPTIONAL property on an options object, so omitting it compiles. The
+inert-seam gate cannot see it either — it tracks trailing optional PARAMETERS, not options-bag
+properties. Nothing was watching the argument from either direction.
+
+Driving the sweep to that line needs `resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit`
+to succeed, i.e. a real git repo, which would make this a git fixture rather than a lane test. So the
+seam is asserted directly: with the card's resolved lanes supplied there is no blocker, and without
+them the same card blocks — reproducing the production symptom exactly, an already-merged card on a
+renamed board failed with "Merge confirmed but finalization blocked", the sweep's purpose inverted.
+
+WHAT THIS STILL DOES NOT COVER, MEASURED RATHER THAN ASSUMED. I deleted the `reviewColumns` argument
+from the sweep's call site and these three cases stayed GREEN. They pin the SEAM's behaviour, not the
+producer that fills it — the same guard-versus-resolver split that made the planner-metrics option
+inert in #2842, where only a test driving the PRODUCER caught the omission.
+
+So this is an improvement over the claim it replaces ("type-checked and identical to a shape proven
+elsewhere", which was unfounded — an optional options-bag property compiles when omitted and the
+inert-seam gate does not track those), but it is not coverage of the wiring. Covering that needs a
+test that drives `recoverAlreadyMergedReviewTasks` far enough to reach the call, which needs
+`resolveSelfHealingMergeTarget` and `findAlreadyMergedTaskCommit` to succeed against a real repo.
+Stated here so the next reader does not mistake three green cases for a watched argument.
+*/
+describe("the already-merged hard blocker judges the card's OWN review lanes", () => {
+  const mergedCard = (column: string) => ({
+    id: "FN-HARD",
+    column,
+    status: "failed" as const,
+    paused: false,
+    steps: [],
+    workflowStepResults: [],
+  });
+
+  it("does NOT block an already-merged card in a RENAMED review lane when its lanes are supplied", () => {
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.review), {
+      reviewColumns: new Set([RENAMED_VOCAB.review]),
+    });
+
+    expect(blocker).toBeUndefined();
+  });
+
+  it("DOES block the same card when the lanes are omitted — the symptom if the wiring is dropped", () => {
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.review));
+
+    /* The message the operator would see behind "Merge confirmed but finalization blocked". */
+    expect(blocker).toContain("must be in 'in-review'");
+  });
+
+  it("still blocks a card that is genuinely outside its board's review lanes", () => {
+    /*
+    The paired negative. Wiring the resolved lanes must not degrade into "never blocks" — that would
+    finalize a merge for a card sitting in WIP.
+    */
+    const blocker = getTaskHardMergeBlocker(mergedCard(RENAMED_VOCAB.wip), {
+      reviewColumns: new Set([RENAMED_VOCAB.review]),
+    });
+
+    expect(blocker).toContain(`must be in '${RENAMED_VOCAB.review}'`);
   });
 });

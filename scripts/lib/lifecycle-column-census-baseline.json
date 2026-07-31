@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 79,
+    "packages/engine/src/self-healing.ts": 56,
     "packages/engine/src/scheduler.ts": 12,
     "packages/engine/src/executor.ts": 8,
     "packages/core/src/task-store/async-comments-attachments.ts": 6,
@@ -40,6 +40,7 @@
   },
   "deliberateByFile": {
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
+    "packages/engine/src/self-healing.ts\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
     "packages/core/src/store.ts\u0000in-review": 2,
@@ -58,7 +59,7 @@
     "packages/engine/src/scheduler.ts\u0000done": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
     "packages/engine/src/scheduler.ts\u0000in-review": 2,
-    "packages/engine/src/self-healing.ts\u0000in-review": 2,
+    "packages/engine/src/self-healing.ts\u0000done": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000done": 2,
     "plugins/fusion-plugin-reports/src/store/report-store.ts\u0000archived": 2,
@@ -120,7 +121,7 @@
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
     "packages/engine/src/project-engine.ts\u0000in-review": 1,
     "packages/engine/src/scheduler.ts\u0000todo": 1,
-    "packages/engine/src/self-healing.ts\u0000done": 1,
+    "packages/engine/src/self-healing.ts\u0000archived": 1,
     "packages/engine/src/triage.ts\u0000triage": 1,
     "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts\u0000archived": 1,
     "plugins/fusion-plugin-even-cards/src/cards/board-cards.ts\u0000done": 1,
@@ -128,9 +129,9 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 32,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
+    "packages/engine/src/self-healing.ts": 2,
     "packages/core/src/async-mission-store.ts": 1,
     "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
