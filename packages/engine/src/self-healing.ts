@@ -2764,15 +2764,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // may read for sibling-spec context (executor prompt). Done/archived
       // dependents have already consumed the spec and don't block.
       const tasksWithActiveDependents = new Set<string>();
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:40 (fleet phase — self-healing terminal-lane cluster):
+      "Has this card finished?" asked by id skips every renamed board, so the sweep silently treats a
+      finished card as live. Resolved once per sweep via the project union — over-inclusion is free
+      here because the per-card check below still discards, and the union needs no per-task workflow
+      selection (docs/solutions/workflow-learnings/project-union-versus-per-task-lanes.md).
+      */
+      const dependentTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
       for (const t of tasks) {
-        if (t.column === "done" || t.column === "archived") continue;
+        if (dependentTerminalColumns.has(t.column)) continue;
         for (const depId of t.dependencies ?? []) {
           tasksWithActiveDependents.add(depId);
         }
       }
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:55 (fleet phase): the COMPLETE role, not the terminal
+      pair — this sweep archives finished cards, so an already-archived one is not a candidate.
+      */
+      const doneColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
       const stale = tasks.filter((t) => {
-        if (t.column !== "done") return false;
+        if (!doneColumns.has(t.column)) return false;
         // Prefer columnMovedAt (when the task entered done); fall back to updatedAt
         // for legacy tasks that lack the field.
         const ts = t.columnMovedAt || t.updatedAt;
@@ -7206,8 +7219,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       let detected = 0;
       const seen = new Set<string>();
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:40 (fleet phase — self-healing terminal-lane cluster):
+      "Has this card finished?" asked by id skips every renamed board, so the sweep silently treats a
+      finished card as live. Resolved once per sweep via the project union — over-inclusion is free
+      here because the per-card check below still discards, and the union needs no per-task workflow
+      selection (docs/solutions/workflow-learnings/project-union-versus-per-task-lanes.md).
+      */
+      const sweepTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
       for (const task of tasks) {
-        if (task.column === "done" || task.column === "archived") continue;
+        if (sweepTerminalColumns.has(task.column)) continue;
         if (task.paused === true || task.userPaused === true) continue;
         if (executingIds.has(task.id) || executingTaskLock.has(task.id)) continue;
         if (this.options.isTaskActive?.(task.id) === true) continue;
