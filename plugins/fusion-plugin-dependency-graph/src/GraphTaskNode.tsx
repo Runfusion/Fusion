@@ -27,6 +27,9 @@ type TaskCardBridgeProps = Pick<
   | "onMoveTask"
   | "lastFetchTimeMs"
   | "workflowStepNameLookup"
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-06:25: the card's resolved lane traits — a Pick that
+     omits them is why the stuck indicator could only ask the legacy question. */
+  | "taskColumnFlags"
 >;
 
 export interface GraphTaskNodeProps extends TaskCardBridgeProps, Pick<HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave" | "onClick"> {
@@ -66,10 +69,22 @@ export function GraphTaskNode({
   onNodeDragEnd,
   ...taskCardProps
 }: GraphTaskNodeProps) {
-  const { task, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs, onOpenDetail } = taskCardProps;
+  const { task, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs, onOpenDetail, taskColumnFlags } = taskCardProps;
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
-  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:20:
+  The card's OWN resolved traits, now that the host supplies them through the plugin view context.
+
+  Six of the seven other `isTaskStuck` call sites in the tree already passed this; the graph's stuck
+  indicator answered for the legacy vocabulary on every board. It was exempted in the inert-seam gate
+  on the grounds that supplying it needed a published-API change, then that it needed build plumbing.
+  Both were wrong: the blocker was a hand-maintained interop declaration that had drifted to the
+  pre-conversion three-argument signature.
+
+  Absent flags still degrade to the legacy id, the documented no-metadata path.
+  */
+  const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, taskColumnFlags);
   /*
   FNXC:PluginLifecycleColumns 2026-07-30-03:40 (U11 #2515 audit):
   Keyed on `column === "triage"`, this went permanently FALSE for default-lineage

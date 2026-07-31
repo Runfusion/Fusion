@@ -11,6 +11,8 @@ export function DependencyGraphDashboardView({ context }: { context?: PluginDash
   return createElement(DependencyGraph, {
     tasks: context?.tasks ?? [],
     projectId: context?.projectId,
+    /* Per-task lane traits, so the graph's stuck indicator is a role question. */
+    columnFlagsByTaskId: context?.columnFlagsByTaskId,
     workflowStepNameLookup: createWorkflowStepNameLookup(context?.workflowSteps),
     onOpenDetail: context?.openTaskDetail as ((task: Task | TaskDetail) => void) | undefined,
   });

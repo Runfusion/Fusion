@@ -368,6 +368,8 @@ export function MainContent({
           context={{
             projectId: currentProject?.id,
             tasks: pluginContextTasks,
+            /* The per-task trait index already threaded to this component's other children. */
+            columnFlagsByTaskId,
             workflowSteps,
             subscribePluginEvents,
             openTaskDetail: openPluginTaskDetail,

@@ -19,6 +19,16 @@ const NARROW_VIEWPORT_WIDTH = 768;
 export interface DependencyGraphProps {
   tasks: Task[];
   projectId?: string;
+  /** Per-task lane traits from the host; absent means fall back to the legacy ids. */
+  columnFlagsByTaskId?: ReadonlyMap<string, {
+    readonly intake?: boolean;
+    readonly hold?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+  }>;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenDetail?: (task: Task) => void;
   addToast?: (message: string, type?: "success" | "error" | "info" | "warning") => void;
@@ -56,7 +66,7 @@ export function DependencyGraph({
   onMoveTask,
   lastFetchTimeMs,
   workflowStepNameLookup,
-}: DependencyGraphProps) {
+  columnFlagsByTaskId,}: DependencyGraphProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const pointerDraggedRef = useRef(false);
@@ -470,6 +480,7 @@ export function DependencyGraph({
                   <GraphTaskNode
                     key={node.task.id}
                     task={node.task}
+                    taskColumnFlags={columnFlagsByTaskId?.get(node.task.id)}
                     projectId={projectId}
                     isSelected={selectedTaskId === node.task.id}
                     style={{ minHeight: `${NODE_HEIGHT}px`, left: `${position.x}px`, top: `${position.y}px` }}

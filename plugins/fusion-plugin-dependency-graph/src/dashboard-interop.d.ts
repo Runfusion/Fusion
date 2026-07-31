@@ -1,7 +1,30 @@
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-06:10:
+THIS FILE IS A HAND-MAINTAINED MIRROR of the dashboard surfaces this plugin uses, wired in via
+tsconfig `paths`. It drifts silently: the real `isTaskStuck` grew a fourth `columnFlags` parameter
+during the lane conversion and this declaration kept the three-argument shape, so the plugin could
+not have supplied the argument even if someone tried — the compiler said it did not exist.
+
+That drift is what made this look like a build-plumbing problem from outside. Any future dashboard
+surface added here needs the same update, and there is no check that notices.
+*/
 declare module "@fusion/dashboard/app/utils/taskStuck" {
   import type { Task } from "@fusion/core";
 
-  export function isTaskStuck(task: Task, taskStuckTimeoutMs?: number, lastFetchTimeMs?: number): boolean;
+  export function isTaskStuck(
+    task: Task,
+    taskStuckTimeoutMs?: number,
+    lastFetchTimeMs?: number,
+    columnFlags?: {
+    readonly intake?: boolean;
+    readonly hold?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+  },
+  ): boolean;
 }
 
 declare module "@fusion/dashboard/app/plugins/types" {
@@ -17,6 +40,16 @@ declare module "@fusion/dashboard/app/plugins/types" {
     tasks: Task[];
     workflowSteps: WorkflowStep[];
     openTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
+    /** Per-task lane traits; absent means fall back to the legacy ids. */
+    columnFlagsByTaskId?: ReadonlyMap<string, {
+    readonly intake?: boolean;
+    readonly hold?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+  }>;
     renderTaskCard?: (task: Task | TaskDetail) => ReactNode;
     addToast?: (message: string, type?: PluginToastType) => void;
   }
@@ -49,6 +82,15 @@ declare module "@fusion/dashboard/app/components/TaskCard" {
     lastFetchTimeMs?: number;
     workflowStepNameLookup?: ReadonlyMap<string, string>;
     disableDrag?: boolean;
+    taskColumnFlags?: {
+    readonly intake?: boolean;
+    readonly hold?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+  };
   }
 
   export function TaskCard(props: TaskCardProps): ReactElement;

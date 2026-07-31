@@ -37,6 +37,23 @@ export interface PluginDashboardViewContext {
   openTaskDetail: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   /** Open a project-relative file in the dashboard's built-in file viewer. */
   openFile: (path: string, options?: { workspace?: string; line?: number; col?: number }) => void;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-06:15:
+  PER-TASK lane traits, so a plugin view can ask role questions about the cards it draws.
+
+  Without it a plugin view had no trait source at all and every lifecycle question it asked answered
+  for the legacy vocabulary. Keyed by TASK id because a column id means something only relative to
+  its own workflow, and a board can render several. The host already builds this index.
+  */
+  columnFlagsByTaskId?: ReadonlyMap<string, {
+    readonly intake?: boolean;
+    readonly hold?: boolean;
+    readonly countsTowardWip?: boolean;
+    readonly mergeBlocker?: boolean;
+    readonly humanReview?: boolean;
+    readonly complete?: boolean;
+    readonly archived?: boolean;
+  }>;
   renderTaskCard?: (task: Task | TaskDetail) => ReactNode;
   addToast?: (message: string, type?: PluginToastType) => void;
   /**

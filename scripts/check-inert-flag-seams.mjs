@@ -140,17 +140,6 @@ An omission earns an entry only when supplying the argument would be WRONG, not 
 */
 const ALLOWED_OMISSIONS = new Map([
   [
-    "plugins/fusion-plugin-dependency-graph/src/GraphTaskNode.tsx::isTaskStuck",
-    { count: 1, reason: "Surfaced the moment this gate started scanning `plugins/` (2026-07-31). The plugin has NO "
-      + "lane-trait source anywhere: it is mounted as a dashboard view through `PluginDashboardViewContext`, "
-      + "and `DependencyGraph` receives `tasks: Task[]` and nothing else. Supplying the argument here would "
-      + "pass `undefined` — an unsupplied optional parameter, which this document's first failure shape says "
-      + "is strictly worse than the literal it replaces, because it reads as converted and answers legacy "
-      + "forever. Correct supply needs the plugin VIEW CONTEXT to carry per-task flags: a published-API "
-      + "change, not local wiring, which is the same 'needs a data change' category as the entry below. "
-      + "Filed for the plugin-API owner rather than bodged here." },
-  ],
-  [
     "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
     { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
