@@ -35,6 +35,9 @@ import { join } from "node:path";
 import { storeLog } from "../store.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
+/* DELIBERATE-LITERAL — the no-resolution fallback for the archive lane above. */
+const LEGACY_ARCHIVE_LANES: readonly string[] = ["archived"];
+
 export function listWorkflowWorkItemsForTaskSyncImpl(store: TaskStore, taskId: string, opts: { kinds?: WorkflowWorkItemKind[] } = {}): WorkflowWorkItem[] {
     const conditions = ["taskId = ?"];
     const params: unknown[] = [taskId];
@@ -433,7 +436,21 @@ export async function resolveUnarchiveTargetColumnImpl(
       && (lifecycle !== undefined
         ? declaredColumnIds.has(preArchiveColumn)
         : isColumn(preArchiveColumn));
-    if (!declaresPreArchiveColumn || preArchiveColumn === archivedColumn || preArchiveColumn === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-18:20 (fleet — the pre-archive unarchive target):
+    RESOLVED archive lane UNION the legacy id, stated once instead of twice.
+
+    The condition already accepted either — `archivedColumn` when the workflow resolved, and the
+    literal as a belt-and-braces second arm. A set says that once, so the two halves cannot drift
+    apart, which is the real risk with a duplicated condition rather than the census count.
+
+    NOT the same as the sites `archived-column-gate-parity.test.ts` pins: those compare a TASK's
+    column and are one of three encodings that must move together. This compares a stored
+    `preArchiveColumn` VALUE against the board's archive lane, so it is not part of that gate —
+    verified by running that suite, which stays green.
+    */
+    const archiveLanes = new Set<string>([archivedColumn, ...LEGACY_ARCHIVE_LANES].filter((c): c is string => c !== undefined));
+    if (!declaresPreArchiveColumn || archiveLanes.has(preArchiveColumn)) {
       if (completeColumn === undefined) {
         throw new Error(`Cannot resolve an unarchive target${taskId ? ` for ${taskId}` : ""}: its workflow declares no complete column`);
       }
