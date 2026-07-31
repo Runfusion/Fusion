@@ -107,10 +107,24 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
  * to exist. Invisible to the column census (not a comparison) and invisible to the Drizzle scan below
  * (not an `eq`/`ne` call), so before this inventory nothing in the repo counted them at all.
  */
+/*
+FNXC:ArchivedGateParity 2026-07-31-17:45 (re-recorded — main was RED on this ratchet):
+Both movements below are REAL removals in the direction this file wants, and both landed without the
+same-commit inventory update the failure message demands. Because this test is not in the merge gate,
+main went red without blocking anything and stayed that way.
+
+  async-mission-store.ts          2 -> 0 (drops out)   #3046 CONVERTED both raw predicates to
+                                                       `archivedLanesFor(...)`, a resolved lane set.
+  task-store/async-archive-lineage.ts  3 -> 2          #3042 DELETED `liveParentFilter` outright — no
+                                                       caller, and it carried `column != 'archived'`.
+
+Verified before re-recording rather than assumed: a count that falls because a gate was silently
+DROPPED looks identical here to one that falls because a gate was converted, and only the first is a
+defect. #3046 replaced its comparisons; #3042 removed a function nothing called.
+*/
 const AUDITED_RAW_SQL_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/async-mission-store-queries.ts": 1,
-  "packages/core/src/async-mission-store.ts": 2,
-  "packages/core/src/task-store/async-archive-lineage.ts": 3,
+  "packages/core/src/task-store/async-archive-lineage.ts": 2,
   "packages/core/src/task-store/async-maintenance.ts": 1,
   "packages/core/src/task-store/reads.ts": 1,
 };
@@ -345,7 +359,18 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
     must be counted. An assertion of absence here would have to be deleted by whoever added the next
     raw template, and deleting a red guard is how a class of sites stops being tracked.
     */
+    /*
+    FNXC:ArchivedGateParity 2026-07-31-17:45 (8 -> 5, and why the number is allowed to move):
+    Three raw templates left the tree legitimately — #3046 converted two to a resolved lane set, #3042
+    deleted a dead function carrying a third. The total is a headstone for "this encoding exists and is
+    counted", not a floor; pinning it at a stale 8 would keep main red until someone re-added raw SQL,
+    which is the opposite of the pressure this file wants to apply.
+
+    Lowered only after checking each movement individually — a total that falls because a gate was
+    silently DROPPED is indistinguishable here from one that falls because a gate was CONVERTED, and
+    only the first is a defect. The per-file inventory above records which was which.
+    */
     expect(Object.keys(AUDITED_RAW_SQL_SITES).length).toBeGreaterThan(0);
-    expect(Object.values(AUDITED_RAW_SQL_SITES).reduce((a, b) => a + b, 0)).toBe(8);
+    expect(Object.values(AUDITED_RAW_SQL_SITES).reduce((a, b) => a + b, 0)).toBe(5);
   });
 });
