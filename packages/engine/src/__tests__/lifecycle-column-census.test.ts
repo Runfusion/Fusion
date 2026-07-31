@@ -23,6 +23,7 @@ import {
   summarize,
   mixedVocabularyFiles,
   hasDeferralNote,
+  describeBacklogState,
 } from "../../../../scripts/lib/lifecycle-column-census.mjs";
 
 function census(source: string) {
@@ -786,10 +787,25 @@ describe("the ratchet follows the count down", () => {
   }
 
   /** Inflate one file's allowance, which is a DROP from the CLI's point of view. */
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-13:15 (u12 — this fixture ROTTED as the backlog shrank):
+  It required a baseline entry with `count > 1`, then inflated that entry by 3. Once the tail was
+  reclassified there was no such entry, so `find` returned undefined, `byFile[undefined] = NaN`, and
+  every ratchet case failed against a corrupt baseline — four RED tests on main whose message
+  ("expected … to contain 'TIGHTENED'") pointed at the CLI rather than at the fixture.
+
+  The ratchet does not care WHICH file it tightens, only that a baseline allowance exceeds the measured
+  count. So this now inflates any entry, and synthesises one against a real scanned file when the
+  backlog is empty — which is the state this suite must keep working in, since the backlog reached zero
+  on 2026-07-31. Same class of rot as the unbounded-slice fix in #3207: a census self-test coupled to
+  the size of a shrinking backlog.
+  */
+  const INFLATE_FALLBACK_FILE = "packages/core/src/store.ts";
   const inflate = (baseline: any): string => {
-    const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
-    baseline.byFile[file as string] = (count as number) + 3;
-    return file as string;
+    const byFile = baseline.byFile as Record<string, number>;
+    const [file, count] = Object.entries(byFile)[0] ?? [INFLATE_FALLBACK_FILE, 0];
+    byFile[file] = (count as number) + 3;
+    return file;
   };
 
   it("TIGHTENS on a drop and exits 0, so somebody else's merge cannot redden the gate", async () => {
@@ -833,10 +849,23 @@ describe("the ratchet follows the count down", () => {
   }, 30_000);
 
   it("still FAILS on a rise, which is the check's actual purpose", async () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-13:20 (u12 — same rot as `inflate`, plus the zero-backlog case):
+    A RISE means "measured exceeds allowed", so it needs an allowance BELOW the real count. While guards
+    exist, deflating any entry gives that. Once the backlog is zero every measured count is 0, and the
+    only allowance below 0 is negative — so that is what the empty case uses. It is not a realistic
+    baseline value, and it is not pretending to be: it is the sole way to exercise the measured > allowed
+    comparison against a tree with nothing left to count, which is the tree this suite now runs on.
+    */
     const deflate = (baseline: any): string => {
-      const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
-      baseline.byFile[file as string] = (count as number) - 1;
-      return file as string;
+      const byFile = baseline.byFile as Record<string, number>;
+      const entry = Object.entries(byFile)[0];
+      if (!entry) {
+        byFile[INFLATE_FALLBACK_FILE] = -1;
+        return INFLATE_FALLBACK_FILE;
+      }
+      byFile[entry[0]] = (entry[1] as number) - 1;
+      return entry[0];
     };
 
     const run1 = await run(deflate, ["--strict"]);
@@ -907,5 +936,45 @@ describe("the deferral-note rule the queue-empty verdict is computed from", () =
     ]) {
       expect(hasDeferralNote([note, "const x = 1;"], 2), note).toBe(true);
     }
+  });
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-13:00 (u12 — the state the tree cannot demonstrate yet):
+`describeBacklogState` is pure precisely so the ZERO state is testable before the tree reaches zero.
+While it was an inline branch in the CLI, only the CURRENT backlog state was observable, and the zero
+branch did not exist at all — the report printed nothing at the finish line.
+*/
+describe("the backlog-state verdict the bare command prints", () => {
+  it("states ZERO as a protected end state, not an empty scan", () => {
+    const lines = describeBacklogState({ columnGuards: 0, unexaminedGuards: 0 });
+
+    expect(lines.join(" ")).toContain("BACKLOG ZERO");
+    // The load-bearing half: a bare "0" reads as a broken scan unless the report says otherwise.
+    expect(lines.join(" ")).toContain("not an empty scan");
+    expect(lines.join(" ")).toContain("--strict");
+  });
+
+  it("calls a fully-deferred backlog DEBT rather than a work queue", () => {
+    const lines = describeBacklogState({ columnGuards: 7, unexaminedGuards: 0 });
+
+    expect(lines.join(" ")).toContain("CONVERSION QUEUE EMPTY");
+    expect(lines.join(" ")).toContain("7 remaining column guard(s)");
+    expect(lines.join(" ")).toContain("DEBT, not a work queue");
+  });
+
+  it("reports unexamined guards as claimable work", () => {
+    const lines = describeBacklogState({ columnGuards: 7, unexaminedGuards: 3 });
+
+    expect(lines.join(" ")).toContain("3 unexamined guard(s) remain");
+    // Must NOT tell a worker the queue is empty while real work is outstanding.
+    expect(lines.join(" ")).not.toContain("QUEUE EMPTY");
+    expect(lines.join(" ")).not.toContain("BACKLOG ZERO");
+  });
+
+  it("prefers the ZERO state over the unexamined branch when both could apply", () => {
+    // Defensive: zero guards cannot have unexamined ones. If a caller ever passes both, the honest
+    // answer is still zero — reporting "N unexamined" against an empty backlog would be a fabrication.
+    expect(describeBacklogState({ columnGuards: 0, unexaminedGuards: 3 }).join(" ")).toContain("BACKLOG ZERO");
   });
 });

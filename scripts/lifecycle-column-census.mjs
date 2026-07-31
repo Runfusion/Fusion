@@ -48,6 +48,7 @@ import {
   summarize as summarizeText,
   mixedVocabularyFiles,
   hasDeferralNote,
+  describeBacklogState,
 } from "./lib/lifecycle-column-census.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -238,12 +239,10 @@ if (json) {
   `--claims` can see open PRs.
   */
   const { open: unexaminedGuards } = triageFindings();
-  if (summary.totals.column > 0 && unexaminedGuards.length === 0) {
-    console.log(`\n  CONVERSION QUEUE EMPTY: all ${summary.totals.column} remaining column guard(s) carry a documented deferral note.`);
-    console.log(`  There is no unexamined guard to claim. A nonzero backlog above is DEBT, not a work queue.`);
-    console.log(`  Re-read the note at a site before converting it; run --claims to also check open-PR ownership.`);
-  } else if (unexaminedGuards.length > 0) {
-    console.log(`\n  ${unexaminedGuards.length} unexamined guard(s) remain (no deferral note) — run --triage to list them by file.`);
+  const verdict = describeBacklogState({ columnGuards: summary.totals.column, unexaminedGuards: unexaminedGuards.length });
+  if (verdict.length > 0) {
+    console.log("");
+    for (const line of verdict) console.log(`  ${line}`);
   }
   if (triage) {
     const { flagged, open } = triageFindings();

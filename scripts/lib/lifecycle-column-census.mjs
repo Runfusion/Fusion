@@ -285,3 +285,34 @@ export const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT 
 export function hasDeferralNote(lines, line) {
   return FLAG_MARKERS.test(lines.slice(Math.max(0, line - 41), line).join(" "));
 }
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-12:55 (u12 — the report went SILENT at the finish line):
+The backlog-state verdict was two inline branches in the CLI, and neither fired at a count of ZERO —
+`CONVERSION QUEUE EMPTY` required `totals.column > 0`. So the one state the whole fleet phase was
+working toward printed nothing at all, which reads as a broken scan rather than the protected end
+state. Reached zero on 2026-07-31 (722 at the start of the phase).
+
+Pure and exported so all three states are unit-testable. Against the real tree only the CURRENT state
+is observable, so an inline branch for zero could not be tested until the tree was already zero — and
+a message nobody can test before they need it is the one that is wrong when they do.
+
+Returns an array of lines (empty = print nothing), so the caller stays a dumb printer.
+*/
+export function describeBacklogState({ columnGuards, unexaminedGuards }) {
+  if (columnGuards === 0) {
+    return [
+      "BACKLOG ZERO: no lifecycle-column guard remains.",
+      "This is the protected end state, not an empty scan — `--strict` fails on any RISE, so a new",
+      "guard cannot land silently. Use the role helpers (resolveLifecycleColumns / columnHasRole).",
+    ];
+  }
+  if (unexaminedGuards === 0) {
+    return [
+      `CONVERSION QUEUE EMPTY: all ${columnGuards} remaining column guard(s) carry a documented deferral note.`,
+      "There is no unexamined guard to claim. A nonzero backlog above is DEBT, not a work queue.",
+      "Re-read the note at a site before converting it; run --claims to also check open-PR ownership.",
+    ];
+  }
+  return [`${unexaminedGuards} unexamined guard(s) remain (no deferral note) — run --triage to list them by file.`];
+}
