@@ -44,6 +44,7 @@ import { resolveSwitchReconciliation } from "../workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
 import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "../project-lane-vocabulary.js";
+import type { InReviewDurationLanes } from "./async-audit.js";
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -1008,7 +1009,22 @@ failed resolve leaves the query on its documented legacy lanes rather than faili
 */
 export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
         const layer = store.asyncLayer!;
-    let lanes: { reviewColumns?: string[]; completeColumns?: string[] } | undefined;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-06:20:
+    Named type, not an inferred literal, and the reason is a tool contract rather than style.
+
+    `scripts/lib/unwired-lane-parameter.mjs` decides a lane parameter is WIRED when some other file
+    mentions both the parameter name and its declaring symbol. For an interface passed as an inferred
+    object literal there is no mention of the type anywhere, so this call site — which does supply
+    both lanes — was reported as unwired, and #2875 landed two false entries into a guard written to
+    catch the opposite mistake.
+
+    Annotating the local is the smallest honest fix. I tried three variations of the heuristic first;
+    each traded the false positive for false NEGATIVES (the widest hid twelve genuine entries), which
+    is the usual sign that a co-occurrence check has reached its limit. Naming the type costs one
+    word, makes the wiring visible to both the reader and the tool, and leaves the guard's rule alone.
+    */
+    let lanes: InReviewDurationLanes | undefined;
     try {
       const [review, complete] = await Promise.all([
         resolveProjectColumnsForRoles(store, REVIEW_ROLES),
