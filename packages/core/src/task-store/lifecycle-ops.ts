@@ -660,7 +660,7 @@ export async function checkForChangesImpl(store: TaskStore): Promise<void> {
               which throw in PostgreSQL backend mode, so this whole polling replica path is legacy
               SQLite only.
 
-              Recorded rather than converted, for the same reason as `mission-store.ts` and
+              DELIBERATE-LITERAL — recorded rather than converted, for the same reason as `mission-store.ts` and
               `project-store-ops.ts`: an unconverted literal in dead code is not debt a fleet pass
               should spend a signature change on, but it must not read as missed either.
               */

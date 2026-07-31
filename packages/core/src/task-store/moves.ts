@@ -343,6 +343,7 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
       */
       const taskIsArchived = handoffArchivedLanes && handoffArchivedLanes.size > 0
         ? handoffArchivedLanes.has(task.column)
+        /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above uses the resolved set. */
         : task.column === "archived";
       if (taskIsArchived || task.deletedAt != null) {
         throw new HandoffInvariantViolationError(

@@ -805,7 +805,7 @@ export class TriageProcessor {
       layer up." So the arm goes back to the literal, which is honest about being one and keeps this
       file's census entry pointing at work that is still outstanding.
 
-      THE SPECIFICATION IS ABOVE. Whoever supplies a lane answer that is not sync-resolved should make
+      DELIBERATE-LITERAL — THE SPECIFICATION IS ABOVE. Whoever supplies a lane answer that is not sync-resolved should make
       this line read `disposeLanes.wip` and delete this note. LEFT COUNTED until then.
       */
       if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;

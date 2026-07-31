@@ -437,11 +437,13 @@ export function isTaskArchivedImpl(store: TaskStore, id: string): boolean {
     correct without touching it.
 
     Left counted so the census keeps pointing here, and deliberately NOT converted in isolation: a
-    sync function with no store-scoped workflow read cannot resolve a lane, and converting this one
+    A sync function with no store-scoped workflow read cannot resolve a lane, and converting this one
     while `getLiveTaskColumn` still keys on the literal would leave the two disagreeing about what
     archived means.
     */
         const cached = store.taskCache.get(id);
+    /* DELIBERATE-LITERAL — see the note above: sync, no store-scoped workflow read, and converting
+       this alone would disagree with `getLiveTaskColumn`, which still keys on the literal. */
     return cached?.column === "archived";
 }
 

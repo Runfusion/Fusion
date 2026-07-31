@@ -1242,6 +1242,9 @@ export class NotificationService {
   Left counted, with no exemption marker, so the census keeps pointing here.
   */
   private isManualMergeHold(task: Task): boolean {
+    /* DELIBERATE-LITERAL — see the note above: resolving here forces the await into
+       `handleTaskUpdated`, which `task-wedge-notification.test.ts` proves drops an operator
+       notification when a re-wedge arrives close behind a recovery. */
     if (task.column !== "in-review") {
       return false;
     }

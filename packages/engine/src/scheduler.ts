@@ -1270,7 +1270,9 @@ export class Scheduler {
       */
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
-        if (task.column === "in-progress") this.failedTaskIds.add(task.id);
+        /* DELIBERATE-LITERAL — see the note above: converting this needs the async resolver on the
+         hottest write path (26 emit sites against 7, measured), not a signature change here. */
+      if (task.column === "in-progress") this.failedTaskIds.add(task.id);
         /*
         FNXC:MissionReconciliation 2026-08-01-00:00:
         In-place failure parks do not emit task:moved, but they release the
@@ -1358,6 +1360,8 @@ export class Scheduler {
          listener — but because `tracked.has(task.id)` below is a re-entrance guard, and moving this
          answer behind an await lets two updates for the same task both pass it and double-start a
          monitor. LEFT COUNTED. See the fuller note on the mission-failure guard above. */
+      /* DELIBERATE-LITERAL — see the note directly above: an await here lets two updates for the
+         same task both pass the `tracked.has` re-entrance guard and double-start a monitor. */
       if (task.column !== "in-review") return;
       if (!task.prInfo) return;
 

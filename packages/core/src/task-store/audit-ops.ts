@@ -249,6 +249,7 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       const archivedLanes = await resolveArchivedLanes(store);
       const rowIsArchivedLane = archivedLanes
         ? archivedLanes.has(String(pgRow.column ?? ""))
+        /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above uses the resolved set. */
         : pgRow.column === "archived";
       if (rowIsArchivedLane || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
