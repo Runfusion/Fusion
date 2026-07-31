@@ -153,7 +153,9 @@ then listed 20+ files including other workers' commits, which reads exactly like
 reverted their work, and a full test run on that tree came back green. Both signals were true about a
 tree nobody cared about.
 
-    git merge-base --is-ancestor origin/main HEAD    # the only check that distinguishes the two
+```sh
+git merge-base --is-ancestor origin/main HEAD    # the only check that distinguishes the two
+```
 
 It said STALE while the tests said pass. Run it after any rebase, before trusting a verification —
 especially before reporting "verified on current main".
