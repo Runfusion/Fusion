@@ -7,14 +7,11 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError} from "./errors.js";
-import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
+import type {Task, Column, MergeResult, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../task-priority.js";
 import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeRequestState, to: MergeRequestState): boolean {
     if (from === to) return true;
@@ -30,91 +27,15 @@ export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeR
     return allowed[from].has(to);
   }
 
-export function enqueueMergeQueueSyncInternalImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions): MergeQueueEntry {
-    let invalidColumn: Column | null = null;
-    const entry = store.db.transactionImmediate(() => {
-      const existing = store.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
-      const taskRow = store.db.prepare("SELECT priority, column FROM tasks WHERE id = ?").get(taskId) as { priority: string | null; column: Column } | undefined;
-      if (!taskRow) {
-        throw new MergeQueueTaskNotFoundError(taskId);
-      }
-      /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-10:35 (fleet — FLAGGED, deliberately NOT converted):
-      This guard runs inside `store.db.transactionImmediate`, a SYNCHRONOUS SQLite transaction. Converting
-      it needs a synchronous lane resolution, and the only one available (`resolveTaskWorkflowIrSync`) reads
-      `getTaskWorkflowSelectionImpl`, which returns `undefined` unconditionally in PostgreSQL mode — the
-      shipped backend. So a "conversion" here would drop the census count by one and behave exactly as the
-      literal does (documented on `isBenignInReviewPauseAbort` in executor.ts, PR #2703).
-
-      Converting it properly means either making this path async or pushing the trait read into SQL, both of
-      which are store-architecture changes rather than call-site conversions. Left as a literal WITH this
-      note so the next worker does not "fix" it into a false green.
-      */
-      if (taskRow.column !== "in-review") {
-        invalidColumn = taskRow.column;
-        return null;
-      }
-
-      const now = opts.now ?? new Date().toISOString();
-      const priority = opts.priority ?? normalizeTaskPriority(taskRow.priority);
-
-      let nextEntry: MergeQueueEntry;
-      let alreadyEnqueued = true;
-      if (existing) {
-        nextEntry = store.rowToMergeQueueEntry(existing);
-      } else {
-        store.db.prepare(`
-          INSERT INTO mergeQueue (taskId, enqueuedAt, priority, attemptCount)
-          VALUES (?, ?, ?, 0)
-          ON CONFLICT(taskId) DO NOTHING
-        `).run(taskId, now, priority);
-        const inserted = store.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
-        if (!inserted) {
-          throw new Error(`Failed to read merge queue entry for ${taskId} after enqueue`);
-        }
-        nextEntry = store.rowToMergeQueueEntry(inserted);
-        alreadyEnqueued = false;
-      }
-
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeQueue:enqueue",
-        target: taskId,
-        metadata: {
-          taskId,
-          priority: nextEntry.priority,
-          enqueuedAt: nextEntry.enqueuedAt,
-          alreadyEnqueued,
-        },
-      });
-
-      return nextEntry;
-    });
-
-    if (invalidColumn) {
-      store.db.transactionImmediate(() => {
-        store.insertRunAuditEventRow({
-          taskId,
-          domain: "database",
-          mutationType: "mergeQueue:enqueue-rejected",
-          target: taskId,
-          metadata: {
-            taskId,
-            column: invalidColumn,
-            reason: "not-in-review",
-          },
-        });
-      });
-      throw new MergeQueueInvalidColumnError(taskId, invalidColumn);
-    }
-
-    if (!entry) {
-      throw new Error(`Failed to enqueue merge queue entry for ${taskId}`);
-    }
-    return entry;
-  }
-
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (u12 — DELETED, not converted):
+`enqueueMergeQueueSyncInternalImpl` and its `store.enqueueMergeQueueSyncInternal` entry point are gone.
+Merge-queue enqueue is PostgreSQL-only via `enqueueMergeQueueAsync` (task-artifacts-ops.ts); the sync
+SQLite arm had ZERO callers — every remaining mention was a comment. Its `column !== "in-review"` guard
+was carried in the census as deferred debt "needing a store-architecture change to convert". It needed
+no conversion: the code it guarded was unreachable on the shipped backend. Removing dead code is why the
+count drops here, so do not read this file's 0 as a converted seam.
+*/
 export async function releaseMergeQueueLeaseImpl(store: TaskStore, taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): Promise<void> {
         const layer = store.asyncLayer!;
     return releaseMergeQueueLeaseAsync(layer, taskId, workerId, outcome);

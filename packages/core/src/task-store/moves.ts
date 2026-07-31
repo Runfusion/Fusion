@@ -564,7 +564,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
           });
           /*
           FNXC:HandoffFailureInjection 2026-07-15-12:00:
-          Backend handoffs bypass the legacy enqueueMergeQueueSyncInternal spy.
+          The legacy sync SQLite enqueue arm was deleted 2026-07-31 (no callers).
           This test-only no-op seam runs after every VAL-DATA-013 sub-write
           (move, queue, workflow work, and handoff audit), so an injected throw
           proves this transaction rolls all of them back.
@@ -1243,7 +1243,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         });
         /*
         FNXC:HandoffFailureInjection 2026-07-15-12:00:
-        Backend handoffs bypass the legacy enqueueMergeQueueSyncInternal spy.
+        The legacy sync SQLite enqueue arm was deleted 2026-07-31 (no callers).
         This test-only no-op seam runs after every VAL-DATA-013 sub-write
         (move, queue, workflow work, and handoff audit), so an injected throw
         proves this transaction rolls all of them back.

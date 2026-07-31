@@ -88,7 +88,7 @@ export async function recordPluginActivationImpl(store: TaskStore, input: Plugin
 export async function enqueueMergeQueueImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions = {}): Promise<MergeQueueEntry> {
     /*
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
-    Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite enqueueMergeQueueSyncInternal arm is deleted.
+    Merge-queue enqueue is PostgreSQL-only via enqueueMergeQueueAsync (column check, idempotent insert, audit). The SQLite sync arm is deleted (source removed 2026-07-31).
     */
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-02:10:

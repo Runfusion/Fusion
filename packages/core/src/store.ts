@@ -109,7 +109,7 @@ import { resolveTaskSymbolsForTask, type TaskSymbolResolution } from "./task-sym
 import { acquireSymbolLocksAsync, inspectSymbolLockConflictsAsync, reconcileStaleSymbolLocksAsync, releaseSymbolLocksAsync, renewSymbolLocksAsync } from "./task-store/symbol-locks.js";
 import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./symbol-lock-types.js";
 import { queryRunAuditEvents } from "./task-store/async-audit.js";
-import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
+import { isValidMergeRequestTransitionImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, seedStrandedPlanReviewContinuationImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
 import { runPluginColumnTransitionHooksImpl, logEntryImpl } from "./task-store/audit-ops.js";
@@ -388,8 +388,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /*
   FNXC:HandoffFailureInjection 2026-07-15-12:00:
-  PostgreSQL handoffs call enqueueMergeQueueInTransaction directly, bypassing the
-  legacy enqueueMergeQueueSyncInternal spy. Keep this test-only hook dormant in
+  PostgreSQL handoffs call enqueueMergeQueueInTransaction directly. The legacy sync
+  SQLite enqueue arm this once bypassed was deleted 2026-07-31 (it had no callers);
+  this hook is unrelated to it and stays. Keep this test-only hook dormant in
   production so VAL-DATA-013 can inject a late transaction failure and prove every
   handoff sub-write rolls back without adding queries or runtime behavior.
   */
@@ -1769,12 +1770,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return enqueueMergeQueueImpl(this, taskId, opts);
   }
 
-  /**
-   * FNXC:RuntimeLifecycleAsync 2026-06-24-11:15:
-   */
-  public enqueueMergeQueueSyncInternal(taskId: string, opts: MergeQueueEnqueueOptions): MergeQueueEntry {
-    return enqueueMergeQueueSyncInternalImpl(this, taskId, opts);
-  }
   public cleanupStaleMergeQueueRows(now: string): void {
     return cleanupStaleMergeQueueRowsImpl(this, now);
   }

@@ -4,7 +4,6 @@
     "packages/engine/src/scheduler.ts": 2,
     "packages/core/src/task-store/audit-ops.ts": 1,
     "packages/core/src/task-store/lifecycle-ops.ts": 1,
-    "packages/core/src/task-store/merge-queue-ops-2.ts": 1,
     "packages/core/src/task-store/moves.ts": 1,
     "packages/core/src/task-store/task-id-integrity.ts": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
