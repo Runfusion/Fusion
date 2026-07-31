@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
@@ -877,7 +877,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   // ── Event listener cleanup ──────────────────────────────────────────
   private settingsListener: ((data: { settings: Settings; previous: Settings }) => void) | null = null;
-  private taskMovedFanoutListener: ((data: { task: Task; from: string; to: string; source: string }) => void) | null = null;
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:40: `lanes` is the emitter-resolved payload #3109
+     added; optional, because an emit path that cannot resolve sends none. */
+  private taskMovedFanoutListener: ((data: { task: Task; from: string; to: string; source: string; lanes?: TaskMoveLanes }) => void) | null = null;
 
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
@@ -1543,43 +1545,40 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     this.store.on("settings:updated", this.settingsListener);
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (FLAGGED AND LEFT COUNTED — a conversion I wrote,
-    measured, and withdrew):
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:40 (the last fan-out guard, converted — #3109):
+    THE BOARD-STALL COUNTER WAS THE ONE GUARD HERE THAT GENUINELY NEEDED A SYNCHRONOUS ANSWER, because
+    it mutates in-memory state in the handler's own tick. The other two gated work the listener already
+    `void`s and were converted through the async resolver; this one could not follow them.
 
-    These four guards are dead on a renamed board: the stall counter reads zero, the review rebind
-    never runs, and the completion fan-out never reclaims a worktree or clears a dependent's
-    `blockedBy`. All real. The obvious conversion does NOT fix them.
+    The sync IR path was never the answer for it either: `resolveTaskWorkflowIrSync` cannot resolve a
+    CUSTOM workflow at all (two independent blockers, `sync-workflow-ir-second-blocker.test.ts`), so a
+    conversion routed through it would have been inert — which is why I wrote that conversion, measured
+    it, and withdrew it.
 
-    `task:moved` is emitted synchronously, so an `await` here defers everything after it to a
-    microtask and reorders this handler against every other subscriber — which points at the store's
-    sync IR path, the way the scheduler's `resolveTaskParkedColumnsSync` does. I built exactly that
-    and it is INERT:
+    #3109 removed the dilemma by having the EMITTER carry resolved lanes on the `task:moved` payload.
+    Reading them needs NO await, so the counter's increment stays in the same tick and the guard becomes
+    correct at the same time.
 
-      `getTaskWorkflowSelectionImpl` returns `undefined` UNCONDITIONALLY — "Backend mode cannot
-      synchronously read PostgreSQL" — so `resolveTaskWorkflowIrSync` always takes its `!workflowId`
-      branch and answers with the DEFAULT builtin IR. `columnsWithFlag` on that IR yields exactly
-      `todo / in-progress / in-review / done / archived`. Identical to the literals, on every board.
+    `lanes` is optional and fail-soft to `undefined` — "unknown", never "legacy" — so the literals stay
+    as the fallback, matching the `mergeParkedColumns` convention in `scheduler.ts`.
 
-    Worse than the literal, because the literal is COUNTED: four guards would leave the census, the
-    file would read as converted, and the next reader would have no reason to look. My own test
-    passed only because its store mock supplied a renamed IR — it pinned the helper's shape, not
-    production behaviour. Same defect as #3051's ten scheduler guards; see #3058 and the call-site
-    allow-list in `sync-workflow-ir-callsite-allowlist.test.ts`.
-
-    SCOPE, after the async conversion below: this note now covers ONLY the board-stall counter, which
-    mutates in-memory state in the handler's own tick and so genuinely needs a synchronous answer. The
-    other two guards gate work the listener already `void`s, so they ask the ASYNC resolver instead —
-    see the note on them. Splitting the four this way is the whole finding: "the listener is sync" was
-    never the real constraint, "this particular guard's ANSWER is consumed synchronously" is.
-
-    THE REAL BLOCKER for the counter is a sync path that can answer for a CUSTOM workflow, and there
-    are two things in the way, not one (`sync-workflow-ir-second-blocker.test.ts`). Until then the
-    literals here stay, counted.
+    WHAT IT FIXES: on a renamed board this counter read ZERO, so the board-stall watchdog was blind to
+    a board whose cards were moving out of implementation the whole time — the signal it exists to
+    raise was never raised.
     */
-    this.taskMovedFanoutListener = ({ task, from, to }) => {
+    this.taskMovedFanoutListener = ({ task, from, to, lanes }) => {
+      const wipLane = lanes?.wip ?? "in-progress";
+      /* "Left implementation for somewhere that is not implementation" — every lane a card can land
+         in out of wip, so the counter sees the transition whatever the board calls its columns. */
+      const outOfWipLanes = new Set([
+        lanes?.hold ?? "todo",
+        lanes?.review ?? "in-review",
+        lanes?.complete ?? "done",
+        lanes?.archived ?? "archived",
+      ]);
       if (
-        from === "in-progress"
-        && (to === "todo" || to === "in-review" || to === "done" || to === "archived")
+        from === wipLane
+        && outOfWipLanes.has(to)
         && this.boardStallWindow
       ) {
         // In-memory only counter; resets on engine restart.

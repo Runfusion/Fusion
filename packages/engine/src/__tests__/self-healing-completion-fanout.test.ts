@@ -292,3 +292,76 @@ describe("the task:moved fan-out resolves the board's own lanes", () => {
     mgr.stop();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:45:
+THE BOARD-STALL COUNTER, the last fan-out guard and the only one that needed a SYNCHRONOUS answer.
+
+It increments in-memory state in the handler's own tick, so it could not follow the other two guards
+onto the async resolver, and the sync IR path cannot resolve a custom workflow at all — a conversion
+through it would have been inert. #3109's emitter-carried `lanes` removes the dilemma: reading them
+needs no await, so the increment stays in the same tick and the guard becomes correct.
+
+On a renamed board this counter read ZERO, so the board-stall watchdog was blind to a board whose
+cards were moving out of implementation the whole time.
+
+Asserted through the counter itself rather than a downstream alert: the increment IS what the guard
+decides, and routing the assertion through the watchdog would let an unrelated threshold change mask
+a regression here.
+*/
+describe("the board-stall counter follows the board's own lanes", () => {
+  const RENAMED_LANES = { hold: "drafting", intake: "inbox", wip: "building", review: "checking", complete: "shipped", archived: "filed" };
+
+  function startedManager(store: TaskStore & EventEmitter) {
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    vi.spyOn(mgr as unknown as { startMaintenance: () => void }, "startMaintenance").mockImplementation(() => {});
+    vi.spyOn(mgr, "reconcileCompletedTask").mockResolvedValue({ blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false });
+    vi.spyOn(mgr, "reconcileInReviewBranchRebind").mockResolvedValue(0 as never);
+    mgr.start();
+    (mgr as unknown as { boardStallWindow: { transitionsOutOfInProgressInWindow: number } }).boardStallWindow =
+      { transitionsOutOfInProgressInWindow: 0 };
+    return mgr;
+  }
+
+  const counterOf = (mgr: SelfHealingManager) =>
+    (mgr as unknown as { boardStallWindow: { transitionsOutOfInProgressInWindow: number } }).boardStallWindow
+      .transitionsOutOfInProgressInWindow;
+
+  it("counts a move out of the RENAMED wip lane into the renamed review lane", () => {
+    const t = makeTask("FN-C1", { column: "checking" });
+    const store = createStore([t]);
+    const mgr = startedManager(store);
+
+    store.emit("task:moved", { task: t, from: "building", to: "checking", source: "engine", lanes: RENAMED_LANES });
+
+    expect(counterOf(mgr)).toBe(1);
+    mgr.stop();
+  });
+
+  /*
+  The paired negative. The guard is "left implementation for somewhere that is NOT implementation",
+  so a move BETWEEN two non-wip lanes must not count — otherwise the watchdog's denominator inflates
+  and it stops firing for the opposite reason.
+  */
+  it("does NOT count a move that did not leave the wip lane", () => {
+    const t = makeTask("FN-C2", { column: "shipped" });
+    const store = createStore([t]);
+    const mgr = startedManager(store);
+
+    store.emit("task:moved", { task: t, from: "checking", to: "shipped", source: "engine", lanes: RENAMED_LANES });
+
+    expect(counterOf(mgr)).toBe(0);
+    mgr.stop();
+  });
+
+  it("falls back to the legacy ids when the emitter sent no lanes", () => {
+    const t = makeTask("FN-C3", { column: "in-review" });
+    const store = createStore([t]);
+    const mgr = startedManager(store);
+
+    store.emit("task:moved", { task: t, from: "in-progress", to: "in-review", source: "engine" });
+
+    expect(counterOf(mgr)).toBe(1);
+    mgr.stop();
+  });
+});
