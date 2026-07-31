@@ -337,6 +337,25 @@ const LIFECYCLE_ROLE_FLAGS: Record<keyof LifecycleColumns, keyof TraitFlags> = {
  *
  * Returns `undefined` for a v1 / column-less IR: there is no column vocabulary
  * to resolve, so the caller has no workflow-derived answer to act on.
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-31-19:40: THIS ANSWERS "WHERE SHOULD A CARD GO", NOT
+ * "IS THIS CARD ALREADY THERE".
+ *
+ * Each field is a SINGLE id — the first column carrying that trait. A board may declare several
+ * columns with one role (two pre-review working lanes, a review lane plus a merge-blocked lane),
+ * and every one after the first is invisible here. Using a field for MEMBERSHIP therefore reads as
+ * a working check while silently ignoring lanes: a card resting in the second hold column is
+ * classified as not-held, and the guard that depends on it never fires.
+ *
+ * That misreading has now landed in three separate places — the `hold` guard in `self-healing.ts`
+ * (#3084), the progressed-lane check in `notification-service.ts` (#3096), and the review-set
+ * mismatch in #3088 — so it is a property of this signature, not three unlucky authors.
+ *
+ * For membership, use one of:
+ *   - `columnsWithFlag(ir, role)` — every column with the role on ONE board
+ *   - `resolveProjectColumnsForRoles(store, roles)` — the union across a project's workflows
+ *
+ * Rule of thumb: a routing/move target wants this function; a `.has(task.column)` test does not.
  */
 export function resolveLifecycleColumns(ir: WorkflowIr): LifecycleColumns | undefined {
   const columns = columnsOf(ir);
