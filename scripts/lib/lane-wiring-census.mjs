@@ -60,9 +60,21 @@ export function findLaneAcceptingFunctions(files) {
     ts.forEachChild(sf, (node) => {
       if (!ts.isFunctionDeclaration(node) || !node.name) return;
       if (!node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) return;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-20:15 (POSITIONAL lane parameters count too):
+      The first version only understood the options-bag spelling, so a function taking the lane answer
+      POSITIONALLY — `isRecoverable...(task, reviewColumns)`, `isNearDuplicateCanonicalInactive(c, flags)`
+      — had every one of its wired call sites reported as unwired. Six of the eight hits in
+      `self-healing.ts` alone were that false positive, which would have inflated the baseline with
+      sites that are already correct and taught the next reader to distrust the number.
+
+      Both spellings are tracked: option names by name, positional ones by INDEX, so a call is wired if
+      it passes an accepted option key OR supplies an argument in the positional slot.
+      */
       const names = new Set();
-      for (const param of node.parameters) {
-        if (ts.isIdentifier(param.name) && LANE_ARGUMENT_NAMES.has(param.name.text)) names.add(param.name.text);
+      const positions = new Set();
+      node.parameters.forEach((param, index) => {
+        if (ts.isIdentifier(param.name) && LANE_ARGUMENT_NAMES.has(param.name.text)) positions.add(index);
         if (param.type && ts.isTypeLiteralNode(param.type)) {
           for (const member of param.type.members) {
             if (member.name && ts.isIdentifier(member.name) && LANE_ARGUMENT_NAMES.has(member.name.text)) {
@@ -70,8 +82,8 @@ export function findLaneAcceptingFunctions(files) {
             }
           }
         }
-      }
-      if (names.size > 0) accepting.set(node.name.text, names);
+      });
+      if (names.size > 0 || positions.size > 0) accepting.set(node.name.text, { names, positions });
     });
   }
   return accepting;
@@ -86,9 +98,11 @@ export function findUnwiredCallSites(files, accepting) {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const accepted = accepting.get(node.expression.text);
         if (accepted) {
-          const passes = node.arguments.some((arg) =>
+          const passesOption = node.arguments.some((arg) =>
             ts.isObjectLiteralExpression(arg)
-            && arg.properties.some((p) => p.name && ts.isIdentifier(p.name) && accepted.has(p.name.text)));
+            && arg.properties.some((p) => p.name && ts.isIdentifier(p.name) && accepted.names.has(p.name.text)));
+          const passesPositional = [...accepted.positions].some((index) => node.arguments.length > index);
+          const passes = passesOption || passesPositional;
           if (!passes) {
             const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
             unwired.push({ file, line: line + 1, fn: node.expression.text });
