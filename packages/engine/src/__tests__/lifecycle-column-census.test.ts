@@ -1,0 +1,698 @@
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-14:35 (Phase C convergence — the census's own tests):
+
+A census nobody has tried to fool is a number, not a measurement. This pins every form the
+lifecycle-column census must catch, and every form it must NOT count — because the tracked
+`=== "triage"` grep it replaces was wrong in three separate ways, and each way cost real work:
+
+  1. it counted only ONE of six legacy column ids (triage was under 4% of the total);
+  2. it missed guards whose local was named `from` / `originColumn` rather than `column`;
+  3. it counted `role === "triage"` / `agentType === "triage"` — AGENT ROLE comparisons that
+     must never be converted, since the planner lane keeps that name.
+
+Each case below is one of those, plus the comment-prose case that inflated two files' counts.
+*/
+import { describe, expect, it } from "vitest";
+
+import {
+  DELIBERATE_MARKER,
+  LEGACY_COLUMN_IDS,
+  findComparisons,
+  receiverOf,
+  stripComments,
+  summarize,
+  mixedVocabularyFiles,
+} from "../../../../scripts/lib/lifecycle-column-census.mjs";
+
+function census(source: string) {
+  return findComparisons("fixture.ts", source);
+}
+
+function kinds(source: string): string[] {
+  return census(source).map((f) => (f as { kind: string }).kind);
+}
+
+describe("the census counts a column guard in every shape the codebase actually uses", () => {
+  it("counts all six legacy column ids, not just triage", () => {
+    // Defect 1: the tracked grep measured `triage` only, which was under 4% of the real total.
+    const source = LEGACY_COLUMN_IDS.map((id, i) => `const a${i} = task.column === "${id}";`).join("\n");
+
+    expect(kinds(source)).toEqual(LEGACY_COLUMN_IDS.map(() => "column"));
+  });
+
+  it("counts a guard whose local is NOT named `column`", () => {
+    // Defect 2: this is verbatim the shape of the three executor.ts guards that were absent
+    // from the tracked list while the card they stranded had its work already complete.
+    const source = [
+      `if ((from === "todo" || from === "triage") && to !== "in-progress") return;`,
+      `const promoted = originColumn === "todo" || originColumn === "triage";`,
+    ].join("\n");
+
+    expect(kinds(source).every((k) => k === "column")).toBe(true);
+    expect(kinds(source)).toHaveLength(5);
+  });
+
+  it("counts single-quoted and negated forms", () => {
+    const source = [
+      `if (task.column !== 'in-review') return;`,
+      `const done = t.column === 'done';`,
+    ].join("\n");
+
+    expect(kinds(source)).toEqual(["column", "column"]);
+  });
+
+  it("counts more than one comparison on the same line", () => {
+    const source = `const planner = c === "todo" || c === "triage" || c === "archived";`;
+
+    expect(kinds(source)).toHaveLength(3);
+  });
+});
+
+describe("the census does NOT count things that are not column guards", () => {
+  it("ignores AGENT ROLE comparisons", () => {
+    // Defect 3. Converting these silently empties the planner's prompt template, so counting
+    // them as backlog actively invites the wrong fix.
+    const source = [
+      `if (role === "triage") return TRIAGE_PROMPT;`,
+      `const lane = agentType === "triage" ? planning : execution;`,
+      `if (entry.agent !== "triage") return;`,
+    ].join("\n");
+
+    expect(kinds(source)).toEqual(["role", "role", "role"]);
+    expect(summarize(census(source)).totals.column).toBe(0);
+  });
+
+  it("ignores comment prose describing a past guard", () => {
+    // Two of the tracked hits in replan-target.ts were prose about a filter in another file.
+    const source = [
+      `/* the discovery filter (\`column === "triage" && ready\`) never re-admitted it */`,
+      `// historical: fromColumn === "todo" used to mean planning`,
+      `const real = task.column === "done";`,
+    ].join("\n");
+
+    expect(kinds(source)).toEqual(["column"]);
+  });
+
+  it("counts a trailing line comment as prose, not code", () => {
+    // `stripComments` needs the multiline flag or a trailing comment survives and is counted.
+    const source = `const x = 1; // task.column === "triage" is gone`;
+
+    expect(stripComments(source)).not.toContain("triage");
+    expect(kinds(source)).toEqual([]);
+  });
+
+  it("classifies a reviewed literal as deliberate when the marker is at the site", () => {
+    const source = [
+      `/* FNXC:Whatever ${DELIBERATE_MARKER}: the fallback must NOT be workflow-resolved. */`,
+      `const target = declared ? resolved : "triage";`,
+      `if (task.column === "triage") return legacy;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.deliberate).toBe(1);
+    expect(summary.totals.column).toBe(0);
+  });
+
+  it("does NOT let a marker elsewhere in the file excuse a distant guard", () => {
+    // Otherwise one marker launders a whole file, which is how allowlists rot.
+    const source = [
+      `/* ${DELIBERATE_MARKER}: reason for the site below. */`,
+      `const a = task.column === "triage";`,
+      ...Array.from({ length: 20 }, (_, i) => `const filler${i} = ${i};`),
+      `const b = task.column === "done";`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.deliberate).toBe(1);
+    expect(summary.totals.column).toBe(1);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:05 (PR #2633 review, greptile P1):
+
+COMMENT STRIPPING MUST PRESERVE LINE COUNT. Deleting a multi-line block comment outright shifted
+every following line, and the consequence was not the harmless over-count I had written down: the
+site-local DELIBERATE-LITERAL lookup ran at the wrong offset, so ONE marker in a file laundered
+FOUR unrelated live guards in `replan-target.ts` — they were reported as reviewed-and-intentional
+when they are neither. Findings also pointed at unrelated source lines, which sends a reader to
+the wrong code. Blanking the comment in place fixes both.
+*/
+describe("stripping a comment must not move the lines after it", () => {
+  it("reports the ORIGINAL line number after a multi-line block comment", () => {
+    const source = ["/* a", "multi", "line", "comment */", `const a = task.column === "triage";`].join("\n");
+
+    expect(census(source)[0]?.line).toBe(5);
+  });
+
+  it("finds a site-local marker across a multi-line comment", () => {
+    const source = [
+      `/* FNXC:Whatever ${DELIBERATE_MARKER}: reason`,
+      "spanning",
+      "several",
+      "lines */",
+      `const a = task.column === "triage";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.deliberate).toBe(1);
+  });
+
+  it("does NOT let a marker launder guards the shift used to pull into range", () => {
+    // The replan-target.ts case, minimized: a marked site near the top, then a genuinely
+    // unrelated guard far below. Before the fix the deletion of the intervening comment moved
+    // the second guard inside the marker's window and it was scored `deliberate`.
+    const source = [
+      `/* ${DELIBERATE_MARKER}: this fallback must not be workflow-resolved. */`,
+      `const fallback = declared ? resolved : "triage";`,
+      "/*",
+      ...Array.from({ length: 30 }, (_, i) => ` * filler line ${i}`),
+      " */",
+      `if (task.column === "in-progress" || task.column === "done") return true;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.column).toBe(2);
+    expect(summary.totals.deliberate).toBe(0);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:35 (PR #2633 review follow-up):
+
+A NAME LIST IS GUESSWORK, and mine was already wrong: `skill-resolver.ts` compares
+`sessionPurpose` and `tool-availability.ts` compares `surface`, and both scored as column guards
+until a human found them by hand. Names are unbounded; the vocabulary is not.
+
+`AgentRole` is `triage | executor | reviewer | merger`, and three of those four are never column
+ids. So an expression compared against `"executor"`/`"reviewer"`/`"merger"` nearby is being matched
+against ROLES whatever it is called. Structural, not nominal — and it generalises to receivers
+nobody has named yet. `triage` belonging to both vocabularies is the whole reason this exists.
+*/
+describe("a role comparison is recognised by the vocabulary it uses, not only by its name", () => {
+  it("classifies an unfamiliar receiver as a role when it is matched against role-only values", () => {
+    const source = [
+      `const usesRoleFallback = sessionPurpose === "triage"`,
+      `  || sessionPurpose === "executor"`,
+      `  || sessionPurpose === "reviewer";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals).toEqual({ column: 0, role: 1, status: 0, deliberate: 0 });
+  });
+
+  it("recognises the single-line ternary form too", () => {
+    // tool-availability.ts's shape: `surface === "triage" ? A : B` with the union declared above.
+    const source = `return surface === "triage" ? TRIAGE_GUIDANCE : EXECUTOR_GUIDANCE;\nif (surface === "executor") return x;`;
+
+    expect(summarize(census(source)).totals.role).toBe(1);
+  });
+
+  it("does NOT reclassify a genuine column guard that merely sits near role code", () => {
+    // The signal is the RECEIVER being matched against a role-only value — not proximity alone.
+    // Otherwise one nearby role check would launder every column guard around it.
+    const source = [
+      `if (agentType === "executor") return;`,
+      `if (task.column === "triage") return;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals.column).toBe(1);
+    expect(summary.totals.role).toBe(0);
+  });
+
+  it("still counts a column guard whose receiver is an unremarkable local", () => {
+    // `cli/src/commands/task.ts` compares `col` against the column ids for its board dots —
+    // an unfamiliar name, but the vocabulary is columns, so it stays in the backlog.
+    const source = [
+      `const dot = col === "triage" ? "●" :`,
+      `  col === "todo" ? "●" :`,
+      `  col === "in-review" ? "●" : "○";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.column).toBe(3);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:20 (third colliding vocabulary):
+
+STATUS IS NOT A COLUMN, and this is the largest correction the census has produced: 182 of the 1030
+sites it first called column guards compare an ENTITY STATUS. `StepStatus` is
+`pending | in-progress | done | skipped`; mission features and goals carry their own
+`done`/`archived` statuses. So `step.status === "done"` and `goal.status === "archived"` were
+counted as un-migrated lifecycle guards, inflating `done` (105 of 313) and `in-progress` (49 of
+201).
+
+Converting one would be worse than leaving it: asking "which column carries the complete trait"
+about a STEP's status is a category error, and the step would stop reading as finished.
+*/
+describe("entity statuses that share a column name are not column guards", () => {
+  it("classifies step, goal and feature statuses as status, not backlog", () => {
+    const source = [
+      `const isDone = step.status === "done" || step.status === "skipped";`,
+      `if (existing.status === "archived") return;`,
+      `if (feature.status === "done") count += 1;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    // Three, not four: `skipped` is a StepStatus value but NOT one of the six legacy column ids,
+    // so the census never looks at it. Only the `done`/`archived`/`done` comparisons are findings
+    // at all — which is itself worth knowing, since it means the status inflation comes entirely
+    // from the three names the two vocabularies share.
+    expect(summary.totals.status).toBe(3);
+    expect(summary.totals.column).toBe(0);
+  });
+
+  it("recognises a status by the vocabulary even when the receiver is not named `status`", () => {
+    // `pending` and `skipped` are StepStatus members and never column ids, so an expression
+    // matched against either is a status whatever it is called — the same structural signal the
+    // role classification uses, for the same reason: names are unbounded.
+    const source = [
+      `const finished = s === "done"`,
+      `  || s === "pending"`,
+      `  || s === "skipped";`,
+    ].join("\n");
+
+    expect(summarize(census(source)).totals.status).toBe(1);
+  });
+
+  it("does NOT reclassify a real column guard sitting near status code", () => {
+    const source = [
+      `if (step.status === "pending") return;`,
+      `if (task.column === "done") return;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    // The column guard stays backlog. The `pending` line is not a finding at all — it compares a
+    // value outside the column vocabulary — so a nearby status check cannot launder the guard, and
+    // it cannot pad the status count either.
+    expect(summary.totals.column).toBe(1);
+    expect(summary.totals.status).toBe(0);
+  });
+
+  it("keeps a column guard that merely lives in a file full of statuses", () => {
+    const source = `if (toColumn === "in-progress" && task.status === "pending") return;`;
+    const summary = summarize(census(source));
+
+    // The column half is still backlog; only the status half is excluded.
+    expect(summary.totals.column).toBe(1);
+  });
+});
+
+describe("receiver extraction survives real call shapes", () => {
+  it("reads through property access, optional chaining, and parentheses", () => {
+    expect(receiverOf("if (task.column ")).toBe("column");
+    expect(receiverOf("if (live?.column ")).toBe("column");
+    expect(receiverOf("if (String(task.status) ")).toBe("status");
+    expect(receiverOf("  const x = from ")).toBe("from");
+  });
+});
+
+describe("the census refuses to report success on nothing", () => {
+  it("summarizes an empty finding list as three zeros, never as a pass signal", () => {
+    /*
+    The CLI additionally exits 1 when its own file list comes back EMPTY, because a guard that
+    reports success without checking anything is worse than no guard. That path is a process
+    exit and is exercised by running the script; this pins the pure half — an empty census is
+    three zeros and carries no verdict of its own.
+    */
+    expect(summarize([]).totals).toEqual({ column: 0, role: 0, status: 0, deliberate: 0 });
+    expect(summarize([]).byFile).toEqual([]);
+  });
+});
+
+describe("the summary separates the three classes", () => {
+  it("reports column guards, role comparisons and deliberate literals independently", () => {
+    // Netting them into one number is what produced a tracked figure that was simultaneously
+    // too high and too low.
+    const source = [
+      `if (task.column === "todo") return;`,
+      `if (role === "triage") return;`,
+      `/* ${DELIBERATE_MARKER}: reason. */`,
+      `if (fallbackColumn === "triage") return;`,
+    ].join("\n");
+
+    const summary = summarize(census(source));
+
+    expect(summary.totals).toEqual({ column: 1, role: 1, status: 0, deliberate: 1 });
+    expect(summary.byColumnId).toEqual({ todo: 1 });
+  });
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-18:40 (the ratchet's one unusable state, now fixed):
+
+`--update-baseline` MUST RUN EVEN WHEN A FILE ROSE. It could not: the rise check exited before the write,
+so the only supported way to re-record was unavailable in exactly the situation that needs it.
+
+That is a live problem, not a tidiness one, because #2654 gates CI on this AND A CONVERSION LEGITIMATELY
+ADDS A LITERAL — the correct shape for a caller that may have no traits is
+`flags ? flags.x : columnId === "legacy"`, and each one raises a file's count by one. Measured on main:
+`columnRoles.ts` went 0 -> 1 from exactly that shape. So a worker doing the right thing met a red gate
+whose only escape was hand-editing the JSON, which is how a ratchet becomes something people route around.
+
+Exercised end to end before writing this, on a real rise injected into `live-agent-count.ts`:
+  rise + plain --strict            exit 1  (unchanged — the ratchet still bites)
+  rise + --strict --update-baseline exit 0, printing "ACCEPTED RISES  live-agent-count.ts: 6 -> 7"
+
+EXIT CODES ARE THE CONTRACT and the pure summarizer cannot express them, so these assert the CLI's own
+source: which branch writes, which exits, and — the part that was actually broken — the ORDER. Marker-to-
+marker slices rather than character windows, and each marker checked for uniqueness first, because a
+repeated marker is the magic-number problem wearing a name.
+*/
+describe("the baseline can always be re-recorded", () => {
+  const cliPath = new URL("../../../../scripts/lifecycle-column-census.mjs", import.meta.url).pathname;
+
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-06:30:
+  STRIP COMMENTS — the assertions below index on marker strings, and the CLI's own prose names them.
+
+  These two cases went red on main claiming the ORDER was inverted: `updateAt` 26374, `riseAt` 19345.
+  The order in CODE is unchanged and correct (`if (updateBaseline) {` at line 487, the rise message at
+  510). What moved was a COMMENT: line 359 explains the failure mode and quotes
+  "column-guard count ROSE" verbatim, so `indexOf` found the prose 7000 characters before the branch
+  it was meant to locate.
+
+  A guard that a comment can invert is not measuring control flow. Worse, the honest-looking fix is to
+  reword the comment, which silently re-arms the same trap for whoever explains this next.
+
+  The same defence is already used by `archived-column-gate-parity.test.ts` for the same reason: the
+  notes documenting WHY a literal is dangerous have to mention the literal.
+
+  Deliberately NOT deleting these in favour of the end-to-end block below, even though that block does
+  cover this contract (it drives the real CLI and asserts exit code, baseline content and output — and
+  its own comment names the ordering bug). Two guards at different levels is the point: the e2e one
+  proves the behaviour, these locate the branch that provides it. They only needed to stop being
+  defeated by prose.
+  */
+  function cliSource(): string {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const raw = require("node:fs").readFileSync(cliPath, "utf8") as string;
+    return raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  }
+
+  function sliceBetween(cli: string, from: string, to: string): string {
+    const start = cli.indexOf(from);
+    const end = cli.indexOf(to, start + from.length);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    // A repeated marker would make the slice meaningless, so prove uniqueness before trusting it.
+    expect(cli.indexOf(from, start + from.length)).toBe(-1);
+    return cli.slice(start, end);
+  }
+
+  it("writes the baseline BEFORE the rise check can exit", () => {
+    const cli = cliSource();
+    const updateAt = cli.indexOf("if (updateBaseline) {");
+    const riseAt = cli.indexOf("column-guard count ROSE");
+
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(riseAt).toBeGreaterThan(updateAt);
+  });
+
+  it("exits 0 from the update branch and 1 from the rise branch", () => {
+    const cli = cliSource();
+
+    expect(sliceBetween(cli, "if (updateBaseline) {", "column-guard count ROSE")).toContain("process.exit(0)");
+    expect(sliceBetween(cli, "column-guard count ROSE", "baseline is STALE")).toContain("process.exit(1)");
+  });
+
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-18:30 (PR #2668 review — greptile):
+  END-TO-END, because every assertion above reads this file's SOURCE TEXT. Substrings,
+  marker ordering and `writeFileSync` counts cannot see control flow: move the exit,
+  reorder the branches, or return before the write, and all of them stay green while
+  the contract is broken.
+
+  The contract is three observable things — the EXIT CODE, what lands in the baseline
+  file, and what is printed. These drive the real CLI against a throwaway baseline via
+  `FUSION_CENSUS_BASELINE_PATH` and assert exactly those, so a control-flow change
+  fails here even when the source still contains every string the tests above look for.
+  */
+  describe("driven end to end", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execFileSync } = require("node:child_process");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require("node:os");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path");
+
+    const repoRoot = new URL("../../../..", import.meta.url).pathname;
+
+    function runCli(args: string[], baseline: unknown): { status: number; stdout: string } {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-census-"));
+      const baselinePath = path.join(dir, "baseline.json");
+      fs.writeFileSync(baselinePath, JSON.stringify(baseline));
+      try {
+        const stdout = execFileSync("node", [cliPath, ...args], {
+          encoding: "utf8",
+          /* The CLI globs with `git ls-files` relative to CWD, and vitest runs from the
+             package dir where that finds nothing — the run then exits on "file list is
+             EMPTY". Without this the rise test would pass for the wrong reason. */
+          cwd: repoRoot,
+          env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
+        }) as string;
+        return { status: 0, stdout, ...{ baselinePath } } as never;
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string };
+        return { status: e.status ?? -1, stdout: e.stdout ?? "", ...{ baselinePath } } as never;
+      } finally {
+        // Read-back happens in the caller via the returned path; cleanup is per-test.
+      }
+    }
+
+    it("exits 0 and REWRITES the baseline under --update-baseline, even when the count rose", () => {
+      /* The case the ordering bug broke: a rise used to exit before the write, so the
+         one command whose whole job is re-recording could not re-record. */
+      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const r = runCli(["--strict", "--update-baseline"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
+      expect(r.status).toBe(0);
+      const written = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-30-19:10:
+      Asserted on the per-file entry rather than `totals`, which the pin no longer stores — the
+      derived aggregates were the only lines every conversion PR rewrote, and so the sole cause of
+      fleet-wide conflicts in this file. The claim is unchanged and still specific: the stale pin
+      said 1, and the rewritten pin must carry the tree's real (higher) count for that same file.
+      */
+      expect(written.byFile["packages/engine/src/self-healing.ts"]).toBeGreaterThan(1);
+      expect(r.stdout).toContain("ACCEPTED RISES");
+    });
+
+    it("exits 1 and LEAVES the baseline alone on a rise without --update-baseline", () => {
+      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const r = runCli(["--strict"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
+      expect(r.status).toBe(1);
+      const after = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
+      expect(after.totals.column).toBe(1);
+    });
+  });
+
+  it("names what it accepted instead of swallowing it", () => {
+    // A silent re-record would hide a genuine regression behind a routine command.
+    expect(cliSource()).toContain("ACCEPTED RISES");
+  });
+
+  it("has exactly ONE writer for the baseline artifact", () => {
+    // The old code had a second `writeFileSync` behind the rise exit — unreachable in the case that
+    // needed it, and a second writer for one artifact is how the two drift.
+    expect(cliSource().split("writeFileSync(").length - 1).toBe(1);
+  });
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-08-01-02-45 (coordinator item 2 — the ratchet must FOLLOW THE COUNT DOWN):
+
+A DROP NOW TIGHTENS THE BASELINE INSTEAD OF FAILING. Failing hard was defensible in isolation — a stale
+allowance is a hole, since those guards can return up to the old count while the check stays green. What it
+missed is that the drop is almost never the author's to fix: eleven files dropped during one merge wave, none
+of those PRs re-recorded, and none of their authors did anything wrong.
+
+Measured three times since CI began gating this: `columnRoles.ts` 0 -> 1, then `executor.ts` twice. A
+permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then nothing is
+guarded at all. The RISE check — the actual purpose — is untouched and still fails hard.
+
+Driven end to end through the real CLI with an isolated baseline (`FUSION_CENSUS_BASELINE`), because the exit
+code and the file rewrite ARE the contract and no source-level assertion can prove them. All four transitions
+were exercised by hand first:
+  drop, --strict            exit 0, "TIGHTENED", baseline rewritten 9 -> 6
+  drop, --strict --exact    exit 1, baseline untouched
+  rise, --strict            exit 1
+  clean                     exit 0
+*/
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-21:00 (the half-conversion detector):
+A file holding BOTH vocabularies is where a resolved guard can end up feeding a literal one — the
+shape behind four separate review findings in a single day. Report-only by design: a partially
+converted file is the expected state mid-phase, so this must inform a reviewer, not fail a build.
+*/
+describe("mixed-vocabulary detection", () => {
+  const read = (contents: Record<string, string>) => (file: string) => {
+    const found = contents[file];
+    if (found === undefined) throw new Error(`no such file: ${file}`);
+    return found;
+  };
+
+  it("flags a file that uses a role resolver AND still holds legacy literals", () => {
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `const lanes = resolveLifecycleColumns(ir); if (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([{ file: "a.ts", count: 3, resolvers: 1 }]);
+  });
+
+  it("does NOT flag a file that is fully literal — nothing is half-converted there", () => {
+    /* The whole backlog would light up otherwise, and the signal would carry no information. */
+    expect(mixedVocabularyFiles([["a.ts", 9]], read({ "a.ts": `if (t.column === "done") return;` }))).toEqual([]);
+  });
+
+  it("does NOT flag a fully converted file — zero guards means nothing left to mismatch", () => {
+    expect(mixedVocabularyFiles([["a.ts", 0]], read({ "a.ts": `resolveLifecycleColumns(ir)` }))).toEqual([]);
+  });
+
+  it("does NOT count a resolver named only in a COMMENT", () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-22:10 (PR #2704 review — greptile):
+    This codebase's FNXC notes name these functions constantly, so counting prose made the false
+    positive structural rather than incidental. Measured: it over-reported 23 files / 311 guards
+    where the truth is 21 / 300. A review signal that cries wolf gets ignored, and then it is worth
+    nothing at all.
+    */
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `// was resolveLifecycleColumns(ir) once\nif (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("does NOT count a resolver named only in a STRING literal", () => {
+    /* An error message or a log line mentioning a resolver is not a call to one. */
+    const result = mixedVocabularyFiles(
+      [["a.ts", 3]],
+      read({ "a.ts": `throw new Error("use resolveLifecycleColumns instead"); if (t.column === "done") return;` }),
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it("does not match a resolver name embedded in a longer identifier", () => {
+    /* Same trap the trait hints hit in #2677: `hold` matched inside `threshold`. */
+    expect(mixedVocabularyFiles([["a.ts", 2]], read({ "a.ts": `myResolveLifecycleColumnsHelper()` }))).toEqual([]);
+  });
+
+  it("survives an unreadable file rather than reporting it", () => {
+    expect(mixedVocabularyFiles([["gone.ts", 4]], read({}))).toEqual([]);
+  });
+});
+
+describe("the ratchet follows the count down", () => {
+  const repoRoot = new URL("../../../../", import.meta.url).pathname;
+  const cliPath = `${repoRoot}scripts/lifecycle-column-census.mjs`;
+  const realBaseline = `${repoRoot}scripts/lib/lifecycle-column-census-baseline.json`;
+
+  async function run(mutate: (baseline: any) => string, args: string[], touchedPaths?: () => string) {
+    const { mkdtemp, writeFile, readFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFile } = await import("node:child_process");
+
+    const baseline = JSON.parse(await readFile(realBaseline, "utf8"));
+    const file = mutate(baseline);
+    const dir = await mkdtemp(join(tmpdir(), "fusion-census-tighten-"));
+    const path = join(dir, "baseline.json");
+    await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`);
+
+    const result = await new Promise<{ code: number; out: string }>((resolve) => {
+      execFile(
+        process.execPath, [cliPath, ...args],
+        {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            FUSION_CENSUS_BASELINE_PATH: path,
+            /* Empty string = "this change touched nothing", which is the lenient path the other cases need. */
+            FUSION_CENSUS_TOUCHED_PATHS: touchedPaths ? touchedPaths() : "",
+          },
+          maxBuffer: 32 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => resolve({ code: (error as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` }),
+      );
+    });
+    const after = JSON.parse(await readFile(path, "utf8"));
+    return {
+      ...result,
+      file,
+      inflatedFrom: baseline.byFile[file] as number,
+      allowedAfter: after.byFile[file] as number,
+    };
+  }
+
+  /** Inflate one file's allowance, which is a DROP from the CLI's point of view. */
+  const inflate = (baseline: any): string => {
+    const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
+    baseline.byFile[file as string] = (count as number) + 3;
+    return file as string;
+  };
+
+  it("TIGHTENS on a drop and exits 0, so somebody else's merge cannot redden the gate", async () => {
+    const run1 = await run(inflate, ["--strict"]);
+
+    expect(run1.code).toBe(0);
+    expect(run1.out).toContain("TIGHTENED");
+    /*
+    The WRITE is the point, so assert it directly against the inflated value rather than against itself — my
+    first version compared `allowedAfter` to `4 + allowedAfter`, which is true for every number and proved
+    nothing. Recording that here because it is the same vacuous-assertion trap this file keeps documenting,
+    and I walked into it while writing the case that guards against it.
+    */
+    expect(run1.allowedAfter).toBe(run1.inflatedFrom - 3);
+    expect(run1.out).toContain("COMMIT IT");
+  }, 30_000);
+
+  it("FAILS when the change TOUCHES the file that dropped, so the allowance cannot stay open", async () => {
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-12:10 (PR #2679 review — greptile P1):
+    The auto-tighten write is discarded with the CI runner, so the committed allowance stays stale and a
+    later change could regrow guards up to it while the gate is green. Regrowing means EDITING the file,
+    so a touched file must be re-recorded in the change that touched it. That is what makes the hole
+    unreachable rather than merely documented.
+    */
+    let touchedFile = "";
+    const run1 = await run((baseline) => { touchedFile = inflate(baseline); return touchedFile; }, ["--strict"], () => touchedFile);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("TOUCHES files whose guard count dropped");
+    // The baseline must be left ALONE on the failure path — a rewrite here would defeat the demand.
+    expect(run1.allowedAfter).toBe(run1.inflatedFrom);
+  }, 30_000);
+
+  it("still FAILS on a drop under --exact, and leaves the baseline alone", async () => {
+    // The pinned end state: when the count is meant to be fixed, any divergence is a real event.
+    const run1 = await run(inflate, ["--strict", "--exact"]);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("baseline is STALE");
+  }, 30_000);
+
+  it("still FAILS on a rise, which is the check's actual purpose", async () => {
+    const deflate = (baseline: any): string => {
+      const [file, count] = Object.entries(baseline.byFile as Record<string, number>).find(([, c]) => c > 1) ?? [];
+      baseline.byFile[file as string] = (count as number) - 1;
+      return file as string;
+    };
+
+    const run1 = await run(deflate, ["--strict"]);
+
+    expect(run1.code).toBe(1);
+    expect(run1.out).toContain("column-guard count ROSE");
+  }, 30_000);
+});

@@ -27,6 +27,7 @@ import type { SectionId } from "../SettingsModal";
 import type { MainContentProps } from "./types";
 
 export function MainContent({
+  columnFlagsByTaskId,
   showBackendConnectionErrorPage,
   projectsError,
   t,
@@ -381,7 +382,12 @@ export function MainContent({
                 prAuthAvailable={prAuthAvailable}
                 autoMergeEnabled={autoMerge}
                 nearDuplicateCanonicalInactive={typeof task.sourceMetadata?.nearDuplicateOf === "string"
-                  ? isNearDuplicateCanonicalInactive(pluginContextTasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf))
+                  ? (() => {
+                    /* FNXC:WorkflowResolvedColumns 2026-07-30-01:10: the canonical's own flags, from
+                       the per-task map this component already threads to its other children. */
+                    const canonical = pluginContextTasks.find((candidate) => candidate.id === task.sourceMetadata?.nearDuplicateOf);
+                    return isNearDuplicateCanonicalInactive(canonical, canonical ? columnFlagsByTaskId?.get(canonical.id) : undefined);
+                  })()
                   : undefined}
               />
             ),
@@ -549,6 +555,7 @@ export function MainContent({
         <Suspense fallback={null}>
           <DocumentsView
             projectId={currentProject?.id}
+            columnFlagsByTaskId={columnFlagsByTaskId}
             addToast={addToast}
             onOpenDetail={openDetailTask}
             onOpenArtifactTaskDetail={popOutTaskDetail}
@@ -782,7 +789,7 @@ export function MainContent({
     return (
       <PageErrorBoundary>
         <Suspense fallback={null}>
-          <DevServerView tasks={tasks} addToast={addToast} projectId={currentProject?.id} />
+          <DevServerView tasks={tasks} addToast={addToast} projectId={currentProject?.id} columnFlagsByTaskId={columnFlagsByTaskId} />
         </Suspense>
       </PageErrorBoundary>
     );
@@ -852,8 +859,6 @@ export function MainContent({
             prAuthAvailable={prAuthAvailable}
             onOpenWorkflowEditor={openWorkflowEditorWithNav}
             onCreateWorkflow={openCreateWorkflowWithNav}
-            workflowColumnsEnabled
-            settingsLoaded={settingsLoaded}
             workflowControlsInHeader={sidebarActive || isMobile}
           />
         </PageErrorBoundary>
@@ -969,8 +974,6 @@ export function MainContent({
           prAuthAvailable={prAuthAvailable}
           onOpenWorkflowEditor={openWorkflowEditorWithNav}
           onCreateWorkflow={openCreateWorkflowWithNav}
-          workflowColumnsEnabled
-          settingsLoaded={settingsLoaded}
           workflowControlsInHeader={sidebarActive || isMobile}
         />
       </PageErrorBoundary>
@@ -1016,8 +1019,6 @@ export function MainContent({
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
-        workflowColumnsEnabled
-        settingsLoaded={settingsLoaded}
         workflowControlsInHeader={sidebarActive || isMobile}
       />
     </PageErrorBoundary>

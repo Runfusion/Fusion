@@ -771,11 +771,11 @@ describe("RightDock", () => {
     FNXC:RightDock 2026-06-22-17:40:
     The pop-out is a floating, non-blocking window: the overlay carries the non-blocking class (transparent + pointer-events:none in CSS so behind-clicks pass through), a drag handle (header) exists, and the panel is the floating variant. There is no overlay click-to-dismiss; the explicit close button is the only dismissal.
     */
-    expect(screen.getByTestId("right-dock-expand-modal")).toHaveClass("right-dock-expand-modal-overlay");
+    expect(screen.getByTestId("right-dock-expand-modal")).toHaveClass("floating-window-overlay");
     expect(screen.getByTestId("right-dock-expand-modal")).toHaveAttribute("aria-modal", "false");
     expect(screen.getByTestId("right-dock-expand-drag-handle")).toBeInTheDocument();
-    expect(screen.getByTestId("right-dock-expand-modal").querySelector(".right-dock-expand-modal--floating")).not.toBeNull();
-    expect(screen.getByTestId("right-dock-expand-resize-se")).toHaveAttribute("aria-label", "Resize expanded right dock window");
+    expect(screen.getByTestId("floating-window-right-dock-expand")).toHaveClass("right-dock-expand-modal--floating");
+    expect(screen.getByTestId("floating-window-resize-se")).toHaveAttribute("aria-label", "Resize floating window");
     expect(screen.getByTestId("right-dock-expand-close")).toHaveAttribute("aria-label", "Close expanded right dock view");
     fireEvent.click(screen.getByTestId("right-dock-expand-close"));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -828,7 +828,7 @@ describe("RightDock", () => {
   });
 
   it("restores the expanded modal's persisted size", () => {
-    window.localStorage.setItem("fusion:right-dock-expand-modal-size", JSON.stringify({ width: 640, height: 480 }));
+    window.localStorage.setItem("fusion:right-dock-expand-modal-geometry", JSON.stringify({ size: { width: 640, height: 480 }, position: { x: 32, y: 32 } }));
     render(
       <RightDockExpandModal
         viewKey="files"
@@ -837,7 +837,7 @@ describe("RightDock", () => {
       />,
     );
 
-    expect(screen.getByTestId("right-dock-expand-modal").querySelector(".right-dock-expand-modal")).toHaveStyle({
+    expect(screen.getByTestId("floating-window-right-dock-expand")).toHaveStyle({
       width: "640px",
       height: "480px",
     });
@@ -864,11 +864,11 @@ describe("RightDock", () => {
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 60, clientY: 140 });
     fireEvent.pointerUp(handle, { pointerId: 1, clientX: 60, clientY: 140 });
 
-    const persisted = window.localStorage.getItem("fusion:right-dock-expand-modal-position");
+    const persisted = window.localStorage.getItem("fusion:right-dock-expand-modal-geometry");
     expect(persisted).not.toBeNull();
-    const parsed = JSON.parse(persisted as string) as { x: number; y: number };
-    expect(parsed.x).toBeGreaterThanOrEqual(0);
-    expect(parsed.y).toBeGreaterThanOrEqual(0);
+    const parsed = JSON.parse(persisted as string) as { position: { x: number; y: number } };
+    expect(parsed.position.x).toBeGreaterThanOrEqual(16);
+    expect(parsed.position.y).toBeGreaterThanOrEqual(16);
   });
 
   it("fires expand for the currently selected inline entry", () => {

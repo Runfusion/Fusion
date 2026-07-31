@@ -63,7 +63,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
 
   beforeAll(async () => {
     /*
-    FNXC:PlanningModeBrowserE2E 2026-07-31-09:05:
+    FNXC:PlanningModeBrowserE2E 2026-07-23-09:05:
     This static fixture has no reload contract. Disable file watching so an fsevents watcher cannot
     outlive Chromium and block the required responsive browser lane during teardown.
     */
@@ -89,7 +89,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
   afterAll(async () => {
     await browser?.close();
     /*
-    FNXC:PlanningModeBrowserE2E 2026-07-31-09:05:
+    FNXC:PlanningModeBrowserE2E 2026-07-23-09:05:
     Bound watcher shutdown prevents a native fsevents close callback from holding this mandatory
     browser lane open after the fixture listener is gone, while still releasing it before Vitest exits.
     */
@@ -250,7 +250,7 @@ describe.runIf(executablePath)("Planning Mode browser E2E", () => {
       const triggerIndex = visibleButton ? focusable.indexOf(visibleButton) : -1;
       const buttonRect = visibleButton?.getBoundingClientRect();
       /*
-      FNXC:PlanningComments 2026-07-31-09:05:
+      FNXC:PlanningComments 2026-07-23-09:05:
       Start at the preceding tab stop, then send actual Tab keys. Programmatic focus alone would
       incorrectly accept a tabIndex=-1 contextual-comment trigger as keyboard reachable.
 

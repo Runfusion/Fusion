@@ -20,6 +20,19 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailContent, TaskDetailModal } from "../TaskDetailModal";
 
+/*
+FNXC:FloatingWindow 2026-07-30-08:30:
+Queries run against `document`, not the `container` `render()` returns. `TaskDetailModal` renders
+inside `FloatingWindow`, which uses `createPortal`, so its DOM lands on document.body and `container`
+is EMPTY — every `container.querySelector` returned null. The symptom was misleading: assertions
+failed with "received value must be an HTMLElement" / "Received has value: null" on the ELEMENT,
+while `screen.getByTestId` in the same test kept working (screen queries document).
+
+`document` is correct for both shapes here — `container` is itself inside `document` — so tests that
+render a child component directly are unaffected. Same cause and fix as
+TaskDetailModal.inline-editing-and-integrations.test.tsx.
+*/
+
 vi.mock("../BranchGroupCard", () => ({
   BranchGroupCard: ({ groupId, taskId, onBranchGroupReset }: { groupId: string; taskId?: string; onBranchGroupReset?: () => void }) => {
     const [expanded, setExpanded] = React.useState(false);
@@ -192,7 +205,7 @@ describe("TaskDetailModal planner Chat tab", () => {
   it("defaults planner Chat to collapsed mode and lets the in-view control expand it", async () => {
     const user = userEvent.setup();
     const { container } = renderTask("todo");
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     const toggle = screen.getByTestId("task-planner-chat-expand-toggle");
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
@@ -221,7 +234,7 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
     expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
@@ -245,12 +258,12 @@ describe("TaskDetailModal planner Chat tab", () => {
   it("keeps Activity expansion independent from planner Chat expansion", async () => {
     const user = userEvent.setup();
     const { container } = renderTask("todo", "chat");
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     await user.click(screen.getByTestId("task-chat-expand-toggle"));
     expect(detail).toHaveClass("task-detail-content--chat-expanded");
 
-    const chatTab = container.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab")[0];
+    const chatTab = document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab")[0];
     expect(chatTab?.textContent?.trim()).toBe("Chat");
     fireEvent.click(chatTab!);
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
@@ -276,25 +289,25 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
 
     expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Planner failed hard")).not.toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeNull();
+    expect(document.querySelector(".detail-error-alert")).toBeNull();
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
 
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
   });
 
   it("keeps failed-task banner visible while Activity is expanded", async () => {
@@ -312,7 +325,7 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
@@ -323,7 +336,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
   });
 
   it("renders an actionable generic failed-task alert without an empty message shell", async () => {
@@ -345,7 +358,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("The task failed before it could complete.")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-message")?.textContent).not.toBe("");
+    expect(document.querySelector(".detail-error-message")?.textContent).not.toBe("");
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetryTask).toHaveBeenCalledWith("FN-099");
 
@@ -364,7 +377,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     );
 
     expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeNull();
+    expect(document.querySelector(".detail-error-alert")).toBeNull();
   });
 
   it("surfaces the latest tool error detail and stages a model override before retrying", async () => {
@@ -702,7 +715,7 @@ describe("TaskDetailModal Activity feed loading", () => {
     const { container } = renderActivityFeedModal(makeSlimTask());
 
     await screen.findByText("newer entry");
-    const actions = Array.from(container.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
+    const actions = Array.from(document.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
     expect(actions).toEqual(["newer entry", "older entry"]);
     expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
   });
@@ -1214,13 +1227,19 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
         initialTab="definition"
         task={makeTask({
           column: "in-review",
+          /*
+          FNXC:InReviewStallBadge 2026-07-26-18:20:
+          Fixture repointed off `merge-blocker`, which is now badge-suppressed. This case guards the
+          diagnostics row and its jump-to-activity-entry behavior — not any one stall code — so it
+          needs a code that still surfaces.
+          */
           inReviewStall: {
-            code: "merge-blocker",
+            code: "transient-merge-status-no-owner",
             reason: "Workflow pre-merge check failed",
             observedAt: "2026-05-13T00:00:00.000Z",
           },
           log: [
-            { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [merge-blocker]: Workflow pre-merge check failed" },
+            { timestamp: "2026-05-13T00:01:00.000Z", action: "In-review stall surfaced [transient-merge-status-no-owner]: Workflow pre-merge check failed" },
           ],
         })}
         onClose={noop}
@@ -1234,15 +1253,15 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
 
     await user.click(screen.getByRole("button", { name: "Pull Request" }));
 
-    expect(screen.getByText("Merge blocked by a pre-merge check")).toBeInTheDocument();
+    expect(screen.getByText("Stuck in a transient merge state with no active merger")).toBeInTheDocument();
     expect(screen.getByText("Workflow pre-merge check failed")).toBeInTheDocument();
-    expect(screen.getByText("Open the Review tab to see which step is blocking, then fix the failure or override the step.")).toBeInTheDocument();
+    expect(screen.getByText("Wait one self-healing cycle; if it persists, inspect engine logs for crashed merger runs.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "View activity log" }));
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
     expectActivityView("feed");
     const highlighted = document.querySelector(".detail-log-entry--stall-highlight .detail-log-action");
-    expect(highlighted?.textContent).toContain("In-review stall surfaced [merge-blocker]");
+    expect(highlighted?.textContent).toContain("In-review stall surfaced [transient-merge-status-no-owner]");
   });
 
   it("renders retry-exhausted badge label with counter", async () => {
@@ -1279,8 +1298,9 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
         initialTab="definition"
         task={makeTask({
           column: "in-review",
+          // FNXC:InReviewStallBadge 2026-07-26-18:21: repointed off the now-suppressed `merge-blocker`; this guards the no-log copy, not a specific code.
           inReviewStall: {
-            code: "merge-blocker",
+            code: "transient-merge-status-no-owner",
             reason: "Workflow pre-merge check failed",
             observedAt: "2026-05-13T00:00:00.000Z",
           },

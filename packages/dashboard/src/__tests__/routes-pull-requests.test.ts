@@ -238,6 +238,39 @@ describe("column move-backward guard (R16)", () => {
     );
   });
 
+  it("does NOT protect a column whose id is not in the legacy COLUMNS array", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (PR #2713 review — greptile P1):
+    The guard's own escape hatch, pinned so callers know it exists. `COLUMNS.indexOf` returns -1 for
+    any custom column id, and this function bails on a negative index — so passing an unmapped
+    column silently ALLOWS the move rather than blocking it.
+
+    That is a reasonable contract for a legacy-index helper, and a trap for callers converting to
+    resolved roles: the re-engagement gate in register-task-workflow-routes.ts started admitting
+    custom review columns, kept passing `COLUMNS.indexOf(task.column)`, and stopped protecting them
+    entirely. The fix there is to pass the review LANE'S index, since the caller has already
+    established the task is in review.
+
+    Asserted as documentation of the hazard, not as desired behaviour for custom boards.
+    */
+    expect(
+      isBackwardMoveBlockedByOpenPr({
+        fromIndex: -1,
+        toIndex: 2,
+        activePrEntity: buildEntity({ state: "open" }),
+      }),
+    ).toBe(false);
+
+    // And with the review lane's index supplied instead, the same open PR blocks correctly.
+    expect(
+      isBackwardMoveBlockedByOpenPr({
+        fromIndex: 3,
+        toIndex: 2,
+        activePrEntity: buildEntity({ state: "open" }),
+      }),
+    ).toBe(true);
+  });
+
   it("allows the backward move once the PR is terminal (no active entity)", () => {
     expect(
       isBackwardMoveBlockedByOpenPr({ fromIndex: 3, toIndex: 2, activePrEntity: null }),

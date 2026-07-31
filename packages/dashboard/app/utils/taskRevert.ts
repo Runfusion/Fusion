@@ -65,6 +65,13 @@ export function getRevertOfId(
  * not normally happen given the route's own dedup guard, but the UI must stay
  * defensive), the most recently created one wins.
  */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
+`columnFlags` is a per-task lookup supplied by the caller; omitted -> the legacy pair, i.e. today's
+behaviour. This searches for an OPEN undo task, so a finished one must be skipped. Keyed on the
+literals, a renamed board never skipped anything: a completed undo task counted as still open, and
+the UI offered to resume work that had already landed.
+*/
 export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: string): Task | undefined {
   const trimmedSourceId = sourceTaskId.trim();
   if (trimmedSourceId.length === 0) {
@@ -76,6 +83,39 @@ export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: 
     if (candidate.deletedAt) {
       continue;
     }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (REVERTED — the seam had no supplier):
+    STILL A LITERAL, deliberately, and left counted.
+
+    I converted this and added a `columnFlags` parameter — SINCE REMOVED, so this function takes only
+    `(tasks, sourceTaskId)` today. Its only caller is TaskDetailModal ~line
+    926, which sits ~60 lines ABOVE where `detailColumnFlags` is derived, so it could not supply one.
+    The parameter was therefore never passed: the guard was gone, the census counted a conversion,
+    and the behaviour was the legacy fallback forever.
+
+    Reverted rather than left as a dead seam. An unsupplied optional parameter is strictly worse than
+    the literal — the literal is at least honest, and the census keeps pointing here.
+
+    FNXC:WorkflowResolvedColumns 2026-07-30-20:50 (correcting the unblock recorded above):
+    HOISTING THE FLAGS WOULD NOT UNBLOCK THIS — IT WOULD INTRODUCE A WORSE DEFECT.
+
+    The note above says the blocker is hook ordering, i.e. a cost. It is not: it is a correctness
+    boundary. This function scans the `tasks` list for OTHER tasks pointing back at the source, so the
+    column it classifies belongs to a NEIGHBOUR. `detailColumnFlags` in TaskDetailModal describes the
+    MODAL'S OWN task, and its own FNXC note says so explicitly — it is guarded by
+    `detailFlagsAreForThisTask` precisely because using it for anything else is wrong.
+
+    So supplying it here would answer "is this neighbour finished?" with the modal task's traits: on a
+    project where two workflows reuse a column id, an open undo task would be classified by a workflow
+    it does not belong to and the affordance would vanish or persist wrongly. That is the flags-for-
+    the-wrong-row shape, and it is worse than the literal because it is wrong on data rather than
+    merely stale on vocabulary.
+
+    A CORRECT conversion needs per-NEIGHBOUR flags — the caller would have to resolve each candidate's
+    own workflow, which the modal does not have and should not fetch mid-render. Until a per-task lane
+    map is available at that call site, the literal is the right answer and the census entry is
+    accurate debt rather than a missed conversion.
+    */
     if (candidate.column === "done" || candidate.column === "archived") {
       continue;
     }

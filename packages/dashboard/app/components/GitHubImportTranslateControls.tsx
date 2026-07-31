@@ -16,6 +16,7 @@ import { Languages, Loader2 } from "lucide-react";
 import type { Locale } from "@fusion/core";
 import {
   translateImportContent,
+  fetchCachedImportTranslation,
   getTranslateErrorMessage,
   autoTranslateImportIssues,
 } from "../api";
@@ -287,6 +288,8 @@ export interface UseGitHubImportTranslationArgs {
   body: string;
   dashboardLocale: Locale;
   projectId?: string;
+  /** Complete durable-cache identity for this selected import item. */
+  identity?: { provider: "github" | "gitlab"; repoKey: string; issueNumber: number } | null;
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   When auto-translate is on, the selected item's translation is already fetched at list level. Passing it in means the preview shows the translation BY DEFAULT with no second request and no per-selection wait, while the toggle still reveals the untranslated original.
@@ -307,6 +310,7 @@ export function useGitHubImportTranslation({
   body,
   dashboardLocale,
   projectId,
+  identity = null,
   autoTranslation = null,
   autoTranslateEnabled = false,
 }: UseGitHubImportTranslationArgs): ImportTranslateView {
@@ -331,6 +335,7 @@ export function useGitHubImportTranslation({
   const [showingTranslation, setShowingTranslation] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cacheKey = selectionKey ? `${selectionKey}:${dashboardLocale}:${original.title}:${original.body}` : null;
 
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
@@ -344,12 +349,35 @@ export function useGitHubImportTranslation({
     setTranslating(false);
   }, [selectionKey, hasAutoTranslation]);
 
+  /*
+  FNXC:GitHubImportTranslate 2026-07-19-13:00:
+  Durable cache hydration runs on selection, locale, and source-content changes. A POST-only cache
+  read can never restore translation after reselect/reopen/reload without an extra operator click.
+  Keep this as a transient render cache only; the server cache remains the source of truth.
+  */
+  useEffect(() => {
+    if (!cacheKey || !identity || hasAutoTranslation) return;
+    let cancelled = false;
+    void fetchCachedImportTranslation(original, dashboardLocale, identity, projectId)
+      .then((fields) => {
+        if (!cancelled && fields) {
+          setCache((prev) => new Map(prev).set(cacheKey, {
+            title: fields.title ?? original.title,
+            body: fields.body ?? original.body,
+          }));
+          setShowingTranslation(true);
+        }
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [cacheKey, identity, hasAutoTranslation, original, dashboardLocale, projectId]);
+
   // An auto-translation for the current selection takes precedence over any
   // manually fetched one, so both modes read from a single source.
   const cached = autoTranslateEnabled && autoTranslation
     ? autoTranslation
-    : selectionKey
-      ? cache.get(selectionKey)
+    : cacheKey
+      ? cache.get(cacheKey)
       : undefined;
   const dismissed = selectionKey ? dismissedKeys.has(selectionKey) : true;
 
@@ -372,7 +400,7 @@ export function useGitHubImportTranslation({
     if (!selectionKey || translating) return;
     setError(null);
 
-    const existing = cache.get(selectionKey);
+    const existing = cacheKey ? cache.get(cacheKey) : undefined;
     if (existing) {
       setShowingTranslation(true);
       return;
@@ -388,6 +416,7 @@ export function useGitHubImportTranslation({
         dashboardLocale,
         projectId,
         needs.detected.locale !== "unknown" ? needs.detected.locale : undefined,
+        identity ?? undefined,
       );
       const next: ImportTranslateFields = {
         title: fields.title ?? original.title,
@@ -395,7 +424,7 @@ export function useGitHubImportTranslation({
       };
       setCache((prev) => {
         const copy = new Map(prev);
-        copy.set(selectionKey, next);
+        if (cacheKey) copy.set(cacheKey, next);
         return copy;
       });
       setShowingTranslation(true);
@@ -406,6 +435,7 @@ export function useGitHubImportTranslation({
     }
   }, [
     selectionKey,
+    cacheKey,
     translating,
     cache,
     original.title,
@@ -413,6 +443,7 @@ export function useGitHubImportTranslation({
     dashboardLocale,
     projectId,
     needs.detected.locale,
+    identity,
   ]);
 
   const handleToggle = useCallback(() => {

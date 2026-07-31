@@ -88,26 +88,42 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
     includes custom workflows too (builtinWorkflows is deliberately builtin-only, used for the
     enable/disable checkboxes).
     */
-    const [aiUndoWorkflowOptions, setAiUndoWorkflowOptions] = useState<WorkflowDefinition[]>([]);
+    const [selectableWorkflows, setSelectableWorkflows] = useState<WorkflowDefinition[]>([]);
     useEffect(() => {
         let cancelled = false;
         fetchWorkflows(projectId)
             .then((workflows) => {
             if (!cancelled) {
-                setAiUndoWorkflowOptions(workflows.filter((workflow) => workflow.kind !== "fragment"));
+                setSelectableWorkflows(workflows.filter((workflow) => workflow.kind !== "fragment"));
             }
         })
             .catch(() => {
             if (!cancelled)
-                setAiUndoWorkflowOptions([]);
+                setSelectableWorkflows([]);
         });
         return () => {
             cancelled = true;
         };
     }, [projectId]);
+    /*
+    FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+    `selectableWorkflows` is the full project workflow list (built-ins + custom, fragments
+    excluded — a fragment is a palette piece, never independently selectable). It backs the
+    AI-undo, CLI/agent-create, and refinement pickers alike; `builtinWorkflows` above stays
+    built-in-only because it drives the enable/disable checkboxes, a different question.
+    */
+    const isKnownSelectableWorkflow = (workflowId: string) => workflowId === "" ||
+        selectableWorkflows.some((workflow) => workflow.id === workflowId);
     const aiUndoTaskWorkflowValue = form.aiUndoTaskWorkflowId ?? "builtin:review-heavy";
-    const aiUndoWorkflowHasStoredValue = aiUndoTaskWorkflowValue === "" ||
-        aiUndoWorkflowOptions.some((workflow) => workflow.id === aiUndoTaskWorkflowValue);
+    const aiUndoWorkflowHasStoredValue = isKnownSelectableWorkflow(aiUndoTaskWorkflowValue);
+    /*
+    FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+    Unlike AI-undo (which has a concrete "builtin:review-heavy" schema default), these two
+    default to the EMPTY value, which is the meaningful "Selected workflow" choice rather
+    than a blank — so `?? ""` is the real default, not a placeholder for a missing one.
+    */
+    const taskCreateWorkflowValue = form.taskCreateWorkflowId ?? "";
+    const refinementTaskWorkflowValue = form.refinementTaskWorkflowId ?? "";
     const enabledBuiltinWorkflowIds = useMemo(() => {
         const configured = Array.isArray(form.enabledBuiltinWorkflowIds) ? form.enabledBuiltinWorkflowIds : undefined;
         return new Set(configured ?? builtinWorkflows.map((workflow) => workflow.id));
@@ -220,10 +236,52 @@ export function GeneralSection({ form, setForm, projectId, addToast, prefixError
         </div>
         <select id="aiUndoTaskWorkflowId" className="select" data-testid="ai-undo-workflow-select" value={aiUndoTaskWorkflowValue} onChange={(e) => setForm((f) => ({ ...f, aiUndoTaskWorkflowId: e.target.value }))}>
           <option value="">{t("settings.general.aiUndoTaskWorkflowInherit", "Inherit project default workflow")}</option>
-          {aiUndoWorkflowOptions.map((workflow) => (<option key={workflow.id} value={workflow.id}>
+          {selectableWorkflows.map((workflow) => (<option key={workflow.id} value={workflow.id}>
               {workflow.name}
             </option>))}
           {!aiUndoWorkflowHasStoredValue && (<option value={aiUndoTaskWorkflowValue}>{aiUndoTaskWorkflowValue}</option>)}
+        </select>
+      </div>
+      {/*
+        FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+        Two origins create tasks WITHOUT a workflow picker in front of the operator:
+        `fn task create` (CLI + the `fn_task_create` agent tool) and refinement tasks
+        (the follow-up card a comment on a done task spawns). Both previously always
+        inherited the project default workflow, with no way to route them elsewhere.
+        These pickers add that: the empty-string option means "Selected workflow" — the
+        operator's current Board lane, mirrored server-side so non-browser callers can
+        read it, falling back to the project default workflow — and any other value PINS
+        that origin to a concrete workflow regardless of the lane. Unset is the default,
+        which reproduces the previous behavior exactly.
+        Deliberately placed right after the default-workflow controls: all three answer
+        "which workflow does a new card get?", and reading them apart invites the wrong
+        mental model that this overrides the default for ALL new tasks (it does not — a
+        dashboard-created task still uses the picker in the create form).
+      */}
+      <div className="form-group">
+        <div className="settings-field-label-row">
+          <label htmlFor="taskCreateWorkflowId">{t("settings.general.taskCreateWorkflow", "CLI/agent-created task workflow")}</label>
+          <SettingsHelpTip settingKey="taskCreateWorkflowId">{t("settings.general.taskCreateWorkflowHelp", "Workflow applied to tasks opened by `fn task create` and the fn_task_create agent tool, which have no workflow picker. Choose \"Selected workflow\" to follow your current board workflow (falling back to the project default workflow). No default — unset means Selected workflow. An explicit workflow_id passed to fn_task_create still wins.")}</SettingsHelpTip>
+        </div>
+        <select id="taskCreateWorkflowId" className="select" data-testid="task-create-workflow-select" value={taskCreateWorkflowValue} onChange={(e) => setForm((f) => ({ ...f, taskCreateWorkflowId: e.target.value }))}>
+          <option value="">{t("settings.general.originWorkflowSelected", "Selected workflow")}</option>
+          {selectableWorkflows.map((workflow) => (<option key={workflow.id} value={workflow.id}>
+              {workflow.name}
+            </option>))}
+          {!isKnownSelectableWorkflow(taskCreateWorkflowValue) && (<option value={taskCreateWorkflowValue}>{taskCreateWorkflowValue}</option>)}
+        </select>
+      </div>
+      <div className="form-group">
+        <div className="settings-field-label-row">
+          <label htmlFor="refinementTaskWorkflowId">{t("settings.general.refinementTaskWorkflow", "Refinement task workflow")}</label>
+          <SettingsHelpTip settingKey="refinementTaskWorkflowId">{t("settings.general.refinementTaskWorkflowHelp", "Workflow applied to refinement tasks — the follow-up card spawned from a done or in-review task plus your feedback. Choose \"Selected workflow\" to follow your current board workflow (falling back to the project default workflow). No default — unset means Selected workflow.")}</SettingsHelpTip>
+        </div>
+        <select id="refinementTaskWorkflowId" className="select" data-testid="refinement-task-workflow-select" value={refinementTaskWorkflowValue} onChange={(e) => setForm((f) => ({ ...f, refinementTaskWorkflowId: e.target.value }))}>
+          <option value="">{t("settings.general.originWorkflowSelected", "Selected workflow")}</option>
+          {selectableWorkflows.map((workflow) => (<option key={workflow.id} value={workflow.id}>
+              {workflow.name}
+            </option>))}
+          {!isKnownSelectableWorkflow(refinementTaskWorkflowValue) && (<option value={refinementTaskWorkflowValue}>{refinementTaskWorkflowValue}</option>)}
         </select>
       </div>
       <div className="form-group">

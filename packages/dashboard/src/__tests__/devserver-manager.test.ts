@@ -9,6 +9,26 @@ const { spawnMock, createConnectionMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("node:child_process", () => ({
+  /*
+  FNXC:DashboardTestMocks 2026-08-03-04:20 (whole-file red on main — same class as the `createLogger` pair):
+  `execFile` is stubbed because a `vi.mock("node:child_process", …)` factory REPLACES the module: something in
+  this import graph now calls `execFile`, and an omitted export throws `No "execFile" export is defined`, failing
+  the WHOLE file rather than one case.
+
+  Stubbed as a no-op that invokes its callback with empty output, which is what every consumer in this graph
+  needs to proceed; a test that actually depends on an execFile result should assert on this mock rather than
+  rely on the default.
+  */
+  execFile: (
+    _file: string,
+    ..._rest: unknown[]
+  ) => {
+    const callback = _rest.find((argument) => typeof argument === "function") as
+      | ((error: Error | null, stdout: string, stderr: string) => void)
+      | undefined;
+    callback?.(null, "", "");
+    return { kill: () => undefined } as never;
+  },
   spawn: spawnMock,
 }));
 

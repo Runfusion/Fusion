@@ -41,6 +41,10 @@ export interface BoardWorkflowColumnFlags {
   hiddenFromBoard?: boolean;
   hold?: boolean;
   intake?: boolean;
+  /** An intake column that does NOT auto-triage — cards wait for an operator to promote
+   *  them. Derived server-side from the `intake` trait's `autoTriage: false` config,
+   *  which is configuration rather than a flag and was therefore invisible to clients. */
+  manualIntake?: boolean;
   mergeBlocker?: boolean;
   /** Merge/review lane membership used by the shared live-agent predicate. */
   mergeOrchestration?: boolean;
@@ -54,6 +58,14 @@ export interface BoardWorkflowColumn {
   /** Optional author-defined explanatory copy from the workflow IR. */
   description?: string;
   flags: BoardWorkflowColumnFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+  Columns this one may move to, from the workflow's own graph adjacency
+  (`resolveAllowedColumns`, the same resolver `moveTaskInternal` validates against).
+  Optional so a client that predates the field keeps working; the move menu falls back
+  to approximating targets from neighbouring columns when it is absent.
+  */
+  moveTargets?: string[];
 }
 
 export interface BoardWorkflowDefinition {

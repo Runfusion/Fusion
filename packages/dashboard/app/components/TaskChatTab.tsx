@@ -1,16 +1,21 @@
 import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
+import { isCompleteColumnRole, isReviewColumnRole, isWipColumnRole } from "../utils/columnRoles";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
+import { AlertTriangle, ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { addSteeringComment, refineTask } from "../api";
 import { useAgentLogs } from "../hooks/useAgentLogs";
+import { isLogGapMarker } from "../hooks/logStreamReconcile";
 import { useComposerDictation } from "../hooks/useComposerDictation";
 import { MicButton } from "./MicButton";
 import type { ToastType } from "../hooks/useToast";
 import { getErrorMessage } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:50: these are AGENT ROLE comparisons, not
+// column guards — the planner LANE keeps the name `triage`; U11 removed only the COLUMN.
+import { PLANNER_AGENT_ROLE } from "@fusion/core";
 import { linkifyFilePaths } from "../utils/filePathLinkify";
 import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
@@ -20,6 +25,8 @@ import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import "./TaskChatTab.css";
 
 interface TaskChatTabProps {
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  columnFlags?: Parameters<typeof isWipColumnRole>[0];
   task: Task | TaskDetail;
   projectId?: string;
   active: boolean;
@@ -78,7 +85,7 @@ function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
 
 function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
   if (entry.type !== "status" && entry.type !== "text") return null;
-  const role = entry.agent === "triage" ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
+  const role = entry.agent === PLANNER_AGENT_ROLE ? "Planning" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
   if (!role) return null;
   return parseRuntimeModelMarker(entry.text, role);
 }
@@ -89,7 +96,7 @@ function makeModelInfo(provider: string | undefined, modelId: string | undefined
 }
 
 function getExplicitModelForRole(task: Task | TaskDetail, role: AgentLogRole): TaskChatModelInfo | null {
-  if (role === "triage" && task.planningModelProvider) {
+  if (role === PLANNER_AGENT_ROLE && task.planningModelProvider) {
     return makeModelInfo(task.planningModelProvider, task.planningModelId);
   }
   if (role === "executor" && task.modelProvider) {
@@ -399,9 +406,39 @@ function segmentGroupEntries(entries: AgentLogEntry[]): TaskChatSegment[] {
   return segments;
 }
 
+/*
+FNXC:TaskChat-LogGap 2026-07-26-17:25:
+The reconnect gap marker says OUTPUT IS MISSING from the transcript. It is carried as a `status`
+entry, so it used to render as an ordinary "Status update" row — the same chrome the engine uses for
+routine progress messages — and read as chat content rather than a warning. That is the failure this
+whole marker exists to prevent: a reader who does not notice the row believes the transcript is
+complete.
+Rendered as its own affordance: the shared `status-dot--error` convention plus a lucide AlertTriangle
+and a dashed-edge variant of the existing `.task-chat-entry` block (tokens only, no forked
+component), and `role="status"` so assistive tech announces it as a state message, not prose.
+*/
+function TaskChatLogGapNotice({ entry }: { entry: AgentLogEntry }) {
+  return (
+    <article
+      className="task-chat-entry task-chat-entry--gap"
+      data-testid="task-chat-entry-log-gap"
+      role="status"
+    >
+      <div className="task-chat-entry-label-row">
+        <span className="status-dot status-dot--error" aria-hidden="true" />
+        <AlertTriangle size={14} aria-hidden="true" />
+        <span className="task-chat-entry-kicker">Missing output</span>
+        <TaskChatTimestamp timestamp={entry.timestamp} label="Missing output timestamp" />
+      </div>
+      <div className="task-chat-entry-text">{entry.text}</div>
+    </article>
+  );
+}
+
 function TaskChatText({ entries }: { entries: AgentLogEntry[] }) {
   const firstEntry = entries[0];
   if (!firstEntry) return null;
+  if (isLogGapMarker(firstEntry)) return <TaskChatLogGapNotice entry={firstEntry} />;
 
   return (
     <article
@@ -620,7 +657,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
   );
 }
 
-export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, expanded = false, onToggleExpanded, effectiveModels }: TaskChatTabProps) {
+export function TaskChatTab({ task, columnFlags, projectId, active, addToast, onTaskUpdated, expanded = false, onToggleExpanded, effectiveModels }: TaskChatTabProps) {
   const { t } = useTranslation("app");
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
@@ -630,7 +667,14 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const [optimisticMessages, setOptimisticMessages] = useState<UserChatMessage[]>([]);
   const [isTranscriptAtBottom, setIsTranscriptAtBottom] = useState(true);
   const isTranscriptAtBottomRef = useRef(true);
-  const thinkingDefaultOpen = task.column === "in-progress" || task.column === "in-review";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (batch-dashboard-app):
+  WIP and REVIEW roles, resolved. This decides whether the thinking transcript is expanded by
+  default — open while work is live, collapsed once it is not. Keyed on the literals, a renamed
+  board collapsed it for every card, so an operator watching an active run had to expand it by hand
+  on every task, every time.
+  */
+  const thinkingDefaultOpen = isWipColumnRole(columnFlags, task.column) || isReviewColumnRole(columnFlags, task.column);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef(0);
   const previousScrollHeightRef = useRef(0);
@@ -651,7 +695,9 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const transcriptItems = useMemo(() => buildTranscriptItems(entries, userMessages, t), [entries, t, userMessages]);
   const transcriptItemCount = entries.length + userMessages.length;
   const firstEntryKey = entries[0] ? getEntryKey(entries[0], 0) : null;
-  const isDoneTask = task.column === "done";
+  /* COMPLETE role, same source: a finished card's chat is read-only, and on a renamed board it
+     stayed editable. */
+  const isDoneTask = isCompleteColumnRole(columnFlags, task.column);
   /*
    * FNXC:TaskDetailActivity 2026-06-30-21:51:
    * Activity → Live (legacy `current`) is the operational steering surface for task execution. Keep the top-level planner-model Chat tab separate; Feed and Raw Logs remain read-only Activity segments without this composer.

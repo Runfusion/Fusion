@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-docker-provisioning-routes");
 import type { DockerHostConfig, DockerProvisionInput } from "@fusion/core";
 import { ApiError, badRequest } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -177,7 +180,7 @@ export const registerDockerProvisioningRoutes: ApiRouteRegistrar = (ctx) => {
               });
             } catch (metaError) {
               // Non-fatal: node is registered but Docker metadata couldn't be persisted
-              console.warn(
+              severityAuditLog.warn(
                 "[docker-provisioning] Failed to persist managed Docker node metadata:",
                 metaError instanceof Error ? metaError.message : String(metaError),
               );
@@ -188,7 +191,7 @@ export const registerDockerProvisioningRoutes: ApiRouteRegistrar = (ctx) => {
         }
       } catch (registerError) {
         // Container is running but unregistered — log warning, return result with error
-        console.warn(
+        severityAuditLog.warn(
           "[docker-provisioning] Container created but node registration failed:",
           registerError instanceof Error ? registerError.message : String(registerError),
         );

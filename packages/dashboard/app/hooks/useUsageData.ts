@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { fetchUsageData, type ProviderUsage } from "../api";
-import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 interface UsageDataState {
   providers: ProviderUsage[];
@@ -39,7 +39,6 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
     hasFetched: false,
   });
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stateRef = useRef(state);
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -99,30 +98,23 @@ export function useUsageData(options: UseUsageDataOptions = {}) {
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    pollRef.current = setInterval(() => {
-      fetchData(false);
-    }, pollInterval);
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [autoRefresh, pollInterval, fetchData]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:00:
+  Usage auto-refresh is suspended while the document is hidden. Provider usage is a display-only number, and
+  a backgrounded page that keeps polling it is treated by iOS Safari/PWA and Chrome Android as a live page
+  worth reclaiming — the discard is what produced the full white-splash reload on return. The hidden ->
+  visible edge refreshes once so the returning operator sees current usage.
+  */
+  const pollUsage = useCallback(() => {
+    void fetchData(false);
+  }, [fetchData]);
+  useVisibilityAwarePoll(pollUsage, pollInterval, { enabled: autoRefresh });
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (abortRef.current) {
         abortRef.current.abort();
-      }
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
       }
     };
   }, []);

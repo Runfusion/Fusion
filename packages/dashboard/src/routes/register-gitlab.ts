@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-gitlab");
 import { badRequest, unauthorized, ApiError } from "../api-error.js";
 import { resolveGitlabAuth } from "../gitlab-auth.js";
 import {
@@ -99,10 +102,20 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
   const title = args.resourceType === "merge_request"
     ? `Review MR !${args.item.iid}: ${args.item.title.slice(0, 180)}`
     : args.item.title.slice(0, 200);
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-21:55:
+  NO explicit `column`. An imported GitLab item enters INTAKE, and `createTask` already resolves the
+  intake column from the workflow it selects (`resolvedEntryColumn`); an explicit `column` OVERRIDES
+  that resolution, which is why this import was still naming `triage`.
+
+  `triage` was DELETED as a column by U11 — the default board's lanes are now
+  `todo | in-progress | in-review | done | archived` — so every GitLab import was landing its card in
+  a lane no workflow declares. It is not an error and nothing rejects it: the row is written, the
+  import route reports success with a task id, and the card is simply not on the board.
+  */
   const task = await store.createTask({
     title: title || undefined,
     description: buildGitLabTaskDescription(args.item),
-    column: "triage",
     dependencies: [],
     sourceIssue: provenance.sourceIssue,
     gitlabTracking: provenance.gitlabTracking,
@@ -124,7 +137,7 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     try {
       imageBodies.push(...(await client.listNotes(noteResource, noteProject, args.item.iid)));
     } catch (error) {
-      console.warn(
+      severityAuditLog.warn(
         `[fusion:gitlab-import] Could not fetch notes for ${args.resourceType} #${args.item.iid}; importing description images only: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -151,7 +164,7 @@ async function importItem(ctx: ApiRoutesContext, req: Parameters<ApiRoutesContex
     } catch (error) {
       // FNXC:IssueImportAttachments 2026-07-15-14:10: The task and files are
       // already durable; an audit-write failure must not make import retry collide.
-      console.warn(`[fusion:gitlab-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+      severityAuditLog.warn(`[fusion:gitlab-import] Could not log image attachments for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

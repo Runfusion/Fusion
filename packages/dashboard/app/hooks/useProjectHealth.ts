@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { ProjectHealth } from "../api";
 import { fetchProjectHealth } from "../api";
-import { isVisibilityResumeError, useTabVisibilitySuspension } from "./visibilitySuspension";
+import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
 
 export interface UseMultiProjectHealthResult {
   /** Map of project ID to health data */
@@ -35,7 +35,6 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
   const [healthMap, setHealthMap] = useState<Record<string, ProjectHealth | null>>({});
   const [loading, setLoading] = useState(true); // Start true for initial load
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const healthMapRef = useRef(healthMap);
   const visibilitySuspension = useTabVisibilitySuspension();
@@ -153,27 +152,13 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
     };
   }, [refresh]);
 
-  // Polling - refresh every 10 seconds
-  useEffect(() => {
-    if (projectIds.length === 0) return;
-
-    // Clear any existing interval
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    // Start new polling interval
-    intervalRef.current = setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    };
-  }, [refresh, projectIds.length]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-10:30:
+  Per-project health polling is suspended while the document is hidden. Background network work keeps the
+  page from ever going idle, which is what makes mobile browsers reclaim the tab and force a cold reload on
+  return; one refresh fires on the hidden -> visible edge so health badges are not stale when seen.
+  */
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: projectIds.length > 0 });
 
   return {
     healthMap,

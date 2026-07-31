@@ -34,6 +34,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
   isFullScreenSheetViewport: () => false,
   isShortViewport: () => false,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "desktop",
   getViewportMode: () => "desktop",
   isMobileViewport: () => false,

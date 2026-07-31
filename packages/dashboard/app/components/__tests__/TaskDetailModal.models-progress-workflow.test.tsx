@@ -114,12 +114,34 @@ describe("TaskDetailModal", () => {
       );
     }
 
-    async function openAgentLogAndExpandModelDetails(container: HTMLElement) {
+    /*
+    FNXC:TaskDetailModalTests 2026-07-31-15:10:
+    QUERY THE DOCUMENT — TaskDetailModal renders through a portal, so `container` is the wrong root.
+
+    This helper took the `container` from `render()` and asked it for
+    `[data-testid='agent-log-model-header']`. TaskDetailModal mounts inside `FloatingWindow`, which
+    uses `createPortal`, so the modal subtree is attached to `document.body` and NOT beneath the
+    container React handed back. Every `document.querySelector` in this file therefore returns null
+    no matter what renders.
+
+    Probed rather than inferred, because the symptom pointed the wrong way — 30 cases failing on
+    "expected null to be truthy" reads as "the modal never rendered":
+
+      P1_after_tab_click menu=true items=["Live","Feed","Raw","Interventions"]
+      P2_after_select    viewer=true header=true empty=false
+
+    The Activity menu opens, Raw selects, and the viewer AND its model header are both present — via
+    `document`. Only the container-rooted lookup could not see them.
+
+    Note `screen.getByRole(...)` calls in the same helper always worked, because `screen` queries the
+    document. That mix is why this file half-worked and why the failure looked like a render problem.
+    */
+    async function openAgentLogAndExpandModelDetails(_container: HTMLElement) {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       selectActivityView("raw-logs");
 
       await waitFor(() => {
-        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        const header = document.querySelector("[data-testid='agent-log-model-header']");
         expect(header).toBeTruthy();
       });
 
@@ -128,7 +150,7 @@ describe("TaskDetailModal", () => {
         fireEvent.click(expandButton);
       }
 
-      return container.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
+      return document.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
     }
 
     it("uses task effective settings success path for Raw Logs model display", async () => {
@@ -592,14 +614,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       selectActivityView("raw-logs");
       await waitFor(() => {
-        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        const header = document.querySelector("[data-testid='agent-log-model-header']");
         expect(header).toBeTruthy();
       });
       const expandButton = screen.getByTestId("agent-log-model-expand") as HTMLButtonElement;
       if (expandButton.getAttribute("aria-expanded") !== "true") {
         fireEvent.click(expandButton);
       }
-      const header = container.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
+      const header = document.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
       expect(header.textContent).toContain("openai/gpt-4o");
       expect(header.textContent).toContain("google/gemini-2.5-pro");
     });
@@ -649,14 +671,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       selectActivityView("raw-logs");
       await waitFor(() => {
-        const header = container.querySelector("[data-testid='agent-log-model-header']");
+        const header = document.querySelector("[data-testid='agent-log-model-header']");
         expect(header).toBeTruthy();
       });
       const expandButton = screen.getByTestId("agent-log-model-expand") as HTMLButtonElement;
       if (expandButton.getAttribute("aria-expanded") !== "true") {
         fireEvent.click(expandButton);
       }
-      const header = container.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
+      const header = document.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
       expect(header.textContent).toContain("openai/gpt-4.1");
     });
 
@@ -680,7 +702,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(document.querySelector(".detail-step-progress")).toBeTruthy();
       expect(screen.getByText("Progress")).toBeTruthy();
     });
 
@@ -698,7 +720,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(document.querySelector(".detail-step-progress")).toBeTruthy();
       expect(screen.getByText("(no steps defined)")).toBeTruthy();
     });
 
@@ -722,7 +744,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = container.querySelectorAll(".step-progress-segment");
+      const segments = document.querySelectorAll(".step-progress-segment");
       expect(segments).toHaveLength(3);
     });
 
@@ -747,7 +769,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = container.querySelectorAll(".step-progress-segment");
+      const segments = document.querySelectorAll(".step-progress-segment");
       expect(segments[0].classList.contains("step-progress-segment--done")).toBe(true);
       expect(segments[1].classList.contains("step-progress-segment--in-progress")).toBe(true);
       expect(segments[2].classList.contains("step-progress-segment--pending")).toBe(true);
@@ -778,10 +800,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = container.querySelectorAll(".step-progress-segment");
+      const segments = document.querySelectorAll(".step-progress-segment");
       // 2 impl steps + 2 enabled workflow steps = 4 segments.
       expect(segments).toHaveLength(4);
-      const workflowSegments = container.querySelectorAll(".step-progress-segment--source-workflow");
+      const workflowSegments = document.querySelectorAll(".step-progress-segment--source-workflow");
       expect(workflowSegments).toHaveLength(2);
       // code-review ran (passed → unified "done"); browser-verification enabled-not-run (pending).
       expect(segments[2].classList.contains("step-progress-segment--done")).toBe(true);
@@ -810,7 +832,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = container.querySelectorAll(".step-progress-segment");
+      const segments = document.querySelectorAll(".step-progress-segment");
       expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success)");
       expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--in-progress)");
       expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border)");
@@ -882,7 +904,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const segments = container.querySelectorAll(".step-progress-segment");
+      const segments = document.querySelectorAll(".step-progress-segment");
       expect(segments[0].getAttribute("data-tooltip")).toBe("Initialize project (done)");
       expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
     });
@@ -907,14 +929,14 @@ describe("TaskDetailModal", () => {
       );
 
       // Should be visible in Definition tab
-      expect(container.querySelector(".detail-step-progress")).toBeTruthy();
+      expect(document.querySelector(".detail-step-progress")).toBeTruthy();
 
       // Switch to Activity tab, then Raw Logs segment
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       selectActivityView("raw-logs");
 
       // Should not be visible in Raw Logs segment
-      expect(container.querySelector(".detail-step-progress")).toBeNull();
+      expect(document.querySelector(".detail-step-progress")).toBeNull();
     });
 
     it("step progress is hidden in Comments tab", () => {
@@ -940,7 +962,7 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Comments"));
 
       // Should not be visible in Comments tab
-      expect(container.querySelector(".detail-step-progress")).toBeNull();
+      expect(document.querySelector(".detail-step-progress")).toBeNull();
     });
   });
 
@@ -964,7 +986,7 @@ describe("TaskDetailModal", () => {
         />,
       );
       expect(screen.queryByText("Commits")).toBeNull();
-      const tabTexts = Array.from(container.querySelectorAll(".detail-tab")).map((t) => t.textContent);
+      const tabTexts = Array.from(document.querySelectorAll(".detail-tab")).map((t) => t.textContent);
       expect(tabTexts).toContain("Changes");
     });
   });
@@ -1453,14 +1475,14 @@ describe("TaskDetailModal", () => {
       );
 
       // Definition content visible initially
-      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(document.querySelector(".markdown-body")).toBeTruthy();
 
       // Switch to Workflow tab
       fireEvent.click(screen.getByText("Workflow"));
 
       // Definition content should be hidden
       await waitFor(() => {
-        expect(container.querySelector(".markdown-body")).toBeNull();
+        expect(document.querySelector(".markdown-body")).toBeNull();
       });
     });
   });

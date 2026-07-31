@@ -22,13 +22,29 @@ vi.mock("../github-auth.js", () => ({
   resolveGithubTrackingAuth: (...args: unknown[]) => mockResolveGithubTrackingAuth(...args),
 }));
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (fleet phase — why the existing cases could not catch this):
+`workflowIr` is OPTIONAL and every pre-existing case omits it. Without a workflow reader,
+`resolveTaskLifecycleColumns` catches and returns undefined, so the reconciler falls back to the legacy
+ids and those cases assert exactly what they always asserted — which is why all 33 stayed green through
+the conversion, and why none of them could have caught it being wrong.
+
+Supplying an IR is what makes the renamed-lane case below a real test rather than a restatement.
+*/
 function createStore(options: {
   listTasks?: Array<Record<string, unknown>>;
   reconcileCandidates?: Array<Record<string, unknown>>;
   reconcileHasMore?: boolean;
   settings?: Record<string, unknown>;
+  workflowIr?: Record<string, unknown>;
 }): TaskStore {
   return {
+    ...(options.workflowIr
+      ? {
+        getTaskWorkflowSelection: () => ({ workflowId: "custom:renamed", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: options.workflowIr }),
+      }
+      : {}),
     listTasks: vi.fn().mockResolvedValue(options.listTasks ?? []),
     listTasksForGithubTrackingReconcile: vi
       .fn()
@@ -340,5 +356,65 @@ describe("GitHubTrackingReconciler", () => {
       // deleted/archived reported hasMore, so paging advances by the scan limit.
       expect(nextOffset).toBe(200 + RECONCILE_SCAN_LIMIT);
     });
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-05:30 (fleet phase — the SYNC-FILTER class, converted):
+  Before this, every `.filter((task) => task.column === "done" || task.column === "archived")` in the
+  reconciler matched NOTHING on a board whose terminal lanes are renamed. The pass then reported
+  `scanned: 0, closed: 0` — a clean-looking run that closed no GitHub issues at all.
+
+  REVERT CHECK, measured (both run): restoring the id comparisons makes "closes issues on a RENAMED
+  complete lane" fail with `expected 0 to be 1` and no `setIssueState` call, and makes the archived
+  heuristic case fail the same way. The default-vocabulary cases above pass either way.
+  */
+  const RENAMED_IR = {
+    version: "v2",
+    id: "custom:renamed",
+    name: "Renamed",
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+      { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      { id: "checking", name: "Checking", traits: [{ trait: "merge-blocker" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      { id: "attic", name: "Attic", traits: [{ trait: "archived" }] },
+    ],
+  };
+
+  it("closes issues on a RENAMED complete lane, which the id comparisons could not see", async () => {
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    mockGetIssue.mockResolvedValue({ state: "open" });
+    const store = createStore({
+      workflowIr: RENAMED_IR,
+      listTasks: [
+        { id: "FN-9", column: "shipped", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 9 } } },
+      ],
+    });
+
+    const result = await new GitHubTrackingReconciler().reconcile(store);
+
+    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 9, "closed", "completed");
+    expect(result.closed).toBe(1);
+  });
+
+  it("applies the archived done-heuristic on a RENAMED archived lane", async () => {
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    mockGetIssue.mockResolvedValue({ state: "open" });
+    const store = createStore({
+      workflowIr: RENAMED_IR,
+      listTasks: [
+        { id: "FN-10", column: "attic", executionCompletedAt: "2026-01-01T00:00:00.000Z", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 10 } } },
+        { id: "FN-11", column: "attic", githubTracking: { enabled: true, issue: { owner: "o", repo: "r", number: 11 } } },
+      ],
+    });
+
+    const result = await new GitHubTrackingReconciler().reconcile(store);
+
+    // Completed-before-archive closes as `completed`; never-executed closes as `not_planned`.
+    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 10, "closed", "completed");
+    expect(mockSetIssueState).toHaveBeenCalledWith("o", "r", 11, "closed", "not_planned");
+    expect(result.closed).toBe(2);
   });
 });

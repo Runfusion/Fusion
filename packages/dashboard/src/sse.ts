@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { createLogger } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
@@ -31,6 +32,26 @@ import type { AiSessionStore } from "./ai-session-store.js";
 let activeConnections = 0;
 let highWaterMark = 0;
 let nextConnectionId = 1;
+
+/*
+FNXC:EngineDiagnostics 2026-07-26-08:15:
+SSE open/close fires on every dashboard tab, reconnect, and focus flip. Logging each +/- connection at info filled the TUI log pane with steady-state transport chatter. Gate behind FUSION_DEBUG=sse (or FUSION_DEBUG=1/all/*). Keep backpressure and real failures on warn/error.
+*/
+function isSseDebugEnabled(): boolean {
+  const raw = process.env.FUSION_DEBUG?.trim();
+  if (!raw) return false;
+  if (raw === "1" || raw === "true" || raw === "all" || raw === "*") return true;
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .includes("sse");
+}
+
+const sseLog = createLogger("sse");
+function sseDebug(message: string): void {
+  if (!isSseDebugEnabled()) return;
+  sseLog.debug(message);
+}
 
 const SSE_CLIENT_ID_MAX_LENGTH = 128;
 /*
@@ -534,7 +555,7 @@ export function createSSE(
     if (activeConnections > highWaterMark) {
       highWaterMark = activeConnections;
     }
-    console.log(`[sse] + connection (active=${activeConnections}, hwm=${highWaterMark})`);
+    sseDebug(`[sse] + connection (active=${activeConnections}, hwm=${highWaterMark})`);
 
     // Send initial heartbeat
     res.write(": connected\n\n");
@@ -544,8 +565,8 @@ export function createSSE(
       const result = safeWrite(res, data);
       if (result === "ok") return;
       if (result === "backpressure") {
-        console.warn(
-          `[sse] connection ${connectionId} backpressure exceeded ` +
+        sseLog.warn(
+          `connection ${connectionId} backpressure exceeded ` +
             `(buffered=${res.writableLength}B, threshold=${SSE_MAX_BUFFERED_BYTES}B); closing`,
         );
         closeConnection("backpressure");
@@ -905,7 +926,7 @@ export function createSSE(
       cleaned = true;
       unregisterManagedConnection(connectionId);
       activeConnections--;
-      console.log(`[sse] - connection (active=${activeConnections})`);
+      sseDebug(`[sse] - connection (active=${activeConnections})`);
       if (clientStaleTimer) clearTimeout(clientStaleTimer);
       clearInterval(heartbeat);
       store.off("task:created", onCreated);

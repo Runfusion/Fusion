@@ -1,6 +1,6 @@
 {
   "name": "@fusion/dashboard",
-  "version": "0.74.0-beta.3",
+  "version": "0.74.0-beta.5",
   "license": "MIT",
   "description": "Fusion dashboard: React UI and HTTP API server for monitoring and controlling the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -92,6 +92,7 @@
     "test:api": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-api --silent=passed-only --reporter=dot",
     "test:deep": "FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
     "test:browser-smoke": "node scripts/browser-layout-smoke.mjs",
+    "test:touch-geometry": "vitest run --project dashboard-browser-touch --silent=passed-only --reporter=dot",
     "test:build": "pnpm build && FUSION_DASHBOARD_DEEP=1 vitest run --project dashboard-app --project dashboard-api --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts src/__tests__/plugin-registry-dist.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
     "test:quality:api:backfill-1": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=1/2",
@@ -106,7 +107,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@codemirror/view": "^6.36.4",
-    "@earendil-works/pi-coding-agent": "0.82.0",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@fusion-plugin-examples/claude-runtime": "workspace:*",
     "@fusion-plugin-examples/cli-printing-press": "workspace:*",
     "@fusion-plugin-examples/compound-engineering": "workspace:*",
@@ -130,7 +131,7 @@
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
-    "@xyflow/react": "^12.11.0",
+    "@xyflow/react": "^12.11.2",
     "archiver": "^7.0.1",
     "express": "^5.1.0",
     "html2canvas": "^1.4.1",
@@ -170,12 +171,12 @@
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.5.0",
     "@vitejs/plugin-react": "^4.3.0",
-    "@vitest/coverage-v8": "^4.1.0",
-    "jsdom": "^29.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^29.1.1",
     "tinyrainbow": "^2.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   },
   "private": true
 }

@@ -1,7 +1,35 @@
 import { useEffect, useState } from "react";
 import { fetchSessionFiles } from "../api";
+import {
+  isCompleteColumnRole,
+  isReviewColumnRole,
+  isWipColumnRole,
+  type ColumnRoleFlags,
+} from "../utils/columnRoles";
 
-const ACTIVE_COLUMNS = new Set(["in-progress", "in-review", "done"]);
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-07:30 (dashboard-app feed):
+Session files load for cards that HAVE a worktree — wip, review, and complete.
+
+CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
+backlog pointed at this hook. Found by grepping for lane-shaped list literals.
+
+On a renamed board the set matched nothing, so the Files tab was permanently EMPTY for every card
+that had one — the fetch simply never fired. An empty file list is indistinguishable from a task
+that touched no files, which is why this would never be reported as a bug.
+
+DELIBERATE-LITERAL — the unresolved-flags default, reviewed 2026-07-31-07:30. `columnFlags` is
+optional so every existing caller (and the hook's own test) is byte-identical; the role helpers in
+`columnRoles.ts` own the legacy-id degraded mode.
+*/
+const LEGACY_ACTIVE_COLUMNS = new Set(["in-progress", "in-review", "done"]);
+
+function hasWorktreeBearingRole(column: string, flags: ColumnRoleFlags | undefined): boolean {
+  if (!flags) return LEGACY_ACTIVE_COLUMNS.has(column);
+  return isWipColumnRole(flags, column)
+    || isReviewColumnRole(flags, column)
+    || isCompleteColumnRole(flags, column);
+}
 
 interface UseSessionFilesResult {
   files: string[];
@@ -11,6 +39,8 @@ interface UseSessionFilesResult {
 interface UseSessionFilesOptions {
   /** Enable fetching when true (default). Suppresses fetches for offscreen cards. */
   enabled?: boolean;
+  /** Resolved trait flags for `column`. Omitted → the legacy ids, i.e. today's behaviour. */
+  columnFlags?: ColumnRoleFlags;
 }
 
 /**
@@ -30,6 +60,13 @@ export function useSessionFiles(
   options: UseSessionFilesOptions = {},
 ): UseSessionFilesResult {
   const enabled = options.enabled ?? true;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-07:30 (dashboard-app feed):
+  Collapsed to a BOOLEAN before the effect, deliberately. `columnFlags` is an object, and a caller
+  building it inline hands this hook a new identity every render — putting it in the dep array below
+  would refetch on every parent render. The derived boolean is stable for a stable answer.
+  */
+  const columnBearsWorktree = hasWorktreeBearingRole(column, options.columnFlags);
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -41,7 +78,7 @@ export function useSessionFiles(
       return;
     }
 
-    if (!taskId || !worktree || !ACTIVE_COLUMNS.has(column)) {
+    if (!taskId || !worktree || !columnBearsWorktree) {
       setFiles([]);
       setLoading(false);
       return;
@@ -68,7 +105,7 @@ export function useSessionFiles(
     }
 
     void load();
-  }, [taskId, worktree, column, projectId, enabled]);
+  }, [taskId, worktree, column, projectId, enabled, columnBearsWorktree]);
 
   return { files, loading };
 }

@@ -10,8 +10,12 @@ import {
   ProjectIdentityConflictError,
   readProjectIdentity,
   writeProjectIdentity,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
+  resolveTaskLifecycleColumns,
+  isTerminalColumnRole,
 } from "@fusion/core";
-import type { CentralCore as CentralCoreApi } from "@fusion/core";
+import type { CentralCore as CentralCoreApi, WorkflowIr } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
 import { getOrCreateProjectStore, evictProjectStore } from "../project-store-resolver.js";
@@ -918,15 +922,67 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
         // Compute live task counts from the project-specific store
         const tasks = await projectStore.listTasks({ slim: true });
-        const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
-        const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-08:10:
+        Project-health "active tasks" is the negation of each card's OWN terminal lanes.
+
+        CENSUS-INVISIBLE: a `Set` literal is a definition, not a comparison. On a renamed board it
+        matched nothing, so project health reported **0 active tasks** beside an in-flight agent
+        count that was still correct — the same silent-zero shape as the analytics tallies fixed in
+        #2780. A zero next to a populated neighbour reads as "this project is idle", not as "this
+        number is broken".
+
+        Note the set also listed `triage`, a column U11 deleted, so one of its four entries had been
+        dead on every board since that cutover.
+
+        Resolved per card through one shared IR cache; a card whose workflow will not resolve keeps
+        the legacy answer via `isTerminalColumnRole`'s own degraded mode.
+        */
+        const activeIrCache = new Map<string, never>();
+        const terminalByTaskId = new Map<string, boolean>();
+        for (const t of tasks) {
+          const lanes = await resolveTaskLifecycleColumns(projectStore, t.id, activeIrCache as never).catch(() => undefined);
+          terminalByTaskId.set(
+            t.id,
+            lanes === undefined
+              ? isTerminalColumnRole(undefined, t.column)
+              : t.column === lanes.complete || t.column === lanes.archived,
+          );
+        }
+        const activeTaskCount = tasks.filter((t) => !terminalByTaskId.get(t.id)).length;
         /*
          * FNXC:GlobalConcurrencyControls 2026-06-26-23:46:
          * Project health In-Flight Agents is a live read-layer count, not persisted slot bookkeeping.
          * Include all shared top-level slot holders, including active in-review reviewer/merger/fix agents, so project-level health matches global concurrency without mutating stored health.
          */
         const inFlightAgentCount = countRunningAgentTasks(tasks);
-        const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-00:40 (batch-core):
+        Project-health "tasks completed" — landed work, resolved from each task's own workflow. Keyed
+        on the literal pair, a board that renamed its complete lane reported 0 completed forever, so
+        project health read as a project that had never finished anything.
+
+        SHARED cache across the whole board, so this is one IR resolution per distinct WORKFLOW rather
+        than per task: this iterates every task in the project and a per-task resolve would make a
+        health read scale with board size.
+
+        `complete` and `archived` both count as landed. The legacy pair remains the fallback when the
+        IR cannot be read or resolves empty (v1-upgraded workflows carry `traits: []`, so empty means
+        UNEXPRESSED rather than absent).
+        */
+        const healthIrCache = new Map<string, WorkflowIr>();
+        let totalTasksCompleted = 0;
+        for (const t of tasks) {
+          let landed: Set<string>;
+          try {
+            const ir = await resolveWorkflowIrForTask(projectStore, t.id, healthIrCache);
+            const lanes = [...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")];
+            landed = new Set(lanes.length > 0 ? lanes : ["done", "archived"]);
+          } catch {
+            landed = new Set(["done", "archived"]);
+          }
+          if (landed.has(t.column)) totalTasksCompleted += 1;
+        }
 
         // Get central health metadata (if available) to preserve non-count fields
         const centralHealth = await central.getProjectHealth(req.params.id);

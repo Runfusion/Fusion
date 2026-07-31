@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-board-workflows");
 /**
  * Board multi-lane payload assembly (U9, R16/R17).
  *
@@ -19,8 +22,8 @@ import {
   BUILTIN_CODING_WORKFLOW_IR,
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
-  isWorkflowColumnsEnabled,
   parseWorkflowIr,
+  resolveAllowedColumns,
   resolveColumnFlags,
   resolveWorkflowIrById,
   type Settings,
@@ -28,6 +31,7 @@ import {
   type TraitFlags,
   type WorkflowIr,
   type WorkflowIrV2,
+  type WorkflowIrColumn,
   type WorkflowFieldDefinition,
 } from "@fusion/core";
 
@@ -46,6 +50,22 @@ export interface BoardWorkflowColumn {
   /** Optional author-defined explanatory copy; omitted keeps client lifecycle fallback. */
   description?: string;
   flags: TraitFlags;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+  The columns this one may move to, resolved from the workflow's OWN graph adjacency
+  (`resolveAllowedColumns`) — the same function `moveTaskInternal` validates against,
+  so the menu offers exactly what the store will accept.
+
+  This field exists to retire the client's two remaining legacy-vocabulary reads. The
+  context menu previously had no adjacency at all, so it approximated targets by a
+  column's NEIGHBOURS in declared order and kept a `VALID_TRANSITIONS` shortcut for
+  workflows whose column-id set matched the six built-ins — because the neighbour
+  approximation is strictly weaker (in-progress: 4 real targets vs 2 neighbours).
+
+  Optional on the wire so a client older than this field keeps its previous behaviour
+  rather than losing its move menu.
+  */
+  moveTargets?: string[];
 }
 
 /** A workflow definition in use by visible cards. */
@@ -94,9 +114,44 @@ function toV2(ir: WorkflowIr): WorkflowIrV2 | undefined {
   return ir.version === "v2" ? ir : undefined;
 }
 
+/*
+ * FNXC:WorkflowResolvedColumns 2026-07-27-16:45 (U10 / R8):
+ * The canonical map is a FALLBACK, not an override. Applied unconditionally it replaced the name
+ * a built-in workflow deliberately chose — `builtin:lead-generation` names `triage` "Lead intake"
+ * and the board rendered "Planning" — and it is the same mechanism that would clobber a renamed
+ * built-in column (U11's Todo -> Planning). Canonicalise only when the IR's own name adds nothing:
+ * blank, the raw column id, or the same words in different case (the "In progress"/"In Progress"
+ * variants that motivated the map). Anything else is an authored name and wins.
+ */
 function displayColumnName(id: string, name: string, canonicalizeLifecycle: boolean): string {
   if (!canonicalizeLifecycle) return name;
-  return BUILTIN_WORKFLOW_COLUMN_LABELS[id] ?? name;
+  const canonical = BUILTIN_WORKFLOW_COLUMN_LABELS[id];
+  if (!canonical) return name;
+  const trimmed = name?.trim() ?? "";
+  const isUninformative = trimmed === ""
+    || trimmed.toLowerCase() === id.toLowerCase()
+    || trimmed.toLowerCase() === canonical.toLowerCase();
+  return isUninformative ? canonical : trimmed;
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+`manualIntake` — an intake column that does NOT auto-triage, i.e. one where cards wait
+for an operator to promote them (Coding (Ideas)'s "Ideas" lane).
+
+It exists because the distinction is trait CONFIG (`intake` with `autoTriage: false`),
+not a trait flag, so it was invisible to every client. The dashboard approximated it as
+`intake && column !== "triage"` — a hardcoded id doing the work of a missing fact. That
+approximation inverts under U11: the merged Planning column keeps id `todo` and `triage`
+is deleted, so `column !== "triage"` becomes vacuously TRUE and a "Start" action would
+appear on every planning card. Surfacing the real fact is the fix; renaming the
+comparison would not have been.
+*/
+function isManualIntakeColumn(col: WorkflowIrColumn): boolean {
+  const flags = resolveColumnFlags(col);
+  if (flags.intake !== true) return false;
+  const intakeTrait = (col.traits ?? []).find((trait) => trait.trait === "intake");
+  return (intakeTrait?.config as { autoTriage?: boolean } | undefined)?.autoTriage === false;
 }
 
 function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWorkflowColumn[] {
@@ -106,7 +161,8 @@ function describeColumns(ir: WorkflowIr, canonicalizeLifecycle = false): BoardWo
     id: col.id,
     name: displayColumnName(col.id, col.name, canonicalizeLifecycle),
     ...(col.description ? { description: col.description } : {}),
-    flags: resolveColumnFlags(col),
+    flags: { ...resolveColumnFlags(col), ...(isManualIntakeColumn(col) ? { manualIntake: true } : {}) },
+    moveTargets: resolveAllowedColumns(ir, col.id),
   }));
 }
 
@@ -154,9 +210,15 @@ async function describeWorkflow(
 /**
  * Build the board-workflows payload for the given task ids. Resolves each task's
  * workflow selection (null → the default workflow lane) and assembles the
- * deduplicated set of referenced workflow definitions. Returns
- * `{ flagEnabled: false, ... }` (empty maps) when the flag is OFF so the route
- * can return early and the client renders the legacy board.
+ * deduplicated set of referenced workflow definitions.
+ *
+ * FNXC:WorkflowColumns 2026-07-27-09:48 (U2 / R9):
+ * The flag-OFF early return is deleted — its gate (`isWorkflowColumnsEnabled`)
+ * returned a literal `true`, so the empty payload was unreachable. `flagEnabled`
+ * stays on the WIRE as a constant `true` because shipped dashboard clients still
+ * branch on it (Board, ListView, TaskDetailModal, useBoardWorkflows); removing
+ * the field would change the response shape, which this delete-only unit must
+ * not do. U10 retires the field once no client reads it.
  */
 export async function buildBoardWorkflowsPayload(
   store: Pick<TaskStore, "getWorkflowDefinition" | "getTaskWorkflowSelection" | "getSettings" | "listWorkflowDefinitions"> &
@@ -164,16 +226,16 @@ export async function buildBoardWorkflowsPayload(
   taskIds: string[],
   settingsOverride?: Pick<Settings, "experimentalFeatures">,
 ): Promise<BoardWorkflowsPayload> {
-  const settings = settingsOverride ?? (await store.getSettings());
-  const flagEnabled = isWorkflowColumnsEnabled(settings);
-
-  const empty: BoardWorkflowsPayload = {
-    flagEnabled,
-    defaultWorkflowId: DEFAULT_WORKFLOW_LANE_ID,
-    workflows: [],
-    taskWorkflowIds: {},
-  };
-  if (!flagEnabled) return empty;
+  /*
+  FNXC:WorkflowColumns 2026-07-27-09:50 (U2 / R9):
+  `settingsOverride` and the `store.getSettings()` read it defaulted to existed
+  ONLY to feed the deleted flag check — no other field of this payload depends on
+  settings. The parameter stays in the signature (callers pass it positionally
+  and it costs nothing) but is no longer read, so the settings round-trip is gone
+  from the board-load path.
+  */
+  void settingsOverride;
+  const flagEnabled = true;
 
   const taskWorkflowIds: Record<string, string> = {};
   const referenced = new Set<string>();
@@ -206,7 +268,7 @@ export async function buildBoardWorkflowsPayload(
     // Older/partial test stores may not expose definition listing; the referenced
     // workflow set above is still sufficient for task rendering. Production
     // failures are logged so empty workflow definitions do not disappear silently.
-    console.warn("[board-workflows] listWorkflowDefinitions failed; using referenced workflows only", err);
+    severityAuditLog.warn("[board-workflows] listWorkflowDefinitions failed; using referenced workflows only", err);
   }
 
   const workflows: BoardWorkflowDefinition[] = [];

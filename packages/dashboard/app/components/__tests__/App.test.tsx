@@ -88,12 +88,7 @@ vi.mock("../../api", async (importOriginal) => {
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
     fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
-    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
-      flagEnabled: false,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [],
-      taskWorkflowIds: {},
-    })),
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve(DEFAULT_BOARD_WORKFLOWS)),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -363,16 +358,49 @@ vi.mock("../../components/ScriptsModal", () => ({
     ) : null,
 }));
 
-vi.mock("../../components/TerminalModal", () => ({
-  TerminalModal: ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) =>
-    isOpen ? (
-      <div className="modal-overlay open" data-testid="terminal-modal">
-        <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
-          Close
-        </button>
-      </div>
-    ) : null,
-}));
+/*
+FNXC:Terminal 2026-07-26-19:30:
+This stand-in used to be `isOpen ? <div/> : null` and nothing else. That made App's terminal MOUNT
+decision structurally unverifiable: the stand-in rendered identically whether App always mounted it with
+`isOpen={false}` or did not mount it at all, so a regression back to always-mounted — which costs a live
+PTY WebSocket and a 45s heartbeat on a backgrounded tab, the tab-discard signal the conditional mount at
+App.tsx ~1927 exists to remove — passed the whole suite.
+`terminalLifecycle` records the two things the DOM cannot show: whether the component function was
+invoked at all, and whether it was unmounted. Existing DOM-level tests are unaffected; the markup is
+unchanged.
+*/
+const terminalLifecycle = {
+  renders: [] as boolean[],
+  mounts: 0,
+  unmounts: 0,
+  reset(): void {
+    this.renders = [];
+    this.mounts = 0;
+    this.unmounts = 0;
+  },
+};
+
+vi.mock("../../components/TerminalModal", async () => {
+  const { useEffect } = await import("react");
+  return {
+    TerminalModal: ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+      terminalLifecycle.renders.push(isOpen);
+      useEffect(() => {
+        terminalLifecycle.mounts += 1;
+        return () => {
+          terminalLifecycle.unmounts += 1;
+        };
+      }, []);
+      return isOpen ? (
+        <div className="modal-overlay open" data-testid="terminal-modal">
+          <button type="button" data-testid="terminal-close-btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      ) : null;
+    },
+  };
+});
 
 vi.mock("../../components/AgentsView", () => ({
   AgentsView: () => <div className="agents-view">Agents view</div>,
@@ -611,12 +639,39 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 // Mock useViewportMode so tests can simulate mobile viewport without
 // depending on window.matchMedia in jsdom.
 const mockUseViewportMode = vi.fn(() => "desktop");
+/* `(max-height: 480px)` in production — independent of the width-driven mode. See the note below. */
+const mockIsShortViewport = vi.fn(() => false);
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: (...args: unknown[]) => mockUseViewportMode(...args),
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   isFullScreenSheetViewport: () => mockUseViewportMode() === "mobile",
+  /*
+  FNXC:TestViewportMock 2026-07-30-11:20:
+  An INCOMPLETE module mock does not fail where the export is missing — it throws inside whichever
+  component imports it, and the nearest ErrorBoundary swallows that into "This section encountered an
+  error". NewTaskModal adopted `isShortViewport`, this mock did not, and the test failed on a MISSING
+  HEADING with a healthy-looking DOM.
+
+  FNXC:TestViewportMock 2026-07-30-19:50 (#2846 review — greptile P2, "viewport predicates are conflated"):
+  SHORT-VIEWPORT IS ITS OWN CONTROL, because in production it is its own MEDIA QUERY.
+
+  The first version keyed it to `mode === "mobile"`, matching how the siblings above are stubbed. The
+  siblings are width predicates and the mode IS their answer; this one is not. `isShortViewport()`
+  reads `(max-height: 480px)` alone, while the mobile mode is the OR of width and height — so an
+  ordinary PORTRAIT PHONE (narrow, tall) is mobile and NOT short, and the mock claimed it was both.
+
+  What that silently mis-tested: `FloatingWindow` suspends geometry PERSISTENCE on a short viewport,
+  and `PlanningModeModal` picks its compact interview layout and hides the session list from it. Every
+  mobile test here took those branches, so the ordinary phone case — the most common real viewport —
+  was never actually exercised, and a regression in the non-short mobile path would have passed.
+
+  Defaults to FALSE rather than to the mode: a test that means "short" now has to say so, which is the
+  only spelling that can distinguish the two.
+  */
+  isShortViewport: () => mockIsShortViewport(),
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
@@ -634,6 +689,9 @@ import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, f
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
+import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
+
+
 
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
@@ -666,12 +724,7 @@ beforeEach(() => {
     },
     taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
   });
-  vi.mocked(fetchBoardWorkflows).mockResolvedValue({
-    flagEnabled: false,
-    defaultWorkflowId: "builtin:coding",
-    workflows: [],
-    taskWorkflowIds: {},
-  });
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_BOARD_WORKFLOWS);
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReset();
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReturnValue({
     projects: [],
@@ -797,6 +850,9 @@ beforeEach(() => {
   });
   mockUseViewportMode.mockReset();
   mockUseViewportMode.mockReturnValue("desktop");
+  /* Reset alongside the mode: it is a SEPARATE predicate, so a suite that sets it must not leak. */
+  mockIsShortViewport.mockReset();
+  mockIsShortViewport.mockReturnValue(false);
   mockAgentStats.todoTaskCount = 0;
   mockAgentStats.idleNonEphemeralCount = 1;
 });
@@ -2424,7 +2480,7 @@ describe("App view switching", () => {
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Cleanup
@@ -2445,7 +2501,7 @@ describe("App view switching", () => {
     // Switch to list view
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Switch back to board view
@@ -2471,7 +2527,7 @@ describe("App view switching", () => {
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("+ New Task"));
@@ -2520,7 +2576,7 @@ describe("App view switching", () => {
 
     // Wait for the app to render
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // List view should be active
@@ -2618,6 +2674,15 @@ describe("App view switching", () => {
     });
     first.unmount();
 
+    /*
+     * FNXC:ViewState 2026-07-26-12:56:
+     * Each render here stands for a separate BOOT, not a remount of the same tab. useViewState now
+     * keeps a per-tab sessionStorage copy of the live view so an involuntary mobile tab discard
+     * restores where the operator actually was; jsdom shares one session store across the whole test,
+     * so a boot must start from a cleared one or the previous render's view wins over the localStorage
+     * value this step is asserting on.
+     */
+    sessionStorage.clear();
     localStorage.setItem(taskViewStorageKey(), "board");
     const second = render(<App />);
     await waitFor(() => {
@@ -2625,6 +2690,8 @@ describe("App view switching", () => {
     });
     second.unmount();
 
+    // Third boot — same fresh-tab reset as above.
+    sessionStorage.clear();
     localStorage.setItem(taskViewStorageKey(), "plugin:fusion-plugin-dependency-graph:graph");
     (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
       {
@@ -2711,7 +2778,7 @@ describe("App view switching", () => {
 
     // Should NOT show board or list view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
   });
 
   it("persists agents view preference to localStorage", async () => {
@@ -2778,7 +2845,7 @@ describe("App view switching", () => {
 
     // Should NOT show board, list, or agents view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
   });
 
@@ -3546,7 +3613,9 @@ describe("App footer-safe project layout", () => {
     await waitFor(() => {
       const wrapper = document.querySelector(".project-content--with-footer");
       expect(wrapper).toBeTruthy();
-      expect(wrapper?.querySelector(".list-view")).toBeTruthy();
+      /* Containment is the point here, so this stays a scoped query — but on the body marker, not
+         the `.list-view` class the workflow skeleton also carries. */
+      expect(wrapper?.querySelector('[data-testid="list-view-body"]')).toBeTruthy();
     });
   });
 
@@ -4699,5 +4768,80 @@ describe("App shell connection status plumbing", () => {
     });
 
     expect(screen.queryByTestId("mobile-more-shell-connection")).toBeNull();
+  });
+});
+
+/*
+FNXC:Terminal 2026-07-26-19:35:
+App must render TerminalModal ONLY while `modalManager.terminalOpen` (App.tsx ~1927). A closed-but-mounted
+terminal still runs `useTerminalSessions` + `useTerminal`: a live PTY WebSocket and a 45s heartbeat
+interval, both of which keep a backgrounded tab awake and get it discarded on iOS Safari / Chrome Android.
+That cost is proved against the real component in `TerminalModal.closed-mount-cost.test.tsx`; this block
+proves App does not pay it.
+
+Asserted on the component-function invocation and unmount, not on rendered DOM. The DOM cannot express
+the difference — a mounted TerminalModal with `isOpen={false}` renders nothing, exactly like an unmounted
+one — which is why the previous shallow stand-in left this invariant unverifiable and a regression to
+always-mounted silently green.
+*/
+describe("terminal mount lifecycle (App mounts the terminal only while open)", () => {
+  it("never mounts TerminalModal while the terminal is closed, and unmounts it on close", async () => {
+    terminalLifecycle.reset();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Settings")).toBeTruthy();
+    });
+
+    expect(
+      terminalLifecycle.renders,
+      "TERMINAL MOUNT REGRESSION: App rendered TerminalModal while the terminal was closed. A mounted TerminalModal opens a PTY WebSocket and arms a 45s heartbeat even with isOpen={false} (see TerminalModal.closed-mount-cost.test.tsx), which is the background work that gets a backgrounded mobile tab discarded. Keep the `modalManager.terminalOpen &&` guard on the render in App.tsx.",
+    ).toEqual([]);
+    expect(terminalLifecycle.mounts).toBe(0);
+
+    // Open the terminal through the Scripts -> Run path.
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("scripts-btn"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-scripts-manage")).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("scripts-modal")).toBeTruthy();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("run-script-build"));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    });
+
+    // Now — and only now — the machinery is allowed to exist.
+    expect(terminalLifecycle.mounts).toBe(1);
+    expect(
+      terminalLifecycle.renders.every((open) => open === true),
+      "App mounted TerminalModal with isOpen={false} at some point; every render while mounted must be an open one.",
+    ).toBe(true);
+
+    const rendersWhileOpen = terminalLifecycle.renders.length;
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("terminal-close-btn"));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("terminal-modal")).toBeNull();
+    });
+
+    expect(
+      terminalLifecycle.unmounts,
+      "TERMINAL MOUNT REGRESSION: closing the terminal left TerminalModal mounted. Close must UNMOUNT it — that is what releases the WebSocket, the heartbeat interval, the xterm scrollback ring, and the WebGL context. Rendering null while staying mounted releases none of them.",
+    ).toBe(1);
+    expect(
+      terminalLifecycle.renders.length,
+      "App re-rendered TerminalModal after close; it must not be mounted at all while closed.",
+    ).toBe(rendersWhileOpen);
   });
 });

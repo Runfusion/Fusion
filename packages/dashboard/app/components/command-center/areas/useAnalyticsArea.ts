@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, withProjectId } from "../../../api/legacy";
 import type { DateRange } from "../DateRangePicker";
 import { isInvalidRange, rangeQuery } from "./areaShared";
+import { useVisibilityAwarePoll } from "../../../hooks/visibilitySuspension";
 
 export interface AnalyticsAreaState<T> {
   data: T | null;
@@ -84,15 +85,14 @@ export function useAnalyticsArea<T>(
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (invalid || options.pollMs === undefined) {
-      return undefined;
-    }
-    const interval = window.setInterval(() => {
-      void load();
-    }, options.pollMs);
-    return () => window.clearInterval(interval);
-  }, [invalid, load, options.pollMs]);
+  /*
+  FNXC:MobileTabRetention 2026-07-26-11:18:
+  Every Command Center analytics area shares this poll, so leaving it running in the background meant a
+  backgrounded mobile tab issued several analytics fetches per minute — a primary reason iOS Safari/PWA and
+  Chrome Android discard the page and force the white-splash reload seen on return. The interval is torn down
+  while the document is hidden and fires one refresh on the hidden -> visible edge.
+  */
+  useVisibilityAwarePoll(load, options.pollMs ?? 0, { enabled: !invalid && options.pollMs !== undefined });
 
   const reload = useCallback(() => {
     void load();

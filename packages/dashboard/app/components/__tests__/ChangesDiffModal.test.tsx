@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChangesDiffModal, type NormalizedFile } from "../ChangesDiffModal";
+import { assertModalGeometryRecoveryAndSheetContracts, assertRenderedModalTouchGeometry } from "./floatingWindowMigration.test-helpers";
 import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 import type { MergeDetails } from "@fusion/core";
 
@@ -98,23 +99,23 @@ describe("ChangesDiffModal", () => {
     });
 
     it("shows status badges with correct labels", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} />,
       );
 
-      const modifiedBadge = container.querySelector(
+      const modifiedBadge = baseElement.querySelector(
         ".changes-file-status--modified",
       );
       expect(modifiedBadge).toBeTruthy();
       expect(modifiedBadge?.textContent).toBe("M");
 
-      const addedBadge = container.querySelector(
+      const addedBadge = baseElement.querySelector(
         ".changes-file-status--added",
       );
       expect(addedBadge).toBeTruthy();
       expect(addedBadge?.textContent).toBe("A");
 
-      const deletedBadge = container.querySelector(
+      const deletedBadge = baseElement.querySelector(
         ".changes-file-status--deleted",
       );
       expect(deletedBadge).toBeTruthy();
@@ -140,11 +141,11 @@ describe("ChangesDiffModal", () => {
     });
 
     it("shows diff content for selected file", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} />,
       );
       // The first file's patch should be visible
-      const patchEl = container.querySelector(".changes-diff-patch");
+      const patchEl = baseElement.querySelector(".changes-diff-patch");
       expect(patchEl).toBeTruthy();
       expect(patchEl?.textContent).toContain("@@ -1,3 +1,6 @@");
     });
@@ -197,11 +198,11 @@ describe("ChangesDiffModal", () => {
     });
 
     it("sets title tooltips on diff file path elements", () => {
-      const { container } = render(<ChangesDiffModal {...defaultProps} />);
+      const { baseElement } = render(<ChangesDiffModal {...defaultProps} />);
 
-      const firstPath = container.querySelector('.changes-diff-file-path[title="src/app.ts"]');
-      const secondPath = container.querySelector('.changes-diff-file-path[title="src/new-file.ts"]');
-      const thirdPath = container.querySelector('.changes-diff-file-path[title="src/deleted.ts"]');
+      const firstPath = baseElement.querySelector('.changes-diff-file-path[title="src/app.ts"]');
+      const secondPath = baseElement.querySelector('.changes-diff-file-path[title="src/new-file.ts"]');
+      const thirdPath = baseElement.querySelector('.changes-diff-file-path[title="src/deleted.ts"]');
 
       expect(firstPath).toBeTruthy();
       expect(secondPath).toBeTruthy();
@@ -227,12 +228,12 @@ describe("ChangesDiffModal", () => {
     });
 
     it("highlights the selected file in sidebar", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} />,
       );
 
       // First file should be selected by default
-      const selectedItems = container.querySelectorAll(
+      const selectedItems = baseElement.querySelectorAll(
         ".changes-diff-file-item.selected",
       );
       expect(selectedItems.length).toBe(1);
@@ -241,7 +242,7 @@ describe("ChangesDiffModal", () => {
       // Click on second file
       fireEvent.click(screen.getByText("src/new-file.ts"));
 
-      const newSelectedItems = container.querySelectorAll(
+      const newSelectedItems = baseElement.querySelectorAll(
         ".changes-diff-file-item.selected",
       );
       expect(newSelectedItems.length).toBe(1);
@@ -340,7 +341,7 @@ describe("ChangesDiffModal", () => {
     });
 
     it("toggles word wrap OFF when clicked", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} />,
       );
 
@@ -348,7 +349,7 @@ describe("ChangesDiffModal", () => {
       fireEvent.click(toggle);
 
       // Should now have nowrap class
-      const patchEl = container.querySelector(".changes-diff-patch");
+      const patchEl = baseElement.querySelector(".changes-diff-patch");
       expect(patchEl?.classList.contains("changes-diff-patch--nowrap")).toBe(
         true,
       );
@@ -382,46 +383,35 @@ describe("ChangesDiffModal", () => {
 
     it("calls onClose when clicking the modal overlay", () => {
       const onClose = vi.fn();
-      /*
-      FNXC:ChangesDiffModal 2026-07-07-09:20:
-      FN-7261 (global modal dismissal setting) made backdrop dismissal default-off: useOverlayDismiss only closes when ModalDismissPreferenceProvider enables it. Wrap the render in the provider so the overlay-click dismiss path is exercised (matches AgentErrorDetailsModal.test.tsx).
-      */
-      const { container } = render(
+      const { baseElement } = render(
         <ModalDismissPreferenceProvider enabled>
           <ChangesDiffModal {...defaultProps} onClose={onClose} />
         </ModalDismissPreferenceProvider>,
       );
 
-      const overlay = container.querySelector(".modal-overlay");
-      expect(overlay).toBeTruthy();
-      // Overlay dismiss is wired via mousedown→mouseup so a resize-drag that
-      // ends on the overlay doesn't close the modal. A real click on the
-      // overlay fires both events on the overlay element.
-      fireEvent.mouseDown(overlay!);
-      fireEvent.mouseUp(overlay!);
+      expect(baseElement.querySelector(".floating-window--changes-diff")).toBeTruthy();
+      fireEvent.pointerDown(document.body);
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it("does NOT call onClose when mousedown is on the modal but mouseup is on the overlay (resize drag)", () => {
       const onClose = vi.fn();
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} onClose={onClose} />,
       );
 
-      const overlay = container.querySelector(".modal-overlay")!;
-      const modal = container.querySelector(".changes-diff-modal")!;
-      fireEvent.mouseDown(modal);
-      fireEvent.mouseUp(overlay);
+      const modal = baseElement.querySelector(".changes-diff-modal")!;
+      fireEvent.pointerDown(modal);
       expect(onClose).not.toHaveBeenCalled();
     });
 
     it("does NOT call onClose when clicking inside the modal body", () => {
       const onClose = vi.fn();
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} onClose={onClose} />,
       );
 
-      const modal = container.querySelector(".modal.changes-diff-modal");
+      const modal = baseElement.querySelector(".modal.changes-diff-modal");
       expect(modal).toBeTruthy();
       fireEvent.click(modal!);
       expect(onClose).not.toHaveBeenCalled();
@@ -492,7 +482,7 @@ describe("ChangesDiffModal", () => {
     });
 
     it("does not show commit metadata when column is not done", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal
           {...defaultProps}
           column="in-progress"
@@ -500,15 +490,15 @@ describe("ChangesDiffModal", () => {
         />,
       );
 
-      expect(container.querySelector(".commit-diff-meta")).toBeNull();
+      expect(baseElement.querySelector(".commit-diff-meta")).toBeNull();
     });
 
     it("does not show commit metadata when mergeDetails not provided", () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} column="done" />,
       );
 
-      expect(container.querySelector(".commit-diff-meta")).toBeNull();
+      expect(baseElement.querySelector(".commit-diff-meta")).toBeNull();
     });
 
     it("shows partial commit metadata (SHA only)", () => {
@@ -580,11 +570,11 @@ describe("ChangesDiffModal", () => {
 
   describe("modal height constraint regression", () => {
     it("max-height uses calc() to stay within viewport padding", async () => {
-      const { container } = render(
+      const { baseElement } = render(
         <ChangesDiffModal {...defaultProps} />,
       );
 
-      const modal = container.querySelector(".changes-diff-modal");
+      const modal = baseElement.querySelector(".changes-diff-modal");
       expect(modal).toBeTruthy();
 
       // Load the stylesheet and verify the .changes-diff-modal rule contains
@@ -637,5 +627,13 @@ describe("ChangesDiffModal", () => {
       expect(maxHeightMatch).toBeTruthy();
       expect(maxHeightMatch![1].trim()).toContain("calc(");
     });
+  });
+});
+
+describe("ChangesDiffModal floating geometry", () => {
+  it("uses its production header for touch drag and resize", () => {
+    render(<ChangesDiffModal {...defaultProps} />);
+    assertRenderedModalTouchGeometry("changes-diff", screen.getByTestId("floating-window-changes-diff").querySelector(".modal-header") as HTMLElement);
+    assertModalGeometryRecoveryAndSheetContracts("changes-diff", () => render(<ChangesDiffModal {...defaultProps} />));
   });
 });

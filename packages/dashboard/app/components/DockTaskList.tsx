@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
+import { isArchivedColumnRole, isCompleteColumnRole } from "../utils/columnRoles";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
 import "./DockTaskList.css";
 
 export interface DockTaskListProps {
+  /** Per-task resolved column traits, from the dock's render props. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>;
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
@@ -33,7 +36,7 @@ function dockRowKey(taskId: string, index: number, list: Array<Task | TaskDetail
   return occurrence === 0 ? taskId : `${taskId}--dup-${occurrence}`;
 }
 
-export function DockTaskList({
+export function DockTaskList({ columnFlagsByTaskId,
   tasks,
   projectId,
   onOpenTask,
@@ -48,12 +51,28 @@ export function DockTaskList({
     onOpenTask?.(task);
   }, [onOpenTask]);
 
-  const doneTasks = useMemo(() => tasks.filter((task) => task.column === "done"), [tasks]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (batch-dashboard-app — the dock-wide fix landed):
+  These three decide what the right dock lists: completed cards grouped, archived hidden, done shown
+  only behind `showDone`. Keyed on the literals none matched on a renamed board, so the dock showed
+  ARCHIVED cards and never grouped completed ones.
+
+  Previously sized as blocked, because this component mounts only through `overflowViewRegistry` and
+  those render props carried no flags. That gap is now closed at the source — App threads the map it
+  already builds for the footer through useRightDockController into the registry — so the same change
+  also fixes DevServerView's dock surface. Per TASK, not per column id.
+  */
+  const isTerminal = useCallback((task: Task | TaskDetail) => {
+    const flags = columnFlagsByTaskId?.get(task.id);
+    return { complete: isCompleteColumnRole(flags, task.column), archived: isArchivedColumnRole(flags, task.column) };
+  }, [columnFlagsByTaskId]);
+  const doneTasks = useMemo(() => tasks.filter((task) => isTerminal(task).complete), [tasks, isTerminal]);
   const visibleTasks = useMemo(() => tasks.filter((task) => {
-    if (task.column === "archived") return false;
-    if (task.column === "done") return showDone;
+    const roles = isTerminal(task);
+    if (roles.archived) return false;
+    if (roles.complete) return showDone;
     return true;
-  }), [showDone, tasks]);
+  }), [showDone, tasks, isTerminal]);
   const hasDoneTasks = doneTasks.length > 0;
   const isEmpty = visibleTasks.length === 0;
   const emptyTitle = tasks.length === 0 ? "No tasks yet" : "No active tasks";

@@ -69,10 +69,19 @@ describe("SSE split (KTD4): mailbox-refresh vs approval-banner", () => {
     const approvalSub = subscriptions.find((s) => "task:updated" in s.events);
     expect(mailboxSub).toBeTruthy();
     expect(approvalSub).toBeTruthy();
-    // The split extends to reconnect handling: the mailbox subscription wires
-    // an onReconnect (re-fetch counts), the approval banner does not.
+    /*
+    FNXC:SSE-Split-Reconnect 2026-07-26-18:05:
+    The split extends to reconnect handling, but NOT as "only the mailbox resyncs". Per the sse-bus
+    contract every subscriber must declare a resync path: the mailbox subscription re-fetches counts,
+    and the approval banner re-reads the authoritative pending list. This test previously asserted the
+    banner had NO onReconnect, which encoded the exact defect the mobile hidden-tab suspend work fixed —
+    an approval raised while the tab was backgrounded stayed invisible and its agent blocked forever.
+    What the split still guarantees is that the two resyncs are SEPARATE functions owned by their own
+    hooks, not one shared handler.
+    */
     expect(mailboxSub!.onReconnect).toBeTruthy();
-    expect(approvalSub!.onReconnect).toBeUndefined();
+    expect(approvalSub!.onReconnect).toBeTruthy();
+    expect(mailboxSub!.onReconnect).not.toBe(approvalSub!.onReconnect);
 
     // (i) approval:requested sets the banner candidate; the mailbox hook's
     //     approval:requested handler (count refresh) remains a distinct

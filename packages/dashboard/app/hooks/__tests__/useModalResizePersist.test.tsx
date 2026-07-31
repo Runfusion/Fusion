@@ -99,14 +99,16 @@ function Harness({
   initialWidth,
   isOpen = true,
   storageKey = STORAGE_KEY,
+  touchTargets = false,
 }: {
   initialHeight?: string;
   initialWidth?: string;
   isOpen?: boolean;
   storageKey?: string;
+  touchTargets?: boolean;
 }) {
   const modalRef = useRef<HTMLDivElement | null>(null);
-  useModalResizePersist(modalRef, isOpen, storageKey);
+  useModalResizePersist(modalRef, isOpen, storageKey, { touchTargets });
 
   return (
     <div
@@ -134,9 +136,9 @@ describe("useModalResizePersist", () => {
     document.body.style.userSelect = "";
   });
 
-  it("injects a touch-capable resize grip on tablet and persists dragged size", () => {
+  it("injects a tablet touch hit target and persists a touch drag", () => {
     setViewport(900);
-    render(<Harness />);
+    render(<Harness touchTargets />);
 
     const modal = screen.getByTestId("modal");
     installModalGeometry(modal);
@@ -146,6 +148,8 @@ describe("useModalResizePersist", () => {
 
     expect(grip).toHaveAttribute("role", "separator");
     expect(grip).toHaveAttribute("aria-label", "Resize modal from bottom-right corner");
+    expect(grip).toHaveAttribute("data-resize-hit-target", "true");
+    expect(grip).toHaveClass("modal-resize-grip--touch-target");
 
     dispatchPointerEvent(grip, "pointerdown", { clientX: 10, clientY: 20, pointerType: "touch" });
     dispatchPointerEvent(document, "pointermove", { clientX: 70, clientY: 65, pointerType: "touch" });

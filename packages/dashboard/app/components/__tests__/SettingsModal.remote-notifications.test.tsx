@@ -154,6 +154,7 @@ vi.mock("../../hooks/useViewportMode", () => ({
   isShortViewport: () => false,
   getViewportMode: () => "mobile",
   isMobileViewport: () => true,
+  isTabletTouchViewport: (mode?: string) => mode === "tablet",
   useViewportMode: () => "mobile",
 }));
 vi.mock("lucide-react", async (importOriginal) => {
@@ -499,22 +500,23 @@ describe("SettingsModal", () => {
 
     it("renders remote-status-bar with stopped state and omits share block when not running", async () => {
       mockFetchRemoteStatus.mockResolvedValue({ provider: null, state: "stopped", url: null, lastError: null });
-      const { container } = await renderModalSection("remote", "Remote Access");
+      await renderModalSection("remote", "Remote Access");
 
-      const statusBar = container.querySelector(".remote-status-bar");
+      // FNXC:SettingsModalTests 2026-07-28-17:20: FN-8606 portals the modal branch (FloatingWindow) to document.body, so modal-internal nodes resolve from the document root, not the render container.
+      const statusBar = document.querySelector(".remote-status-bar");
       expect(statusBar).toBeInTheDocument();
       expect(statusBar?.className).toContain("remote-status-bar--stopped");
-      expect(container.querySelector(".remote-share-block")).not.toBeInTheDocument();
+      expect(document.querySelector(".remote-share-block")).not.toBeInTheDocument();
     });
 
     it("renders remote-share-block when tunnel is running with a URL", async () => {
       mockFetchRemoteStatus.mockResolvedValue({ provider: "tailscale", state: "running", url: "https://machine.ts.net/", lastError: null });
-      const { container } = await renderModalSection("remote", "Remote Access");
+      await renderModalSection("remote", "Remote Access");
 
-      const statusBar = container.querySelector(".remote-status-bar");
+      const statusBar = document.querySelector(".remote-status-bar");
       expect(statusBar).toBeInTheDocument();
       expect(statusBar?.className).toContain("remote-status-bar--running");
-      expect(container.querySelector(".remote-share-block")).toBeInTheDocument();
+      expect(document.querySelector(".remote-share-block")).toBeInTheDocument();
     });
 
     it("updates provider selection via radio and shows provider status", async () => {

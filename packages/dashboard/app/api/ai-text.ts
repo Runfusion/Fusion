@@ -131,8 +131,18 @@ export interface TranslateImportFields {
   body?: string;
 }
 
+export interface ImportTranslationIdentity {
+  provider: "github" | "gitlab";
+  repoKey: string;
+  issueNumber: number;
+}
+
 export interface TranslateImportContentResponse {
   fields: TranslateImportFields;
+}
+
+export interface CachedTranslateImportContentResponse {
+  fields: TranslateImportFields | null;
 }
 
 /**
@@ -141,12 +151,14 @@ export interface TranslateImportContentResponse {
  * @param targetLocale - Active dashboard locale
  * @param projectId - Optional project scope for settings/MCP
  * @param sourceLocale - Optional detection hint for the model
+ * @param identity - Optional complete import identity for durable read-through caching
  */
 export async function translateImportContent(
   fields: TranslateImportFields,
   targetLocale: string,
   projectId?: string,
   sourceLocale?: string,
+  identity?: ImportTranslationIdentity,
 ): Promise<TranslateImportFields> {
   const response = await api<TranslateImportContentResponse>(
     withProjectId("/ai/translate-text", projectId),
@@ -156,8 +168,30 @@ export async function translateImportContent(
         fields,
         targetLocale,
         ...(sourceLocale ? { sourceLocale } : {}),
+        ...(identity ?? {}),
       }),
     },
+  );
+  return response.fields;
+}
+
+/** Read a durable manual import translation without triggering AI work or budget use. */
+export async function fetchCachedImportTranslation(
+  fields: TranslateImportFields,
+  targetLocale: string,
+  identity: ImportTranslationIdentity,
+  projectId?: string,
+): Promise<TranslateImportFields | null> {
+  const query = new URLSearchParams({
+    provider: identity.provider,
+    repoKey: identity.repoKey,
+    issueNumber: String(identity.issueNumber),
+    targetLocale,
+    title: fields.title ?? "",
+    body: fields.body ?? "",
+  });
+  const response = await api<CachedTranslateImportContentResponse>(
+    withProjectId(`/ai/import-translation?${query.toString()}`, projectId),
   );
   return response.fields;
 }
@@ -201,6 +235,8 @@ export async function autoTranslateImportIssues(
 /** User-facing error copy for translateImportContent failures (toast/banner). */
 export const TRANSLATE_ERROR_MESSAGES = {
   RATE_LIMIT: "Too many translation requests. Please wait an hour.",
+  VALIDATION: "Translation request is invalid. Check the selected content and try again.",
+  SERVICE: "Translation service is temporarily unavailable. Please try again shortly.",
   NETWORK: "Failed to translate content. Please try again.",
 } as const;
 
@@ -212,18 +248,16 @@ export function getTranslateErrorMessage(error: unknown): string {
     return TRANSLATE_ERROR_MESSAGES.NETWORK;
   }
 
+  const status = "status" in error && typeof error.status === "number" ? error.status : undefined;
   const message = error.message.toLowerCase();
-  if (message.includes("rate limit") || message.includes("429")) {
+  if (status === 429 || message.includes("translate_rate_limit") || message.includes("rate limit")) {
     return TRANSLATE_ERROR_MESSAGES.RATE_LIMIT;
   }
-  if (
-    message.startsWith("fields") ||
-    message.startsWith("text to translate") ||
-    message.startsWith("targetlocale") ||
-    message.includes("targetlocale must") ||
-    message.includes("sourceLocale must")
-  ) {
-    return error.message;
+  if (status === 400 || message.includes("translate_validation_error")) {
+    return TRANSLATE_ERROR_MESSAGES.VALIDATION;
+  }
+  if (status === 503 || message.includes("translate_service_error")) {
+    return TRANSLATE_ERROR_MESSAGES.SERVICE;
   }
   return TRANSLATE_ERROR_MESSAGES.NETWORK;
 }

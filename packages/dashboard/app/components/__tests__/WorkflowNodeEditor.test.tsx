@@ -4265,7 +4265,14 @@ describe("WorkflowNodeEditor simplified view modes", () => {
     await screen.findByTestId("wf-simple-canvas");
 
     fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
-    const dialog = await screen.findByTestId("wf-add-step-modal");
+    /*
+    FNXC:FloatingWindow 2026-07-30-08:50:
+    The add-step dialog is a FloatingWindow now (WorkflowAddStepModal.tsx:145,
+    `windowKey="workflow-add-step"`), so its stable testid is the window's
+    `floating-window-workflow-add-step`. The old `wf-add-step-modal` testid does not exist anywhere in
+    app source — verified by grep, not inferred — so these queries could never resolve.
+    */
+    const dialog = await screen.findByTestId("floating-window-workflow-add-step");
     expect(within(dialog).getByText("Agent steps")).toBeInTheDocument();
     expect(within(dialog).getByText("Automation")).toBeInTheDocument();
     expect(within(dialog).getByText("Flow control")).toBeInTheDocument();
@@ -4275,7 +4282,7 @@ describe("WorkflowNodeEditor simplified view modes", () => {
     expect(within(dialog).queryByTestId("wf-add-step-prompt-prompt")).not.toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByTestId("wf-add-step-script-script"));
-    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("floating-window-workflow-add-step")).not.toBeInTheDocument());
     // def() has an unambiguous edge into end, so the pick inserts there and
     // the new node lands selected with the inspector open.
     expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
@@ -4310,9 +4317,16 @@ describe("WorkflowNodeEditor simplified view modes", () => {
     await act(async () => {});
 
     fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
-    const dialog = await screen.findByTestId("wf-add-step-modal");
+    /*
+    FNXC:FloatingWindow 2026-07-30-08:50:
+    The add-step dialog is a FloatingWindow now (WorkflowAddStepModal.tsx:145,
+    `windowKey="workflow-add-step"`), so its stable testid is the window's
+    `floating-window-workflow-add-step`. The old `wf-add-step-modal` testid does not exist anywhere in
+    app source — verified by grep, not inferred — so these queries could never resolve.
+    */
+    const dialog = await screen.findByTestId("floating-window-workflow-add-step");
     fireEvent.click(within(dialog).getByTestId("wf-add-step-tpl-tpl-sec-optional-group"));
-    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("floating-window-workflow-add-step")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByText("Save").closest("button")!);
     await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
@@ -4348,9 +4362,16 @@ describe("WorkflowNodeEditor simplified view modes", () => {
 
     // def() has a single edge into end, so the toolbar add targets that edge.
     fireEvent.click(screen.getByTestId("wf-simple-toolbar-add-step"));
-    const dialog = await screen.findByTestId("wf-add-step-modal");
+    /*
+    FNXC:FloatingWindow 2026-07-30-08:50:
+    The add-step dialog is a FloatingWindow now (WorkflowAddStepModal.tsx:145,
+    `windowKey="workflow-add-step"`), so its stable testid is the window's
+    `floating-window-workflow-add-step`. The old `wf-add-step-modal` testid does not exist anywhere in
+    app source — verified by grep, not inferred — so these queries could never resolve.
+    */
+    const dialog = await screen.findByTestId("floating-window-workflow-add-step");
     fireEvent.click(within(dialog).getByTestId("wf-add-step-fragment-WF-FRAG"));
-    await waitFor(() => expect(screen.queryByTestId("wf-add-step-modal")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId("floating-window-workflow-add-step")).not.toBeInTheDocument());
 
     // Save and inspect the serialized IR: merge no longer feeds end directly;
     // the fragment's lint gate sits between them.

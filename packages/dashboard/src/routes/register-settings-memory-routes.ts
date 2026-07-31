@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-settings-memory-routes");
 import {
   DEFAULT_GLOBAL_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
@@ -246,7 +249,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       if (process.arch === "x64") {
         return "cloudflared-linux-amd64";
       }
-      console.warn(`[remote-access] Unsupported Linux architecture '${process.arch}' for cloudflared; falling back to amd64`);
+      severityAuditLog.warn(`[remote-access] Unsupported Linux architecture '${process.arch}' for cloudflared; falling back to amd64`);
       return "cloudflared-linux-amd64";
     }
 
@@ -257,7 +260,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       if (process.arch === "x64") {
         return "cloudflared-darwin-amd64";
       }
-      console.warn(`[remote-access] Unsupported macOS architecture '${process.arch}' for cloudflared; falling back to amd64`);
+      severityAuditLog.warn(`[remote-access] Unsupported macOS architecture '${process.arch}' for cloudflared; falling back to amd64`);
       return "cloudflared-darwin-amd64";
     }
 

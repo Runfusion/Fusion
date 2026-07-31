@@ -145,9 +145,15 @@ describe("swrCache", () => {
     expect(SWR_CACHE_KEYS.MAILBOX_INBOX_PREFIX).toBe("kb-dashboard-mailbox-inbox-cache:");
     expect(SWR_CACHE_KEYS.MAILBOX_OUTBOX_PREFIX).toBe("kb-dashboard-mailbox-outbox-cache:");
     expect(SWR_CACHE_KEYS.MAILBOX_UNREAD_COUNT_PREFIX).toBe("kb-dashboard-mailbox-unread-cache:");
-    expect(SWR_DEFAULT_MAX_AGE_MS).toBe(10 * 60 * 1000);
-    expect(SWR_TASKS_MAX_AGE_MS).toBe(60_000);
+    // FNXC:MobileTabDiscard 2026-07-26-12:12: the hydration TTLs are sized to OUTLIVE a mobile tab
+    // discard (minutes-to-hours in the background), not to bound freshness — every consumer
+    // revalidates immediately after hydrating. They must stay strictly below the 24h boot prune
+    // window or the entry is deleted before any hook can read it.
+    expect(SWR_DEFAULT_MAX_AGE_MS).toBe(6 * 60 * 60 * 1000);
+    expect(SWR_TASKS_MAX_AGE_MS).toBe(12 * 60 * 60 * 1000);
     expect(SWR_LONG_MAX_AGE_MS).toBe(24 * 60 * 60 * 1000);
+    expect(SWR_DEFAULT_MAX_AGE_MS).toBeLessThan(SWR_LONG_MAX_AGE_MS);
+    expect(SWR_TASKS_MAX_AGE_MS).toBeLessThan(SWR_LONG_MAX_AGE_MS);
   });
 
   it("swallows quota errors", () => {

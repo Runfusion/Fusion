@@ -52,8 +52,7 @@ FN-7621 recurrence #3 root cause: styles.css's mobile `@media (max-width: 768px)
   touch-action: pan-x pan-y;
 }
 
-.modal-overlay.terminal-modal-overlay--docked.terminal-modal-overlay--docked,
-.modal-overlay.terminal-modal-overlay--floating.terminal-modal-overlay--floating {
+.modal-overlay.terminal-modal-overlay--docked.terminal-modal-overlay--docked {
   align-items: stretch;
   justify-content: flex-end;
   padding: 0;
@@ -61,14 +60,6 @@ FN-7621 recurrence #3 root cause: styles.css's mobile `@media (max-width: 768px)
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   pointer-events: none;
-}
-
-/*
-FNXC:FloatingWindow 2026-06-22-21:30:
-Only the FLOATING terminal joins the shared cross-type floating stack. Reset the base `.modal-overlay` z-index:100 to auto so this click-through overlay does NOT establish a stacking context; the floating panel's inline z-index (from floatingWindowStack, 4000+) then interleaves at the root with the right-dock pop-out, the floating New Task dialog, and FloatingWindow. Docked mode keeps the base overlay stacking (full-width bottom panel) and is intentionally excluded.
-*/
-.modal-overlay.terminal-modal-overlay--floating {
-  z-index: auto;
 }
 
 .modal.terminal-modal {
@@ -90,6 +81,22 @@ Only the FLOATING terminal joins the shared cross-type floating stack. Reset the
 }
 .modal.terminal-modal:not([style*="height"]) {
   height: min(85vh, calc(100dvh - 40px));
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-07-27-19:00:
+The floating terminal is now content inside FloatingWindow, so its old standalone dimensions and
+native resize grip must not escape the shared geometry host. The docked and below presentations
+retain their own sizing rules below.
+*/
+.floating-window .modal.terminal-modal.terminal-modal--floating {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  resize: none;
 }
 
 .modal.terminal-modal.terminal-modal--docked {
@@ -199,88 +206,6 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
   border-radius: var(--radius-pill);
   background: var(--border);
 }
-
-.modal.terminal-modal.terminal-modal--floating {
-  --floating-window-shadow: var(--shadow-lg);
-  position: fixed;
-  left: var(--terminal-float-x);
-  top: var(--terminal-float-y);
-  width: var(--terminal-float-width);
-  height: var(--terminal-float-height);
-  min-width: calc(var(--space-xl) * 20);
-  min-height: calc(var(--space-xl) * 13.333);
-  max-width: calc(100vw - (var(--space-lg) * 2));
-  max-height: calc(100dvh - (var(--space-lg) * 2));
-  resize: none;
-  pointer-events: auto;
-  /*
-  FNXC:FloatingWindow 2026-06-23-23:32:
-  Floating modals share a gentle theme-controlled elevation token. Use the app shadow fallback instead of undefined --shadow-xl so themes can opt out or tune shadow strength consistently across Terminal, New Task, Right Dock, and shared FloatingWindow panels.
-  */
-  box-shadow: var(--floating-window-shadow, var(--shadow-lg));
-}
-
-/*
-FNXC:Terminal 2026-06-22-19:50:
-The floating-mode header is the move grip. `touch-action: none` is required so a touch-drag on it is delivered as a continuous pointermove stream (paired with setPointerCapture on the captured element) instead of being hijacked by the browser into page scroll/pan. Without it the floating drag stutters on touch — same fix the right-dock pop-out drag handle uses. cursor: grab/grabbing signals the move affordance on desktop.
-*/
-.terminal-header--draggable {
-  cursor: grab;
-  user-select: none;
-  touch-action: none;
-  min-height: 48px;
-}
-
-.terminal-header--draggable:active {
-  cursor: grabbing;
-}
-
-.terminal-floating-resize-handle {
-  position: absolute;
-  z-index: 2;
-  touch-action: none;
-}
-
-/*
-FNXC:TerminalModalControls 2026-07-24-12:35:
-Tablet operators resize the global floating terminal with the same edge and corner targets as other
-floating windows. Use tokenized, larger hit regions so touch gestures are discoverable without
-adding a second header or exposing controls in the fixed phone and embedded presentations.
-*/
-.terminal-floating-resize-handle--n,
-.terminal-floating-resize-handle--s {
-  left: var(--space-md);
-  right: var(--space-md);
-  height: var(--space-md);
-  cursor: ns-resize;
-}
-
-.terminal-floating-resize-handle--n { top: 0; }
-.terminal-floating-resize-handle--s { bottom: 0; }
-
-.terminal-floating-resize-handle--e,
-.terminal-floating-resize-handle--w {
-  top: var(--space-md);
-  bottom: var(--space-md);
-  width: var(--space-md);
-  cursor: ew-resize;
-}
-
-.terminal-floating-resize-handle--e { right: 0; }
-.terminal-floating-resize-handle--w { left: 0; }
-
-.terminal-floating-resize-handle--ne,
-.terminal-floating-resize-handle--nw,
-.terminal-floating-resize-handle--se,
-.terminal-floating-resize-handle--sw {
-  width: var(--space-xl);
-  height: var(--space-xl);
-}
-
-.terminal-floating-resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
-.terminal-floating-resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
-.terminal-floating-resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
-.terminal-floating-resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
 
 .terminal-header {
   display: flex;
@@ -1900,17 +1825,6 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
   This keeps the shared header move grip and all eight resize targets reachable at
   exactly 768px without exposing any geometry controls on true-phone sheets.
   */
-  .modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating {
-    min-width: calc(var(--space-xl) * 20) !important;
-    min-height: calc(var(--space-xl) * 13.333) !important;
-    width: var(--terminal-float-width) !important;
-    height: var(--terminal-float-height) !important;
-    max-width: calc(100vw - (var(--space-lg) * 2)) !important;
-    max-height: calc(100dvh - (var(--space-lg) * 2)) !important;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border);
-  }
-
   .modal.terminal-modal.terminal-modal--tablet.terminal-modal--docked {
     min-width: 0 !important;
     min-height: calc(var(--space-xl) * 10) !important;

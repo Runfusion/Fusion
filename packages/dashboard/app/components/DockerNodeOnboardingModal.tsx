@@ -5,6 +5,7 @@ import type { DockerHostConfig, ManagedDockerNodeInput } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { DockerTargetSelector } from "./DockerTargetSelector";
 import "./DockerNodeOnboardingModal.css";
+import { FloatingWindow } from "./FloatingWindow";
 
 interface DockerNodeOnboardingModalProps {
   isOpen: boolean;
@@ -211,14 +212,9 @@ export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast:
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={closeModal}>
-      <div
-        className="modal docker-onboarding"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("docker.ariaLabels.modal", "Docker node onboarding")}
-        onClick={(event) => event.stopPropagation()}
-      >
+    <FloatingWindow windowKey="docker-node-onboarding" modal title={t("docker.titles.provisionNode", "Provision Docker Node")} ariaLabel={t("docker.ariaLabels.modal", "Docker node onboarding")} onClose={() => { if (!submitting) closeModal(); }} hideHeader dragHandleSelector=".docker-onboarding .modal-header" className="floating-window--docker-node-onboarding" defaultSize={{ width: 720, height: 640 }} minSize={{ width: 420, height: 320 }} persistGeometryKey="floating-window:docker-node-onboarding" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+      {/* FNXC:ModalTouchGeometry 2026-07-26-16:22: Provisioning retains outside dismissal only before submit; the guarded host close protects an in-flight node creation. */}
+      <div className="modal docker-onboarding">
         <div className="modal-header">
           <h3>{t("docker.titles.provisionNode", "Provision Docker Node")}</h3>
           <button className="modal-close" onClick={closeModal} disabled={submitting} aria-label={t("docker.ariaLabels.closeModal", "Close onboarding modal")}>
@@ -519,6 +515,6 @@ export function DockerNodeOnboardingModal({ isOpen, onClose, onSubmit, addToast:
           </button>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

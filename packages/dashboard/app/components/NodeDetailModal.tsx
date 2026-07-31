@@ -34,6 +34,7 @@ const DOCKER_MOUNT_LABELS = {
   bind: "bind",
 } as const;
 
+import { FloatingWindow } from "./FloatingWindow";
 interface NodeDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -437,12 +438,10 @@ export function NodeDetailModal({
   const dockerStatusTone = getDockerStatusTone(effectiveDockerStatus);
 
   return (
-    <div className="modal-overlay open" onClick={onClose}>
+    /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
+    <FloatingWindow windowKey="node-detail" title={t("nodes.modalTitle", "Node Details")} ariaLabel={`${t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })} dialog`} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--node-detail" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:node-detail" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       <div
         className="modal modal-lg node-detail-modal"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
         aria-label={t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })}
       >
         <div className="modal-header">
@@ -891,6 +890,6 @@ export function NodeDetailModal({
           addToast={addToast}
         />
       )}
-    </div>
+    </FloatingWindow>
   );
 }

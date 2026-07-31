@@ -1,3 +1,6 @@
+import { createLogger } from "@fusion/core";
+
+const severityAuditLog = createLogger("dashboard-register-signal-routes");
 import type { Request, Response } from "express";
 import type { Task, TaskStore } from "@fusion/core";
 import { ingestIncidentSignal, resolveIncident } from "../monitor-store.js";
@@ -242,7 +245,7 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
       await resolveIncident(layer, signal.groupingKey, at);
     }
   } catch (err) {
-    console.error("[signal-incident-bridge] Failed to record connector signal", err);
+    severityAuditLog.error("[signal-incident-bridge] Failed to record connector signal", err);
   }
 
   return { status: 201, taskId: task.id };

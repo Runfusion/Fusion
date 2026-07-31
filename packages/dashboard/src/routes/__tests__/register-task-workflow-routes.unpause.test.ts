@@ -33,11 +33,11 @@ const createPauseRouteHarness = (initialTaskState: any) => {
     */
     getProjectScopedPluginMcpServers: vi.fn(async () => []),
     getTask: vi.fn(async () => taskState),
-    pauseTask: vi.fn(async (_id: string, paused: boolean) => {
+    pauseTask: vi.fn(async (_id: string, paused: boolean, _runContext, options) => {
       taskState = {
         ...taskState,
         paused: paused ? true : undefined,
-        userPaused: paused ? taskState.userPaused : undefined,
+        userPaused: paused ? (options?.userPaused ? true : taskState.userPaused) : undefined,
         pausedByAgentId: paused ? taskState.pausedByAgentId : undefined,
       };
       return taskState;
@@ -90,6 +90,7 @@ describe("task workflow pause routes", () => {
 
     expect(res.status).toBe(200);
     expect(getTaskState().paused).toBe(true);
-    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true);
+    expect(getTaskState().userPaused).toBe(true);
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, { userPaused: true });
   });
 });

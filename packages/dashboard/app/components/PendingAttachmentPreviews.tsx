@@ -17,7 +17,7 @@ interface PendingAttachmentPreviewsProps {
 }
 
 /*
-FNXC:QuickAddAttachments 2026-08-03-00:00:
+FNXC:QuickAddAttachments 2026-07-23-00:00:
 Task creation surfaces share one pending-attachment renderer so photos retain the established
 floating preview while non-image task-store attachments have only an actionable filename and
 remove control. Never render an image-open button without a preview URL.

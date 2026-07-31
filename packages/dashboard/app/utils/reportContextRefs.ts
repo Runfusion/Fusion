@@ -1,5 +1,5 @@
 /**
- * FNXC:ReportPipeline 2026-08-02-00:00:
+ * FNXC:ReportPipeline 2026-07-19-00:00:
  * FN-8348 moves report entry points from Header into Settings General and Command
  * Center. Resolve task and agent context in this shared helper so each home keeps
  * the same deep-link behavior without duplicating route parsing.

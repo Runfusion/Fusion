@@ -3,7 +3,12 @@ import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as Re
 import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
 import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, isColumn } from "@fusion/core";
+import { VALID_TRANSITIONS, isColumn } from "@fusion/core";
+import { isIntakeColumnRole, isReviewColumnRole } from "../utils/columnRoles";
+// `COLUMNS` is gone from this file: deleting the default-column-set shortcut removed
+// the last use. `VALID_TRANSITIONS` survives ONLY for the no-metadata load window (see
+// the note at `moveTransitions`); every workflow-resolved path now reads the payload's
+// own `moveTargets` adjacency.
 
 /*
 FNXC:ReviewLaneBypass 2026-07-09-00:00:
@@ -44,14 +49,22 @@ export interface TaskContextMenuColumnFlags {
   hiddenFromBoard?: boolean;
   hold?: boolean;
   intake?: boolean;
+  /** Intake WITHOUT auto-triage: the operator promotes the card by hand. */
+  manualIntake?: boolean;
   mergeBlocker?: boolean;
   humanReview?: boolean;
+  /* FNXC:WorkflowResolvedColumns 2026-07-27-15:30 (U10 / R8): surfaced so column-trait consumers
+     can tell an implementation lane from a pre-implementation one without naming `in-progress`. */
+  countsTowardWip?: boolean;
 }
 
 export interface TaskContextMenuColumnMetadata {
   id: ColumnId;
   label: string;
   flags?: TaskContextMenuColumnFlags;
+  /** Columns this one may move to, from the workflow's own graph adjacency. Optional:
+   *  a payload predating the field falls back to the neighbour approximation. */
+  moveTargets?: readonly string[];
 }
 
 export interface TaskReviewActionDescriptor {
@@ -122,29 +135,96 @@ export function getTaskPrAutomationLabel(t: TFunction<"app">, status?: string): 
   return prAutomationStatusLabels[status];
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only.
+Reached when the caller supplies no resolved flags — the pre-load window before the board's
+workflows fetch resolves, and a card stranded on an id its workflow no longer declares. Nothing to
+resolve from in either state, so deleting the id does not remove a decision, it answers "not a
+review column" for every card during first paint.
+
+NOTE, flagged not fixed: the id is currently an UNCONDITIONAL disjunct, so explicit
+`{ mergeBlocker: false, humanReview: false }` on a column named `in-review` is still classified as
+review. #2664 fixed exactly that shape in `isPreExecutionHoldColumn` (traits first, id as fallback).
+Same fix belongs here, but it is a BEHAVIOR CHANGE and out of scope for a conversion batch.
+*/
 function isReviewColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   return column === "in-review" || flags?.mergeBlocker === true || flags?.humanReview === true;
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only, same
+reasoning as `isReviewColumn` above — and the same flagged inversion: `column === "done"` is an
+unconditional disjunct ahead of the trait read.
+*/
 function isDoneOrReview(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   return column === "done" || isReviewColumn(column, flags) || (flags?.complete === true && flags?.archived !== true);
 }
 
+/*
+FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: the no-metadata fallback only.
+Same rule as `isReviewColumn` above: reached when no resolved flags arrive, where answering
+"mutable" for a done/archived card would offer live-work actions on a terminal one.
+*/
 function isMutableLiveColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
   if (flags) return flags.complete !== true && flags.archived !== true;
   return column !== "done" && column !== "archived";
 }
 
-export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
-  if (flags?.complete === true || flags?.archived === true) return false;
-  return column === "triage" || flags?.intake === true || flags?.hold === true;
+/**
+ * A PURE intake lane — intake without hold. A merged Planning column carries both, so it is not
+ * "pure intake": cards rest there waiting for capacity and have real actions.
+ */
+function isPureIntakeColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
+  // With traits, "pure" means intake WITHOUT hold — a merged Planning column carries both and is
+  // therefore not pure. Without traits, defer to the shared intake role so the degraded-mode id
+  // list lives in exactly one place.
+  if (flags) return flags.intake === true && flags.hold !== true;
+  return isIntakeColumnRole(undefined, column);
 }
 
-function isDefaultWorkflowColumnSet(columns: readonly TaskContextMenuColumnMetadata[]): boolean {
-  if (columns.length !== COLUMNS.length) return false;
-  const ids = new Set(columns.map((column) => column.id));
-  return COLUMNS.every((column) => ids.has(column));
+export function isPreExecutionHoldColumn(column: string, flags?: TaskContextMenuColumnFlags): boolean {
+  if (flags?.complete === true || flags?.archived === true) return false;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:35 (Phase B — AUDITED, deliberately NOT consolidated):
+  `isPreImplementationColumnRole` in `utils/columnRoles.ts` answers a near-identical question and I
+  routed this through it — then reverted, because its DEGRADED-MODE answer is wider than this one's.
+
+  Its legacy set is {todo, triage}; this predicate's was {triage} alone. They differ for a reason:
+  that helper drives the preserve-progress prompt, where a flagless `todo` should prompt (losing
+  steps is unrecoverable), while THIS drives the Plan affordance, where a flagless `todo` must not
+  offer to re-plan a card that may already be planned. Consolidating added `plan` to flagless `todo`
+  cards — caught by "exposes Plan only for pre-execution hold columns".
+
+  Same shape, different degraded answer: the trait path is identical and the fallbacks are not
+  interchangeable. Kept separate with the difference recorded, rather than made to look shared.
+  */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-08:00 (U12 — the LAST `triage` column guard):
+  FLAGS-FIRST, id only as the degraded answer. It used to OR the legacy id with the traits
+  UNCONDITIONALLY, which is not a fallback: a resolved column that happens to be named `triage` but
+  whose traits say it is mid-flight answered true, offering Plan on a card that is already executing.
+
+  The degraded set stays {triage} ALONE — deliberately not the {todo, triage} used by
+  `isPreImplementationColumnRole`, for the reason recorded above: that helper drives the
+  preserve-progress prompt where a flagless `todo` should prompt, while this drives the Plan
+  affordance where a flagless `todo` must not offer to re-plan a possibly-planned card.
+
+  Behaviour delta is exactly the inversion. Flags absent: unchanged (`column === "triage"`). Flags
+  present and intake/hold: unchanged (true). Flags present, name `triage`, traits mid-flight: was
+  true, now false — which is the defect.
+
+  DELIBERATE-LITERAL: the surviving `triage` is the DEGRADED answer, not an unconverted guard, and it
+  is the last `triage` comparison in production source. Converting it is not available — there is no
+  trait to read when `flags` is undefined, which happens during first paint and for a card in a column
+  its workflow no longer declares. Deleting it would silently withdraw Plan from exactly the stranded
+  cards that need re-planning most.
+
+  So the census reaching zero for `triage` means "no unconverted guards remain", not "the string is
+  gone". Recorded here rather than achieved by deleting a fallback to move a number.
+  */
+  return flags ? (flags.intake === true || flags.hold === true) : column === "triage";
 }
+
 
 /*
 FNXC:TaskContextMenu 2026-06-30-12:42:
@@ -155,12 +235,52 @@ Manual pull-request review has two separate operator intents: Start PR Review op
 */
 function getWorkflowMoveTargets(task: Task | TaskDetail, columns: readonly TaskContextMenuColumnMetadata[]): ColumnId[] {
   const visibleColumns = columns.filter((column) => column.flags?.hiddenFromBoard !== true);
-  if (isDefaultWorkflowColumnSet(visibleColumns) && isColumn(task.column)) {
-    return task.column === "in-review" ? ["todo", "in-progress"] : [...VALID_TRANSITIONS[task.column]];
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+  REAL ADJACENCY, when the payload carries it. `moveTargets` comes from
+  `resolveAllowedColumns` — the same resolver `moveTaskInternal` validates against — so
+  the menu offers exactly what the store will accept, for ANY workflow.
+
+  This replaces the `VALID_TRANSITIONS` shortcut that used to run whenever a workflow's
+  column-id set matched the six built-ins. That shortcut existed because the fallback
+  below approximates targets from a column's NEIGHBOURS in declared order, which is
+  strictly weaker than the graph (in-progress: 4 real targets vs 2 neighbours), so
+  deleting it without adjacency would have SHRUNK every default-workflow move menu.
+
+  With adjacency on the wire the shortcut is not merely removable, it is redundant:
+  `resolveAllowedColumns(BUILTIN_CODING_WORKFLOW_IR, c)` is byte-identical to
+  `VALID_TRANSITIONS[c]` for all six columns, ORDER included — measured, and pinned by
+  `@fusion/core`'s `builtin-adjacency-matches-legacy-transitions` test so the
+  equivalence cannot drift silently. Custom workflows stop being guessed at.
+
+  Targets are filtered to columns this board can show, so an adjacency edge into a
+  hidden column never becomes a dead menu entry.
+  */
+  const declaredTargets = columns.find((column) => column.id === task.column)?.moveTargets;
+  if (declaredTargets) {
+    const visibleIds = new Set(visibleColumns.map((column) => column.id));
+    return declaredTargets.filter((target) => visibleIds.has(target)) as ColumnId[];
   }
 
   const currentIndex = visibleColumns.findIndex((column) => column.id === task.column);
-  if (currentIndex < 0) return [];
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-27-14:55 (U10 / R8):
+  A card resting in a column its workflow no longer declares used to get an EMPTY move list —
+  the one surface that could rescue it offered nothing, so the card was stranded until an engine
+  sweep re-homed it. Offer the workflow's own recovery lane instead (intake, else hold, else the
+  first live lane), which is the same target `resolveReboundTarget` picks engine-side. Undeclared
+  columns are produced by a workflow edit that drops a lane and by U11's Todo→Planning merge for
+  rows still stored in `todo`.
+  */
+  if (currentIndex < 0) {
+    const liveColumns = visibleColumns.filter(
+      (column) => column.flags?.complete !== true && column.flags?.archived !== true,
+    );
+    const recoveryColumn = liveColumns.find((column) => column.flags?.intake === true)
+      ?? liveColumns.find((column) => column.flags?.hold === true)
+      ?? liveColumns[0];
+    return recoveryColumn ? [recoveryColumn.id] : [];
+  }
   const targets: ColumnId[] = [];
   const previous = visibleColumns[currentIndex - 1]?.id;
   const next = visibleColumns[currentIndex + 1]?.id;
@@ -175,19 +295,91 @@ export function getTaskMoveTransitions(
   columnLabel: (column: ColumnId) => string,
   workflowMoveColumns?: readonly TaskContextMenuColumnMetadata[],
 ): TaskMoveActionDescriptor[] {
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8, decision recorded):
+  The no-metadata `VALID_TRANSITIONS` fallback is KEPT. I removed it first, on the R8
+  principle, and measured the result: `workflowMoveColumns` is optional at both call
+  sites (`workflowMoveMetadata?.moveColumns`, `taskMoveColumns`) and is genuinely
+  undefined until board-workflows resolves, so dropping it left Task Detail with NO
+  move options during load — a live surface degraded to satisfy a purity rule. That is
+  a regression, not a cleanup, so it is not shipped.
+
+  Unlike Board and ListView, where the legacy path was provably unreachable, this one
+  is reachable and useful. It is retired the same way the shortcut above is: by putting
+  each column's allowed targets on the board-workflows payload so the load window has
+  real data instead of a guess.
+  */
+  /*
+  FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: legacy move-target path.
+  Reached only when `workflowMoveColumns` is absent — the payload carries no adjacency, so there is
+  no workflow to ask and `VALID_TRANSITIONS` (a closed six-id map) is the only table available. The
+  resolved path above it is the live answer for every workflow-aware caller.
+  */
   const moveTransitions: ColumnId[] = workflowMoveColumns
     ? getWorkflowMoveTargets(task, workflowMoveColumns)
     : isColumn(task.column)
       ? (task.column === "in-review" ? ["todo", "in-progress"] : [...VALID_TRANSITIONS[task.column]])
       : [];
-  const workflowLabelById = new Map((workflowMoveColumns ?? []).map((column) => [column.id, column.label]));
+  const visibleOrdered = (workflowMoveColumns ?? []).filter((column) => column.flags?.hiddenFromBoard !== true);
+  const workflowLabelById = new Map(visibleOrdered.map((column) => [column.id, column.label]));
+  /*
+  FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+  "Back to X" is derived from COLUMN TRAITS, not from the literals `in-review` and
+  `in-progress`. The old condition (`column === "in-progress" && task.column ===
+  "in-review"`) hardcoded two lifecycle ids AND a hardcoded English label ("Back to In
+  Progress"), so on a workflow that renames those columns it either failed to fire or
+  announced a column name that is not on the board.
+
+  The rule it was expressing is "leaving the review lane backwards into the work lane",
+  which the traits already say: the CURRENT column carries `mergeBlocker`, the TARGET
+  carries `countsTowardWip`. For builtin:coding those are exactly in-review and
+  in-progress, so the labelled set is unchanged — deliberately. I first generalised
+  this to "any target earlier in the workflow order", which is arguably nicer but
+  relabels moves this change never set out to touch (18 assertion sites across three
+  suites would have flipped from "Move to" to "Back to"). Same-set-different-derivation
+  is the honest scope here; widening which moves read as backwards is a separate,
+  visible product decision.
+
+  Load window (no metadata): fall back to the legacy id pair, matching the fallback
+  already kept for the targets themselves a few lines below.
+  */
+  const flagsById = new Map(visibleOrdered.map((column) => [column.id, column.flags]));
+  const orderById = new Map(visibleOrdered.map((column, index) => [column.id, index]));
+  const currentFlags = flagsById.get(task.column);
+  const currentOrder = orderById.get(task.column);
+  const isBackwardsLabel = (target: ColumnId): boolean => {
+    if (visibleOrdered.length === 0) {
+      /*
+      FNXC:TaskContextMenu 2026-07-30-04:10 DELIBERATE-LITERAL: degraded ordering only.
+      Reached when `visibleOrdered` is empty, i.e. no resolved column order arrived — there is no
+      order to compare against, so the legacy pair is the only "is this backwards?" answer left.
+      */
+      return target === "in-progress" && task.column === "in-review";
+    }
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (PR #2521 review — greptile):
+    DIRECTION as well as traits. The traits alone say "review lane -> work lane", but a
+    workflow may declare a `countsTowardWip` column AFTER its `mergeBlocker` one (a
+    rework or hotfix lane placed downstream of review). Labelling that "Back to" would
+    call a FORWARD move backwards — the same class of wrongness as the hardcoded ids
+    this predicate replaced, just arrived at differently.
+
+    Requiring the target to sit EARLIER in the workflow's declared order keeps the
+    builtin:coding set unchanged (in-progress precedes in-review) while making the
+    label mean what it says on any column layout.
+    */
+    if (currentOrder === undefined) return false;
+    const targetOrder = orderById.get(target);
+    if (targetOrder === undefined || targetOrder >= currentOrder) return false;
+    return currentFlags?.mergeBlocker === true && flagsById.get(target)?.countsTowardWip === true;
+  };
 
   return moveTransitions.map((column) => {
     const label = workflowLabelById.get(column) ?? columnLabel(column);
     return {
       column,
-      label: column === "in-progress" && task.column === "in-review"
-        ? t("taskDetail.move.backToInProgress", "Back to In Progress")
+      label: isBackwardsLabel(column)
+        ? t("taskDetail.move.backTo", "Back to {{column}}", { column: label })
         : t("taskDetail.move.moveTo", "Move to {{column}}", { column: label }),
       primaryLabel: t("taskDetail.move.moveTo", "Move to {{column}}", { column: label }),
     };
@@ -270,6 +462,9 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   resurrecting intentionally archived work into a planner lane. Check both the semantic
   workflow trait and legacy id so every menu host omits this dead affordance.
   */
+  /* DELIBERATE-LITERAL — belt-and-braces, and the comment above says so: this checks BOTH the
+     resolved trait and the legacy id on purpose, so a host that supplies no flags still omits the
+     dead affordance. Dropping the literal would re-open it for exactly those hosts. */
   if (task.column !== "archived" && currentColumnFlags?.archived !== true) {
     actions.push({ id: "respecify", label: t("taskDetail.respecify.btn", "Respecify"), onSelect: options.onRespecify });
   }
@@ -287,7 +482,14 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   it never renders as an empty/dead affordance for tasks blocked by other
   reasons or already recovered.
   */
-  if (hasBypassReviewHandler && task.column === "in-review" && hasFailedPreMergeReviewStep(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:50 (batch-dashboard-app):
+  REVIEW role, resolved from `currentColumnFlags` — which this function already receives and already
+  uses for the archived check ~15 lines up. Keyed on the literal, the "Bypass failed review" action
+  never appeared on a renamed board, so an operator with a genuinely failed pre-merge review step had
+  no way to clear it from the menu and the card stayed merge-blocked with no affordance.
+  */
+  if (hasBypassReviewHandler && isReviewColumnRole(currentColumnFlags, task.column) && hasFailedPreMergeReviewStep(task)) {
     actions.push({
       id: "bypass-review",
       label: t("taskDetail.bypassReview.btn", "Bypass failed review"),
@@ -340,8 +542,25 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     actions,
     moveTransitions: getTaskMoveTransitions(task, t, columnLabel, workflowMoveColumns),
     reviewAction: getTaskReviewAction(task, options),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-15:25 (Phase B — TaskContextMenu.tsx):
+    Was `task.column !== "triage"`. The intent is "a bare card sitting in a pure INTAKE lane has no
+    actions worth showing yet" — `triage` happened to be that lane, and `todo` (hold) always showed
+    the menu because cards waiting for capacity have real actions.
+
+    Post-U11 the literal inverts: a default Planning card is `todo`, so `!== "triage"` is true and
+    the menu shows unconditionally — which is right for the hold half, but the guard has stopped
+    distinguishing anything and would also show a full menu on a bare Coding (Ideas) capture.
+
+    Resolved to `intake AND NOT hold` — a PURE intake lane — which reproduces every shape:
+      legacy `triage`   intake only        -> suppressed (as before)
+      legacy `todo`     hold only          -> shown (as before)
+      merged Planning   intake + hold      -> shown (matches the Todo half, where cards wait)
+      Ideas `ideas`     intake only        -> suppressed (a bare captured idea)
+    Falls back to the legacy id when no flags are supplied, so unwired menu hosts are unchanged.
+    */
     shouldShowActionsMenu:
-      task.column !== "triage" ||
+      !isPureIntakeColumn(task.column, currentColumnFlags) ||
       task.status === "awaiting-approval" ||
       canRetryTask ||
       isTaskPaused ||

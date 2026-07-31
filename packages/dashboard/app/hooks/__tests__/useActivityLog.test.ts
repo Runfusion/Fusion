@@ -269,6 +269,84 @@ describe("useActivityLog", () => {
     });
   });
 
+  // ── Retention cap vs. pagination ──────────────────────────────────
+
+  /*
+  FNXC:ActivityLogPaging 2026-07-26-18:45:
+  Regression coverage for a silent pagination stop. With the 500-entry retention cap applied as
+  `merged.slice(0, MAX)`, the eleventh "Load more" (limit 50) fetched a page and then threw away exactly
+  that page, while `lastTimestampRef` still advanced past it and `hasMore` stayed true. The feed stopped
+  moving, the button kept promising it would, and the skipped entries became unreachable because the
+  cursor had passed them.
+
+  The invariant asserted here is the user-visible one: every click of an offered "Load more" must put
+  entries on screen that were not there before, at the cap as well as below it.
+  */
+  function paginatedLogPage(page: number, size: number) {
+    return Array.from({ length: size }, (_, i) => ({
+      id: `p${page}_${i}`,
+      timestamp: new Date(Date.UTC(2024, 0, 1) - (page * size + i) * 60_000).toISOString(),
+      type: "task:created" as const,
+      taskId: "FN-001",
+      taskTitle: "Test Task",
+      details: "Task created",
+    }));
+  }
+
+  it("keeps the page it just fetched when loadMore crosses the retention cap", async () => {
+    const PAGE = 50;
+    let page = 0;
+    mockFetchActivityLog.mockImplementation(async () => paginatedLogPage(page++, PAGE));
+
+    const { result } = renderHook(() => useActivityLog({ limit: PAGE, autoRefresh: false }));
+    await waitFor(() => expect(result.current.entries).toHaveLength(PAGE));
+
+    // Nine clicks fill the buffer exactly to the 500-entry cap.
+    for (let click = 0; click < 9; click++) {
+      await act(async () => {
+        await result.current.loadMore();
+      });
+    }
+    expect(result.current.entries).toHaveLength(500);
+    expect(result.current.hasMore).toBe(true);
+
+    const idsAtCap = result.current.entries.map((entry) => entry.id);
+
+    // The tenth click is the one that used to be a no-op.
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    const idsAfter = result.current.entries.map((entry) => entry.id);
+    expect(idsAfter).toHaveLength(500);
+    expect(idsAfter).not.toEqual(idsAtCap);
+    // The whole freshly fetched (older) page is present…
+    expect(idsAfter).toContain("p10_0");
+    expect(idsAfter).toContain("p10_49");
+    // …paid for from the head, which `refresh` can fetch again from offset 0.
+    expect(idsAfter).not.toContain("p0_0");
+    expect(mockFetchActivityLog).toHaveBeenCalledTimes(11);
+  });
+
+  it("continues to page backwards across several clicks past the cap", async () => {
+    const PAGE = 50;
+    let page = 0;
+    mockFetchActivityLog.mockImplementation(async () => paginatedLogPage(page++, PAGE));
+
+    const { result } = renderHook(() => useActivityLog({ limit: PAGE, autoRefresh: false }));
+    await waitFor(() => expect(result.current.entries).toHaveLength(PAGE));
+
+    for (let click = 0; click < 12; click++) {
+      await act(async () => {
+        await result.current.loadMore();
+      });
+    }
+
+    // Twelve clicks past a 50-entry first page = pages 0..12; the oldest page must be on screen.
+    expect(result.current.entries.map((entry) => entry.id)).toContain("p12_49");
+    expect(result.current.entries).toHaveLength(500);
+  });
+
   it("passes type filter to unified feed when useCentralFeed is true", async () => {
     mockFetchActivityFeed.mockResolvedValue([]);
 

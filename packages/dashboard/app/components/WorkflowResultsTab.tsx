@@ -1,4 +1,5 @@
 import "@xyflow/react/dist/style.css";
+import { isCompleteColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -50,6 +51,8 @@ const markdownComponents: Components = {
 interface WorkflowResultsTabProps {
   taskId: string;
   task?: Task | TaskDetail;
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  columnFlags?: Parameters<typeof isCompleteColumnRole>[0];
   results: WorkflowStepResult[];
   loading?: boolean;
   enabledWorkflowSteps?: string[];
@@ -176,6 +179,7 @@ function getExecutionPhase(
   taskPausedReason: string | undefined,
   results: WorkflowStepResult[],
   t: ReturnType<typeof useTranslation>["t"],
+  columnFlags?: Parameters<typeof isCompleteColumnRole>[0],
 ): { label: string; badgeClass: string; testId: string } {
   if (taskStatus === "awaiting-user-input") {
     return { label: t("app:workflow.executionAwaitingInput", "Awaiting input"), badgeClass: "workflow-result-badge--pending", testId: "awaiting-input" };
@@ -200,7 +204,19 @@ function getExecutionPhase(
   }
 
   const hasTerminalResults = results.length > 0 && results.every((result) => ["passed", "failed", "advisory_failure", "skipped"].includes(result.status));
-  if (hasTerminalResults || taskStatus === "done" || task?.column === "done" || task?.column === "in-review") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10 (batch-dashboard-app):
+  COMPLETE and REVIEW roles, resolved. This decides whether the workflow-steps badge reads
+  "Completed". Keyed on the literals, a renamed board fell through to whatever branch follows, so a
+  task whose steps had all finished still advertised its steps as running — on the tab an operator
+  opens specifically to see whether the gates are done.
+
+  `columnFlags` omitted -> the legacy ids, i.e. today's behaviour for any caller that does not
+  resolve them.
+  */
+  if (hasTerminalResults || taskStatus === "done"
+    || isCompleteColumnRole(columnFlags, task?.column ?? "")
+    || isReviewColumnRole(columnFlags, task?.column ?? "")) {
     return { label: t("app:workflow.executionCompleted", "Completed"), badgeClass: "workflow-result-badge--passed", testId: "completed" };
   }
 
@@ -334,6 +350,7 @@ function LiveAgentLogOutput({
 }
 
 export function WorkflowResultsTab({
+  columnFlags,
   taskId,
   task,
   results,
@@ -713,13 +730,13 @@ export function WorkflowResultsTab({
   }, [effectiveEnabledStepIds, workflowStepLookup, t]);
 
   const workflowName = useMemo(() => getWorkflowName(effectiveWorkflowId, workflowDefinitions, t), [effectiveWorkflowId, workflowDefinitions, t]);
-  const executionPhase = useMemo(() => getExecutionPhase(task, taskStatus, taskPausedReason, results, t), [task, taskStatus, taskPausedReason, results, t]);
+  const executionPhase = useMemo(() => getExecutionPhase(task, taskStatus, taskPausedReason, results, t, columnFlags), [task, taskStatus, taskPausedReason, results, t, columnFlags]);
   const aggregateResult = useMemo(() => getAggregateWorkflowResult(results, t), [results, t]);
   const completedStepCount = useMemo(() => results.filter((result) => ["passed", "skipped", "failed", "advisory_failure"].includes(result.status)).length, [results]);
   const graphWorkflow = graphCacheKey ? workflowGraphCache[graphCacheKey] : undefined;
   const graphFlow = useMemo(() => (graphWorkflow ? irToFlow(graphWorkflow) : null), [graphWorkflow]);
-  const effectiveExecutor = useMemo(() => (task ? resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
-  const effectiveValidator = useMemo(() => (task ? resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
+  const effectiveExecutor = useMemo(() => (task ? resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings, columnFlags) : undefined), [agentLogEntries, assignedAgent, task, settings, columnFlags]);
+  const effectiveValidator = useMemo(() => (task ? resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings, columnFlags) : undefined), [agentLogEntries, assignedAgent, task, settings, columnFlags]);
   const effectivePlanning = useMemo(() => (task ? resolveEffectivePlanning(task, agentLogEntries, settings) : undefined), [agentLogEntries, task, settings]);
 
   const renderEditor = () => {

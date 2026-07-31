@@ -812,10 +812,22 @@ pgDescribe("ingestSignal — incident capture", () => {
     expect(res.status).toBe(201);
     expect(res.taskId).toBe("FN-1");
     expect(store._tasks).toHaveLength(1);
-    expect(consoleSpy).toHaveBeenCalledWith(
+    /*
+    FNXC:DashboardTestMocks 2026-08-03-05:15 (red on main — same createLogger shape as the sse/diagnostics pair):
+    The bridge logs through core's `createLogger("signal-incident-bridge")`, which prefixes a severity marker and
+    folds the scope into the MESSAGE (`<marker>[signal-incident-bridge] Failed …`) rather than passing the scope
+    as a separate first argument. So the two-argument form this asserted no longer matches: the received call is
+    one marker-prefixed string plus the Error.
+
+    Asserting a CONTAINS on the message and the Error argument keeps the case pinned to what matters — the
+    best-effort incident write failed loudly enough to diagnose while connector acceptance still returned 201 —
+    without re-coupling it to the logger's argument shape, which is what broke it.
+    */
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(String(consoleSpy.mock.calls[0]?.[0] ?? "")).toContain(
       "[signal-incident-bridge] Failed to record connector signal",
-      expect.any(Error),
     );
+    expect(consoleSpy.mock.calls[0]?.[1]).toBeInstanceOf(Error);
     consoleSpy.mockRestore();
   });
 
