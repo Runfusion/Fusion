@@ -265,6 +265,11 @@ if (!json) {
   }
 }
 
+/** Guard total across a [file, count] list. */
+function unclaimedGuardTotal(entries) {
+  return entries.reduce((sum, [, count]) => sum + count, 0);
+}
+
 /** Open PRs keyed by the census-relevant files they touch. Returns null when `gh` cannot answer. */
 function openPrClaims(files) {
   const wanted = new Set(files);
@@ -317,12 +322,71 @@ if (claims && !json) {
     }
     if (claimed.length > 12) console.log(`    … and ${claimed.length - 12} more claimed files`);
 
-    const unclaimedGuards = unclaimed.reduce((sum, [, count]) => sum + count, 0);
-    console.log(`\n  UNCLAIMED: ${unclaimed.length} files holding ${unclaimedGuards} guards — start here`);
-    for (const [file, count] of unclaimed.slice(0, 12)) {
+    /*
+    FNXC:LifecycleColumnCensus 2026-08-01-00:20 (UNCLAIMED IS NOT THE SAME AS AVAILABLE):
+    The first version of this flag printed the unclaimed list under "start here". That is wrong, and it
+    misled ME within minutes of shipping it: the top unclaimed file was `taskRevert.ts`, whose two
+    guards carry a written blocker — they classify a NEIGHBOUR row, and supplying the modal's own flags
+    would answer "is this neighbour finished?" with the wrong task's traits. Converting it would be a
+    correctness regression, not progress.
+
+    So the start-here list is crossed with `--triage`'s classification: a file is available only when no
+    open PR holds it AND at least one of its guards lacks a documented deferral note. The two signals
+    answer different questions ("has someone taken it?" vs "is it takeable?") and only their
+    intersection is a work queue. Files that are unclaimed but fully flagged are shown separately, so
+    they stay visible as debt without reading as an invitation.
+    */
+    const { flagged } = triageFindings();
+    const fullyFlagged = new Set();
+    for (const [file, count] of unclaimed) {
+      if (flagged.filter((f) => f.file === file).length >= count) fullyFlagged.add(file);
+    }
+    const available = unclaimed.filter(([file]) => !fullyFlagged.has(file));
+    const deferred = unclaimed.filter(([file]) => fullyFlagged.has(file));
+
+    /*
+    FNXC:LifecycleColumnCensus 2026-08-01-00:35 (the third filter, and the one with teeth):
+    A file can be unclaimed and unflagged and STILL be the wrong place to start, because converting a
+    guard through `resolveTaskWorkflowIrSync` is INERT — that resolver answers with the default
+    workflow in production, so the converted guard behaves exactly as the literal did while leaving the
+    census. Three PRs already did this (#3051, refuted live in #3058; #3062/#3068/#3079 now fail the
+    build on it), which is more damage than any missing conversion in the remaining backlog.
+
+    Caught by dogfooding this flag: with only the two filters above, `scheduler.ts` sat at the TOP of
+    "start here" — and it is the canonical inert file. The report would have walked the next worker
+    straight into the trap the ratchets exist to catch.
+
+    Same warning-not-subtraction stance as the SYNC-RESOLVED section below: attributing individual
+    guards to the resolver needs dataflow this parser does not do, so these are separated and labelled
+    rather than hidden.
+    */
+    const syncCallRe = /resolveTaskWorkflowIrSync\s*\??\.?\s*\(/;
+    const isSyncResolved = (file) => {
+      try {
+        return syncCallRe.test(readFileSync(join(REPO_ROOT, file), "utf8"));
+      } catch {
+        return false;
+      }
+    };
+    const clean = available.filter(([file]) => !isSyncResolved(file));
+    const inertRisk = available.filter(([file]) => isSyncResolved(file));
+
+    const availableGuards = clean.reduce((sum, [, count]) => sum + count, 0);
+    console.log(`\n  UNCLAIMED: ${unclaimed.length} files holding ${unclaimedGuardTotal(unclaimed)} guards`);
+    console.log(`  of those, AVAILABLE (no open PR, no deferral note, no sync resolver): ${clean.length} files / ${availableGuards} guards — start here`);
+    for (const [file, count] of clean.slice(0, 12)) {
       console.log(`    ${String(count).padStart(4)}  ${file}`);
     }
-    if (unclaimed.length > 12) console.log(`    … and ${unclaimed.length - 12} more unclaimed files`);
+    if (clean.length > 12) console.log(`    … and ${clean.length - 12} more available files`);
+    if (inertRisk.length > 0) {
+      console.log(`  unclaimed but the file calls the SYNC resolver — converting here may be INERT: ${inertRisk.length} files`);
+      for (const [file, count] of inertRisk.slice(0, 6)) console.log(`    ${String(count).padStart(4)}  ${file}`);
+    }
+    if (deferred.length > 0) {
+      console.log(`  unclaimed but every guard carries a deferral note (debt, NOT a work queue): ${deferred.length} files`);
+      for (const [file, count] of deferred.slice(0, 6)) console.log(`    ${String(count).padStart(4)}  ${file}`);
+      if (deferred.length > 6) console.log(`    … and ${deferred.length - 6} more`);
+    }
     console.log("  A touched file is not proof the PR converts ITS guards — over-reports rather than misses.");
   }
 }

@@ -541,6 +541,39 @@ describe("the baseline can always be re-recorded", () => {
       expect(out.slice(out.indexOf("UNCLAIMED:"))).not.toContain(`  ${target}\n`);
     });
 
+    /*
+    FNXC:LifecycleColumnCensus 2026-08-01-00:35:
+    "Unclaimed" is not "available", and the first version of --claims conflated them — it put
+    `taskRevert.ts` (two guards with a written blocker) and `scheduler.ts` (the canonical INERT
+    sync-resolver file) at the top of "start here". Both would have been active mistakes to convert.
+
+    Asserted as an INVARIANT over the report's own sections rather than against a file list, so it
+    cannot rot as files move between categories: whatever the report calls deferred or inert-risk must
+    not also appear under start-here. A hardcoded expectation here would go stale the first time one of
+    those six files is converted.
+    */
+    it("never lists a deferral-noted or sync-resolver file under start-here", () => {
+      const payload = JSON.stringify([]);
+      const out = runWithStubbedGh(`#!/bin/sh\ncat <<'JSON'\n${payload}\nJSON\n`);
+
+      const section = (start: string, end?: string) => {
+        const from = out.indexOf(start);
+        if (from < 0) return "";
+        const to = end ? out.indexOf(end, from) : -1;
+        return out.slice(from, to < 0 ? undefined : to);
+      };
+      const startHere = section("no deferral note, no sync resolver", "unclaimed but");
+      const excluded = [
+        ...section("converting here may be INERT", "unclaimed but every guard").matchAll(/\s{4}\d+\s+(\S+)/g),
+        ...section("every guard carries a deferral note", "A touched file").matchAll(/\s{4}\d+\s+(\S+)/g),
+      ].map((m) => m[1]);
+
+      /* Anti-vacuity: an empty exclusion list would make the assertion below trivially true. */
+      expect(excluded.length).toBeGreaterThan(0);
+      expect(startHere).not.toBe("");
+      for (const file of excluded) expect(startHere).not.toContain(file);
+    });
+
     it("says so loudly when gh cannot answer, instead of reporting everything as unclaimed", () => {
       const out = runWithStubbedGh("#!/bin/sh\nexit 1\n");
       expect(out).toContain("CLAIMS: unavailable");
