@@ -14381,10 +14381,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       // FNXC:WorkflowColumns 2026-07-29-09:30 (Phase B): intake role.
-      const intakeCandidates = await this.filterByPreWipRole(
-        tasks,
-        ["intake"],
-        new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>(),
+      const preWipCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const intakeCandidates = await this.filterByPreWipRole(tasks, ["intake"], preWipCache);
+
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (fleet):
+      "Peer progress" means peers sitting in their own board's HOLD lane, which was `peer.column ===
+      "todo"` in two places — once in the candidate filter, once again when computing the number recorded
+      in the log line and the audit metadata. Duplicated predicates that must agree are how a converted
+      guard ends up feeding an unconverted one, so both now read the same precomputed set.
+
+      Resolved ONCE for the whole board rather than per peer: this is an N-squared scan (every candidate
+      counts over every task), so a per-peer resolve would multiply IR reads by the candidate count. The
+      shared cache means one read per distinct workflow.
+      */
+      const holdPeerIds = new Set(
+        (await this.filterByPreWipRole(tasks, ["hold"], preWipCache)).map((peer) => peer.id),
       );
       const candidates = intakeCandidates.filter((task) => {
         if (task.sourceType !== "task_refine") return false;
@@ -14400,7 +14412,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === "todo" &&
+          holdPeerIds.has(peer.id) &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -14421,7 +14433,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === "todo" &&
+            holdPeerIds.has(peer.id) &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;
