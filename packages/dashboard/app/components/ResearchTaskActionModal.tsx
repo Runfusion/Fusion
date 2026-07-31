@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Task, TaskPriority } from "@fusion/core";
 import { fetchTasks } from "../api";
+import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { isArchivedColumnRole } from "../utils/columnRoles";
 import type { ResearchRunDetail } from "../research-types";
 import "./ResearchTaskActionModal.css";
 
@@ -30,6 +32,34 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-11:40 (u12 — CONVERTED, and the earlier cost estimate was wrong):
+  The note this replaces said converting the filter below needed prop threading through three
+  components (MainContent -> ResearchView -> here) because `ListView.tsx:756` builds `columnFlagsById`
+  locally. That was wrong about WHERE the data lives: `listColumns` derives from `useBoardWorkflows`,
+  a hook already called from App, Board and HeaderWorkflowSwitcherSlot. ListView only looked like the
+  owner because it happens to build the map inline.
+
+  So the real cost is this file, and nothing else. The modal already takes `projectId`, and
+  ResearchView renders it ONLY when a finding is open (`open` is hardcoded true beside a
+  `if (!finding) return null`), so the hook cannot fetch for a closed modal.
+
+  Union across workflows keyed by column id, first declaration wins — the same convention
+  `ListView.tsx` uses for its cross-workflow map, so the two cannot disagree about a shared id.
+  */
+  const { boardWorkflows } = useBoardWorkflows({ projectId });
+  const isArchivedColumn = useMemo(() => {
+    const flagsById = new Map<string, { archived?: boolean }>();
+    for (const workflow of boardWorkflows?.workflows ?? []) {
+      for (const column of workflow.columns) {
+        if (!flagsById.has(column.id)) flagsById.set(column.id, column.flags);
+      }
+    }
+    /* `isArchivedColumnRole` fail-softs to the legacy id when a column has no flags, which is the
+       pre-resolution answer — so an unresolved workflow behaves exactly as this filter did before. */
+    return (column: string): boolean => isArchivedColumnRole(flagsById.get(column), column);
+  }, [boardWorkflows]);
+
   const preview = useMemo(() => {
     const firstSentence = (finding.content ?? "").split(/(?<=[.!?])\s+/)[0] ?? "";
     return `${finding.heading || t("research.defaultFindingHeading", "Research finding")} — ${firstSentence}`.trim();
@@ -47,49 +77,24 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
       setLoadingTasks(true);
       void fetchTasks(50, 0, projectId)
         /*
-        FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (batch-dashboard-app — SIZED, NOT CONVERTED):
-        STILL A LITERAL, and threading the board's flags map here would be the WRONG fix.
+        FNXC:WorkflowResolvedColumns 2026-07-31-11:45 (u12 — the history, kept short because it is CONVERTED now):
+        This guard was sized twice and declined twice, each time on a cost that turned out to be wrong.
+        Recorded because both wrong answers are instructive, not to relitigate them:
 
-        The guard is real: on a renamed board `archived` matches nothing, so filed-away tasks stay in
-        this picker and an operator can attach research findings to work they deliberately archived.
+        1. "Needs a data-fetch change" — reasoning about `columnFlagsByTaskId`, a per-TASK map built
+           from board-resident rows. Correct that such a map cannot help (archived rows are exactly
+           what a board map omits), but this guard asks a per-COLUMN question, so it never needed one.
+        2. "Needs prop threading, MainContent -> ResearchView -> here" — correct that the answer is
+           column-keyed, wrong about where it lives. `ListView` builds `columnFlagsById` inline, which
+           made it look like the owner; the data is `useBoardWorkflows`, callable from here directly.
 
-        But this modal fetches its OWN page (`fetchTasks(50, 0, projectId)`), which is not the board's
-        task set. The obvious move — thread `columnFlagsByTaskId` down from MainContent through
-        ResearchView — resolves only rows that happen to be board-resident, and the rows THIS filter
-        cares about are archived ones, which are exactly the rows a board-built map does not contain.
-        It would look converted, drop the guard count, and leave the case it exists for unresolved.
-
-        The honest fix is for this modal to resolve lanes for the page it fetched — either a
-        `fetchTasks` variant that returns resolved flags, or a per-task resolution over the 50 rows.
-        That is a data-fetch change, not a prop-threading one, so it is sized here rather than faked.
-
-        FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (CORRECTING THE SHAPE — it is not a data-fetch
-        change, and the objection above applies to a map this guard does not need):
-        Everything above is about a per-TASK map (`columnFlagsByTaskId`), and it is right that one
-        cannot help here: it is built from board-resident rows, and the rows this filter cares about
-        are archived ones, which are exactly what a board map omits.
-
-        But this guard does not ask a per-task question. "Is `task.column` an archive lane" is a
-        question about a COLUMN, and the answer lives in the workflow definition — a lane exists there
-        whether or not any board row currently sits in it. The board already derives exactly that map:
-        `ListView.tsx:756` builds `columnFlagsById` (ColumnId -> flags) from its workflow columns, and
-        `useExecutorStats` takes the same shape. Archived rows being absent from the board is
-        irrelevant to a column-keyed answer.
-
-        So the cost is prop threading, not a fetch: MainContent -> ResearchView -> this modal, plus
-        sourcing the column map where MainContent renders ResearchView (it does not hold one today).
-        Three layers for one guard is a real cost and a fair thing to decline — but it is a different
-        decision from "needs new data", which is what the note above would have the next reader
-        believe, and the two have very different prices.
-
-        Left counted and unconverted. I am recording the corrected shape rather than threading it,
-        because a three-component prop chain wants to be someone's deliberate change rather than a
-        drive-by on the last census entry in this file.
+        The guard was real either way: on a renamed board `archived` matched nothing, so filed-away
+        tasks stayed in this picker and an operator could attach findings to work they had archived.
         */
-        .then((rows) => setTasks(rows.filter((task) => task.column !== "archived")))
+        .then((rows) => setTasks(rows.filter((task) => !isArchivedColumn(task.column))))
         .finally(() => setLoadingTasks(false));
     }
-  }, [open, mode, projectId, finding.heading, preview, run.title]);
+  }, [open, mode, projectId, finding.heading, preview, run.title, isArchivedColumn]);
 
   if (!open) return null;
 

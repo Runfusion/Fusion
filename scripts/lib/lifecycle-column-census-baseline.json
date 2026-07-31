@@ -1,8 +1,6 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
-  "byFile": {
-    "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1
-  },
+  "byFile": {},
   "deliberateByFile": {
     "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 6,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
