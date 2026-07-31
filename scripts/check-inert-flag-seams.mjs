@@ -36,7 +36,25 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = join(REPO, "packages");
+/*
+FNXC:InertFlagSeams 2026-07-30-23:30:
+`plugins/` IS SCANNED, because plugins hold real lane logic and this gate could not see any of it.
+
+The walk was rooted at `packages/` alone. Measured with a control: the identical unwired seam is
+caught under `packages/` and MISSED under `plugins/` — so every lane parameter a plugin declares or
+calls was outside the ratchet entirely.
+
+Not hypothetical. `plugins/fusion-plugin-even-realities-glasses` resolves workflow IRs and filters by
+column in `src/cards.ts` and `src/routes/board-routes.ts`. The sibling `check-lane-wiring` already
+lists `plugins` in its roots, and its header records the incident that put it there: an unwired
+`completeColumnsByTaskId` sat on `main` unreported because that plugin was not scanned. This gate
+re-opened the same hole rather than learning from it.
+
+Found while auditing my own gates after #3000 showed this one never scanned `scripts/` either. Two
+scope holes in one instrument is a pattern: the roots deserve the same scrutiny as the matcher, and
+they had none.
+*/
+const SCAN_ROOTS = [join(REPO, "packages"), join(REPO, "plugins")];
 const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2e", ".gate-bundle", "coverage"]);
 const TRAILING_FLAG_PARAM = /([Cc]olumnFlags|[Ll]ifecycleColumns|[Rr]eviewColumns|[Tt]erminalColumns|[Pp]lannerLanes)$/;
 
@@ -122,6 +140,17 @@ An omission earns an entry only when supplying the argument would be WRONG, not 
 */
 const ALLOWED_OMISSIONS = new Map([
   [
+    "plugins/fusion-plugin-dependency-graph/src/GraphTaskNode.tsx::isTaskStuck",
+    { count: 1, reason: "Surfaced the moment this gate started scanning `plugins/` (2026-07-31). The plugin has NO "
+      + "lane-trait source anywhere: it is mounted as a dashboard view through `PluginDashboardViewContext`, "
+      + "and `DependencyGraph` receives `tasks: Task[]` and nothing else. Supplying the argument here would "
+      + "pass `undefined` — an unsupplied optional parameter, which this document's first failure shape says "
+      + "is strictly worse than the literal it replaces, because it reads as converted and answers legacy "
+      + "forever. Correct supply needs the plugin VIEW CONTEXT to carry per-task flags: a published-API "
+      + "change, not local wiring, which is the same 'needs a data change' category as the entry below. "
+      + "Filed for the plugin-API owner rather than bodged here." },
+  ],
+  [
     "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
     { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
       + "component never resolves. Passing them would type-check, read as a conversion, and answer "
@@ -177,7 +206,7 @@ missing suppliers in ListView and Column — review did.
 Declarations still use the prefilter: a file DECLARING a flags parameter necessarily contains the
 name, so that half is safe and keeps the scan quick.
 */
-for (const file of walkAll(PACKAGES)) {
+for (const file of SCAN_ROOTS.flatMap((root) => [...walkAll(root)])) {
   const source = readFileSync(file, "utf8");
   const fileIsTest = isTestFile(relative(REPO, file).split("\\").join("/"));
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
