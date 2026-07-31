@@ -53,8 +53,58 @@ function parse(file) {
  *
  * Exported only: an internal helper's callers are all in one file and visible without a tool.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:30:
+NAMED context types are resolved, not just inline literals — without this the census could not see
+the defect it was built for.
+
+The first version matched a lane parameter only when `param.type` was a `TypeLiteralNode`. Every
+`*Context` interface therefore slipped through, including the motivating case:
+
+  export function getInReviewStallReason(task: …, context: InReviewStallContext = {})
+
+`InReviewStallContext` is a TypeReference, so `getInReviewStallReason` never entered `accepting` and
+none of its call sites were examined. MEASURED: removing `reviewColumns` from one of them — i.e.
+re-introducing #2956, the first case in this file's own header — left the check reporting
+"34 known unwired call site(s), none added."
+
+Five core files declare lane-carrying context interfaces (`in-review-stall`, `in-review-stalled`,
+`stale-paused-review`, `stale-paused-todo`, `task-priority`), so the gap was structural rather than
+one awkward signature.
+
+Resolved by NAME across the whole corpus rather than through a type-checker `Program`: these are
+plain source scans and a checker would cost a full type-resolution pass for one lookup. The tradeoff
+is that two same-named types in different files merge — acceptable here, since a false MEMBER only
+widens what counts as wired, and the baseline is a ratchet rather than a hard guard.
+*/
+function findLaneCarryingTypes(files) {
+  const byName = new Map();
+  for (const file of files) {
+    const sf = parse(file);
+    ts.forEachChild(sf, (node) => {
+      const members = ts.isInterfaceDeclaration(node)
+        ? node.members
+        : (ts.isTypeAliasDeclaration(node) && ts.isTypeLiteralNode(node.type) ? node.type.members : null);
+      if (!members || !node.name) return;
+      const names = new Set();
+      for (const member of members) {
+        if (member.name && ts.isIdentifier(member.name) && LANE_ARGUMENT_NAMES.has(member.name.text)) {
+          names.add(member.name.text);
+        }
+      }
+      if (names.size > 0) {
+        const existing = byName.get(node.name.text);
+        if (existing) for (const n of names) existing.add(n);
+        else byName.set(node.name.text, names);
+      }
+    });
+  }
+  return byName;
+}
+
 export function findLaneAcceptingFunctions(files) {
   const accepting = new Map();
+  const laneTypes = findLaneCarryingTypes(files);
   for (const file of files) {
     const sf = parse(file);
     ts.forEachChild(sf, (node) => {
@@ -81,6 +131,10 @@ export function findLaneAcceptingFunctions(files) {
               names.add(member.name.text);
             }
           }
+        }
+        /* `context: InReviewStallContext` — see findLaneCarryingTypes for why this arm exists. */
+        if (param.type && ts.isTypeReferenceNode(param.type) && ts.isIdentifier(param.type.typeName)) {
+          for (const member of laneTypes.get(param.type.typeName.text) ?? []) names.add(member);
         }
       });
       if (names.size > 0 || positions.size > 0) accepting.set(node.name.text, { names, positions });
