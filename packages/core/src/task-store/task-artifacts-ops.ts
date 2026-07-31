@@ -13,6 +13,7 @@ import { TaskStore } from "../store.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
+import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
 import { toJsonNullable } from "../db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
@@ -546,7 +547,18 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     // Update cache if watcher is active
     if (store.isWatching) store.taskCache.set(task.id, { ...task });
 
-    store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine" });
+    /*
+    FNXC:WorkflowEvents 2026-08-01-00:40 (fleet):
+    Carry the resolved lanes, like the main move path in `moves.ts`. Listeners read `task:moved`
+    synchronously and cannot resolve for themselves, so an emit WITHOUT lanes hands every consumer
+    its legacy fallback — which on a renamed board is the wrong answer, not a missing one.
+
+    Concretely: the executor's archive branch releases the task's active-session registry entry, and
+    that entry is what blocks a SUCCESSOR task from acquiring the same path. Emitting this transition
+    lane-less left that leak reachable through this path even after the listener itself was fixed.
+    */
+    const movedLanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+    store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine", lanes: movedLanes });
 }
 
 export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): boolean {
