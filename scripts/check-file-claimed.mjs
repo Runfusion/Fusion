@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
-FNXC:FleetCoordination 2026-08-01-06:10 (fleet):
+FNXC:FleetCoordination 2026-07-31-06:10 (fleet):
 
 WHY THIS EXISTS. Every fleet worker pushes as the SAME GitHub account, so `gh pr list --author "@me"`
 returns all 17 open PRs and no worker can tell their own from a teammate's. There is no way to ask "is
@@ -44,16 +44,34 @@ function gh(args) {
   }
 }
 
-const open = JSON.parse(gh(["pr", "list", "--state", "open", "--limit", "100", "--json", "number,title"]));
+/*
+FNXC:FleetClaims 2026-07-31-21:10 (#3175 review — coderabbitai, "detect or eliminate truncation"):
+A SILENT CAP TURNS THIS TOOL INTO THE BUG IT PREVENTS.
+
+`--limit 100` returns at most 100 PRs. Past that, claims live in PRs this never sees and a claimed file
+reports UNCLAIMED — the one answer that must never be wrong here, because a worker acts on it by
+starting work someone else already started. This fleet ran 50+ open PRs at once, so the cap is not
+hypothetical.
+
+Fails closed rather than warning: a warning printed above an `UNCLAIMED` line is read as noise next to
+a verdict. Same reasoning as `gh()` exiting rather than returning empty.
+*/
+const PR_LIMIT = 300;
+const open = JSON.parse(gh(["pr", "list", "--state", "open", "--limit", String(PR_LIMIT), "--json", "number,title"]));
+if (open.length >= PR_LIMIT) {
+  console.error(`claim-check: ${open.length} open PRs hit the --limit ${PR_LIMIT} cap, so the list may be truncated.`);
+  console.error("claim-check: cannot prove a file is unclaimed from a partial list. Treat as UNKNOWN, not free.");
+  process.exit(2);
+}
 const hits = new Map(targets.map((t) => [t, []]));
 
 for (const pr of open) {
-  let files;
-  try {
-    files = gh(["pr", "diff", String(pr.number), "--name-only"]).split("\n").filter(Boolean);
-  } catch {
-    continue;
-  }
+  /*
+  FNXC:FleetClaims 2026-07-31-21:10 (#3175 review — coderabbitai, "unreachable catch"): `gh()` exits on
+  failure, so this try/catch could never fire. Removed rather than made reachable: skipping a PR whose
+  diff failed is exactly how a claim goes unseen, and the fail-closed exit is already the right answer.
+  */
+  const files = gh(["pr", "diff", String(pr.number), "--name-only"]).split("\n").filter(Boolean);
   for (const t of targets) {
     if (files.some((f) => f.includes(t))) hits.get(t).push(pr);
   }
