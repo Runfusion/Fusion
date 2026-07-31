@@ -13,7 +13,9 @@ declare module "@fusion/dashboard/app/utils/taskStuck" {
 
   export function isTaskStuck(
     task: Task,
-    taskStuckTimeoutMs?: number,
+    /* Positionally REQUIRED in the real signature (`number | undefined`), not optional — the drift
+       check caught this in the very declaration written to fix the previous drift. */
+    taskStuckTimeoutMs: number | undefined,
     lastFetchTimeMs?: number,
     columnFlags?: {
     readonly intake?: boolean;
