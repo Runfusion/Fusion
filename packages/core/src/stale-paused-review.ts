@@ -13,6 +13,19 @@ export interface StalePausedReviewSignal {
 }
 
 export interface StalePausedReviewContext {
+  /** The workflow's REVIEW (merge-orchestration) column. Defaults to the legacy
+   *  `"in-review"` so unconverted callers are byte-identical. */
+  reviewColumn?: string;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (the lane seam, MEMBERSHIP not one column):
+  `reviewColumn` is `resolveLifecycleColumns().review` — the FIRST column carrying a review role. A
+  board declaring a separate merge lane beside its human-review lane has TWO, and a card in the second
+  read as not-in-review. This takes the SET.
+
+  Optional, with today's behaviour preserved as the fallback, so a caller that does not pass it is
+  byte-identical.
+  */
+  reviewColumns?: ReadonlySet<string>;
   now?: number;
   thresholdMs?: number;
   engineActiveSinceMs?: number;
@@ -25,7 +38,20 @@ export function getStalePausedReviewSignal(
   task: Pick<Task, "column" | "paused" | "columnMovedAt" | "updatedAt" | "mergeDetails" | "pausedReason" | "pausedByAgentId">,
   context: StalePausedReviewContext = {},
 ): StalePausedReviewSignal | undefined {
-  if (task.column !== "in-review" || task.paused !== true) return undefined;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-27-23:55 (U4 — surfacing family):
+  The lifecycle role this signal is about is REVIEW (the merge-orchestration
+  lane), not the id `in-review` — that is only what the builtin coding workflow
+  calls it. `getStalePausedTodoSignal` gained the equivalent `holdColumn`
+  parameter in B1; this sibling was missed, so it silently stopped matching for
+  any workflow that renames its review column. Defaults to the legacy id, so
+  every existing caller is byte-identical.
+  */
+  const inReviewLane = context.reviewColumns
+    ? context.reviewColumns.has(task.column)
+    /* DELIBERATE-LITERAL — the no-metadata fallback; a supplied set always wins. */
+    : task.column === (context.reviewColumn ?? "in-review");
+  if (!inReviewLane || task.paused !== true) return undefined;
   if (task.mergeDetails?.mergeConfirmed === true) return undefined;
 
   const thresholdMs = context.thresholdMs ?? DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS;

@@ -2,6 +2,76 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.74.0-beta.5
+
+### Highlights
+
+- Planning Mode and Settings keep every character you type, not just the first
+- Cards no longer stall on "Queued to plan" with free slots after a planner hangs
+- "Queued to plan" and "Ready" badges match what the engine will actually do with the card
+- Expanded Mailbox reply-context rows stay open when you expand another row
+
+### Fixed
+
+- Planning Mode and Settings no longer drop typed text after the first character — the modal shell was remounting the focused input on every render.
+- Cards stuck on "Queued to plan" while concurrency slots sat free are now re-offered for planning after a hung planner is evicted, instead of waiting for an engine restart.
+- The "Queued to plan" and "Ready" badges on Todo cards now reflect whether the card is genuinely awaiting planning, rather than guessing from its step count. Todo rows carry this state through live board updates.
+- Expanded reply-context rows in the Mailbox modal stay expanded when another row is opened; the recursive reply thread no longer remounts and collapses.
+
+## 0.74.0-beta.4
+
+### Highlights
+
+- Code Review and Browser Verification now run with the card in In review, badged there
+- Opt-in auto-update installs the new build and restarts Fusion on your release channel
+- Cards no longer strand in Planning after Plan Review sends them back for changes
+- Dashboard survives mobile tab discards, resyncs on reconnect, and stops caching API responses offline
+- Agent tool output is capped at 16,000 characters, with a Settings control and a no-limit option
+
+### New
+
+- Code Review and Browser Verification run with the card sitting in In review, and the running step shows as a card badge. A changes-requested verdict still sends the card back to implementation.
+- New global setting for auto-update and restart (off by default, in Settings → General next to Release channel). The post-update Restart button now always issues the request and shows the server's reason when it is refused, instead of sitting disabled.
+- Core, workflow, and Git dialogs — 13 modal surfaces in all — are draggable and resizable on tablets, with geometry remembered between sessions.
+- A Settings control for the agent tool-output limit, including 0 for no limit.
+- The mobile project drop-down lists favorite projects in their own section at the top.
+- You get a mailbox notice whenever a task is deleted by an agent tool or an unattributed API caller; deletions from the dashboard, CLI, and engine stay silent.
+
+### Fixed
+
+- Cards sent back for re-planning by Plan Review now actually get re-planned instead of sitting in Planning, and replan bounces keep the task worktree instead of tearing it down and re-cutting the branch.
+- Cards can no longer sit waiting unowned on the planning path, a new watchdog reports any card idle past 30 minutes with no live session, and cards left with a stale "planning" status recover on a sweep instead of waiting for an engine restart.
+- Self-healing no longer pauses cards whose planning session is still running, and queued planning admission walks past a declining lane instead of stalling the whole pass.
+- Reviews stalled by an engine restart recover in one self-healing cycle rather than roughly 36 minutes, and the post-review fix budget default goes from 3 to 10.
+- Review gates are harder to lose: symbol locks are reclaimed on the way back into work, hung gates are stall-detected, a just-started gate is no longer failed by a sweep, and a merge can no longer be enqueued before Code Review has run.
+- Duplicate tasks are parked for your keep-or-delete decision instead of re-planning in a loop — including when the planner only reports the duplicate in its reply rather than writing the marker file.
+- Deny now withholds task-creating tools from agent sessions, and the duplicate-create window widens from 60 seconds to 10 minutes so a retried create no longer duplicates.
+- Approval reuse works on PostgreSQL instead of minting a duplicate request on every retry.
+- A review task whose worktree was removed gets a fresh one instead of failing on every retry.
+- Verification results stay concise, so a large failure dump no longer exhausts agent context.
+- Incomplete foreach workflow steps are blocked from entering merge review.
+- Planned hold-column cards whose Plan Review continuation was lost are recovered.
+- Mobile board swipes from the first or last column advance one column instead of two.
+- Task modals lose their excess tablet padding and dead right-edge space on landscape tablets while keeping usable touch resize grips; floating windows are touch-movable and resizable on tablets.
+- Task-card cost badges return for legacy tasks with recorded token usage, and the size badge lines up when a card shows two status badges.
+- Manual GitHub and GitLab import translations survive reopening the import panel.
+- Cross-project plugin discovery no longer unloads enabled plugin skills.
+- Task API endpoints return 404 for an unknown task id instead of a 500.
+- Task logs no longer report engine-initiated aborts as operator hard-cancel pauses.
+- Mailbox message links use theme colors instead of default browser blue.
+- Routine diagnostic noise is reduced in the operator log view.
+- Legacy desktop builds stay on one packageable Pi runtime dependency closure (Pi 0.82.0).
+- A false handoff-invariant violation is no longer logged every time a task enters a review gate.
+
+### Performance
+
+- Every engine-injected tool result is bounded by a 16,000-character budget, so large reads preserve context capacity.
+
+### Internal
+
+- Task deletions record who asked — operator UI, CLI, agent tool, engine, or unattributed API. Attribution only; no delete gating was added.
+- Review-gate leases record the node holding them, so a restarted engine can reclaim its own dead leases immediately instead of waiting out the staleness window.
+
 ## 0.74.0-beta.3
 
 ### Highlights

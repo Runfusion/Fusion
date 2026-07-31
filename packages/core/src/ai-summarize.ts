@@ -14,6 +14,9 @@
 import { getFnAgent, type AgentMessage } from "./ai-engine-loader.js";
 import { detectContentLanguage, localeDisplayName } from "./detect-content-language.js";
 import { DANGLING_TAIL_STOPWORDS, stripDanglingTail, stripEmptyPlaceholders } from "./task-title-id-drift.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("ai-summarize");
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -144,7 +147,7 @@ function cleanupExpiredRateLimits(): void {
   }
 
   if (cleanedRateLimits > 0) {
-    console.log(`[ai-summarize] Cleanup: removed ${cleanedRateLimits} rate limit entries`);
+    log.debug(`Cleanup: removed ${cleanedRateLimits} rate limit entries`);
   }
 }
 
@@ -208,9 +211,6 @@ export function validateDescription(description: unknown): string {
 
 // ── AI Integration ───────────────────────────────────────────────────────────
 
-/** Debug flag for AI operations */
-const DEBUG = process.env.FUSION_DEBUG_AI === "true";
-
 function isConfiguredModelNotFoundError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /Configured model .+ was not found in the pi model registry/.test(message);
@@ -260,15 +260,15 @@ async function runTitleSummarizer(
     agentOptions.defaultModelId = modelId;
   }
 
-  if (DEBUG) console.log("[ai-summarize] Creating agent session...");
+  log.debug("Creating agent session...");
   const agentResult = await createFnAgent(agentOptions);
 
   if (!agentResult?.session) {
-    if (DEBUG) console.log("[ai-summarize] Failed to initialize AI agent - no session");
+    log.debug("Failed to initialize AI agent - no session");
     throw new AiServiceError("Failed to initialize AI agent");
   }
 
-  if (DEBUG) console.log("[ai-summarize] Agent session created, sending prompt...");
+  log.debug("Agent session created, sending prompt...");
 
   try {
     // Wrap the user-supplied description in a delimiter so the model treats it
@@ -291,18 +291,16 @@ async function runTitleSummarizer(
     // Check for session errors (pi SDK stores errors in state.error, does not throw)
     if (agentResult.session.state?.error) {
       const errorMsg = agentResult.session.state.error;
-      if (DEBUG) console.log(`[ai-summarize] Session error: ${errorMsg}`);
+      log.debug(`Session error: ${errorMsg}`);
       throw new AiServiceError(`AI session error: ${errorMsg}`);
     }
 
-    if (DEBUG) console.log("[ai-summarize] Prompt sent, extracting response from messages...");
+    log.debug("Prompt sent, extracting response from messages...");
 
     const messages: AgentMessage[] = agentResult.session.state?.messages ?? [];
     const assistantMessages = messages.filter((m: AgentMessage) => m.role === "assistant");
 
-    if (DEBUG) {
-      console.log(`[ai-summarize] Total messages: ${messages.length}, Assistant messages: ${assistantMessages.length}`);
-    }
+    log.debug(`Total messages: ${messages.length}, Assistant messages: ${assistantMessages.length}`);
 
     const lastMessage = assistantMessages.pop();
 
@@ -321,22 +319,22 @@ async function runTitleSummarizer(
       }
     }
 
-    if (DEBUG) console.log(`[ai-summarize] Extracted raw title: "${title}"`);
+    log.debug(`Extracted raw title: "${title}"`);
 
     const sanitized = sanitizeTitle(title);
     if (!sanitized) {
-      if (DEBUG) console.log("[ai-summarize] AI returned empty/unusable response");
+      log.debug("AI returned empty/unusable response");
       throw new AiServiceError("AI returned empty response");
     }
 
-    if (DEBUG) console.log(`[ai-summarize] Title generation successful: "${sanitized}"`);
+    log.debug(`Title generation successful: "${sanitized}"`);
     return sanitized;
   } catch (err) {
     if (err instanceof AiServiceError) {
       throw err;
     }
     const message = err instanceof Error ? err.message : "AI processing failed";
-    if (DEBUG) console.log(`[ai-summarize] Unexpected error: ${message}`);
+    log.debug(`Unexpected error: ${message}`);
     throw new AiServiceError(message);
   } finally {
     // Ensure session is disposed even on error
@@ -369,7 +367,7 @@ export async function summarizeTitle(
 
   const createFnAgent = await getFnAgent();
   if (!createFnAgent) {
-    if (DEBUG) console.log("[ai-summarize] AI engine not available");
+    log.debug("AI engine not available");
     throw new AiServiceError("AI engine not available");
   }
 
@@ -381,18 +379,15 @@ export async function summarizeTitle(
     }
 
     const staleModel = formatConfiguredModel(provider, modelId);
-    console.warn(
-      `[ai-summarize] Configured title summarizer model ${staleModel} was not found in the pi model registry; `
-      + "retrying with automatic model resolution.",
+    log.warn(
+      `Configured title summarizer model ${staleModel} was not found in the pi model registry; retrying with automatic model resolution.`,
     );
 
     try {
       return await runTitleSummarizer(createFnAgent, description, rootDir);
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
-      console.warn(
-        `[ai-summarize] Automatic title summarizer fallback after stale model ${staleModel} failed: ${message}`,
-      );
+      log.warn(`Automatic title summarizer fallback after stale model ${staleModel} failed: ${message}`);
       return null;
     }
   }
@@ -635,7 +630,7 @@ export async function summarizeCommitBody(
   try {
     const createFnAgent = await getFnAgent();
     if (!createFnAgent) {
-      if (DEBUG) console.log("[ai-summarize] AI engine not available for commit body");
+      log.debug("AI engine not available for commit body");
       return null;
     }
 
@@ -663,7 +658,7 @@ export async function summarizeCommitBody(
     if (aborter.signal.aborted) return null;
 
     if (session.state?.error) {
-      if (DEBUG) console.log(`[ai-summarize] Commit-body session error: ${session.state.error}`);
+      log.debug(`Commit-body session error: ${session.state.error}`);
       return null;
     }
 
@@ -690,10 +685,8 @@ export async function summarizeCommitBody(
     }
     return body;
   } catch (err) {
-    if (DEBUG) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`[ai-summarize] Commit-body generation failed: ${message}`);
-    }
+    const message = err instanceof Error ? err.message : String(err);
+    log.debug(`Commit-body generation failed: ${message}`);
     return null;
   } finally {
     clearTimeout(timer);
@@ -818,7 +811,7 @@ export async function summarizeCommitSubject(
   try {
     const createFnAgent = await getFnAgent();
     if (!createFnAgent) {
-      if (DEBUG) console.log("[ai-summarize] AI engine not available for commit subject");
+      log.debug("AI engine not available for commit subject");
       return null;
     }
 
@@ -846,7 +839,7 @@ export async function summarizeCommitSubject(
     if (aborter.signal.aborted) return null;
 
     if (session.state?.error) {
-      if (DEBUG) console.log(`[ai-summarize] Commit-subject session error: ${session.state.error}`);
+      log.debug(`Commit-subject session error: ${session.state.error}`);
       return null;
     }
 
@@ -868,10 +861,8 @@ export async function summarizeCommitSubject(
 
     return sanitizeCommitSubject(raw);
   } catch (err) {
-    if (DEBUG) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`[ai-summarize] Commit-subject generation failed: ${message}`);
-    }
+    const message = err instanceof Error ? err.message : String(err);
+    log.debug(`Commit-subject generation failed: ${message}`);
     return null;
   } finally {
     clearTimeout(timer);

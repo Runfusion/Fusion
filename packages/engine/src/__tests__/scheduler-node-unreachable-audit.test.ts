@@ -14,11 +14,27 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, readFile: vi.fn() };
 });
 
+/*
+FNXC:PlanReviewStep 2026-07-26-17:10:
+The default workflow is plan-in-place: a `todo` card releases only after Plan Review passed, so these
+scheduler fixtures model a card that already cleared the gate (the state every real card is in when
+the capacity sweep sees it). Holding an unreviewed card is the gate working — that path is owned by
+`pre-release-plan-review.test.ts`.
+*/
+const PASSED_PLAN_REVIEW = {
+  workflowStepId: "plan-review",
+  workflowStepName: "Plan Review",
+  status: "passed" as const,
+  source: "node" as const,
+  phase: "pre-merge" as const,
+};
+
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
     id: "FN-1",
     description: "x",
     column: "todo",
+    workflowStepResults: [PASSED_PLAN_REVIEW],
     dependencies: [],
     steps: [],
     currentStep: 0,

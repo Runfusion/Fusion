@@ -1,3 +1,4 @@
+import { isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
 import { isActiveMergeStatus } from "./active-merge-status.js";
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "./types.js";
@@ -87,14 +88,33 @@ export function sortTasksByPriorityThenAgeAndId<T extends TaskPrioritySortable>(
 }
 
 const FANOUT_SECONDARY_WEIGHT_MULTIPLIER = 1_000_000;
-const UNBLOCK_ACTIVE_COLUMNS = new Set<Task["column"]>(["triage", "todo", "in-progress", "in-review"]);
-const DONE_COLUMNS = new Set<Task["column"]>(["done", "archived"]);
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-27-22:10 (Phase B / U6):
+`UNBLOCK_ACTIVE_COLUMNS` is DELETED. It enumerated the default workflow's
+non-terminal columns, which is the same concept `DONE_COLUMNS` already expressed
+by exclusion two lines below — one idea encoded twice, and the two halves
+disagreed for any column a custom workflow adds: dependency counting treated a
+`drafting` card as unmet (correct) while the active check treated it as inactive
+(wrong), so the blocker's unblock weight silently scored 0. Both halves now read
+the single terminal set.
+*/
+const DEFAULT_TERMINAL_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 export interface BuildUnblockWeightMapOptions {
   maxAutoMergeRetries?: ProjectSettings["maxAutoMergeRetries"];
+  /** The workflow's terminal columns (complete + archived). Defaults to the
+   *  built-in `{done, archived}` so existing callers are unchanged (R11). */
+  terminalColumns?: ReadonlySet<string>;
+  /** The workflow's review lane, forwarded to the fan-out's staleness classification.
+   *  Defaults to the built-in `{in-review}` so existing callers are unchanged. */
+  reviewColumns?: ReadonlySet<string>;
 }
 
-function countUnmetDependencies(task: Task, taskById: Map<string, Task>): number {
+function countUnmetDependencies(
+  task: Task,
+  taskById: Map<string, Task>,
+  terminalColumns: ReadonlySet<string>,
+): number {
   let unmet = 0;
   for (const dependencyId of task.dependencies ?? []) {
     const dependency = taskById.get(dependencyId);
@@ -102,7 +122,7 @@ function countUnmetDependencies(task: Task, taskById: Map<string, Task>): number
       unmet += 1;
       continue;
     }
-    if (DONE_COLUMNS.has(dependency.column)) {
+    if (terminalColumns.has(dependency.column)) {
       continue;
     }
     unmet += 1;
@@ -115,7 +135,13 @@ export function buildUnblockWeightMap(
   options: BuildUnblockWeightMapOptions = {},
 ): Map<string, number> {
   const taskList = [...tasks];
-  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0);
+  const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-10:00: forward the review lane too — this is the one
+     production caller, so an option it does not pass is an option that never fires. */
+  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, {
+    terminalColumns,
+    ...(options.reviewColumns ? { reviewColumns: options.reviewColumns } : {}),
+  });
   const taskById = new Map(taskList.map((task) => [task.id, task]));
   const weights = new Map<string, number>();
 
@@ -125,11 +151,12 @@ export function buildUnblockWeightMap(
 
     for (const dependentId of entry.dependencyDependentIds) {
       const dependent = taskById.get(dependentId);
-      if (!dependent || !UNBLOCK_ACTIVE_COLUMNS.has(dependent.column)) {
+      // Active by exclusion — the same terminal set the dependency count uses.
+      if (!dependent || terminalColumns.has(dependent.column)) {
         continue;
       }
       secondaryActiveDependentCount += 1;
-      if (countUnmetDependencies(dependent, taskById) === 1) {
+      if (countUnmetDependencies(dependent, taskById, terminalColumns) === 1) {
         primaryOnlyUnmetCount += 1;
       }
     }
@@ -192,13 +219,33 @@ function isMergeActiveStatus(status: string | null | undefined): boolean {
 /**
  * Column-aware default ordering shared by board and list surfaces.
  */
-export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(tasks: readonly T[], column: string): T[] {
-  if (column === "todo") {
+export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
+  tasks: readonly T[],
+  column: string,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+  The column's RESOLVED trait flags. Omitted, core's role helpers fall back to the legacy ids, so an
+  unconverted caller is byte-identical — that degraded mode lives in `column-roles.ts` and is covered
+  by its own tests, which is why this takes flags rather than another bespoke set.
+
+  Each of the three branches is a different visible defect on a renamed board, and none of them
+  errors:
+    - the hold lane loses priority ordering, so urgent work stops floating to the top of the backlog;
+    - the complete lane loses recency ordering, so the most recently finished cards are not at the
+      top of Done;
+    - the review lane stops floating actively-merging cards, so the card the operator is waiting on
+      sits wherever priority puts it.
+  Wrong order is the least likely defect for anyone to file a bug about, which is how three of them
+  survived in one function.
+  */
+  columnFlags?: ColumnRoleTraitFlags,
+): T[] {
+  if (isHoldColumnRole(columnFlags, column)) {
     return sortTasksByPriorityThenAgeAndId(tasks);
   }
 
   return [...tasks].sort((a, b) => {
-    if (column === "done") {
+    if (isCompleteColumnRole(columnFlags, column)) {
       const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
       if (timestampCmp !== 0) {
         return timestampCmp;
@@ -206,7 +253,7 @@ export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(tasks: r
       return compareTaskIdNumeric(a.id, b.id);
     }
 
-    if (column === "in-review") {
+    if (isReviewColumnRole(columnFlags, column)) {
       const aIsMerging = isMergeActiveStatus(a.status);
       const bIsMerging = isMergeActiveStatus(b.status);
       if (aIsMerging !== bIsMerging) {

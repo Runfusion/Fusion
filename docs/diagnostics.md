@@ -1,10 +1,17 @@
 # Diagnostics
 
-## Debug-level engine logs (`FUSION_DEBUG`)
+## Debug-level diagnostics (`FUSION_DEBUG`)
 
-Engine subsystem loggers (`createLogger` in `packages/engine/src/logger.ts`) expose a `debug()` level for steady-state per-poll chatter. It is **off by default** so the TUI log pane and engine stderr show state *changes* rather than the scheduler reprinting its resting state every poll.
+Engine and core subsystem loggers (`createLogger`) expose a `debug()` level for routine diagnostics. It is **off by default** so the TUI log pane and engine stderr show state *changes* rather than repeated resting-state chatter.
 
-Opt in per subsystem with the logger prefix:
+| Severity | Use it for |
+| --- | --- |
+| `debug()` | Repeated poll/sweep lines with unchanged state, expected skips and no-ops, per-item progress, expected-and-handled failures (fallback/retry/optional dependency), and diagnostics already recorded as run-audit events. |
+| `log()` | A state transition or operator-visible event. |
+| `warn()` | Handled degradation that needs eventual operator attention. |
+| `error()` | An unrecovered failure requiring operator action; do not use it when code recovered or scheduled a retry. |
+
+Most new diagnostic sites should therefore start at `debug()` and only be promoted when they meet a higher-severity rule. `debug()` output is enabled per subsystem with the logger prefix:
 
 ```bash
 FUSION_DEBUG=scheduler        # one subsystem
@@ -14,12 +21,11 @@ FUSION_DEBUG=1                # everything (also: true, all, *)
 
 The variable is re-read per call, so it can be toggled on a long-lived process without recreating loggers. Debug lines emit under the `info` severity marker and render like any other info line.
 
-Currently debug-gated:
+Currently debug-gated classes include local/default routing, capacity and re-entrancy skips, poll/sweep no-actions, per-step success/progress, optional integration probes, and successful verification bookkeeping. State-changing recovery and dispatch outcomes remain visible.
 
-- `Task <id> routed to node=local (source=local)` — routing to a **remote** node stays at info; only the local default is demoted.
-- `Hold release for <id> deferred — no reservable slot for <column>` — being at capacity is the expected steady state, not an event.
+Dashboard server code uses the core logger only: `import { createLogger } from "@fusion/core";`. Do not import an engine logger, use a relative cross-package logger path, or add a dashboard-local logger implementation.
 
-Guidance for new log sites: if a line repeats on every scheduler poll while nothing changed, it belongs at `debug()`. Anything reporting a transition, a rejection, or something needing operator action stays at `log()`/`warn()`/`error()`.
+`packages/engine/src/__tests__/log-severity-manifest.ts` and package contract tests pin individual demotions and the no-bare-console rule. This makes an accidental severity reversion a CI failure instead of an operator-visible log flood.
 
 ## Goal injection diagnostics (`[goal-injection]`)
 

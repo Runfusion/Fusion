@@ -7,9 +7,24 @@ import {
   type FollowUpDraft,
   type TaskStore,
 } from "@fusion/core";
-import { createAutomatedFollowup } from "./verification-followup-dedup.js";
+import { resolveTerminalColumnsFor } from "./executor.js";
+import type { resolveWorkflowIrForTask } from "@fusion/core";
 
-const OPEN_COLUMNS = new Set(["triage", "todo", "in-progress", "in-review"]);
+/*
+FNXC:Evals 2026-07-26-00:00:
+Eval follow-ups are a real product feature, but they used to borrow the shared automated-recovery follow-up engine (`createAutomatedFollowup` in verification-followup-dedup.ts) purely for its dedup pass. That engine was deleted along with the recovery follow-up cards it existed to file, so the one dedup rule this feature actually needs is inlined here: never create a second card for the same `suggestionId` under the same parent while one is still open. Closed columns (done/archived) are excluded so a re-run after the follow-up is finished can legitimately file a fresh card.
+*/
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (the dedup blocked new follow-ups forever on a renamed board):
+The comment above states the intent exactly — "closed columns (done/archived) are excluded so a re-run
+after the follow-up is finished can legitimately file a fresh card". Keyed on the literal pair, a finished
+follow-up in a RENAMED complete lane still read as OPEN, so the dedup matched it forever and the fresh card
+was never filed. The feature silently stopped working on any board that renamed its terminals.
+
+Resolved per candidate through the shared `resolveTerminalColumnsFor`, which unions the task's real
+terminals with the legacy pair — see its note: a missing custom workflow silently yields the BUILT-IN IR,
+so the union is what keeps a renamed board's own terminal recognised.
+*/
 const GENERIC_TITLE_PATTERNS = [/^follow\s*-?up$/i, /^todo$/i, /^fix\s+issue$/i, /^improve\s+task$/i, /^investigate$/i];
 
 export interface NormalizeEvalFollowUpsInput {
@@ -90,9 +105,41 @@ export function resolveEvalFollowUpPolicyMode(policy?: "off" | "suggest" | "crea
 
 export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {
   const { parentTaskId, runId, drafts, overallBand, store, policyMode } = input;
-  const openTasks = (await store.listTasks({ slim: true, includeArchived: false })).filter((task) =>
-    OPEN_COLUMNS.has(task.column)
-  );
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-06:40 (engine feed):
+  "Open" is the negation of the task's OWN terminal lanes, not a hard-coded list of four ids.
+
+  Census-invisible: `OPEN_COLUMNS` is a `Set` literal — a definition, not a comparison — so nothing
+  in the lifecycle backlog pointed here. Found by grepping for lane-shaped list literals.
+
+  Consequence on a renamed board: the set matched NOTHING, so `openTasks` was empty and the
+  dedupe below had no live work to compare against. Every eval run then re-filed follow-ups it had
+  already filed — the failure is DUPLICATE TASK CREATION, which looks like the evaluator being
+  thorough rather than like a bug.
+
+  Uses `resolveTerminalColumnsFor` — ALREADY IMPORTED IN THIS FILE for the candidate loop below, and
+  the same helper the executor uses. It unions the task's resolved terminals with the legacy pair for
+  the degraded-IR reason documented at its definition, so there is no fallback to hand-write here.
+
+  My first draft manufactured synthetic trait flags from lane equality to call `isTerminalColumnRole`
+  instead. That is the anti-pattern I flagged in `task-update.ts` two commits ago — a longer way to
+  write the same comparison while LOOKING like it consulted the trait registry — and it ignored a
+  correct helper sitting three lines above the import. Replaced before commit.
+  */
+  const allLiveTasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-09:30 (#2787 review — greptile P2):
+  ONE IR read per WORKFLOW, not per card. This loop runs over every live task on the board, so
+  without the shared cache a large board paid a store read per card before a single follow-up draft
+  was processed — measurable added latency on every scheduled evaluation. The cache is the
+  caller-owned shape the rest of this program already uses.
+  */
+  const openIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const openTasks: typeof allLiveTasks = [];
+  for (const task of allLiveTasks) {
+    const terminal = await resolveTerminalColumnsFor(store, task.id, openIrCache);
+    if (!terminal.includes(task.column)) openTasks.push(task);
+  }
   // FNXC:Evals 2026-06-27-12:40:
   // getEvalStore() returns EvalStore | AsyncEvalStore (PG backend mode); await
   // resolves the sync array and the async promise alike.
@@ -181,6 +228,36 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   });
 }
 
+/**
+ * FNXC:Evals 2026-07-26-00:00:
+ * Inlined replacement for the deleted shared follow-up dedup engine. Returns the id of an
+ * already-open eval follow-up filed for the same `suggestionId` under the same parent, or
+ * undefined when this suggestion has no live card yet. Fails open (undefined) if the store
+ * listing throws, matching the old engine's fail-open-and-create behavior.
+ */
+async function findOpenEvalFollowUpTaskId(
+  store: TaskStore,
+  parentTaskId: string,
+  suggestionId: string,
+): Promise<string | undefined> {
+  const tasks = await store.listTasks({ slim: true }).catch(() => []);
+  /*
+  Cheap identity filters FIRST, so only genuine candidates for this parent+suggestion pay a workflow
+  resolution — usually zero or one card rather than the whole board.
+  */
+  const candidates = tasks.filter(
+    (task) =>
+      task.id !== parentTaskId &&
+      task.sourceParentTaskId === parentTaskId &&
+      task.sourceMetadata?.suggestionId === suggestionId,
+  );
+  for (const task of candidates) {
+    const terminal = await resolveTerminalColumnsFor(store, task.id);
+    if (!terminal.includes(task.column)) return task.id;
+  }
+  return undefined;
+}
+
 export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsInput): Promise<EvalFollowUpSuggestion[]> {
   const { parentTaskId, runId, policyMode, overallScore, followUps, store } = input;
   const created: EvalFollowUpSuggestion[] = [];
@@ -191,47 +268,45 @@ export async function materializeEvalFollowUps(input: MaterializeEvalFollowUpsIn
       continue;
     }
 
-    const result = await createAutomatedFollowup(store, {
-      kind: "eval",
-      parentTaskId,
-      extraMatchKeys: { suggestionId: followUp.suggestionId },
-      createInput: {
-        title: followUp.title,
-        description: [
-          `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
-          "",
-          `Problem summary: ${followUp.description}`,
-          "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
-          `Eval severity/score: ${followUp.severity} (${overallScore})`,
-          `Rationale: ${followUp.rationale}`,
-          `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
-        ].join("\n"),
-        column: "triage",
-        priority: followUp.priority,
-        source: {
-          sourceType: "automation",
-          sourceParentTaskId: parentTaskId,
-          sourceMetadata: {
-            type: "eval_follow_up",
-            runId,
-            suggestionId: followUp.suggestionId,
-            policyMode,
-            dedupeKey: followUp.dedupeKey,
-          },
+    const existingTaskId = await findOpenEvalFollowUpTaskId(store, parentTaskId, followUp.suggestionId);
+    const createdTaskId = existingTaskId ?? (await store.createTask({
+      title: followUp.title,
+      description: [
+        `Follow-up generated from evaluation run ${runId} for ${parentTaskId}.`,
+        "",
+        `Problem summary: ${followUp.description}`,
+        "Expected outcome: Investigate and resolve the issue identified by evaluation findings.",
+        `Eval severity/score: ${followUp.severity} (${overallScore})`,
+        `Rationale: ${followUp.rationale}`,
+        `Evidence refs: ${followUp.evidenceRefs.map((ref) => ref.evidenceId).join(", ") || "none"}`,
+      ].join("\n"),
+      /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+         `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+         override it. Hard-coding `"triage"` created the card in a column the default
+         lineage no longer declares (#2515), i.e. straight into the stranded state. */
+      priority: followUp.priority,
+      source: {
+        sourceType: "automation",
+        sourceParentTaskId: parentTaskId,
+        sourceMetadata: {
+          type: "eval_follow_up",
+          runId,
+          suggestionId: followUp.suggestionId,
+          policyMode,
+          dedupeKey: followUp.dedupeKey,
         },
       },
-    });
+    })).id;
 
-    const createdTaskId = result.outcome === "created" ? result.task.id : result.existingTaskId;
     created.push({
       ...followUp,
       state: "created",
       createdTaskId,
       recommendation: {
         ...followUp.recommendation,
-        reason: result.outcome === "created"
-          ? `Created as ${createdTaskId} by follow-up policy`
-          : `Reused existing follow-up ${createdTaskId} by follow-up policy`,
+        reason: existingTaskId
+          ? `Reused existing follow-up ${createdTaskId} by follow-up policy`
+          : `Created as ${createdTaskId} by follow-up policy`,
       },
     });
   }

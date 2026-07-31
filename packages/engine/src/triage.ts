@@ -9,6 +9,7 @@ import type {
   Agent,
   AgentPermissionPolicy,
   PermanentAgentGatingContext,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   DUPLICATE_OF_METADATA_KEY,
@@ -17,6 +18,7 @@ import {
   TaskDeletedError,
   buildTriageMemoryInstructions,
   isUnplannedSeedPrompt,
+  isTaskAwaitingPlanning,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
   resolveAgentPrompt,
@@ -32,11 +34,14 @@ import {
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
   resolveWorkflowIrForTask,
+  resolveLifecycleColumns,
+  resolveWorkflowIrForTaskWithProvenance,
+  workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
-  isNearDuplicateCanonicalInactive,
+  isNearDuplicateCanonicalInactive, resolveColumnFlags,
   detectImageMimeFromBytes,
   applyFrontendUxCriteria,
   applyOriginalDescription,
@@ -115,7 +120,7 @@ import type {
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "./replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanes } from "./replan-target.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -137,6 +142,7 @@ import {
   recoverIdleSemaphoreLeakCandidate,
   type AgentSemaphore,
 } from "./concurrency.js";
+import { acquireActiveSessionPath, activeSessionRegistry } from "./active-session-registry.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructions,
@@ -159,6 +165,15 @@ import { isOperatorActionableAgentError, isTransientError, isSilentTransientErro
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector } from "./stuck-task-detector.js";
+
+/*
+FNXC:TriageStalePlanning 2026-07-26-17:20:
+Staleness floor before the periodic sweep may clear a `status:"planning"` claim. Generous on
+purpose: it must never race a slow-but-healthy planner, including one owned by another node whose
+in-process `processing` set this engine cannot see. A genuinely stranded card waits at most this
+long instead of until the next engine restart.
+*/
+const STALE_PLANNING_STATUS_GRACE_MS = 20 * 60_000;
 import { exec } from "node:child_process";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -179,6 +194,7 @@ import {
   createTaskPromptWriteTool,
   createWorkflowListTool,
   createWorkflowSelectTool,
+  resolveTerminalColumnsForTasks,
 } from "./agent-tools.js";
 import {
   getResearchGuidanceForSurface,
@@ -205,7 +221,21 @@ export interface TriageProcessorOptions {
   /** Stuck task detector — monitors triage sessions for stagnation and triggers recovery. */
   stuckTaskDetector?: StuckTaskDetector;
   onSpecifyStart?: (task: Task) => void;
-  onSpecifyComplete?: (task: Task) => void;
+  /*
+  FNXC:PlanningHandoffOutcome 2026-07-28-10:05 (U7 / R4, R5 — workflow-owned lifecycle):
+  The reaction is told WHAT FINALIZE DID, not merely that specification stopped.
+  It fired unconditionally before, so a card parked at the manual plan-approval
+  gate — or one whose release move was refused — was announced as specified, and
+  the subscriber logged "Specified X -> todo" and armed a Plan Review run for a
+  card that had not moved.
+
+  The event still fires on every outcome. Dropping it for a non-release would also
+  drop the subscriber's activity/idle signal, and a reaction that silently does not
+  happen is harder to reason about than one that happens with an accurate payload.
+  R5's division of labour: the seam announces, the SUBSCRIBER decides what a given
+  outcome licenses.
+  */
+  onSpecifyComplete?: (task: Task, report: PlanningHandoffReport) => void;
   onSpecifyError?: (task: Task, error: Error) => void;
   onAgentText?: (taskId: string, delta: string) => void;
   /** AgentStore for resolving per-agent custom instructions. */
@@ -233,6 +263,103 @@ export interface TriageProcessorOptions {
  * transparently restarted, so dashboard setting changes take effect without
  * an engine restart.
  */
+/**
+ * FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4 — workflow-owned lifecycle):
+ * What a finalize pass actually did with the card. Three states, because "did it
+ * work?" is not a yes/no question here and collapsing it to one is what produced
+ * the bugs this type exists to remove:
+ *
+ *   released — the card crossed into the hold column, or was already resting there
+ *              (plan-in-place). It is the graph's now. This is the ONLY state that
+ *              means "a specification handoff happened".
+ *   parked   — finalize reached a deliberate disposition that is terminal for now:
+ *              awaiting manual plan approval, a duplicate decision, an operator
+ *              pause, a deleted duplicate. A human or a later event owns the card;
+ *              an automated retry would fight that decision.
+ *   withheld — finalize could not complete the handoff. The card still holds a
+ *              finished spec in the planner column and nothing is waiting on a
+ *              human, so the CALLER'S retry budget is the correct owner.
+ *
+ * The distinction that matters: `parked` and `withheld` both mean "not released",
+ * but only `withheld` should be retried. Treating them alike either strands a card
+ * that needed a retry or overwrites an operator's park with `needs-replan`.
+ */
+export type PlanningHandoffOutcome = "released" | "parked" | "withheld";
+
+/** Mutable report threaded through finalize's many exits. See the rationale on
+ *  `finalizeApprovedTask` for why this is a report object and not a return value. */
+export interface PlanningHandoffReport {
+  outcome: PlanningHandoffOutcome;
+}
+
+
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-08:40 (U11 conversion — triage planner lanes):
+The PLANNER LANES for a task: the columns where specification happens, resolved
+from its own workflow.
+
+Triage's eight column decisions are all one of two questions — "is this card in a
+planner lane?" (hold or intake) and "where does a finished plan get released to?"
+(hold) — and both were answered with literals. Under a renamed workflow every one
+silently stops matching; after U11 deletes `todo` from the builtins, they stop
+matching everywhere.
+
+SYNCHRONOUS on purpose: several call sites are inside event listeners and pure
+filter predicates, and introducing an `await` there would reorder handlers
+relative to a synchronous emitter (see the scheduler conversion, where exactly
+that broke five pre-existing tests).
+
+Fail-soft to the legacy pair so an unresolvable or column-less workflow behaves
+exactly as before.
+
+NOTE FOR U11: once `triage` carries the capacity hold, `hold` and `intake` resolve
+to the SAME column. Every `hold || intake` check below then collapses to one
+column, and the release move becomes a no-op the guard already skips — which is
+the intended end state, not a degenerate case.
+
+MOVED to `replan-target.ts` (2026-07-30) so the executor's stranded-completed recovery and
+planning-evacuation branches resolve the SAME lanes rather than growing a second copy. The
+note above is kept here because this is where the eight decisions it describes live.
+*/
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-19:10 (U11 — STALL 3):
+The pre-implementation column ids that shipped as the builtin lifecycle vocabulary,
+and therefore the only ids a lineage change can leave a card stranded on. Used to
+scope the undeclared-column rescue in `discoverReadyPlanningTasks`; deliberately not
+derived from the IR, since the point is to recognise a column the CURRENT workflow
+no longer has.
+*/
+const LEGACY_PLANNER_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-04:10:
+The canonical's OWN resolved column flags, for `isNearDuplicateCanonicalInactive`.
+
+Omitted, that predicate falls back to the legacy `done`/`archived` ids, so on a renamed board a
+canonical that has SHIPPED reads as still ACTIVE. Every "the canonical is inactive, so clear the
+marker" branch below then fails to fire, and FN-8356's fix — inactive canonicals flow through marker
+cleanup rather than parking the card — is inert. The card keeps its "Needs your decision" badge
+pointing at work that finished days ago, and no decision can ever resolve it.
+
+Module-private rather than shared: `findColumn` is already duplicated this way in hold-release.ts,
+merge-trait.ts, and workflow-capacity.ts, so this follows the established shape instead of adding a
+cross-module helper for it.
+
+`undefined` on any failure is deliberate — it degrades to the legacy id rather than to absent traits
+that match nothing.
+*/
+async function resolveNearDuplicateCanonicalFlags(
+  store: TaskStore,
+  canonical: { id: string; column?: string | null } | null | undefined,
+): Promise<ReturnType<typeof resolveColumnFlags> | undefined> {
+  if (!canonical?.column) return undefined;
+  const ir = await resolveWorkflowIrForTask(store, canonical.id).catch(() => undefined);
+  if (!ir || ir.version !== "v2") return undefined;
+  const column = ir.columns.find((candidate) => candidate.id === canonical.column);
+  return column ? resolveColumnFlags(column) : undefined;
+}
+
 export class TriageProcessor {
   private running = false;
   private polling = false;
@@ -262,6 +389,13 @@ export class TriageProcessor {
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
   private idleSemaphoreLeakCandidateSince: number | null = null;
+  /**
+   * FNXC:ConcurrencyAdmission 2026-07-26-09:30:
+   * Signature of the last emitted `task:plan-admission-throttled` event, so a steady stall records
+   * one row instead of one per poll. `null` means "not currently throttled" — the next throttle,
+   * even with identical numbers, is a NEW stall and is emitted again.
+   */
+  private lastPlanThrottleSignature: string | null = null;
   /** Active agent sessions per task, used to terminate on pause. */
   private activeSessions = new Map<string, { dispose: () => void }>();
   /**
@@ -547,7 +681,8 @@ export class TriageProcessor {
     */
     this.taskColumnWakeHandler = (task: Task) => {
       if (!task?.id) return;
-      if (task.column !== "todo" && task.column !== "triage") return;
+      const wakeLanes = resolvePlannerLanes(this.store, task.id);
+      if (task.column !== wakeLanes.hold && task.column !== wakeLanes.intake) return;
       if (task.paused === true || task.userPaused === true) return;
       // Already being planned (or mid-plan) — the running poll/session owns it.
       if (this.processing.has(task.id) || this.hasLivePlanningWork(task.id)) return;
@@ -585,7 +720,8 @@ export class TriageProcessor {
       an unrelated update.
       */
       if (typeof task.column !== "string") return;
-      if (task.column === "todo" || task.column === "triage" || task.column === "in-progress") return;
+      const disposeLanes = resolvePlannerLanes(this.store, task.id);
+      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {
         this.disposeSubagentsForTask(task.id, `task moved to ${task.column}`);
       }
@@ -651,16 +787,88 @@ export class TriageProcessor {
     planLog.log("Processor started");
   }
 
+  /*
+  FNXC:TriageStalePlanning 2026-07-26-17:20:
+  PERIODIC counterpart to `clearStaleSpecifyingStatuses`, which runs at STARTUP ONLY.
+  Observed strand (FN-8596): a plan-review REVISE routed to `plan-replan`, triage claimed the card
+  with `status:"planning"` and ran the revision session, the session wrote the revised PROMPT.md and
+  then died WITHOUT finalizing. The card was left in `triage` with `status:"planning"`, a live
+  worktree, and no workflow continuation. Nothing re-dispatched it: triage rediscovery skips cards
+  already marked `planning` (they look claimed), and the only sweep that clears that status ran at
+  startup — so the card sat stranded until an operator restarted the engine. The leaked-slot reaper
+  then reclaimed its concurrency slot, which made the card look idle without making it runnable.
+
+  Clearing the status is the whole repair: the card is back in triage with a real spec, so ordinary
+  rediscovery re-picks it on the next poll. This does NOT move, pause, or fail the card.
+
+  Two guards keep it from racing a healthy planner:
+    - `this.processing` excludes sessions this process owns.
+    - a staleness floor excludes cards touched recently, which covers planners owned by ANOTHER
+      node/process that this process's `processing` set cannot see.
+  User-paused cards are never touched (an operator park is authoritative).
+  */
+  private async sweepStalePlanningStatuses(allTasks: Task[], now: number): Promise<void> {
+    try {
+      const stale = allTasks.filter((t) => {
+        if (t.status !== "planning") return false;
+        const lanes = resolvePlannerLanes(this.store, t.id);
+        if (t.column !== lanes.intake && t.column !== lanes.hold) return false;
+        if (this.processing.has(t.id)) return false;
+        if (t.userPaused === true || t.paused === true) return false;
+        const touchedAt = Date.parse(t.updatedAt ?? t.columnMovedAt ?? "");
+        if (!Number.isFinite(touchedAt)) return false;
+        return now - touchedAt >= STALE_PLANNING_STATUS_GRACE_MS;
+      });
+      for (const t of stale) {
+        planLog.warn(
+          `Stale 'planning' status on ${t.id} (column=${t.column}, no live planner) — clearing so triage can re-pick it`,
+        );
+        await this.store.updateTask(t.id, { status: null });
+        await this.store.logEntry(
+          t.id,
+          "Auto-recovered: cleared stale planning status left by a planner that never finished",
+        ).catch(() => undefined);
+      }
+    } catch (err) {
+      // Never let a housekeeping sweep break the poll.
+      planLog.warn(`Stale planning-status sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async clearStaleSpecifyingStatuses(): Promise<void> {
     /*
     FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
-    In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a maxTriageConcurrent slot and blocks new triage work.
+    In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a planning admission slot and blocks new triage work. (The separate maxTriageConcurrent pool AND its setting are both gone — FN-8453 removed the pool, the capacity simplification removed the dead key; planning shares the one agent count.)
     */
-    const triageTasks = await this.store.listTasks({ column: "triage", slim: true });
-    const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
-    const stale = [...triageTasks, ...todoTasks].filter(
-      (t) => t.status === "planning" && !this.processing.has(t.id),
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-16:40 (U11 — self-review of this PR):
+    A board-wide startup sweep has NO single task to resolve lanes against, so it
+    queries the UNION of the legacy planner ids and the default workflow's resolved
+    lanes rather than picking one answer.
+
+    The union is load-bearing, not defensive. Resolving the two queries from the
+    default workflow alone looked equivalent and was not: post-#2515 that workflow's
+    `intake` and `hold` are the SAME merged column, so both queries collapsed onto
+    `todo` and nothing ever swept `triage`. A legacy or Coding (Ideas) card left
+    holding a stale `planning` status would then occupy a planning admission slot
+    permanently — exactly the failure the 2026-07-04 note above describes. Caught by
+    `triage.test.ts`'s rebounded-replan case.
+
+    Querying extra columns is free here: the sweep only READS and every row is
+    filtered on `status === "planning"` before anything is written.
+    */
+    const sweepLanes = resolvePlannerLanes(this.store, "");
+    const sweepColumns = [...new Set(["triage", "todo", sweepLanes.intake, sweepLanes.hold])];
+    const swept = await Promise.all(
+      sweepColumns.map((column) => this.store.listTasks({ column, slim: true })),
     );
+    const seen = new Set<string>();
+    const stale = swept.flat().filter((t) => {
+      if (t.status !== "planning" || this.processing.has(t.id)) return false;
+      if (seen.has(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
     for (const t of stale) {
       planLog.log(`Startup sweep: clearing stale 'planning' status on ${t.id}`);
       await this.store.updateTask(t.id, { status: null });
@@ -922,6 +1130,32 @@ export class TriageProcessor {
       this.activeSessions.delete(taskId);
       this.stuckAborted.delete(taskId);
       this.finalizing.delete(taskId);
+      /*
+      FNXC:ConcurrencyAdmission 2026-07-26-14:20:
+      Eviction must release EVERY admission-side claim the hung planner still holds, not just
+      `processing`. Symptom this fixes: an operator reported a Todo card stuck on "Queued to plan"
+      with free concurrency slots and NO explanation in either diagnostic — no "Plan throttled by"
+      log line and no `task:plan-admission-throttled` run-audit row.
+
+      Cause: `coordinatorAdmittedTaskIds` was only cleared by specifyTask's `finally` (and its
+      duplicate-claim guard), so a promise that never settles — exactly the case this eviction
+      exists for — left the id in the set permanently. Planning discovery does not consult that
+      set, so the card stayed in `triageTasks` and `maxToStart` stayed positive, which means the
+      throttle branch (the only thing that logs or emits) never fired; but `admitOldest`'s
+      `refresh()` filters on the set, so the coordinator saw no candidate. Silent stall until
+      engine restart, and the badge (a pure client-side "unplanned + idle in Todo" inference) kept
+      claiming the card was queued.
+
+      The pre-held host slot is the second claim on the same path. A promise hung INSIDE
+      retryableWork has already transferred ownership, so the drop is a no-op there by design; a
+      promise hung BEFORE `takePreHeldExecutorSlot` still holds an untransferred registration, and
+      returning it here is the difference between a reclaimed slot and one the semaphore's
+      stale-excess valve cannot touch for 600s. If such a run later resumes, its take() returns
+      false and it acquires through `semaphore.run` normally, so the register/take-or-drop pairing
+      invariant holds either way.
+      */
+      this.coordinatorAdmittedTaskIds.delete(taskId);
+      if (dropPreHeldExecutorSlot(taskId)) this.options.semaphore?.release();
       evicted.add(taskId);
     }
 
@@ -949,7 +1183,75 @@ export class TriageProcessor {
     const recoverableStatus =
       task.status === "planning"
       || (task.status == null && this.hasPassedPlanReview(task));
-    if (task.column !== "triage" || !recoverableStatus) {
+    /* FNXC:WorkflowLifecycleColumns 2026-07-29-09:05 (U11): the INTAKE lane, not
+       the literal. Converting only the `todo` sites left this one rejecting every
+       card whose workflow renames its planner column, so the release below was
+       unreachable for exactly the workflows the conversion was for. */
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-29-23:10 (U11 #2515 audit):
+    ADDITIVE: the resolved intake lane OR the legacy `triage` id.
+
+    Resolving the lane (above) fixed recovery for renamed and merged workflows and
+    silently broke it for cards still SITTING in `triage` — the migration population
+    U11's re-homing has not reached yet. A default-workflow card there resolves
+    intake to `todo`, fails this gate, and its approved spec is discarded: the
+    stale-planning sweep clears the status, ordinary discovery re-plans from scratch,
+    and a fresh LLM pass is burned on the path FN-1312 built to avoid exactly that.
+
+    Trading "cannot recover post-U11 cards" for "cannot recover pre-U11 cards" is not
+    a fix. `triage` stays a legal column id for stored rows (R11), so accepting both
+    is compatibility, not a second source of truth — once a row is re-homed the
+    resolved lane is what matches.
+    */
+    const lanes = resolvePlannerLanes(this.store, task.id);
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:50 (PR #2593 review — greptile P1):
+    The legacy acceptance is SCOPED to an ORPHANED `triage` row — one whose workflow
+    does not declare a `triage` column at all. A custom workflow is free to name a
+    non-intake lane `triage` (its review or wip column), and accepting a
+    planning-status card from there would finalize its plan and move it to the hold
+    lane, bypassing whatever transition that custom column represents.
+
+    Unqualified `|| task.column === "triage"` could not tell those two apart. This
+    can: the migration case is precisely "the row sits in a column its workflow no
+    longer has", which is also exactly what `reconcileUndeclaredTaskColumns` is about
+    to re-home. If the workflow DOES declare `triage`, its declared role governs and
+    only the resolved intake lane is accepted.
+    */
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:20 (PR #2593 review — greptile, PG defaults):
+    THE SYNC READER CANNOT BE USED HERE, and it is production that breaks. `resolveTaskWorkflowIrSync`
+    returns `WorkflowIr`, never undefined: in backend/PostgreSQL mode it "cannot synchronously read
+    PostgreSQL, so return undefined and let the sync readers fall back to their defaults"
+    (`workflow-definitions.ts`). So the value arriving here was the DEFAULT coding IR, which post-U11
+    declares no `triage` column — making `declaresLegacyTriage` false for every task under PG and the
+    scoping this guard exists for unable to fire at all. A custom workflow that legitimately names a
+    non-intake lane `triage` would have had its planning-status card accepted and finalized, which is
+    the precise regression the earlier review asked me to prevent.
+
+    The provenance API is the fix, not a bigger try/catch: `source: "selection"` is verified by IR
+    identity, so it is only reported when the store really resolved the task's own workflow. Anything
+    else — PG's sync gap, no selection, a missing or malformed definition, a throwing lookup — is
+    `"default"`, and we then FAIL CLOSED by assuming the workflow declares `triage` and declining to
+    widen. Declining costs a deferred recovery that the next sweep retries; widening wrongly
+    finalizes a plan in someone's custom lane.
+    */
+    const resolved = await resolveWorkflowIrForTaskWithProvenance(this.store, task.id);
+    const declaresLegacyTriage = resolved.source === "selection"
+      ? workflowHasColumn(resolved.ir, "triage")
+      : true;
+    /*
+    FNXC:RecoverApprovedIntakePostU11 2026-07-29-23:55 DELIBERATE-LITERAL: the migration arm only.
+    The census flagged this as a NEW guard, correctly — it is a literal, and it is new. It is also
+    irreducible: the condition is "this row sits in a column its workflow no longer declares", so
+    there is no trait to resolve and no IR that can answer it. Resolving `triage` from the workflow
+    is what the `!declaresLegacyTriage` half already does, and it is what makes this the orphan case
+    rather than a blanket acceptance. Same class as the markers in `replan-target.ts` and
+    `hold-release.ts`; retires with the U11 migration window, when no row can rest in `triage`.
+    */
+    const inPlannerColumn = task.column === lanes.intake
+      || (task.column === "triage" && !declaresLegacyTriage);
+    if (!inPlannerColumn || !recoverableStatus) {
       return false;
     }
 
@@ -1023,13 +1325,29 @@ export class TriageProcessor {
       }
     }
 
-    await this.finalizeApprovedTask(task, written, settings, {
+    const report = await this.finalizeApprovedTask(task, written, settings, {
       recoveryLogAction: approvalRequired
         ? "Auto-recovered specified task stuck in planning — awaiting manual approval"
         : "Auto-recovered specified task stuck in planning — moved to todo",
     });
 
-    return true;
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4):
+    Report what finalize ACTUALLY did. This used to `return true` unconditionally,
+    which meant a finalize that could not hand the card off still reported recovery
+    as successful — and `handleStuckAbortRequeue` treats `true` as "done, stop here".
+    So a card whose release move was refused by the planning-stage guard (FN-8361),
+    or whose store could not perform the move at all, was left holding a finished
+    spec in the planner column with its stuck-retry budget silently skipped: nothing
+    re-planned it and nothing escalated it.
+
+    `parked` still returns TRUE, and that is the whole reason this is three states
+    rather than a boolean. An awaiting-approval park is a successful outcome of
+    recovery — the card is exactly where the operator's pending decision put it.
+    Returning false there would send the stuck handler down its draft path and stamp
+    `needs-replan` over a plan a human is in the middle of reviewing.
+    */
+    return report.outcome !== "withheld";
   }
 
   private async readNonEmptyPromptDraft(taskId: string, context: string): Promise<string | undefined> {
@@ -1130,7 +1448,7 @@ export class TriageProcessor {
       freshTask.status === "planning"
       || freshTask.status === "needs-replan"
       || freshTask.status === "plan-review-unavailable";
-    const releasedToTodo = freshTask.column === "todo" && !planningStageStatus;
+    const releasedToTodo = freshTask.column === resolvePlannerLanes(this.store, freshTask.id).hold && !planningStageStatus;
     if (hasAdvancedPastPlanning(freshTask) || releasedToTodo) {
       const nextStuckKillCount = (freshTask.stuckKillCount ?? task.stuckKillCount ?? 0) + 1;
       planLog.log(
@@ -1242,15 +1560,204 @@ export class TriageProcessor {
    * union include cards before their planner writes status:"planning".
    */
   private async discoverReadyPlanningTasks(allTasks: Task[], now: number): Promise<Task[]> {
-    const eligibleTriageTasks = allTasks.filter(
-      (t) => t.column === "triage" && isTaskStillInPlanningStage(t)
+    /*
+    FNXC:MergedPlanningColumn 2026-07-28-15:10 (U11):
+    Planning discovery has TWO admission rules, and they were selected by hardcoded column id:
+    `triage` admitted any card still in the planning stage, `todo` admitted only a card whose
+    PROMPT.md still reads as a seed (a planned card in the hold column is waiting for CAPACITY,
+    not for planning, and re-specifying it would discard its approved spec).
+
+    Both now select by TRAIT, so a workflow that renames or merges its pre-implementation columns
+    keeps both rules. Deleting `triage` from the coding IRs — U11 — would otherwise leave the
+    intake rule matching nothing while the hold rule silently became the only one.
+
+    ORDER IS LOAD-BEARING. Under U11 one column carries BOTH `intake` and `hold`, so a card can
+    satisfy both rules. Hold is tested FIRST and the branches are mutually exclusive, for two
+    reasons: a card would otherwise appear in both lists and be dispatched twice for the same
+    planning run, and the hold rule is the NARROWER of the two — applying the intake rule to a
+    merged column would re-specify a card that has already been planned and is only waiting for a
+    slot. Narrower wins; nothing is admitted that both rules would not admit.
+
+    A card whose workflow cannot be resolved falls back to the legacy ids rather than being
+    dropped from discovery entirely — an unplannable card is worse than a conservatively
+    planned one, and R11 keeps `todo`/`triage` legal ids for stored rows and custom workflows.
+
+    FNXC:MergedPlanningColumn 2026-07-29-09:20 (PR #2515 review — greptile + coderabbit):
+    COST. Resolving a task's lifecycle columns needs its workflow-selection row, i.e. a store
+    round-trip. The first cut of this conversion awaited one for EVERY task on the board,
+    sequentially, before filtering anything — turning a pure in-memory filter into an O(board)
+    serial scan on the triage poll, which is the engine's hottest loop. It scaled with total board
+    size instead of with candidate count, so it was worst for exactly the operators with the
+    biggest boards.
+
+    Two changes, in order of importance:
+
+    1. FILTER FIRST. Every predicate that needs no store read — processing/live-planning
+       membership, pause, the terminal statuses, the recovery backoff, and each branch's own cheap
+       precondition — is applied BEFORE any resolution. Only survivors are resolved, so the cost is
+       O(candidates), and a board whose cards are overwhelmingly done/in-review/executing pays
+       almost nothing.
+    2. Resolve the survivors CONCURRENTLY under a bounded window rather than one await at a time,
+       so a genuine backlog of candidates costs one bounded batch instead of N serial round-trips.
+       Bounded rather than an unbounded Promise.all: this runs against the operator's live database
+       and a board-sized fan-out is its own denial of service.
+
+    The IR cache still collapses the parse cost — a board of 400 cards on three workflows reads
+    three IRs — and is now shared across the concurrent resolutions rather than a serial loop.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+
+    /*
+    The store-free half of both admission rules. A card failing this can never be admitted by
+    EITHER branch, so it never justifies a workflow-selection read. Kept deliberately in sync with
+    the two filters below — anything cheap that appears there should appear here.
+    */
+    const couldBeCandidate = (t: Task): boolean => {
+      if (this.processing.has(t.id) || this.hasLivePlanningWork(t.id) || t.paused) return false;
+      if (t.status === "awaiting-approval" || t.status === "failed" || t.status === "stuck-killed") return false;
+      if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
+      const couldBeIntake = isTaskStillInPlanningStage(t) && !this.advancedRecoveryReservations.has(t.id);
+      const couldBeHold = t.status !== "planning";
+      return couldBeIntake || couldBeHold;
+    };
+
+    const candidates = allTasks.filter(couldBeCandidate);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
+    Resolves the IR ONCE per candidate and derives both the lifecycle roles and the
+    DECLARED column ids from it. Previously this called `resolveTaskLifecycleColumns`,
+    which returns roles only; the declared set is what the undeclared-column rescue
+    below needs, and taking it from the same resolution keeps the cost identical
+    (same call, same `irCache`, same bounded window) rather than adding a read.
+    */
+    const lifecycleByTaskId = new Map<string, { intake?: string; hold?: string; declared: ReadonlySet<string>; manualIntake?: boolean }>();
+    const RESOLUTION_CONCURRENCY = 8;
+    for (let offset = 0; offset < candidates.length; offset += RESOLUTION_CONCURRENCY) {
+      const window = candidates.slice(offset, offset + RESOLUTION_CONCURRENCY);
+      const resolved = await Promise.all(
+        window.map(async (t) => {
+          try {
+            const ir = await resolveWorkflowIrForTask(this.store, t.id, irCache);
+            const roles = resolveLifecycleColumns(ir);
+            const columns = (ir as { columns?: Array<{ id: string; traits?: Array<{ trait: string; config?: Record<string, unknown> }> }> }).columns ?? [];
+            /*
+            FNXC:ManualIntakeAdmission 2026-07-31-04:20:
+            The intake trait's `autoTriage: false` comes from the SAME resolution, not a second read —
+            it is the only durable signal that separates a parked card from one an operator released.
+            */
+            const intakeTraitConfig = columns
+              .find((column) => column.id === roles?.intake)
+              ?.traits?.find((trait) => trait.trait === "intake")
+              ?.config;
+            return {
+              ...roles,
+              declared: new Set(columns.map((c) => c.id)),
+              manualIntake: intakeTraitConfig?.autoTriage === false,
+            };
+          } catch {
+            return undefined;
+          }
+        }),
+      );
+      window.forEach((t, index) => {
+        lifecycleByTaskId.set(
+          t.id,
+          resolved[index] ?? { intake: "triage", hold: "todo", declared: new Set<string>() },
+        );
+      });
+    }
+
+    // An unresolved task id means the card was filtered out before resolution, so it is not a
+    // candidate and both predicates are correctly false for it.
+    const isAtHoldColumn = (t: Task): boolean => lifecycleByTaskId.get(t.id)?.hold === t.column;
+    /*
+    FNXC:ManualIntakeAdmission 2026-07-31-04:25 (live bug — FN-7596's rule was broken by the trait conversion):
+    A MANUAL intake (`autoTriage: false`) is never auto-admitted. Coding (Ideas) exists so an operator
+    can park a card without the engine planning it; the operator promotes it into Planning when ready.
+
+    HOW IT BROKE. The rule used to be enforced accidentally, by this predicate naming `triage`: an
+    `ideas` card matched no branch. Converting the predicate to resolve intake BY TRAIT made `ideas`
+    the resolved intake column for that workflow — so discovery started specifying parked ideas. The
+    conversion widened admission, which is the same shape as every other half-conversion in this
+    program: the guard became correct in vocabulary and wrong in effect.
+
+    ITS GUARDING TEST COULD NOT CATCH IT. `triage.test.ts`'s "excludes a parked ideas-column task"
+    uses a mock store with no workflow readers, so lifecycle resolution falls back to
+    `triage`/`todo` and an `ideas` card matches neither branch — it passes for a reason unrelated to
+    the rule, and kept passing after the rule broke. Its own comment still describes the old
+    mechanism ("which only matches column === triage"), which is the tell.
+
+    The hold branch is deliberately NOT gated on this: a card in the hold column was RELEASED there,
+    by an operator or by finalize, and a manual intake says nothing about a card that already left it.
+    */
+    const isAtIntakeColumn = (t: Task): boolean => {
+      const lifecycle = lifecycleByTaskId.get(t.id);
+      if (lifecycle?.intake !== t.column) return false;
+      return lifecycle.manualIntake !== true;
+    };
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-18:40 (U11 — STALL 3):
+    A card in a column its OWN workflow does not declare is unowned by construction:
+    no lane's rules apply to it, so no sweep claims it.
+
+    #2515 created a population of exactly these. It removed `triage` from the default
+    lineage while leaving the id legal for stored rows, and shipped no migration — so
+    every project upgrading has cards sitting in a column their workflow no longer
+    knows about. Both role checks above miss them (a default card's `intake` and
+    `hold` are BOTH `todo`), and the rebound paths that could move them are all
+    triggered by ACTIVE work, which a parked card has none of. Discovery admitted
+    nothing and the card sat until an operator dragged it by hand.
+
+    Admitting it to PLANNING heals it without a data migration: it gets planned, and
+    finalize releases it to the workflow's hold column, re-homing the row as a side
+    effect of ordinary work.
+
+    An EMPTY declared set means the IR could not be resolved (or is column-less v1) —
+    that is ignorance, not evidence of strandedness, so it must never trigger the
+    rescue. Requiring a non-empty set keeps an unresolvable workflow behaving exactly
+    as before.
+
+    NARROWED to the LEGACY LIFECYCLE IDS, and this is the load-bearing half. "Any
+    undeclared column" is too broad: a card can also sit in a column its workflow
+    genuinely owns while the SELECTION fails to resolve, and then the resolved
+    default IR does not declare that column either. The first version of this rescue
+    re-specified a parked Coding (Ideas) `ideas` card for exactly that reason, which
+    breaks FN-7596's manual-intake rule — an ideas card is promoted by an OPERATOR,
+    never auto-planned. `triage.test.ts` caught it.
+
+    So the rescue is scoped to the population a lineage change can actually strand: a
+    card resting on a legacy PRE-IMPLEMENTATION id that its own workflow no longer
+    declares. A workflow-specific column name is never rescued, which is the
+    difference between healing #2515's orphans and second-guessing a workflow about
+    its own board.
+    */
+    const isAtUndeclaredColumn = (t: Task): boolean => {
+      const declared = lifecycleByTaskId.get(t.id)?.declared;
+      if (declared === undefined || declared.size === 0) return false;
+      return LEGACY_PLANNER_COLUMN_IDS.has(t.column) && !declared.has(t.column);
+    };
+
+    const eligibleTriageTasks = candidates.filter(
+      // `!isAtHoldColumn` keeps the two branches disjoint for a merged intake+hold column.
+      /* `isTaskStillInPlanningStage` is what keeps the rescue narrow: a card that
+         advanced past planning in an undeclared column stays with self-healing's
+         advanced-recovery sweep instead of being re-specified here. */
+      /* `t.userPaused !== true` is explicit rather than inherited from `t.paused`.
+         The ratified safeguard is that a user-paused card's lifecycle state is never
+         MUTATED, and planning a card mutates it. `couldBeCandidate` screens only
+         `paused`, so a row carrying `userPaused` without `paused` slipped through —
+         invisible before this change (an undeclared-column card was admitted by
+         nothing at all) and reachable the moment the rescue widens admission. */
+      (t) => ((isAtIntakeColumn(t) && !isAtHoldColumn(t)) || isAtUndeclaredColumn(t))
+        && t.userPaused !== true
+        && isTaskStillInPlanningStage(t)
         && !this.advancedRecoveryReservations.has(t.id)
         && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
     );
-    const eligibleTodoTasksRaw = allTasks.filter(
-      (t) => t.column === "todo" && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
+    const eligibleTodoTasksRaw = candidates.filter(
+      (t) => isAtHoldColumn(t) && !this.processing.has(t.id) && !this.hasLivePlanningWork(t.id) && !t.paused
         && t.status !== "awaiting-approval" && t.status !== "failed" && t.status !== "stuck-killed"
         && t.status !== "planning"
         && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
@@ -1272,10 +1779,18 @@ export class TriageProcessor {
       Only ENOENT is treated as unplanned; a genuine read fault (permissions, a directory in the
       file's place) still skips the card, but now says so in the log instead of vanishing.
       */
+      /*
+      FNXC:CodingIdeasWorkflow 2026-07-26-15:30:
+      Shared with the `GET /api/tasks` `awaitingPlanning` enrichment that drives the
+      "Queued to plan" / "Ready" badge pair, so the board cannot label a card's wait differently
+      from the lane that actually decides it. The three clauses of `isTaskAwaitingPlanning` are
+      exactly this loop's three branches: the `needs-replan` early-continue above, this content
+      check, and the ENOENT branch below (the helper's `null` case).
+      */
       try {
         const promptPath = join(this.rootDir, ".fusion", "tasks", todoTask.id, "PROMPT.md");
         const content = await readFile(promptPath, "utf-8");
-        if (isUnplannedSeedPrompt(content, todoTask.id, todoTask.title, todoTask.description)) {
+        if (isTaskAwaitingPlanning(todoTask, content)) {
           eligibleTodoTasks.push(todoTask);
         }
       } catch (err) {
@@ -1337,6 +1852,14 @@ export class TriageProcessor {
   /** Coalescing window for requestImmediatePoll, so a multi-card drag causes one poll, not N. */
   private static readonly NUDGE_DEBOUNCE_MS = 150;
 
+  /**
+   * FNXC:DuplicateIntake 2026-07-26-10:40:
+   * How much of the planner's visible reply is retained for duplicate-verdict recovery. The marker
+   * convention places the verdict in the closing summary, so a tail is sufficient and keeps a long
+   * planning run from accumulating every streamed token in memory.
+   */
+  private static readonly SESSION_TEXT_TAIL_CHARS = 4000;
+
   private async poll(): Promise<void> {
     if (!this.running) return;
     if (this.polling) return;
@@ -1373,6 +1896,8 @@ export class TriageProcessor {
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const now = Date.now();
 
+      await this.sweepStalePlanningStatuses(allTasks, now);
+
       if (this.options.semaphore) {
         const result = recoverIdleSemaphoreLeakCandidate({
           semaphore: this.options.semaphore,
@@ -1394,14 +1919,11 @@ export class TriageProcessor {
 
       /*
       FNXC:ConcurrencyAdmission 2026-08-03-12:00:
-      FN-8453 removes the separate maxTriageConcurrent pool. Planning uses the
+      FN-8453 removed the separate maxTriageConcurrent pool, and the capacity simplification deleted the orphaned setting it left behind. Planning uses the
       same maxConcurrent live-agent claim as execute/review so a project cannot
       exceed its operator-facing top-level capacity in a different lane.
       */
       const maxConcurrent = settings.maxConcurrent ?? 2;
-      const semaphoreAvailable = this.options.semaphore
-        ? Math.max(0, this.options.semaphore.availableCount)
-        : Infinity;
       // processing entries that have not yet written status:"planning" still claim a future slot.
       let pendingSpecifyCount = 0;
       for (const id of this.processing) {
@@ -1413,24 +1935,126 @@ export class TriageProcessor {
         tasks: allTasks,
         pendingSpecifyCount,
       });
-      // `claimed` is project-local. The scoped/global host semaphore remains a
-      // distinct process-wide availability gate, so project A cannot spend B's cap.
+      /*
+      FNXC:CapacityModel 2026-07-31-11:10 (PR #2562 review — coderabbit; CORRECTED):
+      Capacity is the PROJECT's agent count, full stop. The second term was the
+      cross-project host semaphore's AVAILABILITY, which no longer constrains
+      admission: permanently Infinity here, so `Math.min` was a no-op keeping a dead
+      limiter visible in the arithmetic.
+
+      REMOVED FROM THROTTLE ACCOUNTING, NOT DELETED. An earlier version of this note
+      said "nothing wires `options.semaphore` any more", which is false and dangerous
+      in a specific way: it reads as permission to delete live coordination code.
+      `options.semaphore` is still wired at five call sites — pre-held slot
+      registration (`reserve`), the release on drop, the leak-recovery path, and the
+      two admission-reservation hand-offs. Only its use as an ADMISSION LIMIT is gone.
+      */
       const projectRoom = Math.max(0, maxConcurrent - claimed);
-      const maxToStart = Math.min(projectRoom, semaphoreAvailable);
+      const maxToStart = projectRoom;
 
       if (maxToStart <= 0 && triageTasks.length > 0) {
-        const semaphoreSnapshot = this.options.semaphore?.snapshot();
-        const semaphoreDetail = semaphoreSnapshot
-          ? `, semaphore active=${semaphoreSnapshot.activeCount}/${semaphoreSnapshot.limit}, available=${semaphoreSnapshot.availableCount}, waiting=${semaphoreSnapshot.waitingCount}`
-          : ", semaphore unavailable";
         const processingIds = [...this.processing].slice(0, 5);
         const eligibleIds = triageTasks.slice(0, 5).map((t) => t.id);
-        const blockedBy = projectRoom <= 0 ? "running-agent cap" : "global semaphore";
+        /*
+        FNXC:CapacityModel 2026-07-29-10:20 (drop the cross-project cap — throttle payload):
+        `blockedBy` was a DISCRIMINATOR between two gates: "running-agent cap" and
+        "global semaphore". With the machine-wide cap deleted there is only one gate
+        left, so the field collapses to a constant. It is KEPT rather than dropped:
+        the event's whole purpose (FN-8600) is answering "why did this card sit
+        queued?", and a named reason answers it even when there is only one — while
+        a payload with no reason field at all would read as "unknown".
+        */
+        const blockedBy = "running-agent cap";
         planLog.log(
           `Plan throttled by ${blockedBy}: eligible=${triageTasks.length} [${eligibleIds.join(", ")}], ` +
           `maxConcurrent=${maxConcurrent}, claimed=${claimed}, processing=${this.processing.size}` +
-          `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}${semaphoreDetail}`,
+          `${processingIds.length > 0 ? ` [${processingIds.join(", ")}]` : ""}`,
         );
+        /*
+        FNXC:ConcurrencyAdmission 2026-07-26-09:30:
+        Durable counterpart to the log line above. Requirement from a real incident (FN-8600,
+        2026-07-26): an operator asked why a started card sat "Queued to plan" for seven minutes, and
+        it was UNANSWERABLE after the fact — the binding gate existed only in this `planLog.log`,
+        which lands in the TUI's in-memory pane (truncated to ~40 chars) and is persisted nowhere.
+        Reconstructing it cost a full DB forensics pass and still could not separate "host semaphore
+        exhausted" from "project cap consumed". Emitting the gate to run-audit makes it answerable at
+        all. Caveat: today the only run-audit READ route resolves through a durable agent's heartbeat
+        run, and this event carries a synthetic run id under agentId "triage", so it is reachable by
+        direct DB query but not yet through any dashboard route or fn_* tool -- the same blind spot
+        every synthetic-run self-healing/scheduler diagnostic shares. A task/type-scoped run-audit
+        read surface would close it for all of them at once.
+
+        Metadata stays ids/counts/outcomes-only per the run-audit contract: gate name, caps, counts,
+        and at most five eligible/processing task IDs — never prompts, titles, or reasons prose.
+
+        Deduped on the gate signature, not on time: while the gate and the cards behind it hold
+        steady a long stall collapses to ONE row instead of ~28 at a 15s poll, which is what keeps
+        operators reading the event. The signature deliberately includes the eligible task IDs --
+        counts alone would let a NEW card's stall be swallowed whenever the numbers happened to land
+        on the same tuple, and "why is THIS card queued" is the question the event exists to answer.
+        Live counts still jitter as unrelated lanes cycle, so this bounds write volume rather than
+        guaranteeing exactly one row.
+        */
+        /*
+        FNXC:CapacityModel 2026-07-29-10:20: the two semaphore terms are dropped from
+        the dedupe signature with the gate they described. `blockedBy` is now
+        constant and contributes nothing, but stays for readability of the key; the
+        eligible task IDs remain the term that keeps a NEW card's stall from being
+        swallowed by an unchanged count tuple.
+        */
+        const throttleSignature = [
+          blockedBy,
+          maxConcurrent,
+          claimed,
+          triageTasks.length,
+          this.processing.size,
+          eligibleIds.join(","),
+        ].join("|");
+        if (this.lastPlanThrottleSignature !== throttleSignature) {
+          const throttleAuditor = createRunAuditor(this.store, {
+            taskId: eligibleIds[0],
+            agentId: "triage",
+            runId: generateSyntheticRunId("plan-admission-throttled", eligibleIds[0] ?? this.rootDir),
+            phase: "triage",
+            source: "triage",
+          });
+          /*
+          FNXC:ConcurrencyAdmission 2026-07-26-10:45:
+          Fire-and-forget. Awaiting a store write inside the 15s poll let a slow/hung write delay the
+          NEXT poll's chance to notice freed capacity -- compounding the very stall being recorded.
+          */
+          void throttleAuditor.database({
+            type: "task:plan-admission-throttled",
+            target: eligibleIds[0] ?? this.rootDir,
+            metadata: {
+              blockedBy,
+              maxConcurrent,
+              claimed,
+              projectRoom,
+              eligibleCount: triageTasks.length,
+              eligibleTaskIds: eligibleIds,
+              processingCount: this.processing.size,
+              processingTaskIds: processingIds,
+            },
+          })
+            .then(() => {
+              /*
+              FNXC:ConcurrencyAdmission 2026-07-26-10:45:
+              Mark the stall as recorded ONLY once the write lands. Setting the marker up front meant
+              a failed write -- most likely exactly when the store is contended, the condition this
+              event is meant to explain -- was swallowed for the whole stall with no retry, leaving
+              the incident as unanswerable as before the event existed. On failure the marker stays
+              put so the next poll retries.
+              */
+              this.lastPlanThrottleSignature = throttleSignature;
+            })
+            .catch((auditErr: unknown) => {
+              planLog.warn(`Failed to write plan-admission-throttled run-audit event: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+            });
+        }
+      } else {
+        // Capacity is available again — the next distinct stall must re-announce itself.
+        this.lastPlanThrottleSignature = null;
       }
 
       // Keep handoff reservations visible even when a test/runtime wrapper delays
@@ -1532,12 +2156,27 @@ export class TriageProcessor {
       // FNXC:ConcurrencyAdmission 2026-08-06-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       this.coordinatorAdmittedTaskIds.delete(task.id);
       return;
     }
     this.processing.add(task.id);
     this.processingSince.set(task.id, Date.now());
+
+    /*
+    FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
+    Holds the worktree path this planning run published to `activeSessionRegistry`, so the outer
+    `finally` can release exactly what it registered (and nothing when planning ran in the shared
+    checkout). Declared at method scope because registration happens deep inside the try.
+    */
+    let registeredPlanningPath: string | null = null;
+
+    /*
+    FNXC:DuplicateIntake 2026-07-26-10:40:
+    Bounded tail of the planner's visible reply, used only to recover a duplicate verdict the planner
+    announced in prose instead of writing to PROMPT.md (FN-8600).
+    */
+    let sessionTextTail = "";
 
     planLog.log(
       `Specifying ${task.id}: ${task.title || task.description.slice(0, 60)}`,
@@ -1577,7 +2216,7 @@ export class TriageProcessor {
         FNXC:Triage 2026-07-16-05:35:
         A skip on this PRIMARY claim path is an anomaly, not a benign scheduler race: poll()
         already proved the card is an eligible planner candidate, so failing the guard here
-        means it is re-claimed every poll, never planned, and holds a maxTriageConcurrent slot
+        means it is re-claimed every poll, never planned, and holds a planning admission slot
         against healthy cards. Recovery-write skips stay silent by design (see
         updatePlanningStateIfStillCurrent); this one must be visible — the FN-7977 steps>0
         wedge stalled the whole planner for hours precisely because it logged nothing.
@@ -1849,8 +2488,50 @@ export class TriageProcessor {
         same shared-path shape behind the reported Plan Review session collision. The worktree acquired
         here is the one Plan Review and the implementation session then reuse.
         */
-        const planningCwd = (await this.options.acquirePlanningWorktree?.(task.id).catch(() => null)) || this.rootDir;
+        let planningCwd = (await this.options.acquirePlanningWorktree?.(task.id).catch(() => null)) || this.rootDir;
         if (planningCwd !== this.rootDir) {
+          /*
+          FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
+          Publish the planner's worktree as a live session for as long as this planning run owns it.
+          Registration is what makes `activeSessionRegistry.isPathActive()` true, which is the single
+          guard every worktree-removal path consults. Without it the self-healing reclaim sweep tore
+          the worktree out from under a running planner and paused the task
+          `branch-conflict-unrecoverable` (FN-8600). Registered ONLY for a real task worktree — the
+          shared `rootDir` fallback is the operator's checkout and must never be marked task-owned.
+          The reciprocal unregister lives in this method's outer `finally`, so an early throw between
+          here and there cannot leak a permanent entry that blocks later legitimate cleanup.
+          */
+          /*
+          FNXC:NodeWorktreeIsolation 2026-07-26-10:25:
+          Acquire through the reclaim-aware seam, not raw `registerPath`. `acquireActiveSessionPath`
+          is what lets a leaked entry from a crashed/dead holder be reclaimed instead of hard-failing
+          a legitimate new registration; raw `registerPath` throws on any foreign-held path, so one
+          stale record would wedge planning for that worktree until the engine restarted. The
+          executor already registers exclusively through this seam
+          (`TaskExecutor.acquireSessionRegistryPath`) — planning must not be the one holder that
+          bypasses it. `contended` means a genuinely live foreign holder, so planning falls back to
+          the shared checkout rather than running in a worktree someone else owns.
+          */
+          const acquired = acquireActiveSessionPath(activeSessionRegistry, planningCwd, {
+            taskId: task.id,
+            kind: "planning",
+            ownerKey: `planning:${task.id}`,
+          }, {
+            holderLiveProbe: (holderTaskId) => this.processing.has(holderTaskId) || this.hasLivePlanningWork(holderTaskId),
+          });
+          if (acquired.action === "contended") {
+            planLog.warn(
+              `${task.id}: planning worktree ${planningCwd} is held by live task ${acquired.holderTaskId} (${acquired.holderKind}) — planning in the shared checkout instead`,
+            );
+            planningCwd = this.rootDir;
+          } else {
+            if (acquired.action === "reclaimed-stale-foreign") {
+              planLog.warn(
+                `${task.id}: reclaimed a stale active-session entry on ${planningCwd} from dead task ${acquired.holderTaskId} (idle ${acquired.ageMs}ms)`,
+              );
+            }
+            registeredPlanningPath = planningCwd;
+          }
           await this.store.logEntry(task.id, `Planning session running in task worktree ${planningCwd}`).catch(() => undefined);
         }
         const { session } = await createResolvedAgentSession({
@@ -1862,7 +2543,20 @@ export class TriageProcessor {
           systemPromptLayers: triageLayers,
           tools: "coding",
           customTools,
-          onText: agentLogger.onText,
+          onText: (text: string) => {
+            /*
+            FNXC:DuplicateIntake 2026-07-26-10:40:
+            Tee the planner's visible text into a bounded tail so a duplicate verdict announced in the
+            REPLY (rather than written to PROMPT.md) is still recoverable at finalize — see the
+            recovery block below. AgentLogger flushes and clears its own buffer on a timer, so it
+            cannot be read back for this; this tail is independent of it and never replaces it.
+            Bounded to the last SESSION_TEXT_TAIL_CHARS characters because the marker convention puts
+            the verdict in the closing summary, and an unbounded accumulator would grow with every
+            streamed token of a long planning run.
+            */
+            sessionTextTail = `${sessionTextTail}${text}`.slice(-TriageProcessor.SESSION_TEXT_TAIL_CHARS);
+            agentLogger.onText(text);
+          },
           onThinking: agentLogger.onThinking,
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
@@ -1902,8 +2596,11 @@ export class TriageProcessor {
         /*
         FNXC:PlanningModelMarker 2026-07-21-12:00:
         Planning-lane provenance is operator-facing, so its task activity marker uses the board's Planning name while the persisted agent role remains the internal `triage` identifier.
+
+        FNXC:EngineDiagnostics 2026-07-26-10:30:
+        Engine TUI line `using model` fires on every planning session start and is steady-state — planLog.debug (FUSION_DEBUG=plan). Task activity (logEntry/appendAgentLog) stays so the board still shows which model planned.
         */
-        planLog.log(`${task.id}: using model ${modelDesc}`);
+        planLog.debug(`${task.id}: using model ${modelDesc}`);
         await this.store.logEntry(task.id, `Planning using model: ${modelDesc}`);
         await this.store.appendAgentLog(
           task.id,
@@ -2064,8 +2761,11 @@ export class TriageProcessor {
               await this.store.deleteTask(task.id, {
                 removeLineageReferences: true,
                 auditContext: {
+                  // FNXC:TaskDeleteAttribution 2026-07-26-14:30: labelling only — this
+                  // split-close delete is intended engine behavior and is unchanged.
                   agentId: task.assignedAgentId ?? "triage",
                   runId: generateSyntheticRunId("triage-delete", task.id),
+                  callerKind: "engine",
                 },
               });
               planLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
@@ -2117,7 +2817,7 @@ export class TriageProcessor {
             ).catch(() => undefined);
           }
 
-          const written = await readFile(
+          let written = await readFile(
             join(this.rootDir, promptPath),
             "utf-8",
           ).catch((err: unknown) => {
@@ -2126,13 +2826,54 @@ export class TriageProcessor {
             return "";
           });
 
+          /*
+          FNXC:DuplicateIntake 2026-07-26-10:40:
+          Recover a duplicate verdict the planner reported in its REPLY instead of writing it to
+          PROMPT.md. FN-8600: the planner found the duplicate, said `DUPLICATE: FN-8595`, and stated
+          "No new PROMPT.md written" — a reasonable reading of an instruction that said not to write a
+          spec. The engine reads the verdict only from the file, so it saw no plan at all, failed
+          deterministic validation, retried, terminalized, self-healed to todo, and re-planned in a
+          loop, never recording the operator's keep-or-delete decision.
+
+          Recovery WRITES the canonical marker file rather than routing the verdict through a second
+          code path, so everything downstream — marker parse, keep/delete resolution, the
+          `nearDuplicateOf` metadata the dashboard decision renders from — runs unchanged and cannot
+          drift from the file-based contract.
+
+          Gated on a genuinely absent plan: only when the file read produced nothing does prose get a
+          vote. A planner that wrote a real spec is never second-guessed by something it said, and the
+          line-anchored parser ignores a marker merely mentioned mid-sentence.
+          */
+          if (!written.trim()) {
+            const recoveredMarker = fusionCore.parseDuplicateMarkerFromSessionText(sessionTextTail);
+            if (recoveredMarker) {
+              const markerBody = `DUPLICATE: ${recoveredMarker.canonicalId}\n`;
+              const recovered = await writeFile(join(this.rootDir, promptPath), markerBody, "utf-8")
+                .then(() => true)
+                .catch((err: unknown) => {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  planLog.warn(`${task.id}: failed to persist recovered duplicate marker: ${msg}`);
+                  return false;
+                });
+              if (recovered) {
+                written = markerBody;
+                planLog.log(`${task.id}: recovered duplicate verdict ${recoveredMarker.canonicalId} from the planner's reply (no PROMPT.md was written)`);
+                await this.store.logEntry(
+                  task.id,
+                  `Recovered duplicate verdict from the planning reply — the planner reported ${recoveredMarker.canonicalId} without writing PROMPT.md`,
+                ).catch(() => undefined);
+              }
+            }
+          }
+
           // FN-5220: planning agents that emit a `DUPLICATE: FN-NNNN` redirect
           // short-circuit normal spec finalization.
+          const duplicateReport: PlanningHandoffReport = { outcome: "parked" };
           if (await this.tryFinalizeExplicitDuplicateMarker(task, written, settings, {
             isReplan,
             feedback,
-          })) {
-            this.options.onSpecifyComplete?.(task);
+          }, duplicateReport)) {
+            this.options.onSpecifyComplete?.(task, duplicateReport);
             return;
           }
 
@@ -2181,11 +2922,11 @@ export class TriageProcessor {
             return;
           }
 
-          await this.finalizeApprovedTask(task, written, settings, {
+          const finalizeReport = await this.finalizeApprovedTask(task, written, settings, {
             isReplan,
             feedback,
           });
-          this.options.onSpecifyComplete?.(task);
+          this.options.onSpecifyComplete?.(task, finalizeReport);
         } finally {
           this.activeSessions.delete(task.id);
           stuckDetector?.untrackTask(task.id);
@@ -2387,7 +3128,33 @@ export class TriageProcessor {
       // can exist before planner setup reaches takePreHeldExecutorSlot(). Every
       // early setup failure must return that untransferred host slot; after a
       // successful transfer this is intentionally a no-op.
-      dropPreHeldExecutorSlot(task.id, this.options.semaphore);
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
+      /*
+      FNXC:NodeWorktreeIsolation 2026-07-26-09:10:
+      Release the planner's registry entry on EVERY exit path (success, planning failure, abort,
+      pause). A leaked entry is not merely untidy: `isPathActive` would stay true forever and
+      permanently veto legitimate reclaim/cleanup of that worktree, converting this fix into the
+      opposite stall. Unregister is keyed on what we registered, so it is a no-op for planning runs
+      that used the shared checkout.
+      */
+      if (registeredPlanningPath) {
+        /*
+        FNXC:NodeWorktreeIsolation 2026-07-26-10:20:
+        Release ONLY if this planning run still owns the record. A bare path delete would reintroduce
+        this fix's own symptom on the execution side: `finalizeApprovedTask` moves the card to `todo`
+        while still inside the try, and several awaited writes (log flush, token-usage record,
+        getTask/updateTask, dispose) run before this finally. The scheduler can dispatch in that
+        window and the executor registers the SAME worktree path — `registerPath` permits a same-task
+        overwrite, so the record becomes `kind:"executor"`. Deleting by path alone would then clear a
+        LIVE executor entry, making `isPathActive` false and handing the reclaim sweep the same
+        worktree it tore out from under a planner in FN-8600.
+        */
+        const record = activeSessionRegistry.lookupByPath(registeredPlanningPath);
+        if (record?.ownerKey === `planning:${task.id}`) {
+          activeSessionRegistry.unregisterPath(registeredPlanningPath);
+        }
+        registeredPlanningPath = null;
+      }
       this.processing.delete(task.id);
       this.processingSince.delete(task.id);
       this.coordinatorAdmittedTaskIds.delete(task.id);
@@ -2443,7 +3210,11 @@ export class TriageProcessor {
       parameters: Type.Object({}),
       execute: async () => {
         const tasks = await store.listTasks({ slim: true, includeArchived: false });
-        const active = tasks.filter((t) => t.column !== "done");
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): triage's own copy of the
+           fn_task_list terminal filter — same defect, same helper. Converting one copy and leaving the
+           other is the Surface Enumeration failure this program keeps hitting. */
+        const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
+        const active = tasks.filter((t) => !isTerminal(t));
         if (active.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No active tasks." }],
@@ -2499,9 +3270,10 @@ export class TriageProcessor {
           limit: params.limit ?? 20,
         });
         const includeDone = params.includeDone ?? true;
+        const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
         const filtered = includeDone
           ? results
-          : results.filter((t) => t.column !== "done");
+          : results.filter((t) => !isTerminalResult!(t));
         if (filtered.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No tasks matched." }],
@@ -2653,7 +3425,10 @@ export class TriageProcessor {
             title: params.title,
             description: params.description,
             dependencies: validDeps,
-            column: "triage",
+            /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+               `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+               override it. Hard-coding `"triage"` created the card in a column the default
+               lineage no longer declares (#2515), i.e. straight into the stranded state. */
             priority: params.priority,
             workflowId: params.workflow_id,
             noCommitsExpected: params.noCommitsExpected,
@@ -2744,10 +3519,32 @@ export class TriageProcessor {
    * mutation in one task-lock acquisition; row-only atomic patches cannot protect PROMPT.md.
    */
   private async runIfStillPlanningUnderTaskLock(task: Task, operation: () => Promise<void>): Promise<boolean> {
+    /*
+    FNXC:TriageFinalizeVisibility 2026-07-26-19:05 (FN-8596 follow-up):
+    Every caller of this helper treats `false` as "skip silently and return". That is how the
+    FN-8596 strand hid: the planning-stage predicate went false (stale execution stamps), each
+    guarded write no-opped, and NOTHING anywhere said so. Skipping is a legitimate outcome when the
+    scheduler genuinely advanced the card, but it must be OBSERVABLE, so log the reason with the
+    live state that decided it. Logged here rather than at the four call sites so a future caller
+    inherits the visibility instead of re-introducing a silent branch.
+    */
     const store = this.store as TaskStore;
-    if (typeof store.withTaskLock !== "function" || typeof store.readTaskForMove !== "function") return false;
+    if (typeof store.withTaskLock !== "function" || typeof store.readTaskForMove !== "function") {
+      planLog.warn(
+        `${task.id}: planning-guarded write skipped — store lacks withTaskLock/readTaskForMove; no recovery write performed`,
+      );
+      return false;
+    }
     return store.withTaskLock(task.id, async () => {
-      if (!isTaskStillInPlanningStage(await store.readTaskForMove(task.id))) return false;
+      const live = await store.readTaskForMove(task.id);
+      if (!isTaskStillInPlanningStage(live)) {
+        planLog.warn(
+          `${task.id}: planning-guarded write skipped — no longer in the planning stage `
+          + `(column=${live?.column ?? "unknown"}, status=${live?.status ?? "null"}, `
+          + `executionStartedAt=${live?.executionStartedAt ?? "null"})`,
+        );
+        return false;
+      }
       await operation();
       return true;
     });
@@ -2798,6 +3595,15 @@ export class TriageProcessor {
       isReplan?: boolean;
       feedback?: string;
     } = {},
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-10:20 (U7):
+    Finalize's outcome is reported through this ref rather than by widening the
+    return type. The boolean return answers a DIFFERENT question — "was this a
+    duplicate marker at all?" — and 16 existing tests assert it directly. Folding
+    two questions into one return would have made every one of those an expectation
+    edit, which is how a behavior change gets to travel disguised as churn.
+    */
+    report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<boolean> {
     try {
       const explicitDuplicateMarker = parseExplicitDuplicateMarker(written);
@@ -2818,12 +3624,15 @@ export class TriageProcessor {
       marker cleanup instead of being rejected here. The detail banner cannot offer a decision for
       an inactive canonical, so parking the card would strand its Needs your decision badge.
       */
-      if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+      const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+      if (isNearDuplicateCanonicalInactive(canonicalTask, canonicalFlags)) {
         planLog.log(`${task.id} explicit duplicate marker targets inactive ${canonicalId}; clearing marker for replanning`);
       } else {
         planLog.log(`${task.id} explicit duplicate marker detected — redirecting to ${canonicalId}`);
       }
-      await this.finalizeApprovedTask(task, written, settings, options);
+      // FNXC:PlanningHandoffOutcome 2026-07-28-10:20: surface what finalize did to
+      // the caller's reaction without changing what this method's boolean means.
+      report.outcome = (await this.finalizeApprovedTask(task, written, settings, options)).outcome;
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2842,18 +3651,34 @@ export class TriageProcessor {
       recoveryLogAction?: string;
       preservePromptContent?: boolean;
     } = {},
-  ): Promise<void> {
+  ): Promise<PlanningHandoffReport> {
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
     Mark the card finalizing for the whole Plan Review → column handoff so stuck-kill
     eviction and poll rediscovery cannot start a concurrent planner (FN-1312).
     */
     this.finalizing.add(task.id);
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20 (U7 / R4 — workflow-owned lifecycle):
+    Finalize has ~25 exit points and previously returned `void`, so no caller could
+    tell "the card was handed off" from "finalize gave up". Both callers then assumed
+    success: `specifyTask` announced completion unconditionally, and
+    `recoverApprovedTask` returned `true` unconditionally.
+
+    A mutable report rather than a return value at each exit, deliberately: threading
+    a return through every one of those exits is 25 chances to mis-classify a branch,
+    and mis-classifying is what turns a truthfulness fix into a lifecycle bug. The
+    default is `parked`, which is exactly today's observable behavior at every exit —
+    so this plumbing is inert everywhere except the two sites explicitly marked
+    below. Adding a state to an exit is then a deliberate, reviewable act.
+    */
+    const report: PlanningHandoffReport = { outcome: "parked" };
     try {
-      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options);
+      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options, report);
     } finally {
       this.finalizing.delete(task.id);
     }
+    return report;
   }
 
   /*
@@ -2928,6 +3753,7 @@ export class TriageProcessor {
       recoveryLogAction?: string;
       preservePromptContent?: boolean;
     } = {},
+    report: PlanningHandoffReport = { outcome: "parked" },
   ): Promise<void> {
     let written = writtenInput;
     // FNXC:WorkflowArtifacts 2026-07-21-17:00: Confirm the authoritative plan
@@ -2955,7 +3781,8 @@ export class TriageProcessor {
       remove only the marker and return eligible work to planning instead of stranding its badge;
       explicit, implicit, and unrelated pauses are preserved.
       */
-      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined)) {
+      const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+      if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined, canonicalFlags)) {
         if (canClearInactiveMarker) {
           if (!await this.runIfStillPlanningUnderTaskLock(task, async () => {
             await rm(join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md"), { force: true });
@@ -2992,7 +3819,8 @@ export class TriageProcessor {
         if (typeof deleteTaskIf !== "function") return;
         const result = await deleteTaskIf.call(this.store, task.id, isTaskStillInPlanningStage, {
           removeLineageReferences: true,
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id) },
+          // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
+          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine" },
         });
         if (!result.deleted) return;
         await this.store.recordActivity({
@@ -3179,7 +4007,25 @@ export class TriageProcessor {
     FN-8361 treats every delayed-finalization mutation as a live planning-stage
     transition. A normal scheduler advance skips and terminates this recovery body.
     */
-    if (!await this.updatePlanningStateIfStillCurrent(task, taskUpdates)) return;
+    /*
+    FNXC:TriageFinalizeVisibility 2026-07-26-18:20 (FN-8596 strand):
+    This guard aborting used to be COMPLETELY silent — a bare `return` with no log, no audit and no
+    requeue. That is how the FN-8596 strand stayed invisible: the planner wrote PROMPT.md (via the
+    store tool, which bypasses the guard), the finalize refused here, and the card sat in triage
+    with `status:"planning"` forever with nothing in any log explaining why. Skipping is a LEGITIMATE
+    outcome when the scheduler genuinely advanced the card (FN-8024 deliberately does not log that
+    case), but "the finalize declined to hand off" must be observable — so warn with the live state
+    that made the decision. Cheap: it fires at most once per finalize attempt, not per poll.
+    */
+    if (!await this.updatePlanningStateIfStillCurrent(task, taskUpdates)) {
+      const live = await this.store.getTask(task.id).catch(() => null);
+      planLog.warn(
+        `${task.id}: planning finalize skipped — task no longer in the planning stage `
+        + `(column=${live?.column ?? "unknown"}, status=${live?.status ?? "null"}, `
+        + `executionStartedAt=${live?.executionStartedAt ?? "null"}). Handoff NOT performed.`,
+      );
+      return;
+    }
 
     try {
       const preflightDecision = await Promise.race([
@@ -3229,9 +4075,13 @@ export class TriageProcessor {
           }
 
           const nowMs = Date.now();
-          const candidates = (await this.store.listTasks({ slim: false, includeArchived: false }))
+          const listed = await this.store.listTasks({ slim: false, includeArchived: false });
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-engine tail): a FINISHED card passed this
+             dedup filter on a renamed board, so completed work was offered as a duplicate candidate. */
+          const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);
+          const candidates = listed
             .filter((candidate) => candidate.id !== task.id)
-            .filter((candidate) => candidate.column !== "done")
+            .filter((candidate) => !isTerminalCandidate(candidate))
             .filter((candidate) => Date.parse(candidate.createdAt) >= nowMs - 7 * 24 * 60 * 60 * 1000)
             .map((candidate) => ({
               id: candidate.id,
@@ -3279,7 +4129,8 @@ export class TriageProcessor {
            * FNXC:NearDuplicateDetection 2026-06-14-12:00:
            * FN-6439 makes the triage backstop defense-in-depth: never persist a user-decision duplicate flag when the canonical is inactive, even if candidate filtering regresses or a stale snapshot slips through.
            */
-          if (isNearDuplicateCanonicalInactive(canonicalTask)) {
+          const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonicalTask);
+          if (isNearDuplicateCanonicalInactive(canonicalTask, canonicalFlags)) {
             planLog.log(`${task.id}: near-duplicate candidate ${canonical.id} is inactive; skipping near-duplicate flag`);
             return;
           }
@@ -3457,12 +4308,40 @@ export class TriageProcessor {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }
 
-    if (task.column !== "todo") {
+    const releaseTarget = resolvePlannerLanes(this.store, task.id).hold;
+    if (task.column !== releaseTarget) {
       const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
-      if (typeof moveTaskIf !== "function") return;
-      const release = await moveTaskIf.call(this.store, task.id, "todo", isTaskStillInPlanningStage);
-      if (!release.moved) return;
+      if (typeof moveTaskIf !== "function") {
+        // FNXC:TriageFinalizeVisibility 2026-07-26-19:05: the release move is the handoff. If it
+        // cannot even be attempted the card stays in the planner column with a finished spec, so
+        // never let that be silent.
+        planLog.warn(`${task.id}: planning handoff skipped — store does not expose moveTaskIf; card left in ${task.column}`);
+        // FNXC:PlanningHandoffOutcome 2026-07-28-09:20: WITHHELD, not parked — the card
+        // holds a finished spec in the planner column and nothing is waiting on a human,
+        // so a caller's retry budget is the correct owner of what happens next.
+        report.outcome = "withheld";
+        return;
+      }
+      const release = await moveTaskIf.call(this.store, task.id, releaseTarget, isTaskStillInPlanningStage);
+      if (!release.moved) {
+        planLog.warn(
+          `${task.id}: planning handoff to todo REFUSED by the planning-stage guard `
+          + `(column=${release.task?.column ?? "unknown"}, status=${release.task?.status ?? "null"}). Card left in ${task.column}.`,
+        );
+        // FNXC:PlanningHandoffOutcome 2026-07-28-09:20: same class as above (FN-8361).
+        report.outcome = "withheld";
+        return;
+      }
     }
+
+    /*
+    FNXC:PlanningHandoffOutcome 2026-07-28-09:20:
+    The handoff is complete: the card either crossed into the hold column or was
+    already resting there (plan-in-place). Set BEFORE the terminal status clear and
+    the log lines, because the release is what makes the card the graph's — a failure
+    in the bookkeeping that follows does not un-hand-off a card that has already moved.
+    */
+    report.outcome = "released";
 
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:

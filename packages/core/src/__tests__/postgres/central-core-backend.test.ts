@@ -233,40 +233,7 @@ pgDescribe("CentralCore backend mode (PostgreSQL)", () => {
     expect(count).toBeGreaterThanOrEqual(1);
   });
 
-  it("manages global concurrency state through PostgreSQL", async () => {
-    ctx = await setupCtx();
-    const initial = await ctx.central.getGlobalConcurrencyState();
-    expect(initial.globalMaxConcurrent).toBeGreaterThanOrEqual(1);
 
-    const updated = await ctx.central.updateGlobalConcurrency({
-      globalMaxConcurrent: 6,
-    });
-    expect(updated.globalMaxConcurrent).toBe(6);
-
-    const reread = await ctx.central.getGlobalConcurrencyState();
-    expect(reread.globalMaxConcurrent).toBe(6);
-  });
-
-  it("acquires and releases a global concurrency slot atomically", async () => {
-    ctx = await setupCtx();
-    const projectPath = makeProjectDir(ctx, "delta");
-    const project = await ctx.central.registerProject({
-      name: "Delta",
-      path: projectPath,
-    });
-    await ctx.central.updateGlobalConcurrency({ globalMaxConcurrent: 1, currentlyActive: 0, queuedCount: 0 });
-
-    const acquired = await ctx.central.acquireGlobalSlot(project.id);
-    expect(acquired).toBe(true);
-
-    // At limit now — second acquire should queue.
-    const queued = await ctx.central.acquireGlobalSlot(project.id);
-    expect(queued).toBe(false);
-
-    await ctx.central.releaseGlobalSlot(project.id);
-    const state = await ctx.central.getGlobalConcurrencyState();
-    expect(state.currentlyActive).toBe(0);
-  });
 
   it("records project-node path mappings through PostgreSQL", async () => {
     ctx = await setupCtx();

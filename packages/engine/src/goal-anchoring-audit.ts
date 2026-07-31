@@ -1,6 +1,9 @@
 import type { TaskStore } from "@fusion/core";
 
 import type { RunAuditor } from "./run-audit.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("goal-anchoring-audit");
 
 /** Goal context was injected into heartbeat/executor prompts for the Slice 2 cite-rate experiment. */
 export const GOAL_INJECTION_APPLIED = "goal:injection-applied";
@@ -88,6 +91,6 @@ export function emitGoalRetrievalAudit(
       },
     });
   } catch (error) {
-    console.warn("[fusion-extension] goal retrieval audit emission skipped", error);
+    log.debug("goal retrieval audit emission skipped", error);
   }
 }

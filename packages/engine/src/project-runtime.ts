@@ -45,10 +45,13 @@ export interface ProjectRuntimeConfig {
   maxWorktrees: number;
   /** Optional project settings override */
   settings?: ProjectSettings;
-  /** Shared global semaphore from ProjectManager. When provided, the runtime
-   *  uses this semaphore for concurrency control instead of creating its own.
-   *  This ensures cross-project concurrency limits are enforced. */
-  globalSemaphore?: import("./concurrency.js").AgentSemaphore;
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  `globalSemaphore` is GONE. Capacity is two numbers PER PROJECT (total agents +
+  maxWorktrees); a machine-wide cap across projects was a third limiter and the
+  operator removed it. Runtimes no longer receive or consult one — the scheduler's
+  semaphore gate is simply absent rather than holding an infinite limit.
+  */
   /**
    * An already-initialized TaskStore to use instead of creating a new one.
    * When provided, the runtime will skip TaskStore construction and init().

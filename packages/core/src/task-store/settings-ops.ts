@@ -6,10 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, storeLog, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
-import {rm} from "node:fs/promises";
-import {join} from "node:path";
-import {detectWorkspaceRepos, saveWorkspaceConfig, loadWorkspaceConfig} from "../git-repository.js";
+import {TaskStore, storeLog} from "../store.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../moved-settings.js";
@@ -26,10 +23,6 @@ import {appendConfigurationRevision, createConfigurationRevision} from "../async
 export async function publishSettingsUpdated(store: TaskStore, previous: Settings, settings: Settings): Promise<void> {
   /* FNXC:ConfigVersioning 2026-07-18-14:20: rollback is an observable settings replacement, so it must use the same post-commit notification/effects seam as a forward mutation. */
   store.emit("settings:updated", { settings, previous });
-  if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(settings)) {
-    try { await store.evacuateCustomColumnsToLegacy("flag-toggled-off"); }
-    catch (err) { storeLog.warn("workflowColumns ON→OFF evacuation failed", { phase: "evacuate-custom-columns", error: err instanceof Error ? err.message : String(err) }); }
-  }
   if (settings.memoryEnabled !== false && previous.memoryEnabled === false) {
     try { await ensureMemoryFileWithBackend(store.rootDir, settings); }
     catch (err) { storeLog.warn("Project-memory bootstrap failed after memory toggle-on", { phase: "updateSettings:memory-toggle-on", rootDir: store.rootDir, error: err instanceof Error ? err.message : String(err) }); }
@@ -50,7 +43,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
     Reject legacy project setting writes before side effects rather than claim a
     rollback guarantee that the compatibility backend cannot provide.
     */
-    if (!store.backendMode) throw new Error("Project configuration changes require the PostgreSQL revision store");
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project configuration changes always use PostgreSQL revision store. */
 
     // Stale-writer guard (U4, R8): moved keys no longer live in project settings —
     // they belong to workflow setting values. Drop any moved key arriving from a
@@ -76,13 +69,13 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
     }
 
     return store.withConfigLock(async () => {
-      // FNXC:RuntimePersistenceAsync 2026-06-24-10:28:
-      // In backend mode, read/write the config table via the async helpers
-      // instead of the sync SQLite path. The business logic (promptOverrides
-      // merge, null-delete semantics) is identical across backends.
-      if (store.backendMode) {
-        const layer = store.asyncLayer!;
-        const transactionResult = await layer.transactionImmediate(async (tx) => {
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-26-14:30:
+      updateSettings is PostgreSQL-only (asyncLayer transaction + configuration revision). The store.readConfigFast / writeConfig SQLite arm is deleted. Side effects (evacuate, memory, workspace) run via publishSettingsUpdated after commit.
+      FNXC:RuntimePersistenceAsync 2026-06-24-10:28: promptOverrides merge and null-delete semantics unchanged.
+      */
+      const layer = store.asyncLayer!;
+      const transactionResult = await layer.transactionImmediate(async (tx) => {
         const projectConfig = await readProjectConfigAsync(layer, tx);
         const config: BoardConfig = {
           nextId: projectConfig.nextId ?? 1,
@@ -158,145 +151,16 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
         // Do not publish changes from within the transaction: a revision insert
         // or commit failure must remain invisible to listeners and side effects.
         return { previousMerged, updatedMerged };
-        });
-
-        /*
-        FNXC:ConfigVersioning 2026-07-18-11:00:
-        Configuration observers and filesystem follow-up work run only after the
-        target-plus-revision transaction commits. A failed journal append must
-        not make a rolled-back setting observable as a successful update.
-        */
-        await publishSettingsUpdated(store, transactionResult.previousMerged, transactionResult.updatedMerged);
-        return transactionResult.updatedMerged;
-      }
-
-      const config = store.readConfigFast();
-
-      // Handle null values as "delete this key from settings"
-      // This allows the frontend to explicitly clear a setting by sending null
-      // (since JSON.stringify drops undefined keys, we use null as a sentinel)
-
-      // Handle special null-as-delete semantics for promptOverrides
-      const incomingPromptOverrides = (projectPatch as Record<string, unknown>)["promptOverrides"];
-      if (incomingPromptOverrides === null) {
-        // promptOverrides: null → clear the entire promptOverrides object
-        delete (config.settings as unknown as Record<string, unknown>)["promptOverrides"];
-        delete (projectPatch as Record<string, unknown>)["promptOverrides"];
-      } else if (
-        incomingPromptOverrides !== undefined &&
-        typeof incomingPromptOverrides === "object" &&
-        incomingPromptOverrides !== null
-      ) {
-        // promptOverrides: { key: value } → merge with existing, treating null values as delete
-        const incomingMap = incomingPromptOverrides as Record<string, unknown>;
-        const existingMap = ((config.settings as unknown as Record<string, unknown>)["promptOverrides"] as Record<string, string>) ?? {};
-        const mergedMap: Record<string, string> = { ...existingMap };
-
-        for (const [key, value] of Object.entries(incomingMap)) {
-          if (value === null) {
-            // null → delete this specific key
-            delete mergedMap[key];
-          } else if (typeof value === "string" && value !== "") {
-            // non-empty string → set this key
-            // Empty strings are treated as "clear" and not stored
-            mergedMap[key] = value;
-          }
-          // Empty strings are silently ignored (treated as "clear")
-        }
-
-        // If merged map is empty, remove the entire promptOverrides
-        if (Object.keys(mergedMap).length === 0) {
-          delete (config.settings as unknown as Record<string, unknown>)["promptOverrides"];
-          delete (projectPatch as Record<string, unknown>)["promptOverrides"];
-        } else {
-          (config.settings as unknown as Record<string, unknown>)["promptOverrides"] = mergedMap;
-          (projectPatch as Record<string, unknown>)["promptOverrides"] = mergedMap;
-        }
-      }
-
-      // Handle null values for other top-level keys (non-promptOverrides)
-      for (const key of Object.keys(projectPatch)) {
-        if ((projectPatch as Record<string, unknown>)[key] === null) {
-          delete (config.settings as unknown as Record<string, unknown>)[key];
-          delete (projectPatch as Record<string, unknown>)[key];
-        }
-      }
-
-      const globalSettings = await store.globalSettingsStore.getSettings();
-      const previousMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...config.settings } as Settings;
-      const updatedProjectSettings = { ...config.settings, ...projectPatch };
-      // FNXC:TaskPinnedWorktrees 2026-07-16-00:00: reject recycleWorktrees + worktreeNaming:"task-id"
-      // (mutually exclusive) against the resolved next state BEFORE persisting the invalid combination.
-      assertWorktreeNamingRecycleExclusive({ ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings);
-      config.settings = updatedProjectSettings as Settings;
-      await store.writeConfig(config);
-      const updatedMerged: Settings = { ...DEFAULT_SETTINGS, ...globalSettings, ...updatedProjectSettings } as Settings;
-      store.emit("settings:updated", { settings: updatedMerged, previous: previousMerged });
-
-      // #1409: if this update flipped workflowColumns ON→OFF, evacuate any card
-      // stranded in a custom (non-legacy) column back to a legacy column so the
-      // board stays listable / movable on the legacy path.
-      if (isWorkflowColumnsCompatibilityFlagEnabled(previousMerged) && !isWorkflowColumnsCompatibilityFlagEnabled(updatedMerged)) {
-        try {
-          await store.evacuateCustomColumnsToLegacy("flag-toggled-off");
-        } catch (err) {
-          storeLog.warn("workflowColumns ON→OFF evacuation failed", {
-            phase: "evacuate-custom-columns",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      // Bootstrap project memory file when memory is toggled on
-      if (updatedMerged.memoryEnabled !== false && previousMerged.memoryEnabled === false) {
-        try {
-          // Use backend-aware bootstrap to honor memoryBackendType setting
-          await ensureMemoryFileWithBackend(store.rootDir, updatedMerged);
-        } catch (err) {
-          // Non-fatal — memory bootstrap failure should not block settings update
-          storeLog.warn("Project-memory bootstrap failed after memory toggle-on", {
-            phase: "updateSettings:memory-toggle-on",
-            rootDir: store.rootDir,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      });
 
       /*
-      FNXC:Workspace 2026-06-24-16:00:
-      When workspaceMode is toggled on, detect sub-repos and persist workspace.json so the
-      executor and ensureGitRepositoryForProjectPath treat the root as workspace-mode. When
-      toggled off, remove workspace.json so the root falls back to single-repo behavior.
+      FNXC:ConfigVersioning 2026-07-18-11:00:
+      Configuration observers and filesystem follow-up work run only after the
+      target-plus-revision transaction commits. A failed journal append must
+      not make a rolled-back setting observable as a successful update.
       */
-      if (updatedMerged.workspaceMode === true && previousMerged.workspaceMode !== true) {
-        try {
-          const existing = await loadWorkspaceConfig(store.rootDir);
-          if (!existing) {
-            const repos = await detectWorkspaceRepos(store.rootDir);
-            if (repos.length > 0) {
-              await saveWorkspaceConfig(store.rootDir, { repos });
-            }
-          }
-        } catch (err) {
-          storeLog.warn("workspace.json sync failed after workspaceMode toggle-on", {
-            phase: "updateSettings:workspace-toggle-on",
-            rootDir: store.rootDir,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      } else if (updatedMerged.workspaceMode === false && previousMerged.workspaceMode === true) {
-        try {
-          await rm(join(store.rootDir, ".fusion", "workspace.json"), { force: true });
-        } catch (err) {
-          storeLog.warn("workspace.json removal failed after workspaceMode toggle-off", {
-            phase: "updateSettings:workspace-toggle-off",
-            rootDir: store.rootDir,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      return updatedMerged;
+      await publishSettingsUpdated(store, transactionResult.previousMerged, transactionResult.updatedMerged);
+      return transactionResult.updatedMerged;
     });
   }
 
@@ -308,16 +172,12 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
      * In backend mode, read config via async helper instead of store.readConfigFast()
      * which uses store.db (SQLite).
      */
-    let config: BoardConfig;
-    if (store.backendMode) {
-      const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
-      config = {
-        nextId: projectConfig.nextId ?? 1,
-        settings: (projectConfig.settings ?? {}) as Settings,
-      };
-    } else {
-      config = store.readConfigFast();
-    }
+    const projectConfig = await readProjectConfigAsync(store.asyncLayer!);
+    const config: BoardConfig = {
+      nextId: projectConfig.nextId ?? 1,
+      settings: (projectConfig.settings ?? {}) as Settings,
+    };
+
     const previous: Settings = { ...DEFAULT_SETTINGS, ...previousGlobal, ...config.settings } as Settings;
 
     // Stale-writer guard (U4, R8): moved keys are all project-scoped, but null
@@ -395,20 +255,33 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
     // Emit settings:updated so SSE listeners pick up the change
     store.emit("settings:updated", { settings: merged, previous });
 
-    // #1409: workflowColumns lives in experimentalFeatures (a global key), so the
-    // ON→OFF toggle flows through here. Evacuate any card stranded in a custom
-    // column when the flag flips off.
-    if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(merged)) {
-      try {
-        await store.evacuateCustomColumnsToLegacy("flag-toggled-off");
-      } catch (err) {
-        storeLog.warn("workflowColumns ON→OFF evacuation failed", {
-          phase: "evacuate-custom-columns",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    The #1409 `workflowColumns` ON→OFF evacuation hook is DELETED from both settings
+    write paths.
 
+    CORRECTED (PR #2500 review — greptile P1). An earlier draft of this note claimed the
+    ON→OFF transition was unreachable because no production writer sets the key. That is
+    wrong: `settings-schema.ts` explicitly TOLERATES stale persisted values, so a project
+    upgraded from a version where this was a real toggle can carry
+    `experimentalFeatures.workflowColumns: true`, and a settings import or configuration
+    rollback can then flip it to false. The transition is reachable. It is the EVACUATION
+    that is wrong, not the trigger.
+
+    Post-cutover the evacuation is a destructive reposition, not a repair. It moved cards
+    OUT of columns their own workflow legitimately declares and into the legacy `triage`
+    column. It existed to protect the legacy enum BOARD, which could only render the six
+    legacy ids — and that board is deleted in this same change, so the thing it protected
+    is gone.
+
+    The stranding it guarded against does not occur either: `moves.ts` resolves a
+    NON-LEGACY source column's targets from the task's own workflow adjacency on the
+    flag-OFF path (the FN-7591 carve-out), so a card in a custom column still moves.
+    `src/__tests__/coding-ideas-move.test.ts` proves this in the production shape — it
+    never writes the flag — covering the forward chain and the non-adjacent rejection.
+    And `reconcileUndeclaredTaskColumns` correctly leaves such a card alone: its workflow
+    DECLARES its column, so there is nothing undeclared to reconcile.
+    */
     return merged;
   }
 

@@ -266,6 +266,23 @@ export interface WorkflowStepResult {
    */
   leaseOwner?: string;
   /*
+   * FNXC:PlanReviewLease 2026-07-26-20:05:
+   * Node that owns this lease. `leaseOwner` alone identifies a run but not WHERE it runs, and in a
+   * multi-node deployment (several engines on one central database) every node's self-healing sweep
+   * sees every other node's leases. Without attribution the only safe liveness test is the
+   * 15-minute staleness floor, because a lease that is fresh-but-unknown might be running on a peer.
+   *
+   * With it, a node can prove one specific case: a lease stamped with ITS OWN id whose `startedAt`
+   * predates its current process boot cannot have a live owner — the process that took it is gone.
+   * That is the restart-orphan case (FN-8603: an engine restart killed a Code Review session 34s in
+   * and the card then waited out the full floor before anything re-ran it). Peer-owned and
+   * unattributed (legacy) leases keep the floor.
+   *
+   * Absent on legacy rows written before this field existed; treat absence as "unknown node", never
+   * as "this node".
+   */
+  leaseNodeId?: string;
+  /*
    * FNXC:ReviewLaneBypass 2026-07-09-00:00:
    * A privileged operator can bypass a `status:"failed"` pre-merge review step
    * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`

@@ -12,6 +12,8 @@
 
 import { TaskStore } from "../store.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
+import { parseWorkflowIr } from "../workflow-ir.js";
+import { columnsWithFlag } from "../workflow-lifecycle-traits.js";
 import { InsightStore } from "../insight-store.js";
 import { ResearchStore } from "../research-store.js";
 import { type TaskRow } from "./persistence.js";
@@ -75,17 +77,74 @@ export async function recordBranchGroupMemberLandedImpl(store: TaskStore,
     });
 }
 
-export function areAllDependenciesDoneImpl(store: TaskStore, dependencies: string[], tasksById: Map<string, Task>): boolean {
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-17:45 (fleet — the SAME "satisfied" answer as #2720):
+A DEPENDENCY IS SATISFIED IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived), unioned with the legacy
+ids. This is the third place that question is asked, and it now gives the same answer as the store's
+`blockedBy` computation (#2720) and the merge blocker — three surfaces, one rule, which is the whole reason
+I refused to settle it inside a vocabulary sweep the first two times it came up.
+
+Injected: this helper takes a pre-loaded map of dependency rows (it is used inside batch passes), so the
+caller resolves lanes once for the batch rather than once per dependency.
+*/
+export function areAllDependenciesDoneImpl(
+  store: TaskStore,
+  dependencies: string[],
+  tasksById: Map<string, Task>,
+  satisfiedColumns?: ReadonlySet<string>,
+): boolean {
+    const satisfied = satisfiedColumns ?? LEGACY_SATISFIED_COLUMNS;
     return dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
-      return dependency?.column === "done" || dependency?.column === "archived";
+      return dependency !== undefined && satisfied.has(dependency.column);
     });
 }
+
+/** The satisfied ids from before workflows owned the vocabulary. */
+const LEGACY_SATISFIED_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     moveSource: NonNullable<MoveTaskOptions["moveSource"]>,
     options?: MoveTaskOptions,
   ): boolean {
+  /*
+  FNXC:WorkflowColumns 2026-07-30-11:00 (PR #2655 review — BOTH findings are right, and they are
+  the same defect seen from two sides. REVERTED to reading `options?.moveSource`.)
+
+  Round 1 said an optionless `moveTask(id, target)` LOSES bypass, because the call site resolves
+  `moveSource` to "engine" while this read the absent option. I switched to the resolved value.
+  Round 2 said that grants privileged bypass to PUBLIC callers. Both are correct, because an absent
+  `moveSource` is genuinely ambiguous — measured on this tree:
+
+    18 optionless calls in packages/engine (self-healing, project-engine) — genuine engine moves
+     8 optionless calls in packages/dashboard HTTP routes (reset, rebound, respecify, unassign)
+       — operator-initiated, and they must NOT skip merge blockers or plugin gates
+
+  Reading the resolved value hands bypass to those eight routes. Reading the option leaves the
+  eighteen engine calls unbypassed, which is what has shipped all along.
+
+  So this reverts to the shipped read. A flag-resolution PR is the wrong place to change who gets to
+  skip merge blockers: it is a behaviour change with a security shape, it is not required by the
+  flip, and "the tests pass" is not evidence for it. The real fix is to make `moveSource` EXPLICIT at
+  those 26 call sites so the default never has to be guessed — filed as follow-up work, not smuggled
+  in here.
+
+  The `void moveSource;` below is kept for the same reason it existed: the parameter is part of the
+  signature and deliberately unused until that follow-up lands.
+
+  `void moveSource;` discarded the parameter and re-read the raw option, so an OPTIONLESS call —
+  `moveTask(id, target)` — resolved `moveSource` to "engine" at every call site and then computed
+  `bypassGuards === false`, because `options` was undefined. The two disagreed about what kind of
+  move it was.
+
+  Harmless while the move-path flag gated validation, because nothing consumed the answer. The flag
+  is gone, so seam 2's guards now run for these calls and an internal executor/merger/recovery move
+  made without an options object would be judged as if a user had made it.
+
+  The `void` was a deliberate unused-parameter suppression, i.e. someone noticed the argument was
+  unused and silenced the lint instead of wiring it up. Using it aligns bypass with the `moveSource`
+  every caller already resolves the same way.
+  */
     void moveSource;
     return options?.recoveryRehome === true ||
       (options?.bypassGuards ??
@@ -102,10 +161,23 @@ params: {
   }): boolean {
     if (params.bypassGuards) return true;
     if (params.options?.recoveryRehome === true) return true;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-17:55 (fleet):
+    THE HARD-CANCEL SHAPE — a USER dragging a card from the wip lane back to the hold lane — is what
+    AGENTS.md's Move-Task contract calls a hard cancel, and it is the one move allowed to bypass workflow
+    transition guards. Spelled as literals, the bypass never applied on a renamed board: the operator's drag
+    was rejected by the transition validator, so a card could not be cancelled from the board at all.
+
+    FLAGGED, NOT CONVERTED: this function is SYNCHRONOUS and receives only column strings — no task id, no
+    store — so there is nothing to resolve from and no caller-injected set today. Converting it means adding
+    lanes to `MoveTaskOptions` (the moves path already resolves them; see moves.ts) and threading them here.
+    That is a moves-path change, and moves.ts is owned by another worker's PR, so this is a deliberate hand-off
+    rather than a literal nobody noticed. DELIBERATE-LITERAL until the moves path passes its snapshot down.
+    */
     return params.moveSource === "user" && params.fromColumn === "in-progress" && params.toColumn === "todo";
 }
 
-export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): MergeRequestRecord | null {
+export function getMergeRequestRecordImpl(_store: TaskStore, _taskId: string): MergeRequestRecord | null {
     /*
     FNXC:PostgresCutover 2026-07-04:
     Synchronous read of merge_requests cannot run against PostgreSQL (Drizzle
@@ -118,9 +190,8 @@ export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): Mer
     degradation) instead of throwing. Callers that need the real record in PG
     must use getMergeRequestRecordAsync below.
     */
-    if (store.backendMode) return null;
-    const row = store.db.prepare("SELECT * FROM merge_requests WHERE taskId = ?").get(taskId) as MergeRequestRow | undefined;
-    return row ? store.rowToMergeRequestRecord(row) : null;
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync merge-request reader is incomplete-PG; use getMergeRequestRecordAsync. */
+    return null;
 }
 
 /**
@@ -133,7 +204,7 @@ export function getMergeRequestRecordImpl(store: TaskStore, taskId: string): Mer
  * mode it delegates to the sync impl.
  */
 export async function getMergeRequestRecordAsyncImpl(store: TaskStore, taskId: string): Promise<MergeRequestRecord | null> {
-    if (!store.backendMode) return store.getMergeRequestRecord(taskId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const layer = store.asyncLayer!;
     const rows = await layer.db
       .select()
@@ -156,9 +227,60 @@ export function getWorkflowWorkItemByIdentityImpl(store: TaskStore,
     return row ? store.rowToWorkflowWorkItem(row) : null;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+THE QUERY WAS THE DEFECT, not the predicate below it.
+
+`isLegacyAutoMergeStampCandidate` gained an optional resolved `reviewColumns` and no caller passed
+it. Wiring that parameter here would have changed NOTHING, because the read above it asked
+`listTasks({ column: "in-review" })` — a QUERY filter with the literal. On a renamed board that query
+returns zero rows, so the backfill iterated an empty list and reported success over nothing; the
+predicate was never reached.
+
+This is the third unwired parameter in this sweep whose caller held the larger defect
+(`blocker-fanout` emitted no warning at all; the analytics routes reported a silent zero). An
+optional parameter nobody fills is worth reading as a SYMPTOM of an unexamined caller rather than as
+a cosmetic gap.
+
+WHY A UNION ACROSS DEFINITIONS: there is no task to resolve from before the read, which is what makes
+the query class hard. The project's declared workflows are the only lane vocabulary available at this
+point, so every review-bearing column any of them declares is queried, unioned with the legacy id so
+a board mid-rename (rows still stored under the old id) is not skipped. Over-inclusion costs one
+extra query and is filtered by the predicate; under-inclusion silently backfills nothing, which is
+the failure being fixed.
+*/
+/**
+ * The review-lane vocabulary for the legacy auto-merge stamp backfill, resolved from the PROJECT's
+ * declared workflows because there is no task to resolve from before the read.
+ *
+ * Exported so the candidate query and the two re-checks that follow it share ONE answer. Deriving it
+ * separately per site is how a read and its re-check end up disagreeing.
+ */
+export async function resolveLegacyStampReviewColumns(store: TaskStore): Promise<ReadonlySet<string>> {
+    /* DELIBERATE-LITERAL — unioned, not replaced: a board mid-rename still has rows stored under the
+       old id, and skipping them is the failure this fixes. Reviewed 2026-07-31-13:00. */
+    const reviewColumns = new Set<string>(["in-review"]);
+    try {
+      for (const definition of await store.listWorkflowDefinitions()) {
+        const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+        if (!ir) continue;
+        for (const id of columnsWithFlag(ir, "mergeOrchestration")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "mergeBlocker")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "humanReview")) reviewColumns.add(id);
+      }
+    } catch {
+      /* Unreadable definitions leave the legacy id alone — exactly the previous behaviour. */
+    }
+    return reviewColumns;
+}
+
 export async function listLegacyAutoMergeStampCandidatesImpl(store: TaskStore): Promise<Task[]> {
-    const inReview = await store.listTasks({ column: "in-review" });
-    return inReview.filter((task) => store.isLegacyAutoMergeStampCandidate(task));
+    const reviewColumns = await resolveLegacyStampReviewColumns(store);
+    const byId = new Map<string, Task>();
+    for (const column of reviewColumns) {
+      for (const task of await store.listTasks({ column })) byId.set(task.id, task);
+    }
+    return [...byId.values()].filter((task) => store.isLegacyAutoMergeStampCandidate(task, reviewColumns));
 }
 
 export function deleteTaskByIdImpl(store: TaskStore, taskId: string): void {
@@ -213,20 +335,77 @@ export function applyBuiltInPromptOverridesSyncImpl(store: TaskStore, workflowId
     return applyPromptOverridesToIr(ir, overrides);
 }
 
+/*
+FNXC:IncompletePgPorts 2026-07-26-20:40:
+Async sibling for applyBuiltInPromptOverridesSyncImpl. Backend mode must load
+workflow_prompt_overrides via Drizzle; the sync reader returns {} on PG and
+silently dropped operator customizations from getWorkflowDefinition / move IR.
+*/
+export async function applyBuiltInPromptOverridesAsyncImpl(store: TaskStore, workflowId: string, ir: WorkflowIr): Promise<WorkflowIr> {
+    if (!isBuiltinWorkflowId(workflowId)) return ir;
+    const projectId = store.getWorkflowSettingsProjectId();
+    const overrides = await store.getWorkflowPromptOverridesAsync(workflowId, projectId);
+    return applyPromptOverridesToIr(ir, overrides);
+}
+
 export async function getDefaultWorkflowIdImpl(store: TaskStore): Promise<string | undefined> {
     const settings = await store.getSettingsFast();
     const id = (settings as { defaultWorkflowId?: string }).defaultWorkflowId;
     return id && id.trim() ? id : undefined;
 }
 
+/**
+ * FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+ * Resolves the workflow OVERRIDE for a programmatic task origin — `fn task create`
+ * (CLI + `fn_task_create` tool) and refinement tasks.
+ *
+ * Returns `undefined` to mean "no override, inherit the existing default path".
+ * That is deliberate: the callers' existing behavior when no workflow is passed is
+ * already `materializeDefaultWorkflowSteps()`, so falling through to `undefined`
+ * reproduces it exactly rather than re-implementing it. Only a pinned setting or
+ * the mirrored Board lane produces a concrete id.
+ *
+ * Precedence: pinned per-origin setting -> mirrored Board lane -> inherit (undefined).
+ *
+ * A configured id that no longer resolves — deleted workflow, or a fragment, which
+ * is never independently selectable — degrades to inherit rather than throwing.
+ * Task creation must not be breakable by a stale settings value; this mirrors the
+ * same tolerance `aiUndoTaskWorkflowId`'s route applies.
+ */
+export type TaskOriginWorkflowKind = "task-create" | "refinement";
+
+export async function resolveOriginWorkflowOverrideIdImpl(
+  store: TaskStore,
+  origin: TaskOriginWorkflowKind,
+): Promise<string | undefined> {
+  let candidate: string | undefined;
+  try {
+    const settings = (await store.getSettingsFast()) as {
+      taskCreateWorkflowId?: string;
+      refinementTaskWorkflowId?: string;
+      boardSelectedWorkflowId?: string;
+    };
+    const pinned = origin === "refinement"
+      ? settings.refinementTaskWorkflowId
+      : settings.taskCreateWorkflowId;
+    candidate = pinned?.trim() || settings.boardSelectedWorkflowId?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+  if (!candidate) return undefined;
+
+  try {
+    const def = await store.getWorkflowDefinition(candidate);
+    if (!def || def.kind === "fragment") return undefined;
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveTaskCustomFieldDefsSyncImpl(store: TaskStore, taskId: string): WorkflowFieldDefinition[] {
     const ir = store.resolveTaskWorkflowIrSync(taskId);
     return ir.version === "v2" ? (ir.fields ?? []) : [];
-}
-
-export function resolveEffectiveWorkflowIdSyncImpl(store: TaskStore, taskId: string): string {
-    const selection = store.getTaskWorkflowSelection(taskId);
-    return selection?.workflowId ?? TaskStore.DEFAULT_WORKFLOW_POOL_ID;
 }
 
 export async function clearTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
@@ -238,16 +417,56 @@ export async function clearTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
 
 export function refreshDatabaseHealthImpl(store: TaskStore): ReturnType<TaskStore["getDatabaseHealth"]> {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-25-16:30:
-     * In backend mode, the SQLite integrity_check refresh path is not
-     * applicable (PostgreSQL manages its own integrity). Delegate to
-     * getDatabaseHealth() which returns the healthy sentinel.
-     */
-    if (store.backendMode) {
+    FNXC:IncompletePgPorts 2026-07-26-20:40:
+    Sync refresh cannot await PostgreSQL. Kick a background async refresh when
+    a layer is present, then return the last snapshot (or optimistic healthy
+    until the first probe completes). Prefer refreshDatabaseHealthAsync from
+    async callers (self-healing surfaceDbCorruption).
+
+    FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+    Only schedule the async probe when asyncLayer exists. Without a layer,
+    refreshDatabaseHealthAsyncImpl used to call back into this sync entry and
+    re-schedule forever (unbounded health-refresh microtask recursion).
+    */
+    if (store.asyncLayer) {
+      void refreshDatabaseHealthAsyncImpl(store).catch(() => undefined);
+    }
+    return store.getDatabaseHealth();
+}
+
+/*
+FNXC:IncompletePgPorts 2026-07-26-20:40:
+Probe AsyncDataLayer.ping + pg_stat_database via checkPostgresHealth and store
+the result on TaskStore.postgresHealthSnapshot for sync getDatabaseHealth /
+healthCheck readers.
+*/
+export async function refreshDatabaseHealthAsyncImpl(store: TaskStore): Promise<ReturnType<TaskStore["getDatabaseHealth"]>> {
+    if (!store.asyncLayer) {
+      /*
+      FNXC:SqliteDualPathCleanup 2026-07-27-06:15:
+      No AsyncDataLayer: return the cached/safe incomplete-PG snapshot. Do not call
+      refreshDatabaseHealthImpl here — that path re-schedules this function and would recurse.
+      */
       return store.getDatabaseHealth();
     }
-    store.db.refreshIntegrityCheck();
-    return store.getDatabaseHealth();
+    store.postgresHealthSnapshot = {
+      healthy: store.postgresHealthSnapshot?.healthy ?? true,
+      corruptionDetected: store.postgresHealthSnapshot?.corruptionDetected ?? false,
+      corruptionErrors: store.postgresHealthSnapshot?.corruptionErrors ?? [],
+      lastCheckedAt: store.postgresHealthSnapshot?.lastCheckedAt ?? null,
+      isRunning: true,
+    };
+    const { checkPostgresHealth } = await import("../postgres/postgres-health.js");
+    const errors = await checkPostgresHealth(store.asyncLayer);
+    const now = new Date();
+    store.postgresHealthSnapshot = {
+      healthy: errors.length === 0,
+      corruptionDetected: errors.length > 0,
+      corruptionErrors: errors.slice(0, 5),
+      lastCheckedAt: now,
+      isRunning: false,
+    };
+    return store.postgresHealthSnapshot;
 }
 
 export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
@@ -256,15 +475,11 @@ export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
      * In backend mode, use the async layer to clear the activity log via
      * Drizzle instead of the SQLite-specific db.prepare() path.
      */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
-        .delete(schema.project.activityLog)
-        .where(eq(schema.project.activityLog.projectId, activityProjectPartition(layer.projectId ?? "")));
-      return;
-    }
-    store.db.prepare("DELETE FROM activityLog").run();
-    store.db.bumpLastModified();
+        const layer = store.asyncLayer!;
+    await layer.db
+      .delete(schema.project.activityLog)
+      .where(eq(schema.project.activityLog.projectId, activityProjectPartition(layer.projectId ?? "")));
+    return;
 }
 
 export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsightStore {
@@ -275,15 +490,12 @@ export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsig
       // project_insight_run_events). The sync SQLite InsightStore (store.db) is
       // used only in legacy SQLite mode. Both expose the same method names; the
       // dashboard insights routes await the result so either works.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.insightStore = new AsyncInsightStore(layer);
-      } else {
-        store.insightStore = new InsightStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.insightStore = new AsyncInsightStore(layer);
+
     }
     return store.insightStore;
 }
@@ -298,15 +510,12 @@ export function getResearchStoreImpl(store: TaskStore): ResearchStore | AsyncRes
       // routes await the result so either works. AI research EXECUTION (the engine
       // ResearchOrchestrator/ResearchRunDispatcher) stays degraded in PG mode — those
       // are coupled to the sync EventEmitter ResearchStore and are out of scope here.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("ResearchStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.researchStore = new AsyncResearchStore(layer);
-      } else {
-        store.researchStore = new ResearchStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("ResearchStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.researchStore = new AsyncResearchStore(layer);
+
     }
     return store.researchStore;
 }
@@ -318,15 +527,12 @@ export function getTodoStoreImpl(store: TaskStore): TodoStore | AsyncTodoStore {
       // over project.todo_lists / project.todo_items). The sync SQLite TodoStore
       // (store.db) is used only in legacy SQLite mode. Both expose the same
       // method names; the dashboard todo routes await the result so either works.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("TodoStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.todoStore = new AsyncTodoStore(layer);
-      } else {
-        store.todoStore = new TodoStore(store.db);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("TodoStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.todoStore = new AsyncTodoStore(layer);
+
     }
     return store.todoStore;
 }

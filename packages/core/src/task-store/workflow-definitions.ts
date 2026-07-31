@@ -10,12 +10,12 @@
  */
 
 import { TaskStore } from "../store.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
+import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconciliation} from "../workflow-reconciliation.js";
+import {resolveColumnCapacity, resolveCapacityPoolId} from "../workflow-capacity.js";
+import {readTaskRow as readTaskRowAsync} from "./async-persistence.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../builtin-workflows.js";
-import { CentralCore } from "../central-core.js";
-import { fromJson } from "../db.js";
-import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../distributed-task-id.js";
+import { type DistributedTaskIdAllocator } from "../distributed-task-id.js";
 import { ExperimentSessionStore } from "../experiment-session-store.js";
 import { MasterKeyManager } from "../master-key.js";
 import { MissionStore } from "../mission-store.js";
@@ -32,17 +32,19 @@ import { getInReviewDurationEvents as getInReviewDurationEventsAsync, getTaskMer
 import { readProjectConfig, writeProjectConfig } from "./async-settings.js";
 import { compactTaskActivityLog } from "./comments.js";
 import { type TaskRow } from "./persistence.js";
-import { ActivityLogRow } from "./row-types.js";
-import { ActivityEventType, ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
+import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
+import { acquireTaskAdvisoryXactLock } from "./task-advisory-lock.js";
+import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflow-definition-types.js";
 import { WorkflowIr } from "../workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
 import { resolveDefaultOnOptionalGroupIds } from "../workflow-optional-steps.js";
 import { resolveSwitchReconciliation } from "../workflow-reconciliation.js";
 import { WORKFLOW_COMPILED_STEP_TEMPLATE_PREFIX } from "../store.js";
 import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "../project-lane-vocabulary.js";
+import type { InReviewDurationLanes } from "./async-audit.js";
 
 export async function getAgentLogsByTimeRangeImpl(store: TaskStore,
     taskId: string,
@@ -80,28 +82,16 @@ export async function importLegacyAgentLogsOnceImpl(store: TaskStore): Promise<v
 }
 
 export async function readRawProjectSettingsImpl(store: TaskStore): Promise<Record<string, unknown>> {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: backend mode previously
-    // returned {} from the catch below, hiding raw persisted project settings
-    // on PostgreSQL. Read the config row via the async layer instead.
-    if (store.backendMode) {
-      try {
-        const config = await readProjectConfig(store.asyncLayer!);
-        const settings = config.settings;
-        return settings && typeof settings === "object" && !Array.isArray(settings)
-          ? (settings as Record<string, unknown>)
-          : {};
-      } catch {
-        return {};
-      }
-    }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
+    Raw project settings are read from PostgreSQL project config only. The SQLite config-row arm is deleted.
+    FNXC:PostgresOnlyDataAccess 2026-07-16-12:35: never hide settings behind an empty {} when the layer is present.
+    */
     try {
-      const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as
-        | { settings: string }
-        | undefined;
-      if (!row) return {};
-      const parsed = JSON.parse(row.settings) as unknown;
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
+      const config = await readProjectConfig(store.asyncLayer!);
+      const settings = config.settings;
+      return settings && typeof settings === "object" && !Array.isArray(settings)
+        ? (settings as Record<string, unknown>)
         : {};
     } catch {
       return {};
@@ -127,6 +117,20 @@ export function migrateLegacyArchiveEntriesToArchiveDbImpl(store: TaskStore): vo
 }
 
 export async function migrateActiveArchivedTasksToArchiveDbImpl(store: TaskStore): Promise<void> {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:10 DELIBERATE-LITERAL:
+    `'archived'` here is the STATE marker, not a board lane, and must NOT be widened to the resolved
+    archived columns.
+
+    This finds live rows that Fusion's own archive path stamped (`archive-lifecycle-2.ts` and
+    `serialization.ts` both hardcode `column: "archived"`) so they can be migrated into the archive
+    DB. A workflow may also declare an archived-TRAIT lane under any id — `resolveLifecycleColumns`
+    resolves it, and a card can be moved there — but such a card was never archived by Fusion, has no
+    archive-store row, and migrating it would move live work out of the board.
+
+    So the resolved set is the wrong question at this site even though it is the right one for the
+    live-view exclusions that share this literal. See issue #2839 for the split.
+    */
     const rows = store.db.prepare(`SELECT * FROM tasks WHERE "column" = 'archived'`).all() as unknown as TaskRow[];
     if (rows.length === 0) {
       return;
@@ -316,16 +320,11 @@ export async function readAllWorkflowDefinitionsImpl(store: TaskStore): Promise<
     // PG backend mode reads custom workflow rows from project.workflows via the
     // AsyncDataLayer (the sync store.db SELECT throws). Builtins are merged the
     // same way in both backends. Every caller already awaits this method.
-    if (store.backendMode) {
-      const layer = store.getAsyncLayer();
-      if (!layer) {
-        throw new Error("workflow definitions: AsyncDataLayer not initialized in backend mode");
-      }
-      const rows = await listWorkflowRows(layer);
-      store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
-      return store.workflowDefinitionsCache;
+        const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("workflow definitions: AsyncDataLayer not initialized in backend mode");
     }
-    const rows = store.db.prepare("SELECT * FROM workflows ORDER BY createdAt ASC").all() as StoredWorkflowRow[];
+    const rows = await listWorkflowRows(layer);
     store.workflowDefinitionsCache = [...BUILTIN_WORKFLOWS, ...rows.map((row) => store.toWorkflowDefinition(row))];
     return store.workflowDefinitionsCache;
 }
@@ -339,22 +338,17 @@ export async function getWorkflowDefinitionImpl(store: TaskStore,
         const requiredPluginId = getRequiredPluginIdForBuiltinWorkflow(id);
         if (!requiredPluginId || !(await store.isPluginInstalled(requiredPluginId))) return undefined;
       }
-      return { ...builtin, ir: store.applyBuiltInPromptOverridesSync(id, builtin.ir) };
+      const ir = await store.applyBuiltInPromptOverridesAsync(id, builtin.ir);
+      return { ...builtin, ir };
     }
     // FNXC:WorkflowDefinitions 2026-06-27-06:00: PG backend reads the custom row
     // from project.workflows via the AsyncDataLayer; sync store.db otherwise.
-    if (store.backendMode) {
-      const layer = store.getAsyncLayer();
-      if (!layer) {
-        throw new Error("workflow definition: AsyncDataLayer not initialized in backend mode");
-      }
-      const asyncRow = await getWorkflowRow(layer, id);
-      return asyncRow ? store.toWorkflowDefinition(asyncRow) : undefined;
+        const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("workflow definition: AsyncDataLayer not initialized in backend mode");
     }
-    const row = store.db.prepare("SELECT * FROM workflows WHERE id = ?").get(id) as
-      | StoredWorkflowRow
-      | undefined;
-    return row ? store.toWorkflowDefinition(row) : undefined;
+    const asyncRow = await getWorkflowRow(layer, id);
+    return asyncRow ? store.toWorkflowDefinition(asyncRow) : undefined;
 }
 
 export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
@@ -363,32 +357,21 @@ export async function occupantsByColumnForWorkflowImpl(store: TaskStore,
   ): Promise<Map<string, number>> {
     const counts = new Map<string, number>();
     const taskIds = await store.listWorkflowOccupantTaskIds(workflowId, includeNullSelection);
-    if (store.backendMode) {
-      if (taskIds.length === 0) return counts;
-      const rows = await store.asyncLayer!.db
-        .select({ column: schema.project.tasks.column })
-        .from(schema.project.tasks)
-        .where(and(
-          inArray(schema.project.tasks.id, taskIds),
-          isNull(schema.project.tasks.deletedAt),
-          taskProjectScope(store.asyncLayer!),
-        ));
-      for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
-      return counts;
-    }
-    for (const taskId of taskIds) {
-      const row = store.db.prepare(`SELECT "column" AS column FROM tasks WHERE id = ?`).get(taskId) as
-        | { column: string }
-        | undefined;
-      if (!row) continue;
-      counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
-    }
+        if (taskIds.length === 0) return counts;
+    const rows = await store.asyncLayer!.db
+      .select({ column: schema.project.tasks.column })
+      .from(schema.project.tasks)
+      .where(and(
+        inArray(schema.project.tasks.id, taskIds),
+        isNull(schema.project.tasks.deletedAt),
+        taskProjectScope(store.asyncLayer!),
+      ));
+    for (const row of rows) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
     return counts;
 }
 
 export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
     input: WorkflowDefinitionInput,
-    flagOn: boolean,
   ): WorkflowDefinition {
     const name = input.name?.trim();
     if (!name) throw new Error("Workflow name is required");
@@ -419,7 +402,7 @@ export function insertWorkflowDefinitionSyncImpl(store: TaskStore,
             definition.name,
             definition.description,
             definition.icon ?? null,
-            serializeWorkflowIr(flagOn ? definition.ir : downgradeIrToV1IfPure(definition.ir)),
+            serializeWorkflowIr(downgradeIrToV1IfPure(definition.ir)),
             JSON.stringify(definition.layout),
             definition.kind,
             definition.createdAt,
@@ -535,24 +518,13 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
     }
 }
 
-export function getTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): { workflowId: string; stepIds: string[] } | undefined {
+export function getTaskWorkflowSelectionImpl(_store: TaskStore, _taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     /*
     FNXC:PostgresCutover 2026-07-04-00:00:
-    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
+    Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync reader (resolveTaskWorkflowIrSync) fall back to its default. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
     */
-    if (store.backendMode) return undefined;
-    const row = store.db
-      .prepare("SELECT workflowId, stepIds FROM task_workflow_selection WHERE taskId = ?")
-      .get(taskId) as { workflowId: string; stepIds: string } | undefined;
-    if (!row) return undefined;
-    let stepIds: string[] = [];
-    try {
-      const parsed = JSON.parse(row.stepIds) as unknown;
-      if (Array.isArray(parsed)) stepIds = parsed.filter((s): s is string => typeof s === "string");
-    } catch {
-      // Corrupt list falls back to empty.
-    }
-    return { workflowId: row.workflowId, stepIds };
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:20: sync selection reader is incomplete-PG; use getTaskWorkflowSelectionAsync. */
+    return undefined;
 }
 
 /*
@@ -560,7 +532,7 @@ FNXC:PostgresCutover 2026-07-04-00:00:
 Async backend-mode read of a task's workflow selection (PostgreSQL). stepIds is a JSONB array, returned by Drizzle already parsed. Returns undefined when no row exists. SQLite mode delegates to the sync impl.
 */
 export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
-    if (!store.backendMode) return store.getTaskWorkflowSelection(taskId);
+    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: always PostgreSQL path below. */
     const layer = store.asyncLayer!;
     /*
     FNXC:WorkflowModelLanes 2026-07-14-16:34:
@@ -589,11 +561,33 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode upsert of the task_workflow_selection row via async Drizzle (taskId is the primary key). stepIds is stored as a JSONB array.
     */
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      await layer.db
+        const layer = store.asyncLayer!;
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
+    Selection upsert must include projectId — PK is (projectId, taskId) and the authoritative read pins projectId.
+    */
+    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+    /*
+    FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process race):
+    The selection write now runs in a transaction that first takes the per-task
+    advisory lock, because the in-transaction capacity gate in `moves.ts` reads this
+    row and enforces a limit against it. Without a lock BOTH sides take, the gate
+    could read the selection, this write could land, and the move would commit the
+    task under a workflow whose pool was never the one checked.
+
+    `selectTaskWorkflow` already wraps this call in `store.withTaskLock`, which is
+    an IN-PROCESS mutex — it serializes one TaskStore instance and gives nothing
+    across nodes. Multi-node is several nodes against one central PostgreSQL
+    database, so the cross-process window is a supported deployment shape.
+
+    Acquisition order is advisory-lock-then-row-write on both sides, so the two
+    paths cannot deadlock against each other.
+    */
+    await layer.transactionImmediate(async (tx) => {
+      await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+      await tx
         .insert(schema.project.taskWorkflowSelection)
-        .values({ taskId, workflowId, stepIds, updatedAt })
+        .values({ projectId, taskId, workflowId, stepIds, updatedAt })
         .onConflictDoUpdate({
           target: [
             schema.project.taskWorkflowSelection.projectId,
@@ -601,18 +595,8 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
           ],
           set: { workflowId, stepIds, updatedAt },
         });
-      return;
-    }
-    store.db
-      .prepare(
-        `INSERT INTO task_workflow_selection (taskId, workflowId, stepIds, updatedAt)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(taskId) DO UPDATE SET
-           workflowId = excluded.workflowId,
-           stepIds = excluded.stepIds,
-           updatedAt = excluded.updatedAt`,
-      )
-      .run(taskId, workflowId, JSON.stringify(stepIds), updatedAt);
+    });
+    return;
 }
 
 export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
@@ -620,18 +604,8 @@ export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: 
     FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode delete reuses purgeTaskWorkflowSelectionRowsAsyncImpl (read stepIds, delete workflow_steps children, delete the selection row) so PG stays in lockstep with the SQLite path.
     */
-    if (store.backendMode) {
-      await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
-      return;
-    }
-    const existing = store.getTaskWorkflowSelection(taskId);
-    if (existing) {
-      for (const stepId of existing.stepIds) {
-        store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);
-      }
-      store.workflowStepsCache = null;
-    }
-    store.db.prepare("DELETE FROM task_workflow_selection WHERE taskId = ?").run(taskId);
+        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
+    return;
 }
 
 export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: string): void {
@@ -645,36 +619,16 @@ export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: str
      * recreation works in PG mode (FN-5233 soft-delete-stickiness invariant,
      * VAL-DATA-005/006).
      */
-    if (store.backendMode) {
-      // Drizzle queries are async; synchronously schedule the purge and let
-      // the awaiting caller (maybeResolveTombstonedTaskId, already async)
-      // observe completion. We cannot await here without changing the return
-      // type, so we throw-and-rethrow via a microtask is not viable. Instead
-      // the async caller must use purgeTaskWorkflowSelectionRowsAsync below.
-      // To preserve the existing synchronous call sites that ignore the result,
-      // we fire-and-forget ONLY in the non-critical path. The resurrection
-      // path uses the async variant directly.
-      void purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
-      return;
-    }
-    const row = store.db
-      .prepare("SELECT stepIds FROM task_workflow_selection WHERE taskId = ?")
-      .get(taskId) as { stepIds: string } | undefined;
-    if (!row) return;
-    try {
-      const parsed = JSON.parse(row.stepIds) as unknown;
-      if (Array.isArray(parsed)) {
-        for (const stepId of parsed) {
-          if (typeof stepId === "string") {
-            store.db.prepare("DELETE FROM workflow_steps WHERE id = ?").run(stepId);
-          }
-        }
-      }
-    } catch {
-      // Corrupt stepIds list — still remove the selection row below.
-    }
-    store.db.prepare("DELETE FROM task_workflow_selection WHERE taskId = ?").run(taskId);
-    store.workflowStepsCache = null;
+        // Drizzle queries are async; synchronously schedule the purge and let
+    // the awaiting caller (maybeResolveTombstonedTaskId, already async)
+    // observe completion. We cannot await here without changing the return
+    // type, so we throw-and-rethrow via a microtask is not viable. Instead
+    // the async caller must use purgeTaskWorkflowSelectionRowsAsync below.
+    // To preserve the existing synchronous call sites that ignore the result,
+    // we fire-and-forget ONLY in the non-critical path. The resurrection
+    // path uses the async variant directly.
+    void purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
+    return;
 }
 
 /**
@@ -685,10 +639,7 @@ export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: str
  * Called by maybeResolveTombstonedTaskId on the resurrection hard-delete path.
  */
 export async function purgeTaskWorkflowSelectionRowsAsyncImpl(store: TaskStore, taskId: string): Promise<void> {
-  if (!store.backendMode) {
-    purgeTaskWorkflowSelectionRowsImpl(store, taskId);
-    return;
-  }
+  
   const layer = store.asyncLayer!;
   const rows = await layer.db
     .select({ stepIds: schema.project.taskWorkflowSelection.stepIds })
@@ -782,34 +733,199 @@ export async function selectTaskWorkflowAndReconcileImpl(store: TaskStore,
     enabledWorkflowSteps: string[];
     reconciliation?: { preserved: boolean; fromColumn: string; toColumn: string };
   }> {
-    const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
-    if (!(await store.workflowColumnsFlagOn())) {
-      return { enabledWorkflowSteps };
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    PRE-FLIGHT BEFORE COMMITTING. The ordering, not the message, is the fix.
+
+    `selectTaskWorkflow` COMMITS the new selection. If the re-home that follows is then
+    rejected, the card's selection says one thing and its column says another, and
+    self-healing later has to GUESS which is authoritative. So the deterministic
+    rejection cause — the destination column being at its WIP limit — is checked HERE,
+    before anything is written. On that path nothing commits: the task keeps its old
+    workflow AND its old column, which is a consistent card, and the operator gets a
+    typed error naming the full column.
+
+    The target IR is resolved straight from `workflowId` rather than through the task's
+    selection, which is precisely what let this move ahead of the commit.
+    */
+    const preRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (preRow) {
+      const fromColumnPre = String(preRow.column);
+      const targetDef = await store.getWorkflowDefinition(workflowId);
+      if (targetDef) {
+        const targetIr = parseWorkflowIr(targetDef.ir);
+        const pre = resolveSwitchReconciliation(targetIr, fromColumnPre);
+        if (!pre.preserved && pre.targetColumn !== fromColumnPre) {
+          const settingsForCapacity = await store.getSettingsFast();
+          const capacity = resolveColumnCapacity(targetIr, pre.targetColumn, settingsForCapacity);
+          if (capacity.limit !== undefined && Number.isFinite(capacity.limit)) {
+            const occupied = await store.asyncLayer!.transactionImmediate(async (tx) =>
+              store.countActiveInCapacitySlotAsync({
+                tx,
+                targetColumn: pre.targetColumn,
+                workflowId: resolveCapacityPoolId(workflowId),
+                countPending: capacity.countPending === true,
+                excludeTaskId: taskId,
+              }),
+            );
+            if (occupied >= capacity.limit) {
+              throw new WorkflowSwitchRehomeFailedError({
+                taskId,
+                workflowId,
+                fromColumn: fromColumnPre,
+                intendedColumn: pre.targetColumn,
+                reason: `target column is at its limit (${occupied}/${capacity.limit})`,
+                committed: false,
+              });
+            }
+          }
+        }
+      }
     }
-    const newIr = store.backendMode
-      ? await resolveWorkflowIrForTask(store, taskId)
-      : store.resolveTaskWorkflowIrSync(taskId);
-    const current = store.readTaskFromDb(taskId, { includeDeleted: false });
-    if (!current) return { enabledWorkflowSteps };
-    const fromColumn = current.column;
+
+    const enabledWorkflowSteps = await store.selectTaskWorkflow(taskId, workflowId);
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The early return on the raw `workflowColumns` flag is DELETED. It read a key no
+    production writer sets, so switching a task's workflow NEVER reconciled its
+    column: the card kept sitting in its old column even when the new workflow does
+    not declare that column, and the `reconciliation` field this function promises in
+    its return type was never populated for a real project.
+
+    Operator-visible consequence, deliberate: switching a task to a workflow that does
+    not declare its current column now moves the card into that workflow's resolved
+    target column (`resolveSwitchReconciliation`), and API/dashboard callers start
+    receiving the `reconciliation` summary they already have handling for. A card whose
+    column IS declared by the new workflow is preserved in place, unchanged.
+    */
+    const newIr = await resolveWorkflowIrForTask(store, taskId);
+    /*
+    FNXC:PostgresCutover 2026-07-28-00:00 (U12):
+    ASYNC read, not `store.readTaskFromDb`. The synchronous reader resolves through
+    `TaskStore.db`, which THROWS under the PostgreSQL runtime ("SQLite Database is not
+    available in backend mode"). The old flag gate returned before ever reaching this
+    line, so un-gating the switch reconciliation surfaced a path that could not run at
+    all in the production backend — the flag was hiding an unported read, not just a
+    disabled feature. Caught by the production-shape tests in
+    `__tests__/postgres/workflow-reconciliation-production-shape.pg.test.ts`.
+
+    NOT a missing SQLite fallback (PR #2513 review — CodeRabbit). `backendMode` is
+    defined as "the mandatory production AsyncDataLayer was injected", this module
+    already dereferences `store.asyncLayer!` in 15 other places, and the sibling
+    workflow-definition operations carry FNXC:SqliteDualPathCleanup notes stating they
+    require an AsyncDataLayer. Re-adding the synchronous reader as a fallback would
+    reintroduce exactly the throw this line fixes.
+    */
+    const currentRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    if (!currentRow) return { enabledWorkflowSteps };
+    const fromColumn = String(currentRow.column);
     const decision = resolveSwitchReconciliation(newIr, fromColumn);
     if (!decision.preserved && decision.targetColumn !== fromColumn) {
-      await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      const outcome = await store.rehomeOccupant(taskId, decision.targetColumn, "workflow-switch", { workflowId });
+      /*
+      FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2513 review):
+      FAIL LOUDLY. `rehomeOccupant` swallows a rejected move by design, which is right
+      for the best-effort sweep callers but wrong here: the new selection has ALREADY
+      committed, so a swallowed rejection is a torn write — selection and column
+      disagree and nobody is told. Throw instead, leaving the recoverable state in
+      place (the R7 startup sweep re-homes an undeclared column) rather than rolling
+      back a committed selection.
+      */
+      if (!outcome.moved) {
+        /*
+        RESIDUAL RACE ONLY. The capacity pre-flight above already rejects the
+        deterministic case before any commit, so reaching here means the destination
+        filled up (or the move was otherwise rejected) between the pre-flight and the
+        move. The selection IS committed at this point, so this IS a torn card — and it
+        is RECORDED, not merely thrown, so self-healing and an operator both find the
+        divergence in run-audit instead of having to infer it from a card in a lane the
+        board cannot draw. Metadata stays ids/columns/outcomes-only.
+        */
+        /*
+        AWAITED, not fire-and-forget (PR #2512 review — CodeRabbit). The whole claim of
+        this branch is that the divergence is a fact on disk; `void`-ing the write and
+        throwing on the next line meant the one artifact self-healing is meant to find
+        could silently be absent. The write is awaited and its own failure is swallowed
+        so it can never mask the rejection the caller actually needs to see.
+
+        NO ERROR PROSE (PR #2512 review — CodeRabbit). `outcome.error` is a propagated
+        `err.message`; persisting it would contradict this file's own "ids/columns/
+        outcomes-only" claim and the project rule that run-audit never stores error
+        prose. The bounded outcome code goes here; the human-readable reason travels on
+        the thrown error, which is not persisted.
+        */
+        try {
+          await store.recordRunAuditEvent({
+            taskId,
+            agentId: "system",
+            runId: `workflow-switch-torn-${taskId}`,
+            domain: "database",
+            mutationType: "task:workflow-switch-torn",
+            target: taskId,
+            metadata: {
+              workflowId,
+              fromColumn,
+              intendedColumn: decision.targetColumn,
+              selectionCommitted: true,
+              outcome: "rehome-rejected",
+            },
+          });
+        } catch {
+          // An audit-write failure must not replace the rejection being reported.
+        }
+        throw new WorkflowSwitchRehomeFailedError({
+          taskId,
+          workflowId,
+          fromColumn,
+          intendedColumn: decision.targetColumn,
+          committed: true,
+          ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
+        });
+      }
     }
-    return {
-      enabledWorkflowSteps,
-      reconciliation: {
-        preserved: decision.preserved,
-        fromColumn,
-        toColumn: decision.targetColumn,
-      },
-    };
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    Report the column the task ACTUALLY has, not the one we asked for.
+    `rehomeOccupant` deliberately swallows a rejected move — "a full target column
+    rejects, which we audit and skip" — and returns void, so reporting
+    `decision.targetColumn` claimed a move that may never have happened. A caller
+    (dashboard switch, `fn_task_set_workflow`) would then show the card in a column it
+    is not in.
+
+    Re-reading also makes the reported result honest under the concurrency windows
+    raised in the same review: this call resolves the IR and re-homes AFTER
+    `selectTaskWorkflow` released its task lock, so a racing move can land in between.
+    Re-reading cannot close that window — it makes the response describe the outcome
+    rather than the intention, so a caller is never told a move succeeded when the
+    card sits elsewhere. Closing the window itself needs the switch to hold the task
+    lock across selection + reconciliation, which changes the locking contract and is
+    left as a separate, testable change rather than smuggled into a flag flip.
+    */
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review, greptile P1):
+    ABSENT IS ABSENT, decided by the pure `buildSwitchReconciliation` seam. An earlier
+    version fell back to `fromColumn`, so a task SOFT-DELETED between the first read
+    and this one was reported as having its old column PRESERVED — a live column
+    fabricated for a row that is gone.
+    */
+    const afterRow = await readTaskRowAsync(store.asyncLayer!, taskId, { includeDeleted: false });
+    const reconciliation = buildSwitchReconciliation(
+      fromColumn,
+      afterRow ? String(afterRow.column) : undefined,
+    );
+    return { enabledWorkflowSteps, ...(reconciliation ? { reconciliation } : {}) };
 }
 
 export function pruneAgentLogFilesImpl(store: TaskStore, retentionDays: number): { prunedFiles: number; prunedEntries: number; freedBytes: number } {
     if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
       return { prunedFiles: 0, prunedEntries: 0, freedBytes: 0 };
     }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:14 DELIBERATE-LITERAL:
+    STATE marker again, same reasoning as migrateActiveArchivedTasksToArchiveDbImpl above: this prunes
+    agent-log files for rows Fusion archived or soft-deleted. A card in a workflow's archived-TRAIT
+    lane is live work whose logs must survive, so the resolved set would delete data here.
+    */
     // Only prune JSONL files for tasks that are no longer active (soft-deleted or archived)
     const inactiveTaskIds = new Set(
       (
@@ -833,25 +949,13 @@ export async function getSecretsStoreImpl(store: TaskStore): Promise<SecretsStor
     // In backend mode, pass the AsyncDataLayer so SecretsStore delegates to
     // the async helpers. The sync projectDb/centralDb are still required by
     // the constructor signature but are unused when asyncLayer is set.
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      // CentralCore is not needed in backend mode; the async layer serves both
-      // project and central schemas. We pass dummy stubs for the sync DBs since
-      // they are never used when asyncLayer is present.
-      const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db.js").Database;
-      const noopCentral = noopDb as unknown as import("../central-db.js").CentralDatabase;
-      store.secretsStore = new SecretsStore(noopDb, noopCentral, masterKeyProvider, { asyncLayer: layer });
-      return store.secretsStore;
-    }
-
-    const central = new CentralCore(store.getFusionDir());
-    await central.init();
-    store.secretsCentralCore = central;
-    const centralDb = (central as unknown as { db: import("../central-db.js").CentralDatabase | null }).db;
-    if (!centralDb) {
-      throw new Error("Central database unavailable for secrets store");
-    }
-    store.secretsStore = new SecretsStore(store.db, centralDb, masterKeyProvider);
+        const layer = store.asyncLayer!;
+    // CentralCore is not needed in backend mode; the async layer serves both
+    // project and central schemas. We pass dummy stubs for the sync DBs since
+    // they are never used when asyncLayer is present.
+    const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db.js").Database;
+    const noopCentral = noopDb as unknown as import("../central-db.js").CentralDatabase;
+    store.secretsStore = new SecretsStore(noopDb, noopCentral, masterKeyProvider, { asyncLayer: layer });
     return store.secretsStore;
 }
 
@@ -863,28 +967,17 @@ export function getDatabaseHealthImpl(store: TaskStore): {
     isRunning: boolean;
   } {
     /*
-     * FNXC:SqliteFinalRemoval 2026-06-25-16:30:
-     * In backend mode, SQLite-specific corruption detection (PRAGMA
-     * integrity_check) is not applicable. PostgreSQL health is checked via
-     * the async layer. Return a healthy sentinel so synchronous callers do
-     * not block; the real health signal comes from /api/health.
-     */
-    if (store.backendMode) {
-      return {
-        healthy: true,
-        corruptionDetected: false,
-        corruptionErrors: [],
-        lastCheckedAt: null,
-        isRunning: false,
-      };
-    }
-    const corruptionDetected = store.db.corruptionDetected;
-    return {
-      healthy: !corruptionDetected,
-      corruptionDetected,
-      corruptionErrors: store.db.integrityCheckErrors.slice(0, 5),
-      lastCheckedAt: store.db.integrityCheckLastRunAt ? new Date(store.db.integrityCheckLastRunAt) : null,
-      isRunning: store.db.integrityCheckPending,
+    FNXC:IncompletePgPorts 2026-07-26-20:40:
+    Backend mode returns the last refreshDatabaseHealthAsync snapshot. Until the
+    first probe runs, report healthy with lastCheckedAt null (unknown, not a
+    lie about a successful integrity check).
+    */
+        return store.postgresHealthSnapshot ?? {
+      healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
+      lastCheckedAt: null,
+      isRunning: false,
     };
 }
 
@@ -897,107 +990,76 @@ export function getDistributedTaskIdAllocatorImpl(store: TaskStore): Distributed
     // reconcileTaskIdStateAsync() during init(). The async allocator handles
     // the reserve/commit/abort lifecycle against the PostgreSQL
     // distributed_task_id_state and distributed_task_id_reservations tables.
-    if (store.backendMode) {
-      if (!store.asyncDistributedTaskIdAllocator) {
-        store.asyncDistributedTaskIdAllocator = createAsyncDistributedTaskIdAllocator(store.asyncLayer!);
-      }
-      return store.asyncDistributedTaskIdAllocator;
+        if (!store.asyncDistributedTaskIdAllocator) {
+      store.asyncDistributedTaskIdAllocator = createAsyncDistributedTaskIdAllocator(store.asyncLayer!);
     }
-    if (!store.distributedTaskIdAllocator) {
-      store.distributedTaskIdAllocator = createDistributedTaskIdAllocator(store.db);
-    }
-    return store.distributedTaskIdAllocator;
+    return store.asyncDistributedTaskIdAllocator;
 }
 
 export function healthCheckImpl(store: TaskStore): boolean {
-    // FNXC:RuntimePersistenceAsync 2026-06-24-11:08:
-    // In backend mode, the sync SQLite health check is not applicable.
-    // PostgreSQL health is checked via the async ping() method on the
-    // AsyncDataLayer (wired by postgres-health.ts). Return true here so
-    // synchronous callers do not block; the real health signal comes from
-    // the /api/health endpoint which uses the async path.
-    if (store.backendMode) {
-      return true;
-    }
-    try {
-      // Simple query to verify database responsiveness
-      store.db.prepare("SELECT 1").get();
-      return store.db.checkFts5Integrity();
-    } catch {
-      return false;
-    }
+    /*
+    FNXC:IncompletePgPorts 2026-07-26-20:40:
+    Backend mode: report last postgresHealthSnapshot.healthy and schedule a
+    background refresh so CLI/daemon probes converge on real connectivity.
+    */
+        void store.refreshDatabaseHealthAsync().catch(() => undefined);
+    return store.getDatabaseHealth().healthy;
 }
 
 export function getSettingsSyncImpl(store: TaskStore): Settings {
-    // FNXC:RuntimePersistenceAsync 2026-06-24-10:30:
-    // In backend mode, no synchronous DB read is possible (PostgreSQL is async).
-    // This method is only used by generateSpecifiedPrompt for ntfy settings.
-    // Return DEFAULT_SETTINGS; the async getSettings() path is the authoritative
-    // settings read in backend mode. Callers needing live settings must use the
-    // async path (getSettings/getSettingsFast).
-    if (store.backendMode) {
-      return DEFAULT_SETTINGS;
-    }
-    try {
-      const row = store.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings: string | null } | undefined;
-      if (!row) return DEFAULT_SETTINGS;
-      const settings = fromJson<Settings>(row.settings);
-      return { ...DEFAULT_SETTINGS, ...settings };
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
+    /*
+    FNXC:IncompletePgPorts 2026-07-26-20:40:
+    Backend mode returns settingsSyncCache populated by getSettings/getSettingsFast.
+    Before the first async load, DEFAULT_SETTINGS is the only safe sync value.
+    */
+        return store.settingsSyncCache ?? DEFAULT_SETTINGS;
 }
 
-export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT * FROM activityLog
-         WHERE type = 'task:moved'
-           AND timestamp > ?
-           AND timestamp <= ?
-           AND (
-             json_extract(metadata, '$.to') = 'in-review'
-             OR (
-               json_extract(metadata, '$.from') = 'in-review'
-               AND json_extract(metadata, '$.to') = 'done'
-             )
-           )
-         ORDER BY timestamp ASC
-         LIMIT ?`,
-      )
-      .all(options.since, options.until, 200_000) as unknown as ActivityLogRow[];
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:15:
+Resolve the two roles the duration query reads, ONCE per call, and hand them to the SQL.
 
-    return rows.map((row) => ({
-      id: row.id,
-      timestamp: row.timestamp,
-      type: row.type as ActivityEventType,
-      taskId: row.taskId || undefined,
-      taskTitle: row.taskTitle || undefined,
-      details: row.details,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-    }));
+The predicate had `in-review` and `done` baked into a `sql` template — the one place neither the
+lifecycle census nor the unwired-lane-parameter guard can see them — so the Reliability panel's
+duration metric stayed blind on a renamed board after #2861 fixed the two counts beside it.
+
+This impl is where the store is available, which is why the resolution lives here rather than in
+`async-audit.ts`: that function takes a `db` handle and cannot resolve anything. Best-effort — a
+failed resolve leaves the query on its documented legacy lanes rather than failing the panel.
+*/
+export async function getInReviewDurationEventsImpl(store: TaskStore, options: { since: string; until: string }): Promise<ActivityLogEntry[]> {
+        const layer = store.asyncLayer!;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-06:20:
+    Named type, not an inferred literal, and the reason is a tool contract rather than style.
+
+    `scripts/lib/unwired-lane-parameter.mjs` decides a lane parameter is WIRED when some other file
+    mentions both the parameter name and its declaring symbol. For an interface passed as an inferred
+    object literal there is no mention of the type anywhere, so this call site — which does supply
+    both lanes — was reported as unwired, and #2875 landed two false entries into a guard written to
+    catch the opposite mistake.
+
+    Annotating the local is the smallest honest fix. I tried three variations of the heuristic first;
+    each traded the false positive for false NEGATIVES (the widest hid twelve genuine entries), which
+    is the usual sign that a co-occurrence check has reached its limit. Naming the type costs one
+    word, makes the wiring visible to both the reader and the tool, and leaves the guard's rule alone.
+    */
+    let lanes: InReviewDurationLanes | undefined;
+    try {
+      const [review, complete] = await Promise.all([
+        resolveProjectColumnsForRoles(store, REVIEW_ROLES),
+        resolveProjectColumnsForRoles(store, ["complete"]),
+      ]);
+      lanes = { reviewColumns: [...review], completeColumns: [...complete] };
+    } catch {
+      lanes = undefined;
+    }
+    return getInReviewDurationEventsAsync(layer.db, layer.projectId ?? "", options, lanes);
 }
 
 export async function getTaskMergedTaskIdsImpl(store: TaskStore, options: { since: string; until: string }): Promise<Set<string>> {
-    if (store.backendMode) {
-      const layer = store.asyncLayer!;
-      return getTaskMergedTaskIdsAsync(layer.db, layer.projectId ?? "", options);
-    }
-    const rows = store.db
-      .prepare(
-        `SELECT DISTINCT taskId FROM activityLog
-         WHERE type = 'task:merged'
-           AND timestamp > ?
-           AND timestamp <= ?
-           AND taskId IS NOT NULL`,
-      )
-      .all(options.since, options.until) as Array<{ taskId: string }>;
-
-    return new Set(rows.map((row) => row.taskId));
+        const layer = store.asyncLayer!;
+    return getTaskMergedTaskIdsAsync(layer.db, layer.projectId ?? "", options);
 }
 
 export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissionStore {
@@ -1012,15 +1074,12 @@ export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissi
       // SSE mission events stay degraded in PG mode — the engine MissionAutopilot +
       // dashboard SSE are coupled to the sync EventEmitter MissionStore and guard their
       // init with `instanceof MissionStore`.
-      if (store.backendMode) {
-        const layer = store.getAsyncLayer();
-        if (!layer) {
-          throw new Error("MissionStore is not available: AsyncDataLayer not initialized in backend mode");
-        }
-        store.missionStore = new AsyncMissionStore(layer, store);
-      } else {
-        store.missionStore = new MissionStore(store.fusionDir, store.db, store);
+            const layer = store.getAsyncLayer();
+      if (!layer) {
+        throw new Error("MissionStore is not available: AsyncDataLayer not initialized in backend mode");
       }
+      store.missionStore = new AsyncMissionStore(layer, store);
+
     }
     return store.missionStore;
 }
@@ -1076,11 +1135,8 @@ export function getExperimentSessionStoreImpl(store: TaskStore): ExperimentSessi
       // FNXC:RuntimeSatelliteAsync 2026-06-24-15:00:
       // In backend mode, pass the AsyncDataLayer so the store delegates to
       // async helpers; otherwise pass the sync SQLite Database.
-      if (store.backendMode) {
-        store.experimentSessionStore = new ExperimentSessionStore(null, { asyncLayer: store.asyncLayer });
-      } else {
-        store.experimentSessionStore = new ExperimentSessionStore(store.db);
-      }
+            store.experimentSessionStore = new ExperimentSessionStore(null, { asyncLayer: store.asyncLayer });
+
     }
     return store.experimentSessionStore;
 }
@@ -1099,28 +1155,17 @@ export async function getVerificationCacheHitImpl(store: TaskStore,
   ): Promise<{ recordedAt: string; taskId: string | null } | null> {
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
-    if (store.backendMode) {
-      const table = schema.project.verificationCache;
-      const rows = await store.asyncLayer!.db
-        .select({ recordedAt: table.recordedAt, taskId: table.taskId })
-        .from(table)
-        .where(and(
-          eq(table.treeSha, treeSha),
-          eq(table.testCommand, normalizedTest),
-          eq(table.buildCommand, normalizedBuild),
-        ))
-        .limit(1);
-      return rows[0] ?? null;
-    }
-    const row = store.db
-      .prepare(
-        `SELECT recordedAt, taskId FROM verification_cache
-         WHERE treeSha = ? AND testCommand = ? AND buildCommand = ?`,
-      )
-      .get(treeSha, normalizedTest, normalizedBuild) as
-      | { recordedAt: string; taskId: string | null }
-      | undefined;
-    return row ?? null;
+        const table = schema.project.verificationCache;
+    const rows = await store.asyncLayer!.db
+      .select({ recordedAt: table.recordedAt, taskId: table.taskId })
+      .from(table)
+      .where(and(
+        eq(table.treeSha, treeSha),
+        eq(table.testCommand, normalizedTest),
+        eq(table.buildCommand, normalizedBuild),
+      ))
+      .limit(1);
+    return rows[0] ?? null;
 }
 
 export async function recordVerificationCachePassImpl(store: TaskStore,
@@ -1132,29 +1177,21 @@ export async function recordVerificationCachePassImpl(store: TaskStore,
     const normalizedTest = testCommand ?? "";
     const normalizedBuild = buildCommand ?? "";
     const recordedAt = new Date().toISOString();
-    if (store.backendMode) {
-      /*
-      FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
-      Target the PK by constraint name: migration 0006_project_ownership
-      rebuilds every project-schema PK to lead with project_id, so a
-      column-list ON CONFLICT on the three logical key columns cannot infer
-      the arbiter index (42P10). project_id itself comes from the column's
-      current_setting('fusion.project_id') default under RLS.
-      */
-      await store.asyncLayer!.db.execute(sql`
-        INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
-        VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
-        ON CONFLICT ON CONSTRAINT verification_cache_pkey
-        DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
-      `);
-      return;
-    }
-    store.db
-      .prepare(
-        `INSERT OR REPLACE INTO verification_cache (treeSha, testCommand, buildCommand, recordedAt, taskId)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
+        /*
+    FNXC:PostgresOnlyDataAccess 2026-07-16-11:55:
+    Target the PK by constraint name: migration 0006_project_ownership
+    rebuilds every project-schema PK to lead with project_id, so a
+    column-list ON CONFLICT on the three logical key columns cannot infer
+    the arbiter index (42P10). project_id itself comes from the column's
+    current_setting('fusion.project_id') default under RLS.
+    */
+    await store.asyncLayer!.db.execute(sql`
+      INSERT INTO project.verification_cache (tree_sha, test_command, build_command, recorded_at, task_id)
+      VALUES (${treeSha}, ${normalizedTest}, ${normalizedBuild}, ${recordedAt}, ${taskId})
+      ON CONFLICT ON CONSTRAINT verification_cache_pkey
+      DO UPDATE SET recorded_at = EXCLUDED.recorded_at, task_id = EXCLUDED.task_id
+    `);
+    return;
 }
 
 /*

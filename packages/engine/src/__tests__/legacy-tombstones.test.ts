@@ -32,6 +32,19 @@ const DELETED_FILES = [
   "packages/core/src/workflow-cutover.ts",
   "packages/engine/src/workflow-authoritative-driver.ts",
   "packages/engine/src/workflow-parity-observer.ts",
+  /*
+  FNXC:WorkflowColumns 2026-07-27-10:25 (U2 / R9 — workflow-owned lifecycle):
+  Two more pre-cutover modules. `workflow-columns-settings.ts` held
+  `isWorkflowColumnsEnabled`, a function whose body was `return true` — eight live
+  call sites still branched on it, so every flag-OFF arm was unreachable code that
+  read as a supported configuration. `workflow-parity.ts` asserted the default
+  workflow's adjacency EQUALS the legacy `VALID_TRANSITIONS`; U11 deliberately
+  breaks that equality by merging Todo into Planning, so re-introducing it would
+  re-encode the exact shape this program chose to break. Neither may come back:
+  the first as a fake kill switch, the second as a contract against the target state.
+  */
+  "packages/core/src/workflow-columns-settings.ts",
+  "packages/core/src/workflow-parity.ts",
 ];
 
 /**
@@ -71,6 +84,22 @@ const DELETED_SYMBOLS: Array<{ symbol: string; why: string }> = [
   { symbol: "maybeExecuteWorkflowGraph", why: "renamed executeWorkflowGraph and returns void — the graph cannot decline a task, so there is no 'maybe'" },
   { symbol: "transferPreHeldToLegacy", why: "re-registered the pre-held global concurrency slot for a legacy execute path that no longer exists" },
   { symbol: "workflow-selection-api-unavailable: store lacks a workflow-selection reader so the workflow graph cannot run ", why: "the OLD fail-closed reason, emitted only when the task had enabled steps; failing closed is now unconditional and carries a different reason" },
+  /*
+  FNXC:WorkflowColumns 2026-07-27-10:26 (U2 / R9):
+  The permanently-true workflow-columns flag and the legacy transition-parity
+  harness. `isWorkflowColumnsEnabled` is the dangerous one: it LOOKS like a
+  runtime toggle, so a future reader adding a new lifecycle branch would naturally
+  gate it on the flag and ship a dead arm. The parity symbols are dangerous the
+  other way — they assert an equality with the legacy six-column transition graph
+  that the target lifecycle shape must violate.
+  */
+  { symbol: "isWorkflowColumnsEnabled", why: "returned a literal `true`; it advertised a kill switch that did not exist and every flag-OFF arm behind it was dead" },
+  { symbol: "checkTransitionParity", why: "asserted the default workflow's adjacency equals the legacy VALID_TRANSITIONS — an equality U11 deliberately breaks" },
+  { symbol: "compareWorkflowRunObservations", why: "compared a graph run against a legacy run that no longer exists" },
+  { symbol: "computeWorkflowColumnsGraduationReport", why: "graduation criteria for a flag flip that already happened" },
+  { symbol: "WORKFLOW_PARITY_OBSERVED_MUTATION", why: "run-audit mutation for the deleted dual-observe chain; nothing emits it" },
+  { symbol: "WORKFLOW_PARITY_DRIFT_MUTATION", why: "run-audit mutation for the deleted dual-observe chain; nothing emits it" },
+  { symbol: "getWorkflowParitySummary", why: "aggregated parity run-audit rows that no emitter writes" },
 ];
 
 /** Strip block and line comments so an explanatory tombstone note is not read as a live reference. */

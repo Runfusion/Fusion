@@ -32,6 +32,28 @@ describe("pre-release Plan Review readiness", () => {
     expect(resolvePreReleasePlanReviewNode(workflow("in-progress"))).toBeUndefined();
   });
 
+  /*
+  FNXC:PlanReview 2026-07-26-14:05:
+  Plan-in-place is the whole gate: Plan Review must run in the column the card is HELD in. When the
+  default workflow moved Plan Review from the wip column to the planning column, "not a wip column"
+  alone made every Todo card look pre-release-gated, and the capacity sweep stopped releasing cards
+  whose graph never routes through Todo (they can never produce a continuation for that boundary).
+  Asserted on the store-free path so the regression cannot hide behind a continuation fixture.
+  */
+  it("does not gate a held card on a Plan Review that lives in an upstream column", async () => {
+    const ir = workflow("triage");
+    (ir as { columns: Array<{ id: string; name: string; traits: Array<{ trait: string }> }> }).columns.push({
+      id: "triage",
+      name: "Planning",
+      traits: [{ trait: "intake" }],
+    });
+    // No listWorkflowWorkItemsForTask: a gated card would be held on the missing store method.
+    const store = {} as any;
+    await expect(isUnplannedForExecution(store, { id: "T-6", column: "todo" } as any, ir)).resolves.toBe(false);
+    // ...while the same review IN the held column still gates.
+    await expect(isUnplannedForExecution(store, { id: "T-7", column: "todo" } as any, workflow())).resolves.toBe(true);
+  });
+
   it("keys release readiness to the durable capacity continuation", async () => {
     const task = { id: "T-4", column: "todo" } as any;
     const item = {

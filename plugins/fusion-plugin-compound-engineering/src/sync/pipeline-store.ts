@@ -231,7 +231,6 @@ export class CePipelineStore {
 
   /** Async sibling: createLink. Routes to Drizzle in backend mode. */
   async createLinkAsync(input: CreateCePipelineLinkInput): Promise<CePipelineLink> {
-    if (!this.asyncLayer) return this.createLink(input);
     const link: CePipelineLink = {
       id: input.id ?? randomUUID(),
       taskId: input.taskId,
@@ -261,7 +260,6 @@ export class CePipelineStore {
 
   /** Async sibling: listByPipeline. Routes to Drizzle in backend mode. */
   async listByPipelineAsync(cePipelineId: string): Promise<CePipelineLink[]> {
-    if (!this.asyncLayer) return this.listByPipeline(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
       .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.cePipelineId, cePipelineId)))
@@ -278,7 +276,6 @@ export class CePipelineStore {
 
   /** Async sibling: findByTaskId. Routes to Drizzle in backend mode. */
   async findByTaskIdAsync(taskId: string): Promise<CePipelineLink | undefined> {
-    if (!this.asyncLayer) return this.findByTaskId(taskId);
     const rows = await this.dbAsync().select()
       .from(cePipelineLinksTable)
       .where(and(eq(cePipelineLinksTable.projectId, this.projectId()), eq(cePipelineLinksTable.taskId, taskId)))
@@ -298,7 +295,6 @@ export class CePipelineStore {
 
   /** Async sibling: getState. Routes to Drizzle in backend mode. */
   async getStateAsync(cePipelineId: string): Promise<CePipelineState | undefined> {
-    if (!this.asyncLayer) return this.getState(cePipelineId);
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
       .where(and(eq(cePipelineStateTable.projectId, this.projectId()), eq(cePipelineStateTable.cePipelineId, cePipelineId)))
@@ -315,7 +311,6 @@ export class CePipelineStore {
 
   /** Async sibling: listAllState. Routes to Drizzle in backend mode. */
   async listAllStateAsync(): Promise<CePipelineState[]> {
-    if (!this.asyncLayer) return this.listAllState();
     const rows = await this.dbAsync().select()
       .from(cePipelineStateTable)
       .where(eq(cePipelineStateTable.projectId, this.projectId()))
@@ -349,7 +344,6 @@ export class CePipelineStore {
 
   /** Async sibling: upsertState. Routes to Drizzle in backend mode. */
   async upsertStateAsync(input: UpsertCePipelineStateInput): Promise<CePipelineState> {
-    if (!this.asyncLayer) return this.upsertState(input);
     const now = new Date().toISOString();
     /*
     FNXC:CompoundEngineeringConcurrency 2026-07-14-23:53:
@@ -401,7 +395,6 @@ export class CePipelineStore {
     cePipelineId: string,
     next: { currentStage?: string; status?: CePipelineStatus; lastArtifactPath?: string | null },
   ): Promise<CePipelineState | undefined> {
-    if (!this.asyncLayer) return this.transitionState(cePipelineId, next);
     const existing = await this.getStateAsync(cePipelineId);
     if (!existing) return undefined;
     return this.upsertStateAsync({
@@ -438,7 +431,6 @@ export class CePipelineStore {
 
   /** Async sibling: enqueueSync. Routes to Drizzle in backend mode. */
   async enqueueSyncAsync(input: EnqueueSyncInput): Promise<CeSyncQueueEntry> {
-    if (!this.asyncLayer) return this.enqueueSync(input);
     const entry: CeSyncQueueEntry = {
       id: input.id ?? randomUUID(),
       cePipelineId: input.cePipelineId,
@@ -472,7 +464,6 @@ export class CePipelineStore {
 
   /** Async sibling: listPendingSync. Routes to Drizzle in backend mode. */
   async listPendingSyncAsync(): Promise<CeSyncQueueEntry[]> {
-    if (!this.asyncLayer) return this.listPendingSync();
     const rows = await this.dbAsync().select()
       .from(cePipelineSyncQueueTable)
       .where(and(eq(cePipelineSyncQueueTable.projectId, this.projectId()), isNull(cePipelineSyncQueueTable.processedAt)))
@@ -488,10 +479,10 @@ export class CePipelineStore {
 
   /** Async sibling: markSyncProcessed. Routes to Drizzle in backend mode. */
   async markSyncProcessedAsync(id: string): Promise<void> {
-    if (!this.asyncLayer) {
-      this.markSyncProcessed(id);
-      return;
-    }
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-13:42:
+    Async queue mark-processed is PostgreSQL-only; the former SQLite markSyncProcessed fallback is deleted.
+    */
     await this.dbAsync().update(cePipelineSyncQueueTable)
       .set({ processedAt: new Date().toISOString() })
       .where(and(

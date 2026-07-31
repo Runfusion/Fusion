@@ -463,6 +463,19 @@ export type TaskRevertResult =
 export type TaskRevertGranularity = "squash" | "per-sha";
 
 export interface PerformTaskRevertOptions {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+  The task's resolved TERMINAL lanes, as membership. Optional: without it the legacy `done`/`archived`
+  pair answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
+  already computes this via `resolveTerminalColumnsForTask` for its own gate and now passes the same set
+  down, so the route and the service cannot disagree about which cards are revertable.
+
+  MEMBERSHIP, not a single id — a workflow may declare more than one complete or archived lane, and
+  first-per-role would refuse a revert on the second. That arity trap has now been hit three times in this
+  program (routes review lane, the FN-7720 bypass guard, dependency satisfaction), so it is the default
+  shape here rather than a later correction.
+  */
+  revertableColumns?: ReadonlySet<string>;
   task: Pick<Task, "id" | "lineageId" | "column" | "mergeDetails" | "autoMerge" | "userPaused" | "paused" | "workspaceWorktrees">;
   worktreePath: string;
   baseBranch: string;
@@ -474,9 +487,22 @@ export interface PerformTaskRevertOptions {
   granularity?: TaskRevertGranularity;
 }
 
-// FNXC:TaskRevert 2026-07-04-00:00 (guard rails, enforced in BOTH the service
-// and the route per PROMPT Step 3): only done/archived tasks are revertable.
-const REVERTABLE_COLUMNS = new Set(["done", "archived"]);
+/*
+FNXC:TaskRevert 2026-07-04-00:00 (guard rails, enforced in BOTH the service and the route per PROMPT
+Step 3): only terminal tasks are revertable.
+
+FNXC:WorkflowResolvedColumns 2026-07-30-17:20 (the two halves had drifted apart):
+This is the DEGRADED default now, not the answer. `POST /tasks/:id/revert` already gates on
+`resolveTerminalColumnsForTask(...)` — resolved membership over the task's own workflow — while this
+service kept the literal pair. On a board whose terminal lanes are renamed the two halves DISAGREED: the
+route admitted the request and the service then refused it with "only done/archived tasks are revertable",
+so the operator got a dead end from an affordance the UI and the route both offered.
+
+Defence-in-depth is the point of having the check twice, but only if both halves answer the same question.
+Callers pass `revertableColumns`; without it the legacy pair keeps today's behaviour for any caller that
+cannot resolve a workflow.
+*/
+const LEGACY_REVERTABLE_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 /**
  * FNXC:TaskRevert 2026-07-04-00:00 (commit message/trailer contract):
@@ -517,8 +543,10 @@ export async function performTaskRevert(opts: PerformTaskRevertOptions): Promise
     return { mode: "git", unsupported: true, reason: "workspace-task-revert-unsupported-by-single-repo-path; use revertWorkspaceTask" };
   }
 
-  if (!REVERTABLE_COLUMNS.has(task.column)) {
-    return { mode: "git", needsHuman: true, reason: `task is in column "${task.column}"; only done/archived tasks are revertable` };
+  const revertableColumns = opts.revertableColumns ?? LEGACY_REVERTABLE_COLUMNS;
+  if (!revertableColumns.has(task.column)) {
+    const named = [...revertableColumns].map((c) => `"${c}"`).join(" or ");
+    return { mode: "git", needsHuman: true, reason: `task is in column "${task.column}"; only ${named} tasks are revertable` };
   }
 
   const effectiveAutoMerge = task.autoMerge ?? opts.effectiveAutoMerge ?? true;
@@ -1041,6 +1069,19 @@ export type WorkspaceTaskRevertResult =
   | { mode: "git"; needsHuman: true; reason: string };
 
 export interface RevertWorkspaceTaskOptions {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:20:
+  The task's resolved TERMINAL lanes, as membership. Optional: without it the legacy `done`/`archived`
+  pair answers, so any caller that cannot resolve a workflow is unchanged. The dashboard revert route
+  already computes this via `resolveTerminalColumnsForTask` for its own gate and now passes the same set
+  down, so the route and the service cannot disagree about which cards are revertable.
+
+  MEMBERSHIP, not a single id — a workflow may declare more than one complete or archived lane, and
+  first-per-role would refuse a revert on the second. That arity trap has now been hit three times in this
+  program (routes review lane, the FN-7720 bypass guard, dependency satisfaction), so it is the default
+  shape here rather than a later correction.
+  */
+  revertableColumns?: ReadonlySet<string>;
   task: Pick<Task, "id" | "lineageId" | "column" | "mergeDetails" | "workspaceWorktrees" | "autoMerge" | "userPaused" | "paused">;
   /** Project root dir; each sub-repo lives at `join(workspaceRootDir, repoRel)` (mirrors `landWorkspaceTask`). */
   workspaceRootDir: string;
@@ -1096,8 +1137,10 @@ export async function revertWorkspaceTask(opts: RevertWorkspaceTaskOptions): Pro
   const { task, workspaceRootDir } = opts;
   const execImpl = opts.execAsyncImpl ?? defaultExecAsync;
 
-  if (!REVERTABLE_COLUMNS.has(task.column)) {
-    return { mode: "git", needsHuman: true, reason: `task is in column "${task.column}"; only done/archived tasks are revertable` };
+  const revertableColumns = opts.revertableColumns ?? LEGACY_REVERTABLE_COLUMNS;
+  if (!revertableColumns.has(task.column)) {
+    const named = [...revertableColumns].map((c) => `"${c}"`).join(" or ");
+    return { mode: "git", needsHuman: true, reason: `task is in column "${task.column}"; only ${named} tasks are revertable` };
   }
 
   const effectiveAutoMerge = task.autoMerge ?? opts.effectiveAutoMerge ?? true;

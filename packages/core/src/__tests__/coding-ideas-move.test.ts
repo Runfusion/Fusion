@@ -114,11 +114,19 @@ pgDescribe("Coding (Ideas) custom-column moves (workflow-columns graduation)", (
     await expect(
       store.moveTask(task.id, "ideas", { moveSource: "user" }),
     ).rejects.toThrow(/Invalid transition: '.*' → 'ideas'/);
-    // ...and so is a legacy-but-non-adjacent target, with the verbatim legacy target list.
+    /*
+    FNXC:WorkflowColumns 2026-07-30-04:30 (U12 — the move-path flag is resolved):
+    ...and so is a non-adjacent target. The advertised target list changed from
+    `in-progress, triage, archived` to `archived, in-progress`, and that is the FIX rather than a
+    regression: the old list came from the hardcoded legacy adjacency table, which still offered
+    `triage` — a column the default lineage stopped declaring at #2515. The move path now resolves
+    adjacency from the task's own workflow, so it can no longer advertise a column that does not
+    exist. An operator following the old message would have been told to move somewhere impossible.
+    */
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await expect(
       store.moveTask(task.id, "in-review", { moveSource: "user" }),
-    ).rejects.toThrow("Invalid transition: 'todo' → 'in-review'. Valid targets: in-progress, triage, archived");
+    ).rejects.toThrow("Invalid transition: 'todo' → 'in-review'. Valid targets: archived, in-progress");
   });
 
   it("cancels an active task continuation when a user sends implementation back to todo", async () => {

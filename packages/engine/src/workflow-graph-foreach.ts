@@ -427,7 +427,11 @@ export async function runForeach(
     const liveSteps = await Promise.resolve(env.getLiveSteps?.() ?? env.steps).catch(() => env.steps);
     const stepStatus = liveSteps[stepIndex]?.status ?? env.steps[stepIndex]?.status;
     if (stepStatus === "done" || stepStatus === "skipped") {
-      schedulerLog.log(
+      /*
+      FNXC:EngineDiagnostics 2026-07-26-10:05:
+      Resume/replay skips one log line per already-terminal step on every foreach expansion. Steady-state bookkeeping — debug (FUSION_DEBUG=scheduler). Failures/rework-exhaustion stay warn.
+      */
+      schedulerLog.debug(
         `foreach ${foreachNode.id} for task ${env.task.id}: skipping step ${stepIndex} — already ${stepStatus}`,
       );
       continue;
@@ -699,7 +703,8 @@ async function runForeachWorktree(
             outcome.status === "conflict" && Array.isArray(outcome.conflictedFiles)
               ? outcome.conflictedFiles
               : [];
-          schedulerLog.log(
+          // FNXC:EngineDiagnostics 2026-07-26-10:05: integration-conflict rework can fire multiple times per instance; task audit entry remains the operator-visible record.
+          schedulerLog.debug(
             `foreach ${foreachNode.id} step ${inst.stepIndex}: integration-conflict — reworking on updated base (budget left ${inst.reworkBudget})`,
           );
           // Task-level audit so the re-running agent sees WHY its base moved

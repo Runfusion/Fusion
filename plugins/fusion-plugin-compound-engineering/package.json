@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/compound-engineering",
-  "version": "0.1.32-beta.3",
+  "version": "0.1.32-beta.5",
   "type": "module",
   "description": "Compound Engineering plugin for Fusion",
   "private": true,
@@ -35,6 +35,6 @@
     "@types/react": "^19.0.0",
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

@@ -1,7 +1,10 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-activity-analytics");
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
+import { resolveDefaultWorkflowIr } from "./builtin-workflows.js";
 import type { WorkflowIrColumn } from "./workflow-ir-types.js";
 
 /**
@@ -209,7 +212,7 @@ function rangeClauses(
  */
 export async function aggregateActivityAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
-  query: ActivityAnalyticsQuery = {},
+  query: SdlcFunnelQuery = {},
 ): Promise<ActivityAnalytics> {
   // FNXC:RuntimeSatelliteAsync 2026-06-24-13:45:
   // The activity analytics queries (sessions, messages, nodes, agents, daily
@@ -604,6 +607,24 @@ const TRAIT_TO_STAGE: Record<string, SdlcStage> = {
   triage: "triage",
   // todo
   "reset-on-entry": "todo",
+  /*
+  FNXC:SdlcFunnel 2026-07-30-16:00:
+  `hold` was absent from this map entirely, so a column whose ONLY pre-implementation trait is
+  `hold` — a renamed board's wait-for-capacity lane — resolved to OTHER and vanished from the
+  funnel. Measured before the fix: `stageForTraits(["hold"]) === "other"`.
+
+  Adding it does NOT change where the merged default Planning column lands. That column carries
+  `["intake","hold","reset-on-entry"]`, and `stageForTraits` prefers the earliest stage in flow
+  order, so `intake` (stage 0) still wins and it resolves to `triage` exactly as before. This is
+  strictly the hold-only case.
+
+  The merged column landing in `triage` while the `todo` stage stays empty is a SEPARATE and larger
+  question — it makes the funnel show a phantom 100% drop between Triage and Todo on every default
+  board since U11 — and it is deliberately not settled here. Changing which stage the Planning column
+  reports would retroactively alter how historical analytics read, which is not a reversible call the
+  way this one is. Flagged for a product decision on PR #2669.
+  */
+  hold: "todo",
   // in-progress
   wip: "in-progress",
   timing: "in-progress",
@@ -710,8 +731,32 @@ interface MoveRow {
   ts: string;
 }
 
+/*
+FNXC:SdlcFunnelColumns 2026-07-30-09:40:
+THE FALLBACK WAS THE LEGACY MONOLITHIC IR, and the only production callers use the fallback.
+`aggregateActivityAnalytics` (Command Center's `/command-center/activity`, and the OTel exporter) never
+passes `columns`, so every project's funnel was mapped through `BUILTIN_CODING_WORKFLOW_IR` — the
+constant the catalog now publishes as `builtin:legacy-coding`, not the current default. The same
+legacy-constant-vs-catalog split produced the "preflight is stale" drift in the move resolvers.
+
+Consequence: any column id absent from that legacy set folds to OTHER, so a renamed or custom board's
+Command Center funnel reads as empty while the board is plainly busy. The doc comment says callers with
+a custom workflow "should call `aggregateSdlcFunnel` directly"; no caller does, which is what makes this
+the default path rather than an edge case.
+
+`resolveDefaultWorkflowIr()` is the shared authority every other default resolution uses, so the
+built-in fallback now agrees with the board Fusion actually ships.
+
+SCOPE, corrected after I overstated it: post-U11 the current lineage's column ids are a SUBSET of the
+legacy constant's, so this change alone fixes NO renamed board — it only stops the fallback describing a
+board Fusion no longer ships (a consistency fix, and it is why `defaultColumns` cannot have a
+behaviour-revealing test on its own). The renamed/custom case is fixed by the CALLER passing `columns`,
+which is why `aggregateActivityAnalytics` now accepts them and the Command Center route resolves the
+project's own workflow. I nearly shipped the consistency change as if it were the whole fix; the
+give-away was a revert proof that would not go red.
+*/
 function defaultColumns(): FunnelColumnTraitSource[] {
-  const ir = BUILTIN_CODING_WORKFLOW_IR;
+  const ir = resolveDefaultWorkflowIr();
   if (ir.version === "v2") {
     return (ir.columns as WorkflowIrColumn[]).map((c) => ({
       id: c.id,
@@ -925,7 +970,7 @@ export async function aggregateMonitorMetrics(
       // (it previously sat outside any try/catch), but log: a real failure here
       // (permissions, schema drift, bad bind) must not masquerade as "0 deploys".
       deployments = 0;
-      console.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
+      severityAuditLog.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
     }
     try {
       const openedFrom = query.from ? sql`AND opened_at >= ${query.from}` : sql``;

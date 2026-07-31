@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -58,7 +58,11 @@ async function formatTaskDuplicateLineage(task: Awaited<ReturnType<TaskStore["ge
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      return linked.column === "archived" ? `${id} (archived)` : id;
+      /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:10 (fleet: CLI surface): the board's archived column.
+         With the literal, a renamed board's archived duplicates printed with no `(archived)` marker, so the
+         operator could not tell a live duplicate from a filed one in the lineage line. */
+      const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
+      return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
     } catch {
       return id;
     }
@@ -335,8 +339,22 @@ async function runCliNearDuplicateCheck(args: {
     }
     if (!args.bypass) {
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const taskCandidates = (await args.store.listTasks({ slim: false, includeArchived: false }))
-        .filter((task) => task.column !== "done")
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-08:15 (fleet: CLI surface):
+      Duplicate detection compares against UNFINISHED work, and "finished" is the board's complete column.
+      With the literal, a renamed board kept every completed card in the candidate set: the guard then
+      reported a new task as a duplicate of work that had already landed, which is the opposite of useful.
+      Resolved per candidate through one shared cache, because candidates can span workflows.
+      */
+      const candidateIrCache = new Map<string, never>();
+      const allCandidates = await args.store.listTasks({ slim: false, includeArchived: false });
+      const completeByTaskId = new Map<string, string>();
+      for (const task of allCandidates) {
+        const lifecycle = await resolveTaskLifecycleColumns(args.store, task.id, candidateIrCache as never);
+        completeByTaskId.set(task.id, lifecycle?.complete ?? "done");
+      }
+      const taskCandidates = allCandidates
+        .filter((task) => task.column !== completeByTaskId.get(task.id))
         .filter((task) => {
           const createdAtMs = Date.parse(task.createdAt);
           return Number.isFinite(createdAtMs) && createdAtMs >= cutoff;
@@ -456,9 +474,19 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
             ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
             ...(hasIntentSignal(nearDuplicate.signature) ? { intentSignature: nearDuplicate.signature } : {}),
           };
+          /*
+          FNXC:OriginWorkflowSelection 2026-07-26-19:40:
+          `fn task create` honors the project `taskCreateWorkflowId` setting: a pinned
+          workflow, else the operator's mirrored Board lane ("Selected workflow"), else
+          `undefined` — which leaves createTask on its existing project-default path, so
+          an unconfigured project behaves exactly as before. The resolver validates the
+          id, so a stale value can never make CLI create throw.
+          */
+          const originWorkflowId = await store.resolveOriginWorkflowOverrideId("task-create");
           const created = await store.createTask({
             description: trimmedDescription,
             dependencies: depends,
+            ...(originWorkflowId ? { workflowId: originWorkflowId } : {}),
             source: {
               sourceType: "cli",
               sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
@@ -581,11 +609,32 @@ export async function runTaskList(projectName?: string) {
     if (colTasks.length === 0) continue;
 
     const label = COLUMN_LABELS[col];
-    const dot =
-      col === "triage" ? "●" :
-      col === "todo" ? "●" :
-      col === "in-progress" ? "●" :
-      col === "in-review" ? "●" : "○";
+    /*
+    FNXC:CliBoardGlyph 2026-07-29-22:40 (lifecycle-column vocabulary):
+    All four non-terminal columns rendered the SAME glyph, so the four id comparisons
+    were only ever asking "is this column terminal?". Naming `triage` here made it a
+    lifecycle-vocabulary site for no behavioural reason — the merged Planning column
+    dropped that id, and this comparison silently stopped matching while the output
+    stayed correct by accident (the fallthrough gave it `●` anyway).
+
+    Asking the terminal question directly removes the vocabulary dependency. It is
+    behaviour-identical ONLY because this loop iterates the legacy `COLUMNS` constant
+    (types/board.ts:27 — exactly the six ids), so `col` can never be a custom id. Worth
+    stating because the two forms DIVERGE outside that set: the old chain fell through
+    to `○` for an unrecognised id, this returns `●`. If this ever iterates
+    workflow-resolved columns, that difference becomes live and the right answer is a
+    trait lookup, not this.
+
+    NOT claimed as trait-resolved, and the deeper bug is left alone: because the loop
+    iterates the legacy enum, a card in a workflow-renamed column is not rendered AT
+    ALL. That is the R8/U10 surface change (no surface derives its column set from the
+    legacy enum) and a far bigger fix than this glyph.
+    */
+    /* DELIBERATE-LITERAL: `col` comes from the legacy `COLUMNS` enum this loop iterates, so the literal
+       matches its own receiver by construction. The real defect is named in the comment above — a card in a
+       workflow-renamed column is not rendered at all — and converting this glyph would hide that behind a
+       trait lookup while the loop still cannot see the card. Retires with the loop. */
+    const dot = col === "done" || col === "archived" ? "○" : "●";
 
     console.log(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
@@ -891,7 +940,11 @@ export async function runTaskSetNode(id: string, nodeNameOrId: string, projectNa
   await withBoardWrite(projectName, { id, action: "set node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+       literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
+       node override of a card that was actively executing — the guard exists because that races the run. */
+    const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
+    if (task.column === (nodeGuardLifecycle?.wip ?? "in-progress")) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -917,7 +970,11 @@ export async function runTaskClearNode(id: string, projectName?: string) {
   await withBoardWrite(projectName, { id, action: "clear node override" }, async (context) => {
     const task = await context.store.getTask(id);
 
-    if (task.column === "in-progress") {
+    /* FNXC:WorkflowLifecycleColumns 2026-08-02-08:20 (fleet: CLI surface): the board's wip lane. With the
+       literal these guards never fired on a renamed board, so `fn task set-node` / `clear-node` rewrote the
+       node override of a card that was actively executing — the guard exists because that races the run. */
+    const nodeGuardLifecycle = await resolveTaskLifecycleColumns(context.store, id);
+    if (task.column === (nodeGuardLifecycle?.wip ?? "in-progress")) {
       console.error(`Cannot change node override: task ${id} is in progress`);
       await closeBoardContextAndExit(context, 1);
       return;
@@ -1147,7 +1204,7 @@ export async function runTaskAttach(id: string, filePath: string, projectName?: 
 export async function runTaskPause(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "pause task" }, async (context) => {
-    const task = await context.store.pauseTask(id, true);
+    const task = await context.store.pauseTask(id, true, undefined, { userPaused: true });
 
     console.log();
     console.log(`  ✓ Paused ${task.id}`);
@@ -1278,8 +1335,39 @@ export async function runTaskRetry(id: string, projectName?: string) {
       throw new Error(`Task ${id} not found`);
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-08:30 (fleet: CLI surface — the retry gate exists TWICE):
+    This is the CLI's copy of the dashboard route's retry classifier, and #2713 converted only the route. So
+    after that PR `POST /tasks/:id/retry` accepted a renamed board's stalled review card while
+    `fn task retry` still refused it with "not in a retryable state" — the same operator action answering
+    differently depending on which surface they used.
+    Worth stating as a rule: when a gate is duplicated across surfaces, converting one of them creates a
+    DISAGREEMENT that is harder to diagnose than the original inert guard. Grep for the classifier by name
+    before claiming a lane is converted.
+    */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-22:10 (consolidation onto #2730's core resolver):
+    ONE DEFINITION, IN CORE. `resolveReviewColumns` is now the authoritative answer to "which columns are
+    review", and this inline union was one of THREE in-tree copies that disagreed with each other:
+
+      core (#2730):         mergeOrchestration u mergeBlocker u humanReview — ALL columns
+      dashboard routes:     mergeBlocker u humanReview u FIRST mergeOrchestration
+      cli/src/extension.ts: mergeBlocker u humanReview u FIRST mergeOrchestration
+      this copy:            all three, full union
+
+    The two `.slice(0, 1)` variants were MINE, from #2723's review round: I narrowed to core's then-single
+    `.review` because the reviewer was right that a superset let the dashboard act on a lane the engine did not
+    own. #2730 answered that question authoritatively in the other direction, so the narrowing is obsolete — and
+    keeping any local copy means re-litigating arity per call site forever, which is what produced three answers.
+
+    The legacy fallback stays: an unresolvable or column-less IR keeps `in-review`, so boards that never declared
+    traits are unchanged.
+    */
+    const retryIr = await resolveWorkflowIrForTask(context.store, id).catch(() => undefined);
+    const resolvedReviewColumns = retryIr === undefined ? [] : resolveReviewColumns(retryIr);
+    const retryReviewColumns = new Set(resolvedReviewColumns.length > 0 ? resolvedReviewColumns : ["in-review"]);
     const isInReviewStatusNone =
-      task.column === "in-review" && (task.status === null || task.status === undefined);
+      retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
     const hasIncompleteSteps = task.steps.some(
       (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
     );
@@ -1290,7 +1378,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
     const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
     const isInReviewRetry =
-      task.column === "in-review" &&
+      retryReviewColumns.has(task.column) &&
       (task.status === "failed" ||
         task.status === "stuck-killed" ||
         isInReviewExecutionStall ||
@@ -1299,19 +1387,40 @@ export async function runTaskRetry(id: string, projectName?: string) {
     FNXC:MissingWorktreeRetry 2026-07-10-18:28:
     Upstream #1992 requires operator retry to recover an in-review task whose session start refused a missing/incomplete/unregistered worktree even when the row is stuck in an invalid merge-active status. This signature-only bypass clears stale session metadata instead of requiring a valid `merging` transition.
     */
-    const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+    const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
 
     // Validate task is in a retryable state
     if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
       throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-11:20 (fleet — the retry TARGET, live regression on main):
+    Retry re-queues the card to its board's HOLD column, resolved from the task's own workflow.
+
+    #2728 converted the retry CLASSIFIER above (`retryReviewColumns.has(task.column)`) and left all
+    three re-queue targets below on the literal `"todo"`. That combination is strictly worse than the
+    bug it fixed: before, `fn task retry` silently did nothing on a renamed board; after, it
+    correctly decides to retry and then THROWS
+
+        TransitionRejectionError: Invalid transition: 'checking' -> 'todo'. Unknown column for this workflow.
+
+    because `todo` is not a column that board declares.
+
+    The census cannot see this: it counts COMPARISONS, and a move target contains none. So the file
+    reads 0 guards while the crash is live — which is exactly why the classifier and the target must
+    move together.
+
+    Fail-soft to `"todo"` when the workflow cannot be resolved, matching every other fallback here.
+    */
+    const retryHoldColumn = (await resolveTaskLifecycleColumns(context.store, id))?.hold ?? "todo";
+
     const autoPauseClearPatch = buildAutoPauseClearPatch(task);
     const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
     const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
 
     if (isMissingWorktreeSessionRetry) {
-      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
       await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,
@@ -1333,7 +1442,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
     // and merge failures (all steps done).
     if (isInReviewRetry) {
       if (isExecutionFailureInReview) {
-        await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+        await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never, { preserveProgress: true }));
         await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
           status: null,
           error: null,
@@ -1353,7 +1462,7 @@ export async function runTaskRetry(id: string, projectName?: string) {
         return;
       }
 
-      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo"));
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
       await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,
@@ -1368,10 +1477,20 @@ export async function runTaskRetry(id: string, projectName?: string) {
       return;
     }
 
-    // Move to todo column before applying retry resets. `moveTask` reads from the
+    // Move to the hold column before applying retry resets. `moveTask` reads from the
     // store's durable index and may overwrite task.json-only updates, so apply the
     // manual retry reset patch after the move to make the cleared counters stick.
-    await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, 'todo'));
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-12:30 (PR #2752 review — greptile P1):
+    THE FOURTH TARGET, and the one that matters most.
+
+    This is the GENERIC retry fallthrough — a plainly `failed` or `stuck-killed` card, which is the
+    ordinary case, not the in-review stall paths above. It was written with SINGLE quotes while its
+    three siblings used double, so my first pass converted three of four and left the common path
+    crashing. Found by review, not by me, and not by any tool: the census counts comparisons and sees
+    none of these, and a same-file grep for the double-quoted form reports clean.
+    */
+    await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, retryHoldColumn as never));
 
     // Clear failure state and stale branch refs so retry can choose a fresh base.
     await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
@@ -1438,8 +1557,11 @@ export async function runTaskDelete(id: string, force?: boolean, allowResurrecti
     await retryBoardCall(context, id, "delete task", () => context.store.deleteTask(id, {
       allowResurrection: allowResurrection === true,
       auditContext: {
+        // FNXC:TaskDeleteAttribution 2026-07-26-14:30: `fn task delete` prompts a human for
+        // confirmation at a terminal, so it is an operator surface, not unattributed automation.
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,
+        callerKind: "operator-cli",
       },
     }));
     console.log();
@@ -1591,7 +1713,10 @@ export async function runTaskImportGitHubInteractive(
       const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
         title: title || undefined,
         description,
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [],
         sourceIssue: source.sourceIssue,
         source: {
@@ -1764,7 +1889,10 @@ export async function runTaskImportFromGitHub(
       const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
         title: title || undefined,
         description,
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [],
         sourceIssue: source.sourceIssue,
         source: {
@@ -1839,7 +1967,10 @@ export async function runTaskImportFromGitLab(
       const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
         title: title || undefined,
         description: dashboard.buildGitLabTaskDescription(item),
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [],
         sourceIssue: provenance.sourceIssue,
         gitlabTracking: provenance.gitlabTracking,

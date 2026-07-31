@@ -19,6 +19,54 @@ function taskFixture(overrides: Partial<OverseerTaskRef> = {}): OverseerTaskRef 
   } as OverseerTaskRef;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+
+THE INVARIANT: the watched stage comes from the column's ROLE, not from its id.
+
+Keyed on the id, `resolveWatchedStage` returned null for every card on a renamed board — and
+`observeTask` returns early on a null stage, so no observation was recorded, no
+`overseer:intervention` was emitted, and `PlannerRecoveryController` had nothing to steer, retry or
+targeted-fix. The whole oversight loop went inert and said nothing about it, which is why this is
+worth a parameter rather than a fallback.
+
+THE REVIEW TEST IS THE THREE-TRAIT UNION. `isReviewColumnRole` checks only `mergeBlocker ||
+humanReview`, so a board whose review lane carries `merge` (mergeOrchestration) — the default's own
+shape — would classify as not-in-review and be skipped. That case is asserted below precisely because
+reaching for the obvious helper would have reintroduced the bug this change removes.
+
+REVERT PROOF, measured: drop the `columnFlags` branch and the three renamed-lane cases fail with
+`expected null to be "executor" / "merger"`.
+*/
+describe("resolveWatchedStage keys on the column role", () => {
+  const wip = { countsTowardWip: true } as never;
+  const mergeLane = { mergeOrchestration: true } as never;
+  const humanReviewLane = { humanReview: true } as never;
+
+  it("classifies a RENAMED wip lane as the executor stage", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "building" }), wip)).toBe("executor");
+  });
+
+  it("classifies a review lane that carries only mergeOrchestration", () => {
+    // The union matters: `isReviewColumnRole` would answer false here and the card would be skipped.
+    expect(resolveWatchedStage(taskFixture({ column: "signoff" }), mergeLane)).toBe("merger");
+  });
+
+  it("classifies a review lane that carries humanReview", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "waiting" }), humanReviewLane)).toBe("merger");
+  });
+
+  it("still returns null for a lane carrying neither role", () => {
+    // The gate must still gate — watching every column would be its own defect.
+    expect(resolveWatchedStage(taskFixture({ column: "shipped" }), { complete: true } as never)).toBeNull();
+  });
+
+  it("falls back to the legacy ids when no flags are supplied", () => {
+    expect(resolveWatchedStage(taskFixture({ column: "in-progress" }))).toBe("executor");
+    expect(resolveWatchedStage(taskFixture({ column: "todo" }))).toBeNull();
+  });
+});
+
 describe("resolveWatchedStage", () => {
   it("resolves an active in-progress task to executor", () => {
     expect(resolveWatchedStage(taskFixture({ column: "in-progress" }))).toBe("executor");

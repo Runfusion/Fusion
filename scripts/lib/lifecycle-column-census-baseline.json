@@ -135,12 +135,12 @@
   "queryByFile": {
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
-    "packages/engine/src/self-healing.ts": 2,
     "packages/core/src/async-mission-store.ts": 1,
     "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
     "packages/engine/src/agent-tools.ts": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1
+    "packages/engine/src/auto-merge-finalization.ts": 1,
+    "packages/engine/src/self-healing.ts": 1
   }
 }

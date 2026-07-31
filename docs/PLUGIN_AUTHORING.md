@@ -595,6 +595,71 @@ Route handlers receive the same loader-built `PluginContext` used by hooks/tools
 - Route path: `/status`
 - Full URL: `/api/plugins/fusion-plugin-notification/status`
 
+### UI metadata endpoints
+
+<!-- FNXC:UiMetadataApi 2026-07-14-00:00: Frontend plugins and command palettes must discover the host's registered view ids and Settings metadata through authenticated, read-only APIs instead of hardcoding dashboard-owned ids, labels, or search terms. -->
+
+Frontend integrations can enumerate the host UI before presenting navigation or settings commands. Both endpoints inherit the dashboard's standard `/api` authentication, are read-only, return static project-independent metadata, and do not require a project id.
+
+`GET /api/views` returns every registered built-in view id in dashboard order. This is the full registry, not a live navigation menu: it includes ids that are flag-gated or experimental (for example `graph`, `todos`, `secrets`), and internal, non-navigable destinations (see `internal` below). Whether any given id is currently reachable in the UI depends on feature flags and plugins the endpoint does not evaluate, so treat the list as the set of known view ids rather than a guaranteed set of visible navigation entries.
+
+```json
+{
+  "views": [
+    { "id": "board", "label": "Board", "labelKey": "nav.board" },
+    { "id": "command-center", "label": "Dashboard", "labelKey": "nav.commandCenter" },
+    {
+      "id": "dev-server",
+      "label": "Dev Server",
+      "labelKey": "nav.devServer",
+      "aliases": ["devserver"]
+    },
+    {
+      "id": "task-detail",
+      "label": "Task Detail",
+      "internal": true
+    }
+  ]
+}
+```
+
+`aliases` lists accepted legacy ids; use the canonical `id` for new links. `internal: true` identifies a programmatic destination that is not a normal navigation entry. Optional fields are omitted when they do not apply.
+
+`label` is the guaranteed English display string. `labelKey` is present only for views whose title the dashboard itself renders through that translation key, so a few ids (for example `graph`, whose label comes from a plugin manifest, and the internal `task-detail`) carry no `labelKey` at all — fall back to `label` when it is absent. Note also that some keys are not yet present in the shipped translation catalogs because the dashboard supplies their English text inline; resolving such a key yields nothing, so treat `labelKey` as best-effort localization support rather than a guaranteed lookup.
+
+`GET /api/settings/sections` returns selectable Settings sections; non-selectable group-header rows are excluded:
+
+```json
+{
+  "sections": [
+    {
+      "id": "appearance",
+      "label": "Appearance",
+      "labelKey": "settings.nav.appearance",
+      "scope": "global",
+      "group": "Preferences",
+      "keywords": ["theme", "color", "sidebar"],
+      "searchableKeys": [],
+      "advanced": false
+    },
+    {
+      "id": "authentication",
+      "label": "Authentication",
+      "labelKey": "settings.nav.authentication",
+      "scope": null,
+      "group": "AI & Models",
+      "keywords": ["login", "OAuth", "API key"],
+      "searchableKeys": [],
+      "advanced": false
+    }
+  ]
+}
+```
+
+`scope` is `global`, `project`, or `null` for sections backed by a dedicated subsystem rather than a settings blob. `group` is the Settings navigation group label, `keywords` and `searchableKeys` support command/search matching, and `advanced` indicates whether the dashboard hides the section until Advanced settings are enabled.
+
+`keywords` and `searchableKeys` are best-effort, non-contractual search hints, not a stable API surface. `searchableKeys` in particular exposes raw i18n translation-key strings that back a section's searchable copy; their exact values, ordering, and presence may change between releases as the dashboard's internal translation keys evolve. Use them to widen local search matching, but do not treat any specific key string as a stable identifier or depend on it programmatically.
+
 ### Supported Methods
 
 - `GET`

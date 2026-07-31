@@ -105,11 +105,24 @@ const plugin = definePlugin({
       const store = getCePipelineStore(ctx);
       const link = await store.findByTaskIdAsync(task.id);
       if (!link) return;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:05:
+      Record the lane the card ACTUALLY reached, not the built-in board's name for "finished".
+
+      `onTaskMoved` two hooks up already records the real `toColumn` it is handed; this one wrote the
+      literal `"done"`, so on a board whose complete lane is named anything else the sync-queue row
+      claimed a column that board does not have. Nothing reads `toColumn` — it is audit metadata, not
+      a control signal, which is precisely why it went unnoticed and precisely why it matters: the
+      one thing a wrong audit row costs you is the ability to reconstruct what happened.
+
+      `task.column` is the completed card's own lane, so the two hooks now record the same kind of
+      fact in the same way.
+      */
       await store.enqueueSyncAsync({
         cePipelineId: link.cePipelineId,
         taskId: task.id,
         reason: "task_completed",
-        toColumn: "done",
+        toColumn: task.column,
       });
       if (!getReconcileOnHooks(ctx.settings)) return;
       void reconcileCePipelines(ctx)

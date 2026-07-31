@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-async-maintenance");
 import { sql } from "drizzle-orm";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { pruneAgentLogFiles as pruneAgentLogFileEntries } from "../agent-log-file-store.js";
@@ -31,9 +34,16 @@ export async function pruneAgentLogFilesAsync(
   }
   const boundProjectId = layer.projectId?.trim();
   if (!boundProjectId) {
-    console.warn("[fusion] PostgreSQL agent-log-file pruning is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+    severityAuditLog.warn("[fusion] PostgreSQL agent-log-file pruning is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
   }
   const projectId = boundProjectId || "__legacy_unscoped__";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:12 DELIBERATE-LITERAL:
+  `'archived'` is the STATE marker here, not a lane. This sweep collects rows Fusion itself archived
+  or soft-deleted; a card merely sitting in a workflow's archived-TRAIT lane is live work and must not
+  be collected. Widening to the resolved archived set would pull real cards into a cleanup pass.
+  See #2839 for why the live-VIEW exclusions that share this literal are a different question.
+  */
   const rows = (await layer.db.execute(
     sql`SELECT id FROM project.tasks WHERE project_id = ${projectId} AND (deleted_at IS NOT NULL OR "column" = 'archived')`,
   )) as unknown as Array<{ id: string }>;
@@ -64,7 +74,7 @@ export async function pruneOperationalLogsAsync(
   Operational retention should normally be project-bound. Preserve the legacy sentinel fallback for compatibility, but make every unbound maintenance pass visible before it can target legacy-unscoped rows.
   */
   if (!boundProjectId) {
-    console.warn("[fusion] PostgreSQL operational maintenance is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
+    severityAuditLog.warn("[fusion] PostgreSQL operational maintenance is using the legacy unscoped project sentinel because asyncLayer.projectId is missing");
   }
   const projectId = boundProjectId || "__legacy_unscoped__";
   const cutoff = new Date(Date.now() - retentionMs).toISOString();

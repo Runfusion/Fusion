@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-dispatcher");
 import type { NotificationProvider } from "./provider.js";
 import type {
   NotificationDispatcherConfig,
@@ -38,7 +41,7 @@ export class NotificationDispatcher {
           return await provider.sendNotification(event, payload);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(
+          severityAuditLog.warn(
             `[notification-dispatcher] Provider ${providerId} failed for event ${event}: ${message}`,
           );
           return { success: false, providerId, error: message };
@@ -60,7 +63,7 @@ export class NotificationDispatcher {
           await provider.initialize(this.config as Record<string, unknown>);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(
+          severityAuditLog.warn(
             `[notification-dispatcher] Provider ${provider.getProviderId()} initialization failed: ${message}`,
           );
         }
@@ -79,7 +82,7 @@ export class NotificationDispatcher {
           await provider.shutdown();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(
+          severityAuditLog.warn(
             `[notification-dispatcher] Provider ${provider.getProviderId()} shutdown failed: ${message}`,
           );
         }

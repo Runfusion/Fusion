@@ -7,12 +7,9 @@ import type {
   DockerProvisionResult,
 } from "./types.js";
 import { DockerClientService } from "./docker-client.js";
+import { createLogger } from "./logger.js";
 
-const log = {
-  info: (...args: unknown[]) => console.log("[docker-provisioning]", ...args),
-  error: (...args: unknown[]) => console.error("[docker-provisioning]", ...args),
-  warn: (...args: unknown[]) => console.warn("[docker-provisioning]", ...args),
-};
+const log = createLogger("docker-provisioning");
 
 /**
  * Service for provisioning Docker-based Fusion nodes.
@@ -37,7 +34,7 @@ export class DockerProvisioningService {
 
       // Step 1: Pull or validate image
       if (input.imageConfig.pullImage) {
-        log.info(`Pulling image ${imageRef}...`);
+        log.debug(`Pulling image ${imageRef}...`);
         try {
           const authOptions =
             input.imageConfig.registryUsername || input.imageConfig.registryPassword
@@ -197,7 +194,7 @@ export class DockerProvisioningService {
       }
 
       const durationMs = Date.now() - startTime;
-      log.info(`Container ${containerName} provisioned successfully in ${durationMs}ms`);
+      log.debug(`Container ${containerName} provisioned successfully in ${durationMs}ms`);
 
       return {
         success: true,
@@ -242,7 +239,7 @@ export class DockerProvisioningService {
       }
 
       await container.remove({ force: true, v: removeVolumes });
-      log.info(`Container ${containerId} deprovisioned`);
+      log.debug(`Container ${containerId} deprovisioned`);
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

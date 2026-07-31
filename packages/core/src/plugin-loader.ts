@@ -161,6 +161,13 @@ export interface PluginLoaderOptions {
   npmPrefix?: string;
   /** Persist started/stopped/error runtime state transitions (default true). */
   persistRuntimeState?: boolean;
+  /**
+   * FNXC:PluginLoader 2026-07-23-12:00:
+   * FN-8596 discovery loaders may read another project's contributions, but
+   * must never join, mutate, or tear down the daemon-wide lifecycle registry
+   * or persist runtime state. Isolated loaders own only private instances.
+   */
+  lifecycleScope?: "shared" | "isolated";
 }
 
 /**
@@ -240,7 +247,7 @@ export class PluginLoader extends EventEmitter<{
     state: PluginInstallation["state"],
     error?: string,
   ): Promise<void> {
-    if (this.options.persistRuntimeState === false) return;
+    if (this.options.persistRuntimeState === false || this.options.lifecycleScope === "isolated") return;
     await this.options.pluginStore.updatePluginState(pluginId, state, error);
   }
 
@@ -364,8 +371,12 @@ export class PluginLoader extends EventEmitter<{
       return this.plugins.get(pluginId)!;
     }
 
-    // Resolve plugin path
+    // Resolve plugin path. Discovery instances deliberately bypass the shared
+    // registry so their teardown can affect only their private plugin maps.
     const pluginPath = this.resolvePluginPath(installation.path);
+    if (this.options.lifecycleScope === "isolated") {
+      return await this.loadPluginFresh(pluginId, installation, pluginPath);
+    }
     const lifecycleKey = this.getProcessLifecycleKey(pluginId, pluginPath);
     const existingLifecycle = PluginLoader.processPluginLifecycles.get(lifecycleKey);
     if (existingLifecycle) {
@@ -643,6 +654,14 @@ export class PluginLoader extends EventEmitter<{
   ): Promise<FusionPlugin> {
     const installation = await this.options.pluginStore.getPlugin(pluginId);
     const pluginPath = this.resolvePluginPath(installation.path);
+    /*
+    FNXC:PluginLoader 2026-07-23-12:00:
+    FN-8596 requires explicit private reload semantics for isolated discovery
+    loaders. Never synchronize an inspection instance into shared participants.
+    */
+    if (this.options.lifecycleScope === "isolated") {
+      return await this.reloadPluginFresh(pluginId, installation, pluginPath, options);
+    }
     const lifecycleKey = this.getProcessLifecycleKey(pluginId, pluginPath);
     const processLifecycle = PluginLoader.processPluginLifecycles.get(lifecycleKey);
     const precedingLifecycle = processLifecycle?.promise;
@@ -1023,6 +1042,10 @@ export class PluginLoader extends EventEmitter<{
       return;
     }
     const pluginPath = this.resolvePluginPath(installation.path);
+    if (this.options.lifecycleScope === "isolated") {
+      await this.stopPluginFresh(pluginId, pluginPath);
+      return;
+    }
     const lifecycleKey = this.getProcessLifecycleKey(pluginId, pluginPath);
     const processLifecycle = PluginLoader.processPluginLifecycles.get(lifecycleKey);
     if (!processLifecycle) {
@@ -1035,6 +1058,13 @@ export class PluginLoader extends EventEmitter<{
         await processLifecycle.promise;
       } catch {
         // A rejected load has already cleaned its local state.
+      }
+      if (processLifecycle.owner !== this) {
+        // Participants adopted the owner's instance; stopping one only detaches
+        // that view and must not unload or persist state for the shared owner.
+        processLifecycle.participants.delete(this);
+        this.discardProcessPlugin(pluginId, pluginPath);
+        return;
       }
       await processLifecycle.owner.stopPluginFresh(pluginId, pluginPath);
       for (const loader of processLifecycle.participants) {

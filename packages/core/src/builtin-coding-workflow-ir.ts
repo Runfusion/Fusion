@@ -74,11 +74,14 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     {
       id: "planning",
       kind: "prompt",
-      column: "triage",
+      column: "todo",
       config: builtinPromptConfig("planning", "Plan / specify"),
     },
-    planReviewOptionalGroupNode("in-progress"),
-    planReplanNode("triage"),
+    // FNXC:PlanReviewStep 2026-07-26-17:10: plan-in-place — the specification phase runs in the
+    // planning lane (`todo`) before the card takes an implementation slot. See the placement note in
+    // builtin-stepwise-coding-workflow-ir.ts.
+    planReviewOptionalGroupNode("todo"),
+    planReplanNode("todo"),
     {
       id: "execute",
       kind: "prompt",
@@ -97,6 +100,29 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     codeReviewRemediationNode("in-progress"),
     completionSummaryNode("in-review"),
     { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-09:20 (U8 / R4 — workflow-owned lifecycle):
+    THE PENDING-REVIEW PARK, as a graph node.
+
+    An implementation session can end because a step is blocked on a pending review: the agent
+    cannot continue, and the card belongs in review rather than in an error bucket (marking it
+    failed deadlocks a row that is both `in-review` and `failed`). Until now the EXECUTOR
+    performed that transition inline, mid-session, and the graph found out afterwards — which is
+    why `handleGraphFailure` carries `alreadyFinalizedToReview`, a classifier whose only job is
+    recognising a move the graph did not make.
+
+    Declaring it here makes the ending a routed outcome instead of a side effect. It is a
+    `review-handoff` seam (a pure lifecycle handoff, no reviewer invocation) and its only edge is
+    to `end`, which is what preserves today's semantics exactly: hand the card to review and STOP.
+    Routing to the ordinary `review` node instead would have been wrong in a way worth recording —
+    the run would continue into merge-gate and merge-attempt on work whose steps are incomplete.
+    */
+    {
+      id: "review-pending-handoff",
+      kind: "prompt",
+      column: "in-review",
+      config: builtinPromptConfig("review-handoff", "Park for pending review"),
+    },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
     { id: "merge-manual-hold", kind: "manual-merge-hold", column: "in-review", config: { release: "manual" } },
@@ -146,6 +172,17 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "planning", to: "end", condition: "failure" },
     { from: "plan-review", to: "plan-replan", condition: "failure" },
     { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
+    /*
+    FNXC:WorkflowExecutionOwnership 2026-07-29-09:25 (U8 / R4):
+    `outcome:` edges are matched on the node's VALUE and take priority over the generic
+    success/failure edges (`shouldTraverseEdge` / `traverseChildren`), so this claims the
+    pending-review ending without disturbing the `failure -> end` edge below it for every other
+    failure value. A workflow that does NOT declare this edge falls through to that generic
+    failure edge — i.e. exactly the pre-existing behavior — which is what lets custom workflows
+    keep working unchanged while the built-in routes the ending properly.
+    */
+    { from: "execute", to: "review-pending-handoff", condition: "outcome:review-pending" },
+    { from: "review-pending-handoff", to: "end", condition: "success" },
     { from: "execute", to: "end", condition: "failure" },
     { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
     { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },

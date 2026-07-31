@@ -1,3 +1,12 @@
+/*
+FNXC:WorkflowColumns 2026-07-29-12:15 (post-#2515 audit):
+Fixtures use the MERGED planning column ("todo"), not the deleted "triage". #2515
+collapsed the default lineage's two pre-implementation columns into one with id
+"todo" carrying `intake` + `hold`, so a default-workflow card is never in "triage"
+again. A fixture left there exercised a state the product can no longer produce —
+and, because the converted sweeps resolve intake by ROLE, would have quietly
+asserted that the sweeps do nothing.
+*/
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock node modules
@@ -117,6 +126,7 @@ vi.mock("../worktree-pool.js", async () => {
 const { selfHealingLoggerMock } = vi.hoisted(() => ({
   selfHealingLoggerMock: {
     log: vi.fn(),
+    debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },
@@ -124,7 +134,7 @@ const { selfHealingLoggerMock } = vi.hoisted(() => ({
 
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn((_name: string) => selfHealingLoggerMock),
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../merger.js", () => ({
@@ -163,6 +173,7 @@ const mockedClassifyOwnedLandedEvidence = vi.mocked(classifyOwnedLandedEvidence)
 
 type MockLogger = {
   log: ReturnType<typeof vi.fn>;
+  debug: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
   error: ReturnType<typeof vi.fn>;
 };
@@ -2326,7 +2337,8 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
-      expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+      // self-healing.ts:2747 emits this at DEBUG level, not log.
+      expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
         "auto-archive: archived FN-030 (age 31d, threshold 30d)",
       );
     });
@@ -3033,7 +3045,17 @@ describe("SelfHealingManager", () => {
       const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
 
       expect(result).toBe(1);
-      expect(store.listTasks).toHaveBeenCalledWith({ column: "todo", slim: true });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-28-06:40 (Phase B / slice B3.1 — U4):
+      The query shape CHANGED on purpose. This sweep can no longer scope itself to
+      `column: "todo"` — that literal made it blind to every workflow whose hold
+      column is named something else, so a finished card sat in `drafting` forever.
+      It now reads the board and filters by each task's RESOLVED hold column.
+
+      The behavioral assertions below are the ones that matter and are unchanged:
+      one qualifying card, promoted exactly once. Only the query shape moved.
+      */
+      expect(store.listTasks).toHaveBeenCalledWith({ slim: true, includeArchived: false });
       expect(recoverFn).toHaveBeenCalledTimes(1);
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
 
@@ -7655,45 +7677,6 @@ describe("SelfHealingManager", () => {
     });
   });
 
-  describe("surfaceDependencyBlockedTodos", () => {
-    it("returns 0 when globalPause is enabled", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ globalPause: true });
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
-      managerWithRecovery.stop();
-    });
-
-    it("returns 0 when dependency-blocked todo reporting is disabled", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: false });
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
-      managerWithRecovery.stop();
-    });
-
-    it("returns groupCount from reporter", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: true });
-      const reportSpy = vi.fn().mockResolvedValue({ alerted: true, groupCount: 1 });
-      (managerWithRecovery as unknown as { dependencyBlockedTodoReporter: { report: typeof reportSpy } }).dependencyBlockedTodoReporter = { report: reportSpy };
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(1);
-      expect(reportSpy).toHaveBeenCalledWith();
-      managerWithRecovery.stop();
-    });
-
-    it("returns 0 and logs error when reporter fails", async () => {
-      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getProjectId: () => "/tmp/test-project" });
-      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ dependencyBlockedTodoReportEnabled: true });
-      const reportSpy = vi.fn().mockRejectedValue(new Error("boom"));
-      (managerWithRecovery as unknown as { dependencyBlockedTodoReporter: { report: typeof reportSpy } }).dependencyBlockedTodoReporter = { report: reportSpy };
-
-      expect(await managerWithRecovery.surfaceDependencyBlockedTodos()).toBe(0);
-      managerWithRecovery.stop();
-    });
-  });
-
   describe("surfaceInReviewStalled", () => {
     function inReviewTask(overrides: Record<string, unknown> = {}) {
       return {
@@ -8291,7 +8274,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-100",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8327,7 +8310,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-101",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [{ action: "Spec review: APPROVE" }],
@@ -8358,7 +8341,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-102",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8454,7 +8437,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-200",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8491,10 +8474,10 @@ describe("SelfHealingManager", () => {
     it.each([
       { column: "in-progress", status: null, worktree: "/tmp/claimed" },
       { column: "todo", status: null, worktree: undefined, steps: [{ id: "planned" }] },
-      { column: "triage", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
+      { column: "in-progress", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
     ])("does not clear a stale candidate advanced to $column", async (live) => {
       const candidate = {
-        id: "FN-8361", column: "triage", status: "planning", paused: false,
+        id: "FN-8361", column: "todo", status: "planning", paused: false,
         log: [], updatedAt: "2026-01-01T00:00:00.000Z",
       };
       const updateTaskAtomic = vi.fn(async (_id: string, updater: (row: any) => any) => updater({ ...candidate, ...live }));
@@ -8520,7 +8503,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-201",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8549,7 +8532,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-202",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8581,7 +8564,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-203",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: true,
           log: [],
@@ -8610,7 +8593,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-204",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -9435,7 +9418,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9476,7 +9459,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9511,7 +9494,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-101",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: REVISE" }],
@@ -9542,9 +9525,9 @@ describe("stale triage processing eviction before recovery", () => {
 
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-approved-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-orphan-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-refinement-live", column: "triage", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
+      { id: "FN-approved-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-orphan-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-refinement-live", column: "todo", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
       { id: "FN-peer-1", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:01:00.000Z" },
       { id: "FN-peer-2", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:02:00.000Z" },
       { id: "FN-peer-3", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:03:00.000Z" },
@@ -9577,9 +9560,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ]);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
 
@@ -9602,9 +9585,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     const planningTasks = [
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ];
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(planningTasks);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
@@ -10486,7 +10469,11 @@ describe("maintenance cycle concurrency", () => {
 
     await (manager as any).runMaintenance();
 
-    expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+    // Steady-state PG no-ops are debug-gated so they do not fill the TUI log pane.
+    expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
+      expect.stringContaining("wal-checkpoint\" skipped — PostgreSQL manages WAL + autovacuum"),
+    );
+    expect(getSelfHealingLogger().log).not.toHaveBeenCalledWith(
       expect.stringContaining("wal-checkpoint\" skipped — PostgreSQL manages WAL + autovacuum"),
     );
   });
@@ -10876,6 +10863,24 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     mockedIsUsableTaskWorktree.mockResolvedValue(true);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2879 review — greptile, "multi-role tasks run
+  recovery twice"): THE FIX IS IN `self-healing.ts`; NO TEST HERE, AND THE ABSENCE IS DELIBERATE.
+
+  `readBucket` dedupes by id inside ONE role's read, so a custom column carrying two queried traits —
+  `hold` plus `countsTowardWip`, or a review role beside either — is returned by two reads and the
+  concatenation handed the recovery loop the same STALE SNAPSHOT twice.
+
+  I wrote a case here and removed it: it reported 0 recoveries, because the card it built reaches the
+  BRANCH-LEVEL scan (subsumed branch, no worktree) rather than the candidates loop the dedupe lives
+  in. Reaching that loop needs `branch` AND `worktree` set plus matching git state, i.e. the git
+  fixture this suite deliberately avoids. A test that passes without exercising the loop would have
+  been worse than none — that is the vacuous shape this program keeps finding.
+
+  So the dedupe ships uncovered and stated. What would cover it: a candidates-loop fixture with a live
+  branch/worktree pair, asserting the recovery COUNT (a double-processed card reports 2 for one card's
+  work) rather than a call count.
+  */
   it("reclaims subsumed fusion task branch with no worktree", async () => {
     (store.listTasks as any).mockResolvedValueOnce([
       { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null, lineageId: "lin-1" },
@@ -11735,7 +11740,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         makeTask({ id: "FN-6770", column: "in-progress" }),
         makeTask({ id: "FN-6771", column: "todo" }),
         makeTask({ id: "FN-6780", column: "todo", status: "queued" }),
-        makeTask({ id: "FN-TRIAGE", column: "triage" }),
+        makeTask({ id: "FN-TRIAGE", column: "todo" }),
         makeTask({ id: "FN-DONE", column: "done" }),
       ]);
 

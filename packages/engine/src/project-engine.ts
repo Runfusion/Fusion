@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type {
+  WorkflowIr,
   TaskStore,
   Task,
   CentralCore,
@@ -17,6 +18,11 @@ import type {
   PlannerOversightStage,
 } from "@fusion/core";
 import {
+  resolveProjectColumnsForRoles,
+  REVIEW_ROLES,
+  resolveWorkflowIrForTask,
+  resolveColumnFlags,
+  type TraitFlags,
   allowsAutoMergeProcessing,
   compareTasksByPriorityThenAgeAndId,
   emitOverseerConfirmation,
@@ -33,8 +39,11 @@ import {
   resolveEffectivePlannerOversightLevel,
   resolveEffectiveSettings,
   resolveMaxAutoMergeRetries,
+  resolveTaskLifecycleColumns,
   resolveTaskSessionAdvisorEnabled,
   sortTasksByPriorityThenAgeAndId,
+  resolveWipTargetForTask,
+  resolveReboundTargetForTask,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./planner-overseer-runtime-snapshot.js";
 import { execFile } from "node:child_process";
@@ -78,11 +87,6 @@ import { ResearchRunDispatcher } from "./research-dispatcher.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import {
-  computeVerificationFailureSignature,
-  createAutomatedFollowup,
-  extractFailingTestFiles,
-} from "./verification-followup-dedup.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { isTransientError } from "./transient-error-detector.js";
 import { classifyTransientMergeError } from "./transient-merge-error-classifier.js";
@@ -249,21 +253,6 @@ async function verifyMergeConfirmedReachability(args: {
     }
     return { reachable: false, reason: "git-error", diagnostic };
   }
-}
-
-function buildVerificationFailureSignature(error: VerificationError): string {
-  const commandResult = error.verificationResult.testResult ?? error.verificationResult.buildResult;
-  const lane = commandResult?.command?.trim()
-    || error.verificationResult.failedCommand?.trim()
-    || "verification-failure";
-  const failingTestFiles = commandResult
-    ? extractFailingTestFiles(commandResult.stdout, commandResult.stderr)
-    : [];
-  return computeVerificationFailureSignature({
-    lane,
-    failingTestFiles,
-    failedCommand: commandResult?.command ?? error.verificationResult.failedCommand ?? null,
-  }).signature;
 }
 
 export interface AutomationSubsystemHealth {
@@ -661,8 +650,26 @@ export class ProjectEngine {
         const store = this.runtime.getTaskStore();
         const queuedTaskIds = [...this.mergeQueue];
         const tasks = await Promise.all(queuedTaskIds.map(async (taskId) => await store.getTask(taskId).catch(() => null)));
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-19:10 (fleet: project-engine.ts merge lane):
+        THE MERGE LANE IS THE TASK'S OWN, resolved through core's `resolveTaskLifecycleColumns` — the
+        canonical helper, so no new abstraction here. Every guard in this file spelled it `in-review`, and
+        on a renamed board that means the merge machinery does not recognise its own queue: this snapshot
+        returned an EMPTY list for a queue full of review cards, so the coordinator saw nothing to admit.
+
+        Resolved per task rather than once, because a merge queue can hold cards from different workflows;
+        the shared `irCache` keeps that to one IR read per workflow, not per card.
+        */
+        const irCache = new Map<string, WorkflowIr>();
+        const lifecycleByTaskId = new Map<string, string>();
+        for (const task of tasks) {
+          if (!task) continue;
+          const lifecycle = await resolveTaskLifecycleColumns(store, task.id, irCache);
+          lifecycleByTaskId.set(task.id, lifecycle?.review ?? "in-review");
+        }
         return tasks.flatMap((task) => {
-          if (!task || task.paused || task.userPaused || task.column !== "in-review") return [];
+          if (!task || task.paused || task.userPaused
+            || task.column !== (lifecycleByTaskId.get(task.id) ?? "in-review")) return [];
           return [{
             taskId: task.id,
             projectId,
@@ -1500,6 +1507,41 @@ export class ProjectEngine {
     return this.prMonitor;
   }
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+  The flags for a task's OWN column, for the planner-overseer stage classification.
+
+  `resolveWatchedStage` is pure and sync with no store, so the answer has to be resolved here and
+  passed in. Keyed on the id it returned null for every card on a renamed board, and `observeTask`
+  returns early on a null stage — so no observation, no `overseer:intervention`, and nothing for
+  `PlannerRecoveryController` to act on. The oversight loop was inert and silent about it.
+
+  The IR cache is what makes this affordable: the poll below already awaits `resolveEffectiveSettings`
+  per task, so it is a per-task async loop regardless, and caching by workflow means the added work is
+  (distinct workflows) resolutions rather than (cards). The cache is per-poll on purpose — a longer
+  lifetime would serve stale lanes after a workflow edit, which is the failure this program exists to
+  remove wearing a different hat.
+
+  Fail-soft: an unresolvable workflow returns undefined and the callee falls back to the legacy ids,
+  which is exactly today's behaviour.
+  */
+  private async resolveTaskColumnFlags(
+    store: TaskStore,
+    task: Pick<Task, "id" | "column">,
+    irCache: Map<string, WorkflowIr>,
+  ): Promise<TraitFlags | undefined> {
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+      /* `WorkflowIr` is a union and the v1 arm declares no columns — a v1 graph has no lane
+         vocabulary to read, so undefined (legacy ids) is the correct answer for it. */
+      const columns = (ir as { columns?: Array<{ id: string }> }).columns;
+      const declared = columns?.find((column) => column.id === task.column);
+      return declared ? resolveColumnFlags(declared as never) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Get the records-only PlannerOverseerMonitor (if initialized). See FN-7511. */
   getPlannerOverseer(): PlannerOverseerMonitor | undefined {
     return this.plannerOverseer;
@@ -1587,7 +1629,10 @@ export class ProjectEngine {
 
       let observation = this.plannerOverseer ? this.plannerOverseer.getObservations(taskId).slice(-1)[0] : undefined;
       if (!observation && this.plannerOverseer) {
-        observation = (await this.plannerOverseer.observeTask(task, level)) ?? undefined;
+        /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: the manual nudge classifies the same way the
+           poll does, or a renamed board answers `no-active-stage` to an operator pressing the button. */
+        const columnFlags = await this.resolveTaskColumnFlags(store, task, new Map());
+        observation = (await this.plannerOverseer.observeTask(task, level, { columnFlags })) ?? undefined;
       }
       if (!observation) {
         return { applied: false, reason: "no-active-stage", task };
@@ -1860,7 +1905,8 @@ export class ProjectEngine {
         }
         // Live surface cleared — allow a fresh skip log if work goes live again later.
         this.plannerLiveRetrySkipLogDedup.delete(`${task.id}::${decision.watchedStage ?? "executor"}`);
-        await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
+        await store.moveTask(task.id, await resolveReboundTargetForTask(store, task.id), { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
         // FN-7551: the attempt just dispatched — record it as attemptCount + 1
         // (decision.attemptCount is the count BEFORE this dispatch).
         await this.emitOverseerInterventionSafe(() =>
@@ -2303,8 +2349,14 @@ export class ProjectEngine {
     } catch {
       // Fall through to the not-eligible response below.
     }
+    /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:15 (fleet): merge eligibility asks whether the card is in
+       ITS board's merge lane. With the literal, no card on a renamed board was ever eligible — auto-merge
+       did not fail, it declined every card, which is why this class of defect has no error signature. */
+    const eligibleReviewColumn = task
+      ? (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review"
+      : "in-review";
     const eligible = !!task && !!settings
-      && task.column === "in-review"
+      && task.column === eligibleReviewColumn
       && !settings.globalPause && !settings.enginePaused
       && (await this.allowInReviewMergeProcessing(task, settings, store))
       && !(task.paused && !task.mergeDetails?.mergeConfirmed);
@@ -2571,8 +2623,23 @@ export class ProjectEngine {
     column: string;
     error?: string | null;
     log?: Array<{ action?: string }>;
-  }, maxAutoMergeRetries: number): boolean {
-    if (task.column !== "in-review") return false;
+  }, maxAutoMergeRetries: number, isReviewColumn?: boolean): boolean {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+    The review-lane question is a parameter with a documented literal default, the shape
+    `shouldHoldActiveFileScopeLease` already uses in scheduler.ts. Both call sites pass the resolved
+    answer; the default exists so an unconverted caller keeps exactly today's behaviour rather than
+    silently changing meaning.
+
+    Keyed on the literal, this returned false for every card on a renamed board, so a task whose
+    merge verification died on a buffer-overflow error was never auto-healed — it sat retry-exhausted
+    until a human reset it. The failure is invisible because "no auto-heal" looks identical to
+    "nothing to heal".
+
+    DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-30-21:40.
+    */
+    const inReviewLane = isReviewColumn ?? task.column === "in-review";
+    if (!inReviewLane) return false;
     if ((task.mergeRetries ?? 0) < maxAutoMergeRetries) return false;
     const err = task.error ?? "";
     const matchesVerificationError =
@@ -2619,7 +2686,7 @@ export class ProjectEngine {
     log?: Array<{ action?: string }>;
     updatedAt?: string | null;
     mergeDetails?: { mergeConfirmed?: boolean } | null;
-  }, maxAutoMergeRetries: number): boolean {
+  }, maxAutoMergeRetries: number, isReviewColumn?: boolean): boolean {
     // Merge-confirmed tasks use the fast-path finalizer, which applies blocker
     // checks after clearing transient status/error state. Once that path parks
     // a blocked task as failed, skip future auto-merge retries.
@@ -2633,7 +2700,7 @@ export class ProjectEngine {
     if (task.status === "failed") return false;
     return (
       (task.mergeRetries ?? 0) < maxAutoMergeRetries ||
-      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries) ||
+      this.hasAutoHealableVerificationBufferFailure(task, maxAutoMergeRetries, isReviewColumn) ||
       this.isRetryCooldownElapsed(task)
     );
   }
@@ -2824,7 +2891,7 @@ export class ProjectEngine {
     this.legacyAutoMergeStampAdvisoryEmitted = true;
 
     try {
-      const candidates = (await store.listTasks({ column: "in-review" }))
+      const candidates = (await this.listTasksInLaneRoles(store, REVIEW_ROLES))
         .filter((task) => task.autoMerge === true && task.autoMergeProvenance !== "user");
       if (candidates.length === 0) {
         return;
@@ -2859,7 +2926,32 @@ export class ProjectEngine {
     // FNXC:PostgresCutover 2026-07-10: allowInReviewMergeProcessing awaits the
     // async getBranchGroup read on the PG branch, so eligibility resolves per
     // task before the sync priority sort.
-    const candidates = tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries)) as Task[];
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+    Resolve each unpaused card's review lane BEFORE the sync filter, sharing ONE IR cache across the
+    sweep per the caller-owned-cache contract on `resolveTaskLifecycleColumns` — a board spanning
+    three workflows must read three IRs, not one per card.
+
+    Resolution is restricted to cards that survive the `paused` check so a paused backlog cannot make
+    this sweep resolve an IR per card for nothing.
+    */
+    const reviewLaneIrCache = new Map<string, WorkflowIr>();
+    const unpaused = tasks.filter((t) => !t.paused);
+    const reviewLaneByTaskId = new Map<string, string | undefined>();
+    for (const t of unpaused) {
+      reviewLaneByTaskId.set(
+        t.id,
+        (await resolveTaskLifecycleColumns(this.runtime.getTaskStore(), t.id, reviewLaneIrCache).catch(() => undefined))?.review,
+      );
+    }
+    const candidates = unpaused.filter((t) => {
+      const reviewLane = reviewLaneByTaskId.get(t.id);
+      return this.canMergeTask(
+        t as any,
+        maxAutoMergeRetries,
+        reviewLane === undefined ? undefined : t.column === reviewLane,
+      );
+    }) as Task[];
     const allowFlags = await Promise.all(candidates.map((t) => this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())));
     const eligible = sortTasksByPriorityThenAgeAndId(
       candidates.filter((_, i) => allowFlags[i]),
@@ -2907,8 +2999,8 @@ export class ProjectEngine {
     const overseer = this.plannerOverseer;
     try {
       const [inProgress, inReview] = await Promise.all([
-        store.listTasks({ column: "in-progress" }).catch(() => [] as Task[]),
-        store.listTasks({ column: "in-review" }).catch(() => [] as Task[]),
+        this.listTasksInLaneRoles(store, ["countsTowardWip"]).catch(() => [] as Task[]),
+        this.listTasksInLaneRoles(store, REVIEW_ROLES).catch(() => [] as Task[]),
       ]);
       const inFlight = [...inProgress, ...inReview];
       const inFlightIds = new Set(inFlight.map((t) => t.id));
@@ -2920,6 +3012,8 @@ export class ProjectEngine {
       // FNXC:PlannerOversight 2026-07-14-00:10: keep session-advisor human-control on live settings.
       this.sessionAdvisor?.setSettings(engineSettings);
 
+      /* One IR cache for the whole sweep: (distinct workflows) resolutions, not (cards). */
+      const overseerIrCache = new Map<string, WorkflowIr>();
       for (const task of inFlight) {
         try {
           const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(() => ({}) as Record<string, unknown>);
@@ -2950,7 +3044,11 @@ export class ProjectEngine {
           // in-progress task reports `signal: "stuck"` instead of always
           // `progressing` (the FN-7732 symptom).
           const executorStuckAfterMs = resolveExecutorStuckAfterMs(workflowEffective.plannerOverseerExecutorStuckAfterMs);
-          await overseer.observeTask(task, level, { executorStuckAfterMs });
+          /* FNXC:WorkflowLifecycleColumns 2026-07-31-00:20: without this the stage is resolved from
+             the legacy ids and every card on a renamed board classifies as null — see
+             `resolveTaskColumnFlags`. The cache is per-poll so a workflow edit is picked up next tick. */
+          const columnFlags = await this.resolveTaskColumnFlags(store, task, overseerIrCache);
+          await overseer.observeTask(task, level, { executorStuckAfterMs, columnFlags });
 
           // FN-7512: one guarded, autonomous-only bounded recovery tick at the
           // same passive seam FN-7511 uses for observation. Inert for every
@@ -2974,7 +3072,10 @@ export class ProjectEngine {
           Session-advisor log feed when effective enable resolves true for the task
           (task override → project default → workflow flag → off). Still needs model.
           */
-          if (task.column === "in-progress" && this.sessionAdvisor) {
+          /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:30 (fleet): the wip lane — the advisor feed exists
+             for cards that are executing, and the literal silenced it on every renamed board. */
+          if (task.column === ((await resolveTaskLifecycleColumns(store, task.id))?.wip ?? "in-progress")
+            && this.sessionAdvisor) {
             const advisorEnabled = resolveTaskSessionAdvisorEnabled(
               task,
               engineSettings,
@@ -3194,32 +3295,6 @@ export class ProjectEngine {
     }, intervalMs);
   }
 
-  private async findActiveRecoveryFollowUp(
-    store: TaskStore,
-    parentTaskId: string,
-    branch?: string,
-  ): Promise<{ task: Task; reason: "parent" | "branch" } | null> {
-    const tasks = await store.listTasks({ slim: true }).catch(() => [] as Task[]);
-    const activeRecoveryTasks = tasks.filter(
-      (task) =>
-        task.column !== "done" &&
-        task.column !== "archived" &&
-        task.sourceType === "recovery",
-    );
-
-    const sameParent = activeRecoveryTasks.find(
-      (task) => task.sourceParentTaskId === parentTaskId,
-    );
-    if (sameParent) return { task: sameParent, reason: "parent" };
-
-    if (branch) {
-      const sameBranch = activeRecoveryTasks.find((task) => task.branch === branch);
-      if (sameBranch) return { task: sameBranch, reason: "branch" };
-    }
-
-    return null;
-  }
-
   private async drainMergeQueue(): Promise<void> {
     if (this.mergeRunning) return;
     this.mergeRunning = true;
@@ -3286,7 +3361,7 @@ export class ProjectEngine {
               continue;
             }
             const task = await store.getTask(taskId);
-            if (!task || task.column !== "in-review") {
+            if (!task || task.column !== ((await resolveTaskLifecycleColumns(store, taskId))?.review ?? "in-review")) {
               continue;
             }
             if (!(await this.allowInReviewMergeProcessing(task, settings, store))) {
@@ -3300,7 +3375,19 @@ export class ProjectEngine {
 
             // Intentional cast to access Task properties needed by merge validation
 
-            if (!this.canMergeTask(task as any, maxAutoMergeRetries)) {
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+            The merge worker's own review-lane answer, resolved from this task's workflow. Same
+            undefined-vs-false distinction as the sweep above: an unresolvable board passes
+            `undefined` so the predicate keeps its documented literal default rather than being told
+            "not in review", which would disable auto-heal outright.
+            */
+            const mergeLoopReviewLane = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.review;
+            if (!this.canMergeTask(
+              task as any,
+              maxAutoMergeRetries,
+              mergeLoopReviewLane === undefined ? undefined : task.column === mergeLoopReviewLane,
+            )) {
               continue;
             }
 
@@ -3746,7 +3833,6 @@ export class ProjectEngine {
           // FNXC:MergeQueue 2026-07-15-10:05: Wait for any orphan body from a prior abort race before claiming the next generation.
           await this.awaitPriorMergeBodySettle();
 
-          const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
           const coordinatorReservedMerge = this.coordinatorAdmittedMergeTaskIds.delete(taskId);
           /*
           FNXC:ConcurrencyAdmission 2026-08-07-10:30:
@@ -3755,14 +3841,27 @@ export class ProjectEngine {
           one-shot candidate after dequeue because durable merge providers only
           see remaining queue entries; without it a sole merge endlessly defers.
           */
+          /*
+          FNXC:CapacityModel 2026-07-28-20:40 (drop the cross-project cap):
+          The `if (!semaphore) return await start()` early-return is DELETED, not
+          left to fire. It was unreachable while a global semaphore always existed;
+          with the semaphore gone it would have fired on EVERY merge and skipped
+          project admission altogether — silently stopping merges from counting
+          against the per-project agent count. That is the opposite of the intent:
+          a merge IS an agent, so it still consumes one of the project's slots; it
+          just no longer consumes a machine-wide slot too.
+
+          `admitOldest` already takes `semaphore` as optional and enforces
+          `maxConcurrent` independently of it (see its `claimed() + reservations >=
+          maxConcurrent` check), so dropping the argument keeps per-project
+          admission and oldest-first fairness exactly as they were.
+          */
           const runWithMergeAdmission = async <T>(start: () => Promise<T>): Promise<T | undefined> => {
-            if (!semaphore) return await start();
             if (coordinatorReservedMerge) {
               try {
                 return await start();
               } finally {
                 projectAdmissionCoordinator.releaseReservation(taskId);
-                semaphore.release();
               }
             }
             let selected = false;
@@ -3770,7 +3869,6 @@ export class ProjectEngine {
             await projectAdmissionCoordinator.admitOldest({
               projectId: cwd,
               maxConcurrent: (await store.getSettings()).maxConcurrent ?? 2,
-              semaphore,
               claimed: async () => computeTopLevelConcurrencyClaimedFromStore({
                 store,
                 tasks: await store.listTasks({ slim: true, includeArchived: false }),
@@ -3788,7 +3886,6 @@ export class ProjectEngine {
             });
             if (!selected) return undefined;
             projectAdmissionCoordinator.releaseReservation(taskId);
-            semaphore.release();
             return value;
           };
 
@@ -4237,6 +4334,30 @@ export class ProjectEngine {
           const taskOnErr = await store.getTask(taskId).catch(() => null);
           const mergeStrategyOnErr =
             this.options.getMergeStrategy?.(settingsOnErr as Settings) ?? "direct";
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+          "Did this task already land?" resolved from the task's OWN workflow, ONCE for this whole
+          error path — the three checks below must agree with each other, and re-resolving per check
+          is how two of them end up on different answers.
+
+          All three ask `column === "done" && mergeDetails.mergeConfirmed`. That pair is the
+          already-finalized fast path: the merge DID land, so the verification error being handled is
+          post-finalize noise and the task must be left alone. Keyed on the literal, a renamed
+          complete column made every one of them false, so a task that had genuinely merged took the
+          bounce-back path instead — re-queued, retry-counted, and in the capped branch parked
+          `failed` with a merge sitting on main. The visible symptom is a card that merged and then
+          reports a verification failure it cannot recover from.
+
+          `null` is deliberate and is NOT the same as "not complete": it means this board declares no
+          complete lane, so the question is unanswerable. Each site below then falls through to the
+          bounce path, which is the pre-existing behaviour for an unresolvable board — the fast path
+          is an optimisation that may be skipped, never a claim that may be invented.
+          */
+          const completeColumnOnErr = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.complete ?? null;
+          const isConfirmedLandedOnErr = (candidate: Task | null | undefined): boolean =>
+            completeColumnOnErr !== null
+            && candidate?.column === completeColumnOnErr
+            && candidate.mergeDetails?.mergeConfirmed === true;
 
           // Deterministic verification failure: move back to in-progress
           const isVerificationError =
@@ -4246,11 +4367,8 @@ export class ProjectEngine {
 
           if (taskOnErr && isVerificationError) {
             const refreshedTaskOnVerificationError = await store.getTask(taskId).catch(() => null);
-            if (
-              refreshedTaskOnVerificationError?.column === "done"
-              && refreshedTaskOnVerificationError.mergeDetails?.mergeConfirmed === true
-            ) {
-              const commitSha = refreshedTaskOnVerificationError.mergeDetails.commitSha;
+            if (isConfirmedLandedOnErr(refreshedTaskOnVerificationError)) {
+              const commitSha = refreshedTaskOnVerificationError!.mergeDetails!.commitSha;
               const shortSha = typeof commitSha === "string" && commitSha.length > 0
                 ? commitSha.slice(0, 8)
                 : "unknown";
@@ -4302,16 +4420,19 @@ export class ProjectEngine {
             const cap = ProjectEngine.MAX_VERIFICATION_FAILURE_BOUNCES;
 
             if (nextBounces >= cap) {
-              // Cap reached — stop bouncing the task and create a follow-up.
-              // The original task stays in in-review with status=failed so a
-              // human can inspect; the follow-up captures the failure context
-              // so a fresh agent can investigate (often a flaky test or an
-              // unrelated regression that won't be fixed by re-running this
-              // task's branch).
+              /*
+              FNXC:AutoMergeLifecycle 2026-07-26-00:00:
+              Cap reached — stop bouncing the task. The task stays in in-review with status=failed
+              and a descriptive `error` so a human can inspect. This used to also file an automated
+              recovery follow-up card; that machinery was deleted because the card only restated
+              context already on this task (the [verification] log entries carry the failing command
+              and output). The park + error + log entry ARE the surface now, so the error text must
+              stand on its own and must not point at a follow-up that will never exist.
+              */
               try {
                 const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
-                if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
-                  const commitSha = checkBeforeWrite.mergeDetails.commitSha;
+                if (isConfirmedLandedOnErr(checkBeforeWrite)) {
+                  const commitSha = checkBeforeWrite!.mergeDetails!.commitSha;
                   const shortSha = typeof commitSha === "string" && commitSha.length > 0
                     ? commitSha.slice(0, 8)
                     : "unknown";
@@ -4347,65 +4468,26 @@ export class ProjectEngine {
                 await store.updateTask(taskId, {
                   status: "failed",
                   verificationFailureCount: nextBounces,
-                  error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. See follow-up task for investigation.`,
+                  error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. Likely a flaky test or an unrelated regression rather than a fix this task can produce on its own; see the most recent [verification] log entries on this task for the failing command and output.`,
                 });
-                const followUpDescription =
-                  `Investigate repeated ${failedKind} verification failure on ${taskId} (${taskOnErr.title || "untitled"}). ` +
-                  `Auto-merge attempted to fix and re-verify ${nextBounces} times without success — likely a flaky test or unrelated regression rather than a fix this task can produce on its own. ` +
-                  `Look at the most recent [verification] log entries on ${taskId} for the failing command and output, then either fix the underlying issue or quarantine the flake.`;
-                const verificationAuditor = createRunAuditor(store, {
-                  runId: generateSyntheticRunId("auto-merge", taskId),
-                  agentId: "auto-merge",
+                await store.addTaskComment(
                   taskId,
-                  phase: "merge",
-                });
-                const followUpResult = await createAutomatedFollowup(store, {
-                  kind: "verification-failure",
-                  parentTaskId: taskId,
-                  signature: err instanceof VerificationError ? buildVerificationFailureSignature(err) : undefined,
-                  createInput: {
-                    description: followUpDescription,
-                    column: "triage",
-                    priority: "high",
-                    source: {
-                      sourceType: "recovery",
-                      sourceParentTaskId: taskId,
-                    },
-                  },
-                  auditor: verificationAuditor,
-                });
-                if (followUpResult.outcome === "deduped") {
-                  await store.addTaskComment(
-                    taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Reusing existing follow-up ${followUpResult.existingTaskId}.`,
-                    "agent",
-                  );
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — skipped creating duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                    "VerificationError",
-                  );
-                  runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                  );
-                } else {
-                  await store.addTaskComment(
-                    taskId,
-                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUpResult.task.id} to investigate.`,
-                    "agent",
-                  );
-                  await store.logEntry(
-                    taskId,
-                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUpResult.task.id}`,
-                    "VerificationError",
-                  );
-                  runtimeLog.warn(
-                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUpResult.task.id}`,
-                  );
-                }
-              } catch (followUpErr) {
+                  `Auto-merge giving up after ${nextBounces} verification-failure bounces. ` +
+                    `Review the most recent [verification] log entries on this task for the failing command and output, ` +
+                    `then either fix the underlying issue or quarantine the flake.`,
+                  "agent",
+                );
+                await store.logEntry(
+                  taskId,
+                  `Auto-merge gave up after ${nextBounces} verification-failure bounces — task parked for human intervention`,
+                  "VerificationError",
+                );
+                runtimeLog.warn(
+                  `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and parked for human intervention`,
+                );
+              } catch (parkErr) {
                 runtimeLog.error(
-                  `Auto-merge: failed to fail-and-followup ${taskId} after verification cap: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
+                  `Auto-merge: failed to park ${taskId} after verification cap: ${parkErr instanceof Error ? parkErr.message : String(parkErr)}`,
                 );
               }
               continue;
@@ -4414,8 +4496,8 @@ export class ProjectEngine {
             // Under cap — bounce back as before, but record the increment.
             try {
               const checkBeforeWrite = await store.getTask(taskId).catch(() => null);
-              if (checkBeforeWrite?.column === "done" && checkBeforeWrite.mergeDetails?.mergeConfirmed === true) {
-                const commitSha = checkBeforeWrite.mergeDetails.commitSha;
+              if (isConfirmedLandedOnErr(checkBeforeWrite)) {
+                const commitSha = checkBeforeWrite!.mergeDetails!.commitSha;
                 const shortSha = typeof commitSha === "string" && commitSha.length > 0
                   ? commitSha.slice(0, 8)
                   : "unknown";
@@ -4461,7 +4543,8 @@ export class ProjectEngine {
                 error: null,
                 verificationFailureCount: nextBounces,
               });
-              await store.moveTask(taskId, "in-progress");
+              /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
+              await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
               await store.logEntry(
                 taskId,
                 `Deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved back to in-progress with status=merging-fix for remediation`,
@@ -4518,8 +4601,17 @@ export class ProjectEngine {
                 // New behavior: bounce the task back to in-progress so the
                 // executor can rebase against the latest main and retry. Cap
                 // bounces at MAX_MERGE_CONFLICT_BOUNCES — past that, park in
-                // in-review with status=failed and create a follow-up task so
-                // a human can resolve the conflict manually.
+                // in-review with status=failed so a human can resolve the
+                // conflict manually.
+                //
+                /*
+                FNXC:AutoMergeLifecycle 2026-07-26-00:00:
+                The park used to also file an automated recovery follow-up card (only when we capped
+                on bounces, not when autoResolveConflicts was merely off). That machinery was deleted
+                because the card restated facts already on this task: the `error`, the operator
+                comment naming the branch to resolve, and the MergeConflictGiveUp log entry all carry
+                the branch, the reason, and the last merge error. The park itself is the surface now.
+                */
                 const previousBounces = taskOnErr.mergeConflictBounceCount ?? 0;
                 const nextBounces = previousBounces + 1;
                 const bounceCap = ProjectEngine.MAX_MERGE_CONFLICT_BOUNCES;
@@ -4548,66 +4640,6 @@ export class ProjectEngine {
                       `Auto-merge gave up after conflict retries exhausted (${reason}); task parked for human intervention`,
                       "MergeConflictGiveUp",
                     );
-                    if (!autoResolveDisabled) {
-                      // Create a follow-up only when we capped on bounces; if
-                      // auto-resolve is just disabled, the user is presumed to
-                      // be handling merges manually and a follow-up is noise.
-                      try {
-                        const followUpResult = await createAutomatedFollowup(store, {
-                          kind: "merge-conflict",
-                          parentTaskId: taskId,
-                          branch: taskOnErr.branch,
-                          signature: computeVerificationFailureSignature({
-                            lane: "merge-conflict",
-                            failingTestFiles: [],
-                          }).signature,
-                          createInput: {
-                            description:
-                              `Resolve auto-merge conflict on ${taskId} (${taskOnErr.title || "untitled"}). ` +
-                              `Auto-merge attempted to rebase + resolve ${nextBounces - 1} times against main and exhausted retries each pass. ` +
-                              `Branch: \`${taskOnErr.branch ?? "?"}\`. Worktree: \`${taskOnErr.worktree ?? "?"}\`. ` +
-                              `Last merge error: ${errorMsg}`,
-                            column: "triage",
-                            priority: "high",
-                            source: {
-                              sourceType: "recovery",
-                              sourceParentTaskId: taskId,
-                            },
-                          },
-                          auditor: createRunAuditor(store, {
-                            runId: generateSyntheticRunId("auto-merge", taskId),
-                            agentId: "auto-merge",
-                            taskId,
-                            phase: "merge",
-                          }),
-                        });
-                        if (followUpResult.outcome === "deduped") {
-                          await store.addTaskComment(
-                            taskId,
-                            `Auto-merge recovery follow-up already exists (${followUpResult.existingTaskId}). Skipping duplicate follow-up creation.`,
-                            "agent",
-                          );
-                          await store.logEntry(
-                            taskId,
-                            `Auto-merge conflict recovery skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                            "MergeConflictGiveUp",
-                          );
-                          runtimeLog.warn(
-                            `Auto-merge: ${taskId} conflict give-up skipped duplicate follow-up (existing ${followUpResult.existingTaskId})`,
-                          );
-                        } else {
-                          await store.addTaskComment(
-                            taskId,
-                            `Created follow-up ${followUpResult.task.id} to track manual conflict resolution.`,
-                            "agent",
-                          );
-                        }
-                      } catch (followUpErr) {
-                        runtimeLog.warn(
-                          `Auto-merge: failed to create follow-up for ${taskId}: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
-                        );
-                      }
-                    }
                   } catch (recoveryErr) {
                     runtimeLog.error(
                       `Auto-merge: failed to park ${taskId} after conflict-bounce cap: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
@@ -4628,7 +4660,8 @@ export class ProjectEngine {
                       error: null,
                       mergeConflictBounceCount: nextBounces,
                     });
-                    await store.moveTask(taskId, "in-progress");
+                    /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. */
+                    await store.moveTask(taskId, await resolveWipTargetForTask(store, taskId));
                     await store.logEntry(
                       taskId,
                       `Auto-merge conflicts unresolved (${maxAutoMergeRetriesOnErr}/${maxAutoMergeRetriesOnErr}) — bounced to in-progress for re-rebase (bounce ${nextBounces}/${bounceCap})`,
@@ -4758,8 +4791,6 @@ export class ProjectEngine {
           // Return its coordinator reservation rather than pinning a top-level slot.
           if (this.coordinatorAdmittedMergeTaskIds.delete(taskId)) {
             projectAdmissionCoordinator.releaseReservation(taskId);
-            const semaphore = (this.runtime as any).projectSemaphore ?? (this.runtime as any).globalSemaphore;
-            semaphore?.release();
           }
           this.clearActiveMergeClaim(taskId);
           this.mergeAbortController = null;
@@ -4768,10 +4799,22 @@ export class ProjectEngine {
           // the waiter(s) were set but not consumed above. Resolve them now.
           if (this.hasMergeResolvers(taskId)) {
             const finalTask = await store.getTask(taskId).catch(() => null);
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
+            The `merged` a manual-merge caller awaits, resolved from the task's own workflow. On a
+            renamed board `column === "done"` was false for a card that HAD merged, so `fn task merge`
+            and the dashboard's merge button reported failure on a successful merge — the merge is
+            already committed at this point, so the report is the only thing that was wrong.
+
+            An unresolvable complete lane yields `false`, matching the pre-existing answer for a board
+            this code cannot read. `false` is the safe direction: it under-claims a merge that
+            happened rather than claiming one that did not.
+            */
+            const finalCompleteColumn = (await resolveTaskLifecycleColumns(store, taskId).catch(() => undefined))?.complete;
             this.resolveMergeResolvers(taskId, {
               task: finalTask!,
               branch: finalTask?.branch ?? "",
-              merged: finalTask?.column === "done",
+              merged: finalCompleteColumn !== undefined && finalTask?.column === finalCompleteColumn,
               worktreeRemoved: false,
               branchDeleted: false,
             } as MergeResult);
@@ -4847,7 +4890,14 @@ export class ProjectEngine {
 
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
-      if (to !== "in-review") return;
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-19:20 (fleet): ONE snapshot for the handoff and its
+      post-grace recheck below. The two are halves of one decision — "did this card just enter the merge
+      lane, and is it still there?" — and with the literal neither half fired on a renamed board, so
+      auto-merge was never handed a card at all.
+      */
+      const handoffReviewColumn = (await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review";
+      if (to !== handoffReviewColumn) return;
       if (task.paused) return;
       if (this.options.getTaskMergeBlocker?.(task)) return;
 
@@ -4868,7 +4918,7 @@ export class ProjectEngine {
             runtimeLog.warn(`Auto-merge handoff (${task.id}): task disappeared during grace period`);
             return;
           }
-          if (latestTask.column !== "in-review") {
+          if (latestTask.column !== handoffReviewColumn) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: column changed to ${latestTask.column}`);
             return;
           }
@@ -4920,39 +4970,56 @@ export class ProjectEngine {
         if (!parentTaskId) continue;
         try {
           const sourcePhase = record.sourcePhase ?? "unknown";
-          const followUpResult = await createAutomatedFollowup(store, {
-            kind: "autostash-orphan",
-            parentTaskId,
-            signature: computeVerificationFailureSignature({
-              lane: "autostash-orphan",
-              failingTestFiles: [],
-            }).signature,
-            createInput: {
-              description:
-                `Investigate preserved merger autostash leftover from ${parentTaskId} (${record.sha.slice(0, 7)}). ` +
-                `Detected by ${record.detectedByTaskId ?? "merge sweep"} during ${sourcePhase}; ` +
-                `stash label: ${record.label}. Recover from stash-recovery before dropping.`,
-              source: {
-                sourceType: "recovery",
-                sourceParentTaskId: parentTaskId,
-              },
-            },
-            auditor: createRunAuditor(store, {
-              runId: generateSyntheticRunId("auto-merge", parentTaskId),
-              agentId: "auto-merge",
-              taskId: parentTaskId,
-              phase: "merge",
-            }),
-          });
+          const shortSha = record.sha.slice(0, 7);
+          const detectedBy = record.detectedByTaskId ?? "merge sweep";
+
+          /*
+          FNXC:AutostashRecovery 2026-07-26-00:00:
+          A `live`-classified autostash orphan is a merger stash that still holds REAL UNCOMMITTED
+          WORK stranded by a merge pass. This used to file an automated recovery follow-up card via
+          the shared follow-up engine; that engine was deleted, but unlike the verification-cap and
+          merge-conflict paths this site has NO parked parent to carry the notice — the parent task
+          may already be `done` and merged, so if we say nothing here the stash becomes invisible and
+          the work is silently lost. So the card is replaced by a durable log entry AND an operator
+          comment on the parent, both of which must keep every fact the old description carried:
+          the sha, the detecting task, the source phase, and above all `record.label` — that stash
+          label is the handle `git stash` recovery needs, so it must never be dropped from the
+          message or truncated. A comment (not only a log entry) because the parent may be closed and
+          the log is not what an operator reads on a done card.
+          */
           await store.logEntry(
             parentTaskId,
-            followUpResult.outcome === "deduped"
-              ? `Auto-detected live autostash orphan ${record.sha.slice(0, 7)} — reused follow-up ${followUpResult.existingTaskId}`
-              : `Auto-created recovery follow-up ${followUpResult.task.id} for live autostash orphan ${record.sha.slice(0, 7)}`,
+            `Auto-detected live autostash orphan ${shortSha} holding uncommitted work — preserved for manual recovery (stash label: ${record.label})`,
             `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`,
           ).catch(() => undefined);
+
+          await store.addTaskComment(
+            parentTaskId,
+            `Preserved merger autostash leftover from this task (${shortSha}) still holds uncommitted work. ` +
+              `Detected by ${detectedBy} during ${sourcePhase}. ` +
+              `Stash label: \`${record.label}\` — recover it via stash-recovery before dropping the stash.`,
+            "agent",
+          ).catch(() => undefined);
+
+          const auditor = createRunAuditor(store, {
+            runId: generateSyntheticRunId("auto-merge", parentTaskId),
+            agentId: "auto-merge",
+            taskId: parentTaskId,
+            phase: "merge",
+          });
+          await auditor.database({
+            type: "task:autostash-orphan-live-detected",
+            target: parentTaskId,
+            metadata: {
+              taskId: parentTaskId,
+              sha: record.sha,
+              stashLabel: record.label,
+              detectedByTaskId: record.detectedByTaskId ?? null,
+              sourcePhase,
+            },
+          }).catch(() => undefined);
         } catch (err: unknown) {
-          runtimeLog.warn(`Autostash orphan recovery follow-up failed for ${parentTaskId}: ${err instanceof Error ? err.message : String(err)}`);
+          runtimeLog.warn(`Autostash orphan recovery notice failed for ${parentTaskId}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     };
@@ -4962,7 +5029,9 @@ export class ProjectEngine {
 
   private wireTaskPauseMergeInterruption(store: TaskStore): void {
     this.taskUpdatedHandler = async (task: Task) => {
-      if (task.column !== "in-review") {
+      /* FNXC:WorkflowLifecycleColumns 2026-08-01-19:25 (fleet): on a renamed board this dropped EVERY card
+         from the paused-review set on its next update, so a merge paused mid-flight was never interrupted. */
+      if (task.column !== ((await resolveTaskLifecycleColumns(store, task.id))?.review ?? "in-review")) {
         this.pausedReviewTaskIds.delete(task.id);
         return;
       }
@@ -5043,8 +5112,39 @@ export class ProjectEngine {
    * Clear crash-leftover merging statuses so manual merge is unblocked.
    * Unconditional (not gated on autoMerge). Safe to run on the critical path.
    */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-00:20:
+  ONE lane-aware read for this class's six `listTasks({ column: "<literal>" })` sites.
+
+  `listTasks`' `column` option filters in the STORE, so on a board whose lanes are renamed each of
+  those reads returned an EMPTY array and the machinery behind it did nothing. The census cannot see
+  any of them — it scores comparisons, and a query filter is not a comparison — so this file reads as
+  fully converted (0 column guards) while the whole auto-merge path was inert on a custom board:
+
+    - `clearStaleMergingStatuses` never cleared a crash-leftover `merging` status, so MANUAL MERGE
+      stayed blocked after an engine crash — the one that costs an operator directly;
+    - the three `enqueueEligibleInReviewTasks` feeds never enqueued anything, so auto-merge never ran;
+    - the legacy auto-merge stamp advisory never warned;
+    - the planner overseer never saw an in-progress or in-review card.
+
+  Project-level resolution, because a read has no task in hand to resolve from, and the legacy ids are
+  always unioned so a board mid-rename still finds rows stored under the old ones. Deduped by id
+  because one column can carry two roles.
+  */
+  private async listTasksInLaneRoles(
+    store: TaskStore,
+    roles: Parameters<typeof resolveProjectColumnsForRoles>[1],
+  ): Promise<Task[]> {
+    const columns = await resolveProjectColumnsForRoles(store, roles);
+    const byId = new Map<string, Task>();
+    for (const column of columns) {
+      for (const task of await store.listTasks({ column })) byId.set(task.id, task as Task);
+    }
+    return [...byId.values()];
+  }
+
   private async clearStaleMergingStatuses(store: TaskStore): Promise<Task[]> {
-    const tasks = await store.listTasks({ column: "in-review" });
+    const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
     // No merge is actually running at startup, so any task still marked
     // as merging is a leftover from a previous engine lifecycle.
     const staleStatuses = new Set(["merging", "merging-pr"]);
@@ -5071,7 +5171,7 @@ export class ProjectEngine {
         runtimeLog.log("Auto-merge startup enqueue skipped: pause active");
         return;
       }
-      const tasks = await store.listTasks({ column: "in-review" });
+      const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
       if (this.shuttingDown) return;
       const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
@@ -5143,7 +5243,7 @@ export class ProjectEngine {
       try {
         const settings = await store.getSettings();
         if (!settings.globalPause && !settings.enginePaused) {
-          const tasks = await store.listTasks({ column: "in-review" });
+          const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
           await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
         }
       } catch (err: unknown) {
@@ -5223,7 +5323,7 @@ export class ProjectEngine {
     }
 
     try {
-      const tasks = await store.listTasks({ column: "in-review" });
+      const tasks = await this.listTasksInLaneRoles(store, REVIEW_ROLES);
       await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
     } catch (err: unknown) {
       runtimeLog.warn(

@@ -466,6 +466,14 @@ export type DatabaseMutationType =
   | "task:checkout"
   /** Metadata: { taskId, artifactKeys, owner, source, action, attempt, maxAttempts, nodeId? } */
   | "task:required-artifact-missing"
+  /**
+   * Planning admission was withheld because no top-level slot was reservable.
+   * Metadata: { blockedBy, maxConcurrent, claimed, projectRoom, eligibleCount, eligibleTaskIds,
+   * processingCount, processingTaskIds, semaphoreActiveCount?, semaphoreLimit?,
+   * semaphoreAvailableCount?, semaphoreWaitingCount? } — ids/counts/outcomes only.
+   * Deduped on the gate signature, so a sustained stall emits one row, not one per poll.
+   */
+  | "task:plan-admission-throttled"
   | "agent:auto-recover-error-state"
   | "agent:reset-error-state-on-startup"
   | "agent:error-retry-exhausted"
@@ -496,10 +504,18 @@ export type DatabaseMutationType =
   | "task:auto-merge-skipped-already-done"
   /** Metadata: { taskId, commitSha, failedCommand, exitCode, errorTail } */
   | "task:post-finalize-verification-no-op"
-  /** Metadata: { kind, parentTaskId, existingTaskId, signature, rateLimited } */
-  | "verification:followup-deduped"
-  /** Metadata: { kind, parentTaskId, newTaskId, signature, supersedesTaskId } */
-  | "verification:followup-created"
+  /*
+  FNXC:RunAudit 2026-07-26-00:00:
+  Replaces the deleted `verification:followup-created`/`verification:followup-deduped` pair. Those
+  two existed only for the automated recovery follow-up engine (verification-followup-dedup.ts) and
+  had no other emitters or readers once it was removed. The autostash-orphan path is the one caller
+  whose signal had to survive: a `live`-classified orphan is a merger stash holding REAL UNCOMMITTED
+  WORK, and its parent task may already be `done` and merged, so nothing else on the board would
+  mention the stash. This event gets a truthful name rather than a borrowed "followup" one.
+  Metadata: { taskId, sha, stashLabel, detectedByTaskId, sourcePhase } — ids/outcomes only; the
+  stash label is an opaque recovery identifier, never description prose.
+  */
+  | "task:autostash-orphan-live-detected"
   | "mission:stranded-feature-triaged"
   | "task:auto-recover-branch-misbound"
   | "task:auto-recover-misrouted-foreign-commit"
@@ -596,6 +612,8 @@ export type DatabaseMutationType =
   reason }, where `reason` is a fixed adoption-table note — never row prose.
   */
   | "task:reconcile-legacy-adoption"
+  // FNXC:WorkflowColumns 2026-07-26-18:30: a row re-homed out of a column its workflow no longer declares.
+  | "task:reconcile-undeclared-column"
   /**
    * An UNMAPPABLE legacy status: the row is parked `paused` for a human with its status
    * deliberately left in place so the operator can see what it carried. Same metadata shape.
@@ -609,6 +627,9 @@ export type DatabaseMutationType =
   { taskId, column, orphanedCount, resultCount }.
   */
   | "task:reconcile-orphaned-pending-step-results"
+  /* FNXC:StalledCardWatchdog 2026-07-26-19:40: detect-only backstop — a non-terminal card with no
+     live session and no queued continuation that has not moved past the stall floor. */
+  | "task:stall-watchdog-detected"
   /**
    * FNXC:MergeQueue 2026-07-15-10:05:
    * Wedged single-flight merge reclaim. Metadata ids/outcomes-only:
@@ -636,14 +657,13 @@ export type DatabaseMutationType =
   | "task:worktree-contamination-detected"
   /** Metadata: { taskId, pausedAgeMs, blockedFollowerIds: string[], previousPausedReason: string | null } */
   | "task:auto-rebound-paused-scope-decay"
-  /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number } */
-  | "task:auto-archived-meta-resolved"
-  /** Metadata: { taskId, targetTaskId, targetColumn, chainDepth: number, blockedBy: string[] } */
-  | "task:auto-archive-meta-resolved-skipped"
-  /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number } */
-  | "task:auto-archived-meta-stalled"
-  /** Metadata: { taskId, targetTaskId, chainDepth: number, stalledMs: number, blockedBy: string[] } */
-  | "task:auto-archive-meta-stalled-skipped"
+  /*
+   * FNXC:RunAudit 2026-07-26-16:50:
+   * The four `task:auto-archive*-meta-*` event types were removed with the meta-task auto-archive
+   * sweeps that emitted them (title-regex classification archived live cards). Historic rows may
+   * still exist in old databases; readers must tolerate unknown stored types rather than have these
+   * names reinstated in the union.
+   */
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, blockedGrowth: number } */
   | "task:auto-board-stall-broken"
   /** Metadata: { holderIds: string[], followerCount: number, windowMs: number, ntfyDispatched: boolean } */
@@ -787,6 +807,14 @@ export type DatabaseMutationType =
   | "message-delivery:retry-issued"
   | "message-delivery:park"
   | "branch-worktree:auto-requeue"
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:25 (#2797 review):
+  Emitted when the branch-worktree auto-requeue cannot resolve a rebound destination from the task's
+  own workflow. The requeue is SKIPPED rather than aimed at the legacy `todo`, because `moveTask`
+  rejects a column the board does not declare and the resulting throw left the task parked with no
+  record at all. Metadata stays ids/outcomes-only.
+  */
+  | "branch-worktree:auto-requeue-skipped"
   | "branch-worktree:ai-session-spawned"
   | "branch-worktree:irreducible-pause"
   | "branch-worktree:foreign-branch-discarded"

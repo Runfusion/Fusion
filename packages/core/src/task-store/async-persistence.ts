@@ -199,6 +199,46 @@ export async function softDeleteTaskRow(
 }
 
 /**
+ * FNXC:TaskStateReconciliation 2026-07-29-16:10:
+ * Resolve only the active wedge episode the caller observed. The PostgreSQL predicate is the cross-process compare-and-set authority, so an update waiting behind a replacement episode rechecks the durable row and cannot clear the replacement.
+ */
+export async function resolveActiveTaskWedgeEpisodeRow(
+  layer: AsyncDataLayer,
+  id: string,
+  episodeId: string,
+  transitionedAt: string,
+): Promise<Record<string, unknown> | undefined> {
+  const rows = await layer.db
+    .update(schema.project.tasks)
+    .set({
+      /*
+      FNXC:WedgeNotification 2026-07-30-12:00:
+      `${transitionedAt}::text` — the CAST is load-bearing, not decoration.
+
+      PostgreSQL cannot infer the type of a bare bind parameter used as a `jsonb_build_object` value:
+      the function is variadic `"any"`, so there is no signature to resolve $1 against and the planner
+      rejects the statement outright with `42P18: could not determine data type of parameter $1`.
+      That is a PARSE-time failure, so it fires on every call rather than on unusual data — wedge
+      notifications could never be resolved in PostgreSQL mode at all.
+
+      Surfaced by `store-wedge-resolution.pg.test.ts`, which has been failing on main; the failure is
+      the product query, not the test.
+      */
+      wedgeNotification: sql`(${schema.project.tasks.wedgeNotification}::jsonb || jsonb_build_object('status', 'resolved', 'transitionedAt', ${transitionedAt}::text))::text`,
+      updatedAt: transitionedAt,
+    })
+    .where(and(
+      taskProjectScope(layer),
+      eq(schema.project.tasks.id, id),
+      isNull(schema.project.tasks.deletedAt),
+      sql`${schema.project.tasks.wedgeNotification}::jsonb ->> 'episodeId' = ${episodeId}`,
+      sql`${schema.project.tasks.wedgeNotification}::jsonb ->> 'status' = 'active'`,
+    ))
+    .returning();
+  return rows[0] as Record<string, unknown> | undefined;
+}
+
+/**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-15:00:
  * Soft-delete a task INSIDE a shared transaction handle. This is the
  * transaction-aware variant of {@link softDeleteTaskRow} for composite

@@ -54,7 +54,6 @@ import type {
   DockerHostConfig,
   DockerNodeConfig,
   DockerNodeStatus,
-  GlobalConcurrencyState,
   IsolationMode,
   ManagedDockerNode,
   MeshSnapshotQuery,
@@ -487,28 +486,23 @@ function mapMeshWriteRow(row: MeshWriteRow): MeshWriteQueueEntry {
 
 /**
  * FNXC:CentralCore 2026-06-26-12:05:
- * Backend-mode init: ensure the singleton globalConcurrency row (id=1) and
- * the local node exist. Mirrors the sync CentralCore.init() local-node
+ * Backend-mode init: ensure the singleton centralSettings row and the local node
+ * exist. Mirrors the sync CentralCore.init() local-node
  * bootstrap. The PostgreSQL schema baseline already created the tables; this
  * only seeds the runtime singletons. Idempotent.
  */
+/** Seed value for a freshly created local node row (previously the unset-row fallback). */
+const DEFAULT_LOCAL_NODE_MAX_CONCURRENT = 2;
+
 export async function ensureBackendBootstrap(layer: AsyncDataLayer): Promise<void> {
   await layer.transactionImmediate(async (tx) => {
-    // Ensure the globalConcurrency singleton row exists (CHECK constraint forces id=1).
-    const concurrency = (await tx
-      .select()
-      .from(schema.central.globalConcurrency)
-      .where(eq(schema.central.globalConcurrency.id, 1))
-      .limit(1)) as { id: number; globalMaxConcurrent: number | null }[];
-    if (concurrency.length === 0) {
-      await tx.insert(schema.central.globalConcurrency).values({
-        id: 1,
-        globalMaxConcurrent: 4,
-        currentlyActive: 0,
-        queuedCount: 0,
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    /*
+    FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+    The globalConcurrency singleton row is no longer SEEDED. Nothing reads it: the
+    cap it held is deleted and its currently_active/queued_count counters were
+    never incremented by production code. The table is dropped in the follow-up;
+    not seeding it here first means the drop has no live writer to race.
+    */
 
     // Ensure the centralSettings singleton row exists.
     const settings = (await tx
@@ -524,15 +518,22 @@ export async function ensureBackendBootstrap(layer: AsyncDataLayer): Promise<voi
       });
     }
 
-    // Ensure a local node exists. Mirror sync: reuse maxConcurrent from the
-    // globalConcurrency row (default 2 when unset, matching sync init()).
+    /*
+    Ensure a local node exists.
+
+    FNXC:CapacityModel 2026-07-28-23:30: the node's maxConcurrent used to be seeded
+    from the global-concurrency row. That row is going, so the seed is the literal
+    default it already resolved to when the row was unset. This is NODE capacity
+    (multi-node work routing), a different concern from the deleted machine-wide
+    agent cap — it is seeded, not enforced, here.
+    */
     const existingLocal = await tx
       .select({ id: schema.central.nodes.id })
       .from(schema.central.nodes)
       .where(eq(schema.central.nodes.type, "local"))
       .limit(1);
     if (existingLocal.length === 0) {
-      const maxConcurrent = concurrency[0]?.globalMaxConcurrent ?? 2;
+      const maxConcurrent = DEFAULT_LOCAL_NODE_MAX_CONCURRENT;
       const now = new Date().toISOString();
       const localId = `node_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
       await tx.insert(schema.central.nodes).values({
@@ -1347,150 +1348,26 @@ export async function setDefaultProjectId(
     .where(eq(schema.central.centralSettings.id, 1));
 }
 
-// ── Global Concurrency ──────────────────────────────────────────────────────
+/*
+FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+The whole Global Concurrency block is DELETED: getGlobalConcurrencyRow,
+getProjectsActiveCounts, getGlobalConcurrencyState, updateGlobalConcurrencyRow,
+acquireGlobalSlotAtomic and releaseGlobalSlotAtomic.
 
-export async function getGlobalConcurrencyRow(
-  handle: QueryHandle,
-): Promise<{ globalMaxConcurrent: number; currentlyActive: number; queuedCount: number }> {
-  const rows = (await handle
-    .select({
-      globalMaxConcurrent: schema.central.globalConcurrency.globalMaxConcurrent,
-      currentlyActive: schema.central.globalConcurrency.currentlyActive,
-      queuedCount: schema.central.globalConcurrency.queuedCount,
-    })
-    .from(schema.central.globalConcurrency)
-    .where(eq(schema.central.globalConcurrency.id, 1))
-    .limit(1)) as {
-    globalMaxConcurrent: number | null;
-    currentlyActive: number | null;
-    queuedCount: number | null;
-  }[];
-  return {
-    globalMaxConcurrent: rows[0]?.globalMaxConcurrent ?? 4,
-    currentlyActive: rows[0]?.currentlyActive ?? 0,
-    queuedCount: rows[0]?.queuedCount ?? 0,
-  };
-}
+Capacity is two numbers PER PROJECT. The machine-wide cap lived here in a separate
+authority (the `global_concurrency` singleton row) that every runtime subscribed to
+and periodically re-reconciled against the per-project gates.
 
-export async function getProjectsActiveCounts(
-  handle: QueryHandle,
-): Promise<Array<{ projectId: string; inFlightAgentCount: number }>> {
-  const rows = (await handle
-    .select({
-      projectId: schema.central.projectHealth.projectId,
-      inFlightAgentCount: schema.central.projectHealth.inFlightAgentCount,
-    })
-    .from(schema.central.projectHealth)
-    .where(sql`${schema.central.projectHealth.inFlightAgentCount} > 0`)) as {
-    projectId: string;
-    inFlightAgentCount: number | null;
-  }[];
-  return rows.map((row) => ({
-    projectId: row.projectId,
-    inFlightAgentCount: row.inFlightAgentCount ?? 0,
-  }));
-}
+The two slot functions were ALREADY dead before this change — measured in the
+enforcement half: nothing in production called acquire/releaseGlobalSlot, so
+`currently_active` was never incremented by real work. The durable counter was
+fiction, which is why no operator ever saw the cap bind through it.
 
-export async function getGlobalConcurrencyState(
-  handle: QueryHandle,
-): Promise<GlobalConcurrencyState> {
-  const row = await getGlobalConcurrencyRow(handle);
-  const activeCounts = await getProjectsActiveCounts(handle);
-  const projectsActive: Record<string, number> = {};
-  for (const { projectId, inFlightAgentCount } of activeCounts) {
-    projectsActive[projectId] = inFlightAgentCount;
-  }
-  return {
-    globalMaxConcurrent: row.globalMaxConcurrent,
-    currentlyActive: row.currentlyActive,
-    queuedCount: row.queuedCount,
-    projectsActive,
-  };
-}
-
-export async function updateGlobalConcurrencyRow(
-  handle: QueryHandle,
-  state: { globalMaxConcurrent: number; currentlyActive: number; queuedCount: number },
-  now: string,
-): Promise<void> {
-  await handle
-    .update(schema.central.globalConcurrency)
-    .set({
-      globalMaxConcurrent: state.globalMaxConcurrent,
-      currentlyActive: state.currentlyActive,
-      queuedCount: state.queuedCount,
-      updatedAt: now,
-    })
-    .where(eq(schema.central.globalConcurrency.id, 1));
-}
-
-/**
- * Atomically acquire a global concurrency slot or queue the request. Mirrors
- * the sync acquireGlobalSlot() transaction: read the singleton row, increment
- * currentlyActive + project inFlightAgentCount if a slot is available,
- * otherwise increment queuedCount.
- */
-export async function acquireGlobalSlotAtomic(
-  layer: AsyncDataLayer,
-  projectId: string,
-): Promise<boolean> {
-  return layer.transactionImmediate(async (tx) => {
-    const row = await getGlobalConcurrencyRow(tx);
-    const now = new Date().toISOString();
-    if (row.currentlyActive < row.globalMaxConcurrent) {
-      await tx
-        .update(schema.central.globalConcurrency)
-        .set({
-          currentlyActive: row.currentlyActive + 1,
-          updatedAt: now,
-        })
-        .where(eq(schema.central.globalConcurrency.id, 1));
-      await tx
-        .update(schema.central.projectHealth)
-        .set({
-          inFlightAgentCount: sql`${schema.central.projectHealth.inFlightAgentCount} + 1`,
-          updatedAt: now,
-        })
-        .where(eq(schema.central.projectHealth.projectId, projectId));
-      return true;
-    }
-    await tx
-      .update(schema.central.globalConcurrency)
-      .set({
-        queuedCount: row.queuedCount + 1,
-        updatedAt: now,
-      })
-      .where(eq(schema.central.globalConcurrency.id, 1));
-    return false;
-  });
-}
-
-/**
- * Atomically release a global concurrency slot. Mirrors the sync
- * releaseGlobalSlot() transaction with MAX(0, ...) clamping.
- */
-export async function releaseGlobalSlotAtomic(
-  layer: AsyncDataLayer,
-  projectId: string,
-): Promise<void> {
-  await layer.transactionImmediate(async (tx) => {
-    const now = new Date().toISOString();
-    await tx
-      .update(schema.central.globalConcurrency)
-      .set({
-        currentlyActive: sql`GREATEST(0, ${schema.central.globalConcurrency.currentlyActive} - 1)`,
-        updatedAt: now,
-      })
-      .where(eq(schema.central.globalConcurrency.id, 1));
-    await tx
-      .update(schema.central.projectHealth)
-      .set({
-        inFlightAgentCount: sql`GREATEST(0, ${schema.central.projectHealth.inFlightAgentCount} - 1)`,
-        updatedAt: now,
-      })
-      .where(eq(schema.central.projectHealth.projectId, projectId));
-  });
-}
+Live "N running (all projects)" telemetry is unaffected: it comes from
+CentralCore.getLiveRunningAgentCounts via the registered side-effect-safe source,
+never from this table. The table itself is dropped in the follow-up so this change
+stays reversible without a schema migration.
+*/
 
 // ── Mesh Snapshots + Write Queue ────────────────────────────────────────────
 

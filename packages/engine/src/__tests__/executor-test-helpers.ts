@@ -37,7 +37,14 @@ vi.mock("../logger.js", () => {
   const probe = process.env.FUSION_TEST_LOG_PROBE === "1"
     ? (...a: unknown[]) => console.error("[probe]", ...a)
     : undefined;
+  /*
+  FNXC:EngineTests 2026-07-26-09:50:
+  Executor construction now emits debug-only dispatch bookkeeping. The rescued
+  fn_task_done invariant suite imports this logger mock, so preserve its full
+  logger contract when it re-enters the default test suite.
+  */
   const createMockLogger = () => ({
+    debug: vi.fn(probe),
     log: vi.fn(probe),
     warn: vi.fn(probe),
     error: vi.fn(probe),
@@ -117,8 +124,10 @@ function withSessionDefaults(session: any, options?: { systemPrompt?: unknown })
 }
 
 vi.mock("../agent-session-helpers.js", async () => {
+  const actual = await vi.importActual<typeof import("../agent-session-helpers.js")>("../agent-session-helpers.js");
   const { createFnAgent } = await import("../pi.js");
   return {
+    ...actual,
     createResolvedAgentSession: async (options: any) => {
       const result = await createFnAgent(options);
       return {
@@ -150,15 +159,26 @@ vi.mock("../agent-session-helpers.js", async () => {
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveValidatorThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
-      (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
-      ?? taskThinkingLevel
+      taskThinkingLevel
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof settings?.validatorGlobalThinkingLevel === "string" ? settings.validatorGlobalThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorThinkingLevel as string
+        : undefined)
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveValidatorFallbackThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
       (typeof settings?.validatorFallbackThinkingLevel === "string" ? settings.validatorFallbackThinkingLevel : undefined)
       ?? (typeof settings?.fallbackThinkingLevel === "string" ? settings.fallbackThinkingLevel : undefined)
-      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorFallbackThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorFallbackThinkingLevel as string
+        : undefined)
       ?? taskThinkingLevel
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? (typeof settings?.validatorGlobalThinkingLevel === "string" ? settings.validatorGlobalThinkingLevel : undefined)
+      ?? (typeof (settings?.selectedWorkflowModelLanes as Record<string, unknown> | undefined)?.validatorThinkingLevel === "string"
+        ? (settings?.selectedWorkflowModelLanes as Record<string, unknown>).validatorThinkingLevel as string
+        : undefined)
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveExecutorSessionModel: (
@@ -190,6 +210,7 @@ vi.mock("../agent-session-helpers.js", async () => {
       }
       return { provider: undefined, modelId: undefined };
     },
+
   };
 });
 vi.mock("../worktree-names.js", async () => {

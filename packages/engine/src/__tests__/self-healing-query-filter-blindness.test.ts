@@ -195,6 +195,45 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "done" }));
   });
   /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:05 (the query-filter class — the last read-shaped sweep):
+
+  `surfaceInReviewStalls` kicks a card that has sat in review past `taskStuckTimeoutMs` back to the
+  hold lane. Its query asked for the literal `in-review`, so on a renamed board it received NOTHING and
+  the review column silently stopped draining — an operator sees cards accumulating with no error and
+  no log line, because a sweep that finds zero candidates is indistinguishable from a healthy one.
+
+  Asserted on the QUERY, like its siblings here, for the reason the file header gives: the outcome is 0
+  either way, so only the query argument distinguishes "nothing to do" from "asked the wrong question".
+
+  `checking` AND `in-review` are both expected — `resolveProjectColumnsForRoles` unions the legacy id
+  deliberately, so a board mid-rename with rows still under the old id is not skipped.
+
+  REVERT PROOF, measured: restore `listTasks({ column: "in-review", slim: false })` and the first
+  assertion fails; the second keeps passing, which is exactly why asserting only the legacy id would
+  have been no test at all.
+  */
+  it("surfaceInReviewStalls asks for the board's own review lane, not the literal", async () => {
+    const stalled = {
+      ...shippedCard(),
+      id: "FN-STALL",
+      column: RENAMED_VOCAB.review,
+      updatedAt: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(),
+    } as Task;
+    const { store, listTasks } = productionFaithfulStore([stalled]);
+    (store as unknown as { getSettings: ReturnType<typeof vi.fn> }).getSettings = vi.fn(async () => ({
+      globalPause: false,
+      enginePaused: false,
+      taskStuckTimeoutMs: 60_000,
+    }) as Settings);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    await manager.surfaceInReviewStalls();
+
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: RENAMED_VOCAB.review }));
+    expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ column: "in-review" }));
+  });
+
+  /*
   FNXC:WorkflowResolvedColumns 2026-07-30-18:05 (#2838 review — greptile P1):
 
   A CARD WHOSE WORKFLOW CANNOT BE RESOLVED MUST NOT BE MISTAKEN FOR ONE THAT ANSWERED.

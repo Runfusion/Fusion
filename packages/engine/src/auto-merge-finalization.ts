@@ -81,6 +81,19 @@ export async function validateWorkflowDoneMergeProof(
   options: { result?: MergeResult; checkWorkflowSteps?: boolean } = {},
 ): Promise<WorkflowDoneMergeProofVerdict> {
   const hasProof = hasDurableMergeProof(task, options.result);
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL but DIAGNOSTIC-ONLY):
+  This literal selects which REASON STRING is reported, not which branch runs. Both arms return
+  `{ ok: false }`, so on a renamed board a card sitting in the complete lane is refused with the
+  generic `missing-merge-confirmation` instead of the specific `done-without-merge-confirmation`.
+
+  Worth recording rather than converting from here: the resolver two functions up already computes
+  `isCompleteColumn` for exactly this workflow, and threading it in is the right fix — but this
+  function does not receive it, and widening the signature to improve an error string is a change
+  whose cost outweighs the diagnosis it sharpens. The other two census entries in this file are NOT
+  defects: the `columnId === "done"` at the top is the resolver's documented degraded fallback (the
+  live arm calls `columnHasFlag`), and the `step.status` comparison is a STEP status, not a column.
+  */
   if (!hasProof) return { ok: false, reason: task.column === "done" ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
   if (options.checkWorkflowSteps !== false && hasIncompleteWorkflowSteps(task)) {
     return { ok: false, reason: "incomplete-workflow-steps" };

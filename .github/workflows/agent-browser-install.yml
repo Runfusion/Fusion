@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -53,7 +53,7 @@ jobs:
           node -e "require('node:fs').writeFileSync(process.argv[1], process.argv[2] + '\n')" "$pack_dir/agent-browser-version.txt" "$agent_browser_version"
 
       - name: Upload packed install fixture
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-browser-install-pack
           path: |
@@ -73,7 +73,7 @@ jobs:
 
     steps:
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
 

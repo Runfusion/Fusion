@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Agent, AgentStore, TaskStore, Task, TaskCreateInput } from "@fusion/core";
 import { createAgentTask, createListAgentsTool, createDelegateTaskTool, createTaskCreateTool } from "../agent-tools.js";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 
 function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   return {
@@ -432,35 +433,61 @@ describe("createDelegateTaskTool", () => {
     }), expect.anything());
   });
 
-  it("does not let a completed diagnostic suppress newly required work", async () => {
-    const completed = {
-      id: "FN-DONE",
-      description: "Fix unresolved `html2canvas` typecheck failure.",
-      dependencies: [],
-      column: "done" as const,
-      sourceParentTaskId: "FN-OLD-PARENT",
-      steps: [],
-      currentStep: 0,
-      log: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as Task;
-    const created = {
-      ...completed,
-      id: "FN-NEW",
-      column: "triage" as const,
-      sourceParentTaskId: "FN-NEW-PARENT",
-    } as Task;
-    vi.mocked(taskStore.searchTasks).mockResolvedValue([completed]);
-    vi.mocked(taskStore.createTask).mockResolvedValue(created);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:20 (batch-engine tail):
+  DIFFERENTIAL over the column vocabulary. This invariant — "a FINISHED diagnostic must not suppress
+  newly required work" — was asserted only against the legacy `done` id, so it passed for a guard that
+  compared `candidate.column !== "done"`. On a board whose complete lane is renamed, that comparison is
+  true for a shipped card, the dedup guard adopts it as canonical, and the new diagnostic is silently
+  absorbed into a task nobody is working on.
 
-    const result = await createAgentTask(taskStore, {
-      description: "Restore the missing html2canvas dependency so dashboard typecheck passes.",
-    }, { sourceTaskId: "FN-NEW-PARENT" });
+  The renamed run supplies a real workflow IR; without one `resolveWorkflowIrForTask` returns the BUILT-IN
+  coding IR (it degrades rather than throwing), the resolved complete lane would be `done`, and the
+  renamed case would be indistinguishable from the default one.
 
-    expect(result).toEqual({ task: created, wasDuplicate: false });
-    expect(taskStore.createTask).toHaveBeenCalledOnce();
-  });
+  REVERT CHECK, measured: with `.filter((c) => c.column !== "done" && c.column !== "archived")` restored,
+  the RENAMED case fails — `wasDuplicate: true` and `createTask` is never called. The DEFAULT case passes
+  before and after, which is why both are run.
+  */
+  for (const [label, completeColumn] of [["DEFAULT", "done"], ["RENAMED", "shipped"]] as const) {
+    it(`does not let a completed diagnostic suppress newly required work (${label} complete column: ${completeColumn})`, async () => {
+      const completed = {
+        id: "FN-DONE",
+        description: "Fix unresolved `html2canvas` typecheck failure.",
+        dependencies: [],
+        column: completeColumn,
+        sourceParentTaskId: "FN-OLD-PARENT",
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as Task;
+      const created = {
+        ...completed,
+        id: "FN-NEW",
+        column: "triage" as const,
+        sourceParentTaskId: "FN-NEW-PARENT",
+      } as Task;
+      vi.mocked(taskStore.searchTasks).mockResolvedValue([completed]);
+      vi.mocked(taskStore.createTask).mockResolvedValue(created);
+      if (label === "RENAMED") {
+        const ir = lifecycleIr(RENAMED_VOCAB, "agent-tools-dedup");
+        Object.assign(taskStore, {
+          getTaskWorkflowSelectionAsync: async () => ({ workflowId: "agent-tools-dedup", stepIds: [] }),
+          getTaskWorkflowSelection: () => ({ workflowId: "agent-tools-dedup", stepIds: [] }),
+          getWorkflowDefinition: async (id: string) => (id === "agent-tools-dedup" ? { ir } : undefined),
+        });
+      }
+
+      const result = await createAgentTask(taskStore, {
+        description: "Restore the missing html2canvas dependency so dashboard typecheck passes.",
+      }, { sourceTaskId: "FN-NEW-PARENT" });
+
+      expect(result).toEqual({ task: created, wasDuplicate: false });
+      expect(taskStore.createTask).toHaveBeenCalledOnce();
+    });
+  }
 
   it("fails closed when cross-parent diagnostic lookup is unavailable", async () => {
     vi.mocked(taskStore.searchTasks).mockRejectedValue(new Error("database unavailable"));
@@ -666,28 +693,58 @@ describe("createDelegateTaskTool", () => {
     expect(store.createTask).not.toHaveBeenCalled();
   });
 
-  it("does not select an archived same-agent task as a defined-feature bootstrap canonical", async () => {
-    const archived = {
-      id: "FN-archived", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
-      sourceAgentId: "agent-001", dependencies: [], column: "archived" as const, steps: [], currentStep: 0,
-      log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    } as Task;
-    const store = createMockTaskStore({ listTasks: vi.fn().mockResolvedValue([archived]) });
-    const validate = vi.fn().mockResolvedValue(undefined);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:35 (batch-engine tail):
+  DIFFERENTIAL over the archive lane's id. The invariant below was asserted only against the legacy
+  `archived` id, so it passed for a guard comparing `task.column === "archived"`.
 
-    const result = await createAgentTask(store, {
-      title: "Bootstrap feature",
-      description: "Bootstrap the hand-authored feature",
-      source: { sourceType: "api", sourceAgentId: "agent-001" },
-      preflightSameAgentDuplicate: true,
-      validateDuplicateCanonical: validate,
-    } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> });
+  NOT the query-filter class, which is why this one is load-bearing: the preflight's own query passes
+  `includeArchived: true`, so this predicate is the ONLY archived guard on the path. On a renamed archive
+  lane the archived sibling became the bootstrap canonical and `claimDefinedFeatureTask` then rejects the
+  non-live row — so a valid first task fails to be created at all.
 
-    /* FNXC:MissionAdmission 2026-07-23-21:10: archived tasks are not live bootstrap canonicals and must not block a valid first task. */
-    expect(result.wasDuplicate).toBe(false);
-    expect(validate).not.toHaveBeenCalled();
-    expect(store.createTask).toHaveBeenCalledOnce();
-  });
+  The renamed IR is built HERE rather than in `_workflow-vocabulary-fixture.ts`: that shared fixture
+  declares no `archived`-trait column, and widening it would change the subject of every suite already
+  built on it.
+
+  REVERT CHECK, measured: with `task.column === "archived"` restored, the RENAMED case fails — `validate`
+  is called with the archived sibling and `createTask` is never called. The DEFAULT case passes both ways.
+  */
+  for (const [label, archivedColumn] of [["DEFAULT", "archived"], ["RENAMED", "boxed"]] as const) {
+    it(`does not select an archived same-agent task as a defined-feature bootstrap canonical (${label} archive lane: ${archivedColumn})`, async () => {
+      const archived = {
+        id: "FN-archived", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
+        sourceAgentId: "agent-001", dependencies: [], column: archivedColumn, steps: [], currentStep: 0,
+        log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      } as Task;
+      const base = lifecycleIr(RENAMED_VOCAB, "agent-tools-archive");
+      const ir = { ...base, columns: [...base.columns, { id: "boxed", name: "Boxed", traits: [{ trait: "archived" as const }] }] };
+      const store = createMockTaskStore({
+        listTasks: vi.fn().mockResolvedValue([archived]),
+        ...(label === "RENAMED"
+          ? {
+              getTaskWorkflowSelectionAsync: (async () => ({ workflowId: "agent-tools-archive", stepIds: [] })) as never,
+              getTaskWorkflowSelection: (() => ({ workflowId: "agent-tools-archive", stepIds: [] })) as never,
+              getWorkflowDefinition: (async (id: string) => (id === "agent-tools-archive" ? { ir } : undefined)) as never,
+            }
+          : {}),
+      });
+      const validate = vi.fn().mockResolvedValue(undefined);
+
+      const result = await createAgentTask(store, {
+        title: "Bootstrap feature",
+        description: "Bootstrap the hand-authored feature",
+        source: { sourceType: "api", sourceAgentId: "agent-001" },
+        preflightSameAgentDuplicate: true,
+        validateDuplicateCanonical: validate,
+      } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> });
+
+      /* FNXC:MissionAdmission 2026-07-23-21:10: archived tasks are not live bootstrap canonicals and must not block a valid first task. */
+      expect(result.wasDuplicate).toBe(false);
+      expect(validate).not.toHaveBeenCalled();
+      expect(store.createTask).toHaveBeenCalledOnce();
+    });
+  }
 
   it("serializes three concurrent paraphrased creates from one parent", async () => {
     const tasks: Task[] = [];

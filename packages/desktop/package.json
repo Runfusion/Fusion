@@ -1,7 +1,7 @@
 {
   "name": "@fusion/desktop",
   "productName": "Fusion",
-  "version": "0.74.0-beta.3",
+  "version": "0.74.0-beta.5",
   "license": "MIT",
   "author": {
     "name": "Runfusion",
@@ -47,17 +47,17 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitest/coverage-v8": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.25.12",
-    "jsdom": "^29.0.1",
+    "jsdom": "^29.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sharp": "^0.33.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

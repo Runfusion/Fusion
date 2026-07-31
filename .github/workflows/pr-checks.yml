@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -50,13 +50,26 @@ jobs:
       - name: Dashboard route modularity
         run: pnpm check:routes-modular
 
+      # The lifecycle-column ratchet was advisory until now: the census existed only as
+      # `pnpm census:lifecycle-columns` (no --strict) and nothing ran it, so three PRs
+      # lowered counts without re-recording and left allowances the deleted guards could
+      # return through while this gate stayed green. ~2s over ~1950 files.
+      - name: Lifecycle-column ratchet
+        run: pnpm check:lifecycle-columns
+      - name: SQL-column ratchet
+        run: pnpm check:sql-column-literals
+      - name: Inert lane/flag seams
+        run: pnpm check:inert-flag-seams
+      - name: FNXC stamp dates
+        run: pnpm check:fnxc-future-dates
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -72,7 +85,7 @@ jobs:
       # warm-gate-build-cache job in full-suite.yml, which must keep an
       # identical path list — actions/cache versions caches by path list).
       - name: Cache TypeScript incremental buildinfo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/*/dist/.tsbuildinfo
@@ -91,7 +104,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -112,7 +125,7 @@ jobs:
         run: echo "hash=$(node scripts/ensure-test-artifacts.mjs --print-source-hash)" >> "$GITHUB_OUTPUT"
 
       - name: Restore built dist artifacts (incremental, restore-only)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             packages/core/dist
@@ -173,7 +186,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -200,7 +213,7 @@ jobs:
 
       - name: Cache built dist artifacts (incremental)
         id: dist-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/core/dist

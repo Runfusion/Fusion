@@ -4,7 +4,27 @@ const DEFAULT_BASE_URL = "http://localhost:4040";
 const DEFAULT_POLLING_INTERVAL_SECONDS = 30;
 const MIN_POLLING_INTERVAL_SECONDS = 5;
 const DEFAULT_NOTIFY_COLUMNS = ["in-review"];
-const DEFAULT_QUICK_CAPTURE_COLUMN = "triage";
+/*
+FNXC:PluginLifecycleColumns 2026-07-30-11:30 (Phase C convergence):
+The quick-capture default was `triage` — the column U11 (#2515) DELETED from the default
+lineage. So every voice-captured card asked the server for a column the default board no
+longer declares. `todo` is the post-U11 merged planning column AND a column every pre-U11
+lineage also declares, so it is correct on both sides of the migration; `triage` was correct
+on neither after #2515.
+
+NOT trait-resolved, deliberately: this is a SETTINGS DEFAULT with no task and no workflow in
+hand — there is nothing to resolve against at module scope. The operator picks the real
+column from `enumValues`; this only has to be a column that exists when they have not.
+
+KNOWN REMAINING GAP, recorded rather than half-fixed: `TaskColumn`/`COLUMN_SET` are still the
+five legacy ids, so on a RENAMED board the enum offers columns that do not exist and
+`normalizeCaptureColumn` silently substitutes the default for a column the operator did name
+(voice "put it in checking" lands in planning, with no error). Closing that needs the board's
+declared columns, and this plugin reaches Fusion over HTTP with no board-columns endpoint in
+`FusionApiClient` — a new read, not a rename. Silent substitution is the worse half of that
+bug and it is unchanged here; I am not papering over it with a guess.
+*/
+const DEFAULT_QUICK_CAPTURE_COLUMN = "todo";
 
 type TaskColumn = "triage" | "todo" | "in-progress" | "in-review" | "done";
 

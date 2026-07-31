@@ -1,3 +1,6 @@
+import { createLogger } from "./logger.js";
+
+const severityAuditLog = createLogger("core-memory-compaction");
 /**
  * AI Memory Compaction Service
  *
@@ -50,8 +53,6 @@ Your job is to compress the provided project memory markdown into a shorter vers
 Return only the compacted markdown content.`;
 
 /** Debug flag for AI operations */
-const DEBUG = process.env.FUSION_DEBUG_AI === "true";
-
 // ── Custom Errors ───────────────────────────────────────────────────────────
 
 export class AiServiceError extends Error {
@@ -81,7 +82,7 @@ export async function compactMemoryWithAi(
 ): Promise<string> {
   const createFnAgent = await getFnAgent();
   if (!createFnAgent) {
-    if (DEBUG) console.log("[memory-compaction] AI engine not available");
+    severityAuditLog.debug("[memory-compaction] AI engine not available");
     throw new AiServiceError("AI engine not available");
   }
 
@@ -103,7 +104,7 @@ export async function compactMemoryWithAi(
     agentOptions.defaultModelId = modelId;
   }
 
-  if (DEBUG) console.log("[memory-compaction] Creating agent session...");
+  severityAuditLog.debug("[memory-compaction] Creating agent session...");
   /*
    * FNXC:McpConfig 2026-06-26-00:00:
    * Memory compaction lives in @fusion/core and cannot import engine MCP resolution without introducing a core→engine cycle. This readonly session intentionally runs without configured MCP servers until a neutral store/secrets seam exists in core.
@@ -111,11 +112,11 @@ export async function compactMemoryWithAi(
   const agentResult = await createFnAgent(agentOptions);
 
   if (!agentResult?.session) {
-    if (DEBUG) console.log("[memory-compaction] Failed to initialize AI agent - no session");
+    severityAuditLog.debug("[memory-compaction] Failed to initialize AI agent - no session");
     throw new AiServiceError("Failed to initialize AI agent");
   }
 
-  if (DEBUG) console.log("[memory-compaction] Agent session created, sending prompt...");
+  severityAuditLog.debug("[memory-compaction] Agent session created, sending prompt...");
 
   try {
     // Send the memory content to the agent
@@ -124,18 +125,16 @@ export async function compactMemoryWithAi(
     // Check for session errors (pi SDK stores errors in state.error, does not throw)
     if (agentResult.session.state?.error) {
       const errorMsg = agentResult.session.state.error;
-      if (DEBUG) console.log(`[memory-compaction] Session error: ${errorMsg}`);
+      severityAuditLog.debug(`[memory-compaction] Session error: ${errorMsg}`);
       throw new AiServiceError(`AI session error: ${errorMsg}`);
     }
 
-    if (DEBUG) console.log("[memory-compaction] Prompt sent, extracting response from messages...");
+    severityAuditLog.debug("[memory-compaction] Prompt sent, extracting response from messages...");
 
     const messages: AgentMessage[] = agentResult.session.state?.messages ?? [];
     const assistantMessages = messages.filter((m: AgentMessage) => m.role === "assistant");
 
-    if (DEBUG) {
-      console.log(`[memory-compaction] Total messages: ${messages.length}, Assistant messages: ${assistantMessages.length}`);
-    }
+    severityAuditLog.debug(`[memory-compaction] Total messages: ${messages.length}, Assistant messages: ${assistantMessages.length}`);
 
     const lastMessage = assistantMessages.pop();
 
@@ -154,21 +153,21 @@ export async function compactMemoryWithAi(
       }
     }
 
-    if (DEBUG) console.log(`[memory-compaction] Extracted compacted content length: ${compacted.length}`);
+    severityAuditLog.debug(`[memory-compaction] Extracted compacted content length: ${compacted.length}`);
 
     if (!compacted) {
-      if (DEBUG) console.log("[memory-compaction] AI returned empty response");
+      severityAuditLog.debug("[memory-compaction] AI returned empty response");
       throw new AiServiceError("AI returned empty response");
     }
 
-    if (DEBUG) console.log("[memory-compaction] Memory compaction successful");
+    severityAuditLog.debug("[memory-compaction] Memory compaction successful");
     return compacted;
   } catch (err) {
     if (err instanceof AiServiceError) {
       throw err;
     }
     const message = err instanceof Error ? err.message : "AI processing failed";
-    if (DEBUG) console.log(`[memory-compaction] Unexpected error: ${message}`);
+    severityAuditLog.debug(`[memory-compaction] Unexpected error: ${message}`);
     throw new AiServiceError(message);
   } finally {
     // Ensure session is disposed even on error

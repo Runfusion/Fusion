@@ -1360,6 +1360,10 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         makeCtx(tmpDir),
       );
       expect(pauseResult.content[0].text).toContain("Paused FN-001");
+      await expect(h.store().getTask("FN-001")).resolves.toMatchObject({
+        paused: true,
+        userPaused: true,
+      });
 
       // Verify it's paused
       const showTool = api.tools.get("fn_task_show")!;
@@ -3000,10 +3004,19 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
             dependencies: [todoFirst.id],
           });
         }
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-20:40:
+        Seeded explicitly in a THIRD distinct column. These used to be created with no `column` and
+        relied on landing in `triage`, which post-U11 no longer exists — they landed in `todo`
+        instead, so the board became Todo (20) / Done (6) and the "Planning (8)" group the
+        assertions looked for never existed. Naming a real column keeps this case covering a
+        three-way column filter rather than collapsing it to two groups.
+        */
         for (let i = 1; i <= 8; i += 1) {
           await store.createTask({
-            title: `${realisticTaskTitle("triage", i)} ${"x".repeat(1_000)}`,
-            description: `Realistic triage task ${String(i).padStart(3, "0")}`,
+            title: `${realisticTaskTitle("in-progress", i)} ${"x".repeat(1_000)}`,
+            description: `Realistic in-progress task ${String(i).padStart(3, "0")}`,
+            column: "in-progress",
           });
         }
         for (let i = 1; i <= 6; i += 1) {
@@ -3026,7 +3039,18 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       );
       expectSingleBoundedTextBlock(broadResult);
       expect(broadResult.content.some((block: { type: string }) => block.type === "image")).toBe(false);
-      expect(broadResult.content[0].text).toContain("Planning (8):");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:55:
+      Assert the group that actually LEADS the broad listing, not one truncation may cut. This
+      previously asserted "Planning (8):" and passed only incidentally: `triage` sorts before `todo`
+      in COLUMNS order, so its group fitted before the text budget truncated the rest. Post-U11
+      `todo` leads, fills the budget, and the later groups collapse into the "... and N more tasks"
+      notice — so a second group header here is a fixture-ordering assertion, not a bounding one.
+      Per-column coverage of every group is asserted by the three filtered cases below, which do not
+      truncate.
+      */
+      expect(broadResult.content[0].text).toContain("Todo (12):");
+      expect(broadResult.content[0].text).toContain("truncated to fit; narrow with column/limit");
       expect(broadResult.details.count).toBe(26);
 
       for (const { callId, params, header, ids } of [
@@ -3037,9 +3061,9 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
           ids: ["FN-001", "FN-002"],
         },
         {
-          callId: "list-realistic-triage",
-          params: { column: "triage", limit: 8 },
-          header: "Planning (8):",
+          callId: "list-realistic-in-progress",
+          params: { column: "in-progress", limit: 8 },
+          header: "In Progress (8):",
           ids: ["FN-013", "FN-014"],
         },
         {
@@ -3090,7 +3114,13 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.content.some((block: { type: string }) => block.type === "image")).toBe(false);
       expect(text).toBeTruthy();
       expect(text.length).toBeLessThanOrEqual(MAX_TASK_LIST_TEXT_CHARS);
-      expect(text).toContain("Planning (15):");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-20:45:
+      These 15 are created with no `column`, so they land in the DEFAULT lineage's intake column,
+      which post-U11 is `todo` — labelled "Todo". The old expectation "Planning (15):" came from
+      `triage`'s label back when a column-less create landed there; `triage` is no longer declared.
+      */
+      expect(text).toContain("Todo (15):");
       expect(text).toContain("FN-001");
       expect(text).toContain("truncated to fit; narrow with column/limit");
       expect(result.details.count).toBe(15);
@@ -4220,6 +4250,478 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(task.assignedAgentId).toBe(agentId);
       expect(selection?.workflowId).toBe(workflowId);
       expect(task.enabledWorkflowSteps).toHaveLength(2);
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-22:05:
+    THE INVARIANT: delegation lands in the selected workflow's HOLD lane, whatever it is named.
+
+    `fn_delegate_task` passed the literal `"todo"`. Its contract is the ready-to-work lane — the tool
+    tells the caller the target agent will pick the card up on its next heartbeat — so on a workflow
+    that names that lane `queued` the card went to a column the workflow does not declare: written,
+    reported as delegated, and never visible to the agent it was delegated to.
+
+    Note the seed IR: `queued` carries the `hold` trait, and `start` sits on it, so intake and hold
+    are the same lane here. That is deliberate — it keeps the case about the RESOLUTION and not about
+    which of the two roles wins, which the neighbouring cases already cover with the built-in board.
+
+    REVERT PROOF, measured: restore `column: "todo"` and this case fails with
+    `expected 'todo' to be 'queued'`. The two cases above it stay green, because the built-in and
+    `linearWorkflowIr` boards both call the lane `todo` — which is exactly why the literal survived.
+    */
+    it("delegates into the workflow's own hold lane, not the literal todo", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-renamed-lane" });
+      const store = h.store();
+      const renamed = await store.createWorkflowDefinition({
+        name: "Renamed hold lane",
+        ir: {
+          version: "v2",
+          name: "Renamed hold lane",
+          columns: [{ id: "queued", name: "Queued", traits: [{ trait: "intake" }, { trait: "hold" }] }],
+          nodes: [
+            { id: "start", kind: "start", column: "queued" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-renamed-lane",
+        { agent_id: agentId, description: "Work in a renamed lane", workflow_id: renamed.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).not.toBe(true);
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("queued");
+      expect(task.assignedAgentId).toBe(agentId);
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-23:55:
+    THE INVARIANT: when intake and hold are DIFFERENT lanes, delegation ends on hold.
+
+    The case above cannot see this: its workflow carries both traits on one column, so the card
+    arrives on the right lane through `createTask`'s entry resolution and the move never runs. Here
+    the two roles are separate columns, so the card lands on `ideas` and must be moved to `queued` —
+    which is the behaviour the old `column: "todo"` literal was providing (skip intake, go straight
+    to the lane the agent picks up from) and the part that would silently regress if the move were
+    dropped as redundant.
+
+    `workflow_id` is deliberately EXPLICIT here rather than set as the project default: the point
+    under test is the move, and pinning the workflow keeps the case from depending on default
+    resolution as well.
+
+    REVERT PROOF, measured: delete the post-create move and this fails with
+    `expected 'ideas' to be 'queued'`; the sibling case above stays green, which is exactly why it
+    is not sufficient on its own.
+    */
+    it("moves the card off intake onto hold when the workflow separates the two", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-split-lanes" });
+      const store = h.store();
+      const split = await store.createWorkflowDefinition({
+        name: "Split intake and hold",
+        ir: {
+          version: "v2",
+          name: "Split intake and hold",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-split-lanes",
+        { agent_id: agentId, description: "Work past intake", workflow_id: split.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).not.toBe(true);
+      // No WARNING in the text: a move that fails must say so rather than report a ready card.
+      expect(result.content[0].text).not.toContain("WARNING");
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("queued");
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:02 (#2843 review — greptile P1, "failed move reports
+    successful delegation"):
+
+    A FAILED LANDING MUST NOT LEAD WITH A SUCCESS CLAIM.
+
+    The first version kept "will be picked up by X on their next heartbeat cycle" and appended a
+    ` WARNING: ...`. Assigned-agent selection skips cards outside the workflow's hold lane, so a card
+    stranded on intake is never dispatched — and the caller, usually another agent, reads the first
+    sentence and moves on. "Success with a caveat" is how a delegation silently goes nowhere.
+
+    WHAT THIS PROVES AND WHAT IT DOES NOT, stated because the distinction matters. It pins the
+    HANDLING — the branch returns `isError`, never claims pickup, and still surfaces the task id so a
+    caller can finish by hand. It does NOT prove the failure is reachable in production, and I could
+    not make it so: `holdColumn` comes from the task's OWN resolved IR, so `moveTask`'s declared-column
+    check passes by construction. I tried a workflow declaring a `hold` column with no node on it,
+    expecting rejection; the move SUCCEEDED and the card landed there — `moveTask` accepts any column
+    the workflow declares, and node reachability does not gate it.
+
+    So the store method is stubbed for exactly one call. Stubbing is normally how a test proves only
+    that a catch block runs, which is why it is worth being explicit: the catch is DEFENSIVE, and what
+    changed — and what regresses silently — is the shape of the message it produces.
+    */
+    it("reports a failed landing as an ERROR and never claims the agent will pick it up", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-landing-fails" });
+      const store = h.store();
+      const split = await store.createWorkflowDefinition({
+        name: "Split lanes (landing fails)",
+        ir: {
+          version: "v2",
+          name: "Split lanes (landing fails)",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const moveTask = vi.spyOn(store, "moveTask").mockRejectedValueOnce(
+        new Error("unknown-column: queued"),
+      );
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      const tool = api.tools.get("fn_delegate_task")!;
+      try {
+        result = await tool.execute(
+          "dt-landing-fails",
+          { agent_id: agentId, description: "Landing will fail", workflow_id: split.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        moveTask.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      /* The claim that must never survive a failed landing. */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("stranded on intake");
+      /* The card exists either way, so the caller keeps what it needs to finish the job by hand. */
+      expect(result.details.taskId).toBeTruthy();
+      expect(result.details.error).toContain("unknown-column");
+
+      /* And it really is still on intake — the message is not merely pessimistic. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("ideas");
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:45 (#2843 review — coderabbit, "fail the delegation
+    when the hold lane cannot be resolved"):
+
+    THE COLLAPSE WAS REAL; THE PATH THAT REACHES IT IS ALL BUT UNREACHABLE. Both halves stated.
+
+    `resolveTaskLifecycleColumns` returns `undefined` when resolution THREW, and a struct whose `hold`
+    is `undefined` when the board resolved fine and declares no hold lane. Reading it as
+    `(await ...)?.hold` collapsed the two, so a resolver failure would skip the move and fall into the
+    SUCCESS response — the same "stranded on intake, reported as ready" outcome the error branch exists
+    to prevent, by a path that never enters it. Splitting them is correct and costs nothing.
+
+    BUT I COULD NOT MAKE THE THROW HAPPEN, and the reason generalises: `resolveWorkflowIrForTask` does
+    not fail, it SUBSTITUTES the built-in IR. Making the selection read reject (below) is swallowed
+    there, so the resolve succeeds with the default board, `hold` comes back as `todo`, and on the
+    built-in board that already equals the card's column — no move, and success is the right answer.
+
+    So this asserts the outcome that IS reachable: a degraded resolve that yields the card's own lane
+    reports success, because nothing went wrong. The `undefined` guard remains as defence, and it is
+    documented as defence rather than counted as covered.
+    */
+    it("a resolve that DEGRADES to the built-in board still reports success — nothing was stranded", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-resolve-degrades" });
+      const store = h.store();
+
+      const resolve = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValueOnce(
+        new Error("workflow selection unreadable"),
+      );
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-resolve-degrades",
+          { agent_id: agentId, description: "Resolve degrades" },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        resolve.mockRestore();
+      }
+
+      expect(result.isError).not.toBe(true);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-22:25 (#2894 review, second round):
+      NO PICKUP PROMISE ON A DEGRADED RESOLVE. This asserted the confident sentence, which is exactly
+      the claim the review says must not be made when the landing could not be verified. The card is
+      still created, assigned and left where it belongs — success — but the text now says the lane is
+      unconfirmed rather than promising dispatch, and `landingVerified: false` carries the same fact
+      structurally.
+      */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("could NOT confirm");
+      expect(result.details.landingVerified).toBe(false);
+
+      /* The lane is still the built-in hold column — unconfirmed is not the same as wrong. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("todo");
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-18:50 (#2843 review — the race, and the fix that removed
+    it rather than detecting it):
+
+    NO TEST FOR A TORN SELECTION SNAPSHOT, because the shape it would test no longer exists.
+
+    I wrote one against a version that read the selection on both sides of the resolve and refused when
+    they disagreed. The version that shipped is better: it drops the second read entirely and judges
+    the substitution by whether it would MOVE the card, so there is no window for two reads to
+    disagree. A test asserting "refuses on a torn snapshot" would have been asserting the mechanism I
+    removed.
+
+    The negative below survives, and matters more under either design: a selection read that FAILS must
+    not fail the delegation.
+    */
+
+    /*
+    The paired negative, and the one that keeps the tear check from becoming "refuse whenever the
+    selection store is flaky": an UNREADABLE selection is unknown, not changed. Failing here would
+    turn every selection-store hiccup into a failed delegation.
+    */
+    it("still lands the card when a selection read FAILS — unreadable is unknown, not changed", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-selection-unreadable" });
+      const store = h.store();
+
+      const sel = vi.spyOn(store, "getTaskWorkflowSelectionAsync").mockRejectedValue(
+        new Error("selection store unavailable"),
+      );
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-selection-unreadable",
+          { agent_id: agentId, description: "Selection unreadable" },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        sel.mockRestore();
+      }
+
+      expect(result.isError).not.toBe(true);
+      /* Same reason as the degraded-resolve case above: unverified landings do not promise pickup. */
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.details.landingVerified).toBe(false);
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-15:55 (#2843 review — greptile, "missing hold reports
+    successful delegation"):
+
+    A BOARD WITH NO HOLD LANE STILL CANNOT DISPATCH THE CARD.
+
+    I first treated this as a benign no-op — the board declares no hold lane, there is nowhere to move
+    the card, staying on intake is correct. Both halves true, conclusion wrong: assigned-agent
+    selection picks cards OUT OF the hold lane, so on a board that has none, nothing ever dispatches
+    this card and "will be picked up on their next heartbeat cycle" is false.
+
+    Unlike the two cases above, this one needs NO stub. A workflow that simply declares no hold-trait
+    column is an ordinary board someone can build, which is what makes it the reachable one of the
+    three and worth the most.
+    */
+    it("reports an ERROR when the workflow declares NO hold lane, instead of promising pickup", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-no-hold" });
+      const store = h.store();
+      const noHold = await store.createWorkflowDefinition({
+        name: "No hold lane",
+        ir: {
+          version: "v2",
+          name: "No hold lane",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "building" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      const tool = api.tools.get("fn_delegate_task")!;
+      const result = await tool.execute(
+        "dt-no-hold",
+        { agent_id: agentId, description: "Nowhere to land", workflow_id: noHold.id },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      expect(result.content[0].text).toContain("no hold");
+      /* The card exists and is assigned; only the dispatch claim is withheld. */
+      expect(result.details.taskId).toBeTruthy();
+      expect(result.details.agentId).toBe(agentId);
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-17:45 (#2843 review — greptile P1, third round):
+    THE INVARIANT: a SUBSTITUTED workflow is not the board's answer, even when its lane exists.
+
+    `resolveWorkflowIrForTask` never throws — it substitutes the default coding IR — so a failed
+    resolution surfaced as the BUILT-IN lanes, `hold: "todo"`. I argued that was harmless because
+    `todo` would be undeclared on such a board and the move would be rejected. Right about the
+    mechanism, wrong about the population: a workflow that holds work in `queued` and ALSO declares a
+    `todo` column for something else gets a move that SUCCEEDS into a lane nothing dispatches from,
+    and a success message with it.
+
+    The fixture is exactly that shape — `ideas` (intake), `queued` (hold), and a plain `todo` that
+    carries no lifecycle trait — which is why the older cases could not have caught this: theirs
+    declared no `todo` at all, so the wrong move was rejected for the wrong reason.
+
+    The stub targets `getTaskWorkflowSelectionAsync`, the READER, not the writer `createTask` uses,
+    so creation is untouched and only the post-create resolution sees a workflow id that resolves to
+    nothing. That is what makes this the first case to reach the "could not be resolved" arm rather
+    than defending it in a comment.
+
+    REVERT PROOF, measured: resolve through `resolveTaskLifecycleColumns` again (no provenance) and
+    this fails — the tool moves the card to `todo` and reports a successful delegation.
+    */
+    it("does not trust a SUBSTITUTED workflow's lanes even when the board declares that column", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-substituted-workflow" });
+      const store = h.store();
+      const declaresTodo = await store.createWorkflowDefinition({
+        name: "Queued hold, unrelated todo",
+        ir: {
+          version: "v2",
+          name: "Queued hold, unrelated todo",
+          columns: [
+            { id: "ideas", name: "Ideas", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+            /* Declared, carries no lifecycle role — the column the built-in fallback would name. */
+            { id: "todo", name: "Someday", traits: [] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "ideas" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      /* Reader only: `createTask` writes the selection, it does not read it through this method. */
+      const selection = vi.spyOn(store, "getTaskWorkflowSelectionAsync")
+        .mockResolvedValue({ workflowId: "wf-vanished", stepIds: [] });
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-substituted",
+          { agent_id: agentId, description: "Workflow resolves to a substitute", workflow_id: declaresTodo.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        selection.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      /* The card must NOT have been moved into the built-in fallback's lane. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).not.toBe("todo");
+    });
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-20:30 (#2843 review — greptile P1, "fallback equality
+    masks wrong hold"):
+    EQUALITY WITH A FABRICATED LANE IS NOT EVIDENCE.
+
+    The board the review names, and the one every earlier case here misses: `todo` is INTAKE and
+    `queued` is hold. `createTask` puts the card on `todo`; a degraded lookup fabricates the built-in
+    `hold: "todo"`; the two match, so the "no move needed" rule accepted it and reported a delegation
+    for a card assigned-agent dispatch will never select, because the real hold lane is `queued`.
+
+    Settled with `params.workflow_id` — caller INPUT, so there is no second snapshot to race. A
+    caller that named a workflow proves a real one exists, so a substitution proves we failed to read
+    it, and its hold lane cannot be inferred from the built-in vocabulary.
+
+    The neighbouring degraded-resolve cases stay green precisely because they pass NO `workflow_id`:
+    there, "substituted" and "this project has no resolvable workflow" are the same observation and
+    the card belongs where it is. That distinction is the whole content of the fix.
+
+    REVERT PROOF, measured: drop the `substituted && workflowId` arm and this fails on `isError` —
+    the tool reports a successful delegation for a card sitting on intake.
+    */
+    it("refuses to claim pickup when the NAMED workflow could not be resolved, even if lanes match", async () => {
+      const agentId = await seedAgent(tmpDir, { name: "delegate-todo-intake-queued-hold" });
+      const store = h.store();
+      const todoIntake = await store.createWorkflowDefinition({
+        name: "Todo intake, queued hold",
+        ir: {
+          version: "v2",
+          name: "Todo intake, queued hold",
+          columns: [
+            /* `todo` is INTAKE here — the id the built-in fallback would call hold. */
+            { id: "todo", name: "Inbox", traits: [{ trait: "intake" }] },
+            { id: "queued", name: "Queued", traits: [{ trait: "hold" }] },
+          ],
+          nodes: [
+            { id: "start", kind: "start", column: "todo" },
+            { id: "end", kind: "end", column: "queued" },
+          ],
+          edges: [{ from: "start", to: "end", condition: "success" }],
+        } as unknown as WorkflowIr,
+      });
+
+      /* Reader only — `createTask` writes the selection rather than reading it through this method. */
+      const selection = vi.spyOn(store, "getTaskWorkflowSelectionAsync")
+        .mockResolvedValue({ workflowId: "wf-vanished", stepIds: [] });
+      const tool = api.tools.get("fn_delegate_task")!;
+      let result: Awaited<ReturnType<typeof tool.execute>>;
+      try {
+        result = await tool.execute(
+          "dt-todo-intake",
+          { agent_id: agentId, description: "Intake is called todo here", workflow_id: todoIntake.id },
+          undefined,
+          undefined,
+          makeCtx(tmpDir),
+        );
+      } finally {
+        selection.mockRestore();
+      }
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).not.toContain("will be picked up");
+      /* Still on intake, and the message must be about the workflow rather than about a move. */
+      const { task } = await readTaskWorkflowState(tmpDir, result.details.taskId);
+      expect(task.column).toBe("todo");
     });
 
     it("rejects unknown agent", async () => {

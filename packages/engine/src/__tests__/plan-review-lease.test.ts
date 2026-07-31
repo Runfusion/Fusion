@@ -99,3 +99,50 @@ describe("makeReviewLeaseRecord", () => {
     expect(classifyReviewLease([rec], STEP, T0 + 1).kind).toBe("adopt");
   });
 });
+
+/*
+FNXC:PlanReviewLease 2026-07-26-21:25:
+Node-attributed lease reclaim (FN-8603 follow-up). Liveness used to be judged purely by the staleness
+floor, so a lease left behind by THIS node's crashed process was indistinguishable from a peer's
+running one and had to age out — ~14 minutes of dead wait after an engine restart. These pin the
+narrow widening: only an own-node lease predating our boot reclaims early. Every other shape must
+keep the floor, because reclaiming a live lease double-dispatches a reviewer.
+*/
+describe("classifyReviewLease — node-attributed pre-boot reclaim", () => {
+  const BOOT = Date.parse("2026-07-26T18:20:00.000Z");
+  const NOW = BOOT + 60_000; // one minute after boot; well inside the 15-minute floor
+  const lease = (over: Partial<WorkflowStepResult> = {}): WorkflowStepResult[] => ([{
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    status: "pending",
+    startedAt: new Date(BOOT - 34_000).toISOString(), // 34s BEFORE boot — the FN-8603 shape
+    leaseOwner: "run-1",
+    ...over,
+  }]);
+  const local = { nodeId: "node-a", processBootAt: BOOT };
+
+  it("reclaims an own-node lease that predates this process boot", () => {
+    const d = classifyReviewLease(lease({ leaseNodeId: "node-a" }), "code-review", NOW, undefined, local);
+    expect(d.kind).toBe("reclaim");
+  });
+
+  it("adopts a peer-node lease of the same age (we cannot prove a peer is dead)", () => {
+    const d = classifyReviewLease(lease({ leaseNodeId: "node-b" }), "code-review", NOW, undefined, local);
+    expect(d.kind).toBe("adopt");
+  });
+
+  it("adopts an unattributed legacy lease of the same age", () => {
+    const d = classifyReviewLease(lease(), "code-review", NOW, undefined, local);
+    expect(d.kind).toBe("adopt");
+  });
+
+  it("adopts an own-node lease taken AFTER boot — that is a live in-process claim", () => {
+    const results = lease({ leaseNodeId: "node-a", startedAt: new Date(BOOT + 5_000).toISOString() });
+    expect(classifyReviewLease(results, "code-review", NOW, undefined, local).kind).toBe("adopt");
+  });
+
+  it("keeps pure floor semantics when no local identity is supplied", () => {
+    const d = classifyReviewLease(lease({ leaseNodeId: "node-a" }), "code-review", NOW);
+    expect(d.kind).toBe("adopt");
+  });
+});

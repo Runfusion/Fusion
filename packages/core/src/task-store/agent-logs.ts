@@ -1,3 +1,6 @@
+import { createLogger } from "../logger.js";
+
+const severityAuditLog = createLogger("core-agent-logs");
 /**
  * agent-logs operations.
  *
@@ -23,7 +26,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
     const batch = store.agentLogBuffer.slice();
     const flushCount = batch.length;
 
-    let validEntries = batch;
+    const validEntries = batch;
     const flushedEntries = new Set<typeof batch[number]>();
     try {
       // FNXC:PostgresBackend 2026-06-27-00:40:
@@ -43,18 +46,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
       // JSONL line + records goal citations under a just-deleted taskId. There
       // is no FK on goal_citations.task_id (plain text column), so this is an
       // orphaned-by-value metadata row, not a constraint violation or crash.
-      if (!store.backendMode) {
-        const liveTaskIds = new Set(
-          (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-        );
-        validEntries = batch.filter((entry) => liveTaskIds.has(entry.taskId));
-        const dropped = batch.length - validEntries.length;
-        if (dropped > 0) {
-          console.warn(
-            `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${store.fusionDir})`,
-          );
-        }
-      }
+      
 
       if (validEntries.length > 0) {
         const citationInputs: GoalCitationInput[] = [];
@@ -84,7 +76,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
                 ),
               );
             } catch (err) {
-              console.warn("[fusion] Failed to scan goal citations from agent_log:", err);
+              severityAuditLog.warn("[fusion] Failed to scan goal citations from agent_log:", err);
             }
           }
         }
@@ -97,15 +89,13 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
           // fire-and-forget agent-log path.
           try {
             void Promise.resolve(store.recordGoalCitations(citationInputs)).catch((err) => {
-              console.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
+              severityAuditLog.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
             });
           } catch (err) {
-            console.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
+            severityAuditLog.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
           }
         }
-        if (!store.backendMode) {
-          store.db.bumpLastModified();
-        }
+        
       }
     } finally {
       store.agentLogBuffer.splice(0, flushCount);
@@ -117,7 +107,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
             try {
               store.flushAgentLogBuffer();
             } catch (err) {
-              console.error(`[fusion] Retry agent log flush failed (${store.fusionDir}):`, err);
+              severityAuditLog.error(`[fusion] Retry agent log flush failed (${store.fusionDir}):`, err);
             }
           }, TaskStore.AGENT_LOG_FLUSH_MS);
           store.agentLogFlushTimer.unref();
@@ -144,17 +134,8 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
     // PG backend mode: skip the sync SQLite deleted-task pre-filter (store.db
     // throws) — JSONL append below is the backend-independent durable write.
     // See flushAgentLogBufferImpl for the full rationale.
-    let validEntries = normalizedEntries;
-    if (!store.backendMode) {
-      const liveTaskIds = new Set(
-        (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-      );
-      validEntries = normalizedEntries.filter((entry) => liveTaskIds.has(entry.taskId));
-      const dropped = normalizedEntries.length - validEntries.length;
-      if (dropped > 0) {
-        console.warn(`[fusion] Dropped ${dropped} batch agent log entries for deleted tasks (${store.fusionDir})`);
-      }
-    }
+    const validEntries = normalizedEntries;
+    
 
     const citationInputs: GoalCitationInput[] = [];
     const entriesByTask = new Map<string, typeof validEntries>();
@@ -192,7 +173,7 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
             ),
           );
         } catch (err) {
-          console.warn("[fusion] Failed to scan goal citations from agent log batch:", err);
+          severityAuditLog.warn("[fusion] Failed to scan goal citations from agent log batch:", err);
         }
       }
     }
@@ -201,10 +182,10 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
       // promise so a citation-write failure is not an unhandled rejection.
       try {
         void Promise.resolve(store.recordGoalCitations(citationInputs)).catch((err) => {
-          console.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
+          severityAuditLog.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
         });
       } catch (err) {
-        console.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
+        severityAuditLog.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
       }
     }
     if (validEntries.length > 0 && !store.backendMode) {

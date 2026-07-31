@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -103,7 +103,7 @@ jobs:
           "$hash  ${{ matrix.binary }}" | Out-File -Encoding ascii ${{ matrix.binary }}.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.binary }}
           path: |
@@ -121,7 +121,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -162,7 +162,7 @@ jobs:
           }
 
       - name: Upload desktop Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-desktop-windows
           path: |
@@ -178,7 +178,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -262,7 +262,7 @@ jobs:
           done
 
       - name: Upload desktop macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-desktop-macos
           path: |
@@ -280,7 +280,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -347,7 +347,7 @@ jobs:
           done
 
       - name: Upload desktop Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Single glob set covers both linux-x64 and linux-arm64 artifact filenames.
           name: fusion-desktop-linux
@@ -389,7 +389,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
@@ -403,7 +403,7 @@ jobs:
           java-version: "21"
 
       - name: Cache Android Gradle caches
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -504,7 +504,7 @@ jobs:
           done
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fusion-android-apk
           path: |
@@ -532,7 +532,7 @@ jobs:
           ls -la combined/
 
       - name: Upload combined archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-binaries
           path: combined/*

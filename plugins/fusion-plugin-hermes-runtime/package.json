@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/hermes-runtime",
-  "version": "0.2.82-beta.3",
+  "version": "0.2.82-beta.5",
   "type": "module",
   "description": "Hermes AI runtime plugin for Fusion - provides AI agent execution runtime",
   "keywords": [
@@ -28,6 +28,6 @@
   "devDependencies": {
     "@types/node": "^25.5.2",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   }
 }

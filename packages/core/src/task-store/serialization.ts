@@ -173,20 +173,28 @@ export function rowToTask(row: TaskRow): Task {
         || row.tokenUsageOutputTokens === null
         || row.tokenUsageCachedTokens === null
         || row.tokenUsageTotalTokens === null
-        || row.tokenUsageFirstUsedAt === null
-        || row.tokenUsageLastUsedAt === null
       ) {
         return undefined;
       }
 
+      /*
+      FNXC:TaskCardCostBadge 2026-07-19-08:55:
+      Legacy task rows can have NULL usage timestamps and cache-write totals even when their
+      positive token totals are durable. Board list requests use this reconstruction before
+      TaskCard derives its opt-in spend badge, so timestamp metadata must not erase valid usage.
+      Fall back to the task timestamp only to retain the non-null usage contract; cost derivation
+      reads token totals and model identity, never these fallback timestamps.
+      */
+      const firstUsedAt = row.tokenUsageFirstUsedAt ?? row.tokenUsageLastUsedAt ?? row.createdAt;
+      const lastUsedAt = row.tokenUsageLastUsedAt ?? row.tokenUsageFirstUsedAt ?? row.createdAt;
       return {
         inputTokens: row.tokenUsageInputTokens,
         outputTokens: row.tokenUsageOutputTokens,
         cachedTokens: row.tokenUsageCachedTokens,
         cacheWriteTokens: row.tokenUsageCacheWriteTokens ?? 0,
         totalTokens: row.tokenUsageTotalTokens,
-        firstUsedAt: row.tokenUsageFirstUsedAt,
-        lastUsedAt: row.tokenUsageLastUsedAt,
+        firstUsedAt,
+        lastUsedAt,
         modelProvider: row.tokenUsageModelProvider ?? undefined,
         modelId: row.tokenUsageModelId ?? undefined,
         perModel: fromJson<import("../types.js").TaskTokenUsagePerModel[]>(row.tokenUsagePerModel) ?? undefined,
@@ -366,7 +374,7 @@ export function archiveEntryToTask(
     columnMovedAt: entry.columnMovedAt,
     firstExecutionAt: entry.firstExecutionAt,
     cumulativeActiveMs: entry.cumulativeActiveMs,
-    // FNXC:TaskTiming 2026-08-01-13:00: archive/restore must retain both
+    // FNXC:TaskTiming 2026-07-20-13:00: archive/restore must retain both
     // planning fields so archived tasks neither lose accumulated AI time nor
     // revive without the live segment anchor needed for exactly-once finalize.
     cumulativePlanningMs: entry.cumulativePlanningMs,

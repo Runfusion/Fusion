@@ -45,7 +45,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe as vitestDescribe } from "vitest";
-import postgres from "postgres";
+import postgres, { type Sql } from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import type { ResolvedBackend } from "../postgres/backend-resolver.js";
@@ -209,6 +209,17 @@ export interface PgTestHarness {
   readonly layer: AsyncDataLayer;
   /** A separate admin Drizzle connection for direct row inspection/seeding. */
   readonly adminDb: PostgresJsDatabase;
+  /*
+  FNXC:PgTestHarness 2026-07-27-18:55:
+  The RAW tagged-template client behind `adminDb`. Needed because several persisted fields are
+  stamped by the store on every write (`updatedAt`, `columnMovedAt`), so a fixture that must
+  present an AGED row — anything testing a staleness threshold — cannot express it through
+  `updateTask` at all: the patch is accepted and the value silently replaced with `now`. Consumers
+  outside `@fusion/core` also cannot reach `adminDb` usefully, since driving it needs `drizzle-orm`
+  and the table schema, neither of which is a dependency of the engine package.
+  Seeding only — never a substitute for asserting through the real read path.
+  */
+  readonly adminSql: Sql;
   /** The temp rootDir used for filesystem-backed operations. */
   readonly rootDir: string;
   /** The unique test database name (for diagnostics). */
@@ -812,6 +823,7 @@ export async function createTaskStoreForTest(options?: {
     store,
     layer,
     adminDb,
+    adminSql,
     rootDir,
     dbName,
     testUrl,
@@ -892,6 +904,8 @@ export interface SharedPgTaskStoreHarness {
   readonly store: () => TaskStore;
   readonly layer: () => AsyncDataLayer;
   readonly adminDb: () => PostgresJsDatabase;
+  /** Raw admin SQL client — see the note on {@link PgTestHarness.adminSql}. */
+  readonly adminSql: () => Sql;
   readonly beforeAll: () => Promise<void>;
   readonly beforeEach: () => Promise<void>;
   readonly afterEach: () => Promise<void>;
@@ -967,6 +981,10 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     adminDb: () => {
       if (!harness) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
       return harness.adminDb;
+    },
+    adminSql: () => {
+      if (!harness) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
+      return harness.adminSql;
     },
     beforeAll: async () => {
       if (harness) return;

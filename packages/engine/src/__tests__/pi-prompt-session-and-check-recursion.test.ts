@@ -7,7 +7,7 @@ vi.mock("../logger.js", async (importOriginal) => {
   return {
     ...actual,
     createLogger: () => ({
-      log: vi.fn(),
+      log: vi.fn(), debug: vi.fn(),
       info: vi.fn(),
       warn: warnMock,
       error: vi.fn(),
