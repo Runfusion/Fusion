@@ -125,9 +125,22 @@ export function isMergeActiveMissingWorktreeSessionStartFailure(
  * the generic branch leaves the stale session metadata in place — so the next execution hit the very
  * same missing-worktree failure. A retry that reports success and changes nothing.
  *
- * Optional rather than required because the other caller (`extension.ts`) still asks BOTH questions
- * with the literal. It is internally consistent that way, so a default preserves its meaning exactly
- * while the converted caller passes the resolved answer.
+ * FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (note drift — the stated reason stopped being true):
+ * The paragraph here used to say the parameter is optional "because the other caller (`extension.ts`)
+ * still asks BOTH questions with the literal". That is no longer the case, and had it stayed it would
+ * have told the next reader an unconverted caller exists — the kind of note that keeps an
+ * inert-conversion shape alive by justifying it.
+ *
+ * Verified: ALL THREE production callers pass the resolved answer —
+ * `cli/src/extension.ts`, `cli/src/commands/task.ts` and
+ * `dashboard/src/routes/register-task-workflow-routes.ts`, each as
+ * `retryReviewColumns.has(task.column)`.
+ *
+ * It stays optional anyway, for a reason that does not rot: the legacy fallback is DELIBERATELY
+ * covered (`cli-active-count-lanes.test.ts` exercises the no-argument path on both a legacy and a
+ * renamed lane). Making the parameter required would delete that coverage to buy an enforcement the
+ * unwired-lane-parameter guard already provides — it watches `isReviewColumn` and fails the build if
+ * any of those callers stops passing it.
  */
 export function isInReviewMissingWorktreeSessionStartFailure(
   task: Task,
