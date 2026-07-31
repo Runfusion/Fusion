@@ -39,6 +39,8 @@ reverted code. Anchor on surrounding context. Measured output is in the PR descr
 */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../../builtin-coding-workflow-ir.js";
+import { resolveDefaultWorkflowIr } from "../../builtin-workflows.js";
+import { resolveEntryColumnId } from "../../workflow-reconciliation.js";
 import type { WorkflowIrV2 } from "../../workflow-ir-types.js";
 import {
   createSharedPgTaskStoreTestHarness,
@@ -136,10 +138,29 @@ pgDescribe("U5 workflow reconciliation guards — production shape (no workflowC
 
     await store.deleteWorkflowDefinition(workflow.id);
 
-    // Immediately after the delete — not at the next engine startup sweep — the card
-    // must be out of the vanished column and in the default workflow's entry column.
-    expect((await store.getTask(task.id)).column).toBe("triage");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-21:30:
+    ASSERTED AGAINST THE RESOLVER, NOT A LITERAL. This expectation was `"triage"` and had been
+    failing on main: the delete path was fixed to re-home occupants using
+    `resolveEntryColumnId(resolveDefaultWorkflowIr())` instead of `BUILTIN_CODING_WORKFLOW_IR`, and
+    this assertion was not updated with it.
 
+    The two IRs are not the same board. `BUILTIN_CODING_WORKFLOW_IR` is `builtin:legacy-coding` and
+    declares `triage`; the catalog's actual default does not. Re-homing into `triage` put cards in a
+    column the default board never declares — it slipped past `moveTask`'s undeclared-target guard
+    only because `triage` is a legacy id and the recovery-rehome path exempts those.
+
+    So `todo` is the CORRECT answer and the literal was the stale half. It is now derived from the
+    same two functions the product path calls, which is the only form of this assertion that cannot
+    drift out of sync with them again — a hardcoded `"todo"` would be the identical trap one rename
+    later.
+    */
+    const defaultEntry = resolveEntryColumnId(resolveDefaultWorkflowIr());
+    expect(defaultEntry).toBeDefined();
+    expect((await store.getTask(task.id)).column).toBe(defaultEntry);
+
+    /* The card must genuinely have left the vanished column, not merely match a resolver. */
+    expect((await store.getTask(task.id)).column).not.toBe("custom-hold");
   });
 
   // ── Guard 3: workflow switch ──────────────────────────────────────────────
