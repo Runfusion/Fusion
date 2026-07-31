@@ -303,3 +303,46 @@ test("does NOT count an object whose KEY merely shares a sync local's name", () 
     rmSync(probe, { force: true });
   }
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59:
+THE WRAPPER SHAPE HAD NO REGRESSION CASE, so the capability could be removed and every test stay green.
+
+`#3181` taught the scan that a sync answer handed to a wrapper is still a sync answer:
+
+    const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(store, id), lanes);
+
+That recovered thirteen `scheduler.ts` guards which had gone uncounted — the callee is not a source,
+so nothing registered `parked`. But it shipped with no case pinning it: delete the argument check and
+the suite is still green while the thirteen go invisible again. That is the shape this whole gate
+exists to prevent, one layer up in the gate itself.
+
+DEPTH IS DELIBERATELY NOT ASSERTED HERE. This implementation walks arguments recursively, so
+`outer(inner(syncCall(...)))` also taints. That is self-consistent with its own note and may well be
+right — a nested sync value is still a sync value. But it is a CHOICE, and the opposite choice was
+argued on #3122: deeper nesting is where a wrapper is likelier to DISCARD its argument, and a false
+positive there is absorbed into the baseline, which is the direction this ratchet must not fail in.
+
+I have left that question to the author rather than freezing my own answer into a test. What is pinned
+below is only the capability itself, which was shipping with no coverage at all.
+*/
+test("taints a wrapper whose DIRECT argument is a sync call", () => {
+  const probe = join(REPO_ROOT, "packages/engine/src/__probe-inert-wrap1.ts");
+  writeFileSync(probe, [
+    `import { resolveTaskWorkflowIrSync } from "@fusion/core";`,
+    `function localSync(store: unknown, id: string) { return resolveTaskWorkflowIrSync(store as never, id); }`,
+    `function merge(a: unknown, b: unknown) { return (a ?? b) as { hold?: string }; }`,
+    `export function probe(store: unknown, id: string, from: string): boolean {`,
+    `  const lanes = merge(localSync(store, id), { hold: "todo" });`,
+    `  return from !== lanes.hold;`,
+    `}`,
+    "",
+  ].join("\n"));
+  try {
+    assert.equal(liveCounts().byFile["packages/engine/src/__probe-inert-wrap1.ts"], 1);
+  } finally {
+    rmSync(probe, { force: true });
+  }
+});
+
+
