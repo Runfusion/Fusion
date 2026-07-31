@@ -163,8 +163,10 @@ for (const [file, count] of Object.entries(baseline)) {
 }
 
 const problems = [];
+const offendingFiles = [];
 for (const [file, count] of Object.entries(found)) {
   const allowed = baseline[file] ?? 0;
+  if (count > allowed) offendingFiles.push(file);
   if (count > allowed) problems.push(`  ${file}: ${count} future-dated FNXC stamp(s), baseline allows ${allowed}`);
 }
 /*
@@ -201,12 +203,43 @@ if (tightened.length > 0) {
 }
 
 if (problems.length > 0) {
-  console.error("\n[check-fnxc-future-dates] future-dated FNXC stamp population changed:\n");
+  console.error("\n[check-fnxc-future-dates] FNXC stamp population changed:\n");
   for (const line of problems.sort()) console.error(line);
+  /*
+  FNXC:FnxcStampHygiene 2026-07-31-07:45 (#3006 fixed the stamps; this fixes why they were hard to
+  find): NAME THE OFFENDING STAMP, AND WHICH RULE IT BROKE.
+
+  This gate counts TWO defects — a date after today, and an impossible clock time — but the failure
+  text only ever explained the first. Main went red on four `2026-07-30-26:10` stamps (hour 26) and
+  the message sent every reader to inspect `2026-07-30`, a perfectly valid past date. The gate had
+  detected the right thing and described a different one, so the natural conclusion was "the gate is
+  broken", not "the stamp is". Confirming otherwise took reproducing the regex by hand, getting zero,
+  and then instrumenting `scan()` to discover `hits += impossibleClockTimes(source)`.
+
+  A gate that misdescribes what it caught spends the reader's trust, which is worth more than the
+  one re-read of already-failing files that printing the real offenders costs.
+  */
+  for (const file of offendingFiles) {
+    let source;
+    try { source = readFileSync(join(REPO, file), "utf8"); } catch { continue; }
+    const bad = [];
+    STAMP.lastIndex = 0;
+    for (const match of source.matchAll(STAMP)) if (match[1] > today) bad.push(`${match[0]}  (dated after today)`);
+    STAMP_TIME.lastIndex = 0;
+    for (const match of source.matchAll(STAMP_TIME)) {
+      if (Number(match[1]) > 23 || Number(match[2]) > 59) bad.push(`${match[0]}  (impossible clock time)`);
+    }
+    if (bad.length > 0) {
+      console.error(`\n  ${file}`);
+      for (const line of [...new Set(bad)]) console.error(`    ${line}`);
+    }
+  }
   console.error(
     `\nA stamp dated after today (${today}) records the change as happening in the future, which makes\n`
-    + "the FNXC record — the project's why-does-this-exist trail — read out of order.\n"
-    + "Use the current date. If a count went DOWN, re-record the baseline in the same commit.\n",
+    + "the FNXC record — the project's why-does-this-exist trail — read out of order. An hour above 23\n"
+    + "or a minute above 59 is not a real time at all.\n"
+    + "Use the current date and a real clock time. If a count went DOWN, re-record the baseline in the\n"
+    + "same commit.\n",
   );
   process.exit(1);
 }
