@@ -62,6 +62,29 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
         The honest fix is for this modal to resolve lanes for the page it fetched — either a
         `fetchTasks` variant that returns resolved flags, or a per-task resolution over the 50 rows.
         That is a data-fetch change, not a prop-threading one, so it is sized here rather than faked.
+
+        FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (CORRECTING THE SHAPE — it is not a data-fetch
+        change, and the objection above applies to a map this guard does not need):
+        Everything above is about a per-TASK map (`columnFlagsByTaskId`), and it is right that one
+        cannot help here: it is built from board-resident rows, and the rows this filter cares about
+        are archived ones, which are exactly what a board map omits.
+
+        But this guard does not ask a per-task question. "Is `task.column` an archive lane" is a
+        question about a COLUMN, and the answer lives in the workflow definition — a lane exists there
+        whether or not any board row currently sits in it. The board already derives exactly that map:
+        `ListView.tsx:756` builds `columnFlagsById` (ColumnId -> flags) from its workflow columns, and
+        `useExecutorStats` takes the same shape. Archived rows being absent from the board is
+        irrelevant to a column-keyed answer.
+
+        So the cost is prop threading, not a fetch: MainContent -> ResearchView -> this modal, plus
+        sourcing the column map where MainContent renders ResearchView (it does not hold one today).
+        Three layers for one guard is a real cost and a fair thing to decline — but it is a different
+        decision from "needs new data", which is what the note above would have the next reader
+        believe, and the two have very different prices.
+
+        Left counted and unconverted. I am recording the corrected shape rather than threading it,
+        because a three-component prop chain wants to be someone's deliberate change rather than a
+        drive-by on the last census entry in this file.
         */
         .then((rows) => setTasks(rows.filter((task) => task.column !== "archived")))
         .finally(() => setLoadingTasks(false));
