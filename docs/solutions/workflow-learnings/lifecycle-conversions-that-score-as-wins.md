@@ -152,7 +152,8 @@ hands in.** If your fixture passes the lane name, you have tested the consumer. 
 computes that argument in production, and whether they compute it or spell it.
 
 MEASURED, so nobody builds the wrong instrument: an AST probe for a call argument
-`{ column: "<legacy id>" }` finds **79 sites** across `packages/`. It flags the two real `moves.ts`
+`{ column: "<legacy id>" }` found **79 sites** across `packages/` when measured on 2026-07-30 (42 as
+of 2026-07-31, after the analytics conversions landed — the ratio is the point, not the total). It flags the two real `moves.ts`
 offenders, but most of the rest are legitimate — `set({ column: "archived" })` writing the archive
 state, `listTasks({ column: "todo" })` filtering a query. A blocking gate on this shape needs a
 curated list of consumers that interpret the column as a ROLE (as opposed to storing or filtering
@@ -167,7 +168,8 @@ a plausible "the census cannot see this" theory; each was measured.
 **Membership tests with inline literals** — `["done","archived"].includes(task.column)`. The census
 counts binary comparisons only, so this shape would be invisible. **Zero sites.** Nobody writes it.
 
-**Named legacy-id collections** — `const X = ["done","archived"]` then `X.has(col)`. **48 declarations**,
+**Named legacy-id collections** — `const X = ["done","archived"]` then `X.has(col)`. **48 declarations**
+measured 2026-07-30, 49 on 2026-07-31;
 and the raw count is misleading: on inspection they are all either
 
 - the intentional fallback vocabulary the role helpers degrade to (`LEGACY_TERMINAL_COLUMNS`,
@@ -182,9 +184,16 @@ would have been the same mistake as gating on `{ column: "<literal>" }` call arg
 mostly legitimate): a number that looks like a work list and is not.
 
 **The rule:** measure a candidate surface, then inspect a sample, before reporting it OR instrumenting
-it. A raw count is a hypothesis. The SQL surface survived this test — 14 sites, all genuinely
-vocabulary-bound — and got a ratchet. These two did not, and got nothing, which is the correct
-outcome and cost an hour to establish rather than a wrong gate to maintain.
+it. A raw count is a hypothesis. The SQL surface survived this test and got a ratchet; these two did
+not, and got nothing, which is the correct outcome and cost an hour to establish rather than a wrong
+gate to maintain.
+
+CORRECTION, 2026-07-31. This paragraph used to read "the SQL surface survived this test — 14 sites,
+all genuinely vocabulary-bound". Both halves were wrong within a day. The population was 31 once the
+scanner stopped missing Drizzle-templated queries, and hand-reading split it into roughly fourteen
+lane-bound sites, eleven `archived` comparisons (three of them CORRECT as literals — they read a
+state, not a lane), and one in dead code. Writing "all genuinely vocabulary-bound" was the same
+mistake this section warns about, committed in the sentence that warns about it.
 
 ## Guards start catching other people's work, not just yours
 
