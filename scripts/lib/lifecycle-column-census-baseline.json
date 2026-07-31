@@ -21,7 +21,6 @@
     "packages/core/src/task-store/task-id-integrity.ts": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
-    "packages/engine/src/backlog-pressure-reporter.ts": 1,
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
