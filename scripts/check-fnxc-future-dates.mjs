@@ -48,7 +48,16 @@ function* walk(dir) {
     if (statSync(full).isDirectory()) yield* walk(full);
     /* `.js`/`.cjs` too: FNXC comments live in plain-JS scripts as well, and omitting them let a
        future-dated stamp land unseen in exactly the files this repo writes tooling in. */
-    else if (/\.(tsx?|m?js|cjs|md)$/.test(full)) yield full;
+    /*
+    FNXC:FnxcStampHygiene 2026-07-30-00:00 (#2953 follow-up): EVERY FILE TYPE THAT CARRIES A STAMP.
+    The filter listed the types stamps were EXPECTED in, not the ones they OCCUR in, so the gate was
+    blind wherever the convention had spread on its own. `.sql` was the costly omission: migrations
+    carry a stamp recording when a schema change landed, they are the files where a wrong date
+    misleads most, and one of them held a stamp dated nearly three months out. `.css` had drifted
+    furthest by volume (1023 stamps across 123 files, from the dashboard CSS split). A gate whose
+    coverage is a guess about where authors write comments will always trail the authors.
+    */
+    else if (/\.(tsx?|m?js|cjs|md|sql|css|html|ya?ml|json|sh)$/.test(full)) yield full;
   }
 }
 
