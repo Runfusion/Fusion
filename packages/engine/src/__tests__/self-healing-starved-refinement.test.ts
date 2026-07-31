@@ -77,6 +77,64 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
     vi.useRealTimers();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (fleet — peer-progress vocabulary):
+  "Peer progress" was `peer.column === "todo"` in two places: the candidate filter and the count written
+  into the log line and audit metadata. On a renamed board both stopped matching, so peer progress read
+  as zero and starved refinements were never escalated — silently, since a zero count is indistinguishable
+  from a genuinely quiet board.
+
+  The board below separates intake from hold on purpose. The candidate rests in INTAKE (`inbox`) and its
+  peers in HOLD (`backlog`), so a conversion that reached for the wrong role set — or that left either
+  site on the literal — resolves no peers and escalates nothing.
+  */
+  it("counts peer progress in the board's own HOLD lane on a renamed board", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
+
+    const RENAMED_IR = {
+      version: "v2",
+      name: "renamed-starvation",
+      columns: [
+        { id: "inbox", name: "Inbox", traits: [{ trait: "intake" }] },
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      ],
+      nodes: [],
+      edges: [],
+    };
+
+    const tasks: Task[] = [
+      task({ id: "FN-R9", column: "inbox", sourceType: "task_refine", createdAt: "2026-05-15T10:00:00.000Z", updatedAt: "2026-05-15T10:00:00.000Z", priority: "low" }),
+      task({ id: "FN-Q1", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:15:00.000Z" }),
+      task({ id: "FN-Q2", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:16:00.000Z" }),
+      task({ id: "FN-Q3", column: "backlog", sourceType: "dashboard_ui", updatedAt: "2026-05-15T10:17:00.000Z" }),
+    ];
+
+    const updateTask = vi.fn(async () => undefined);
+    const store: any = {
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false }),
+      listTasks: vi.fn().mockResolvedValue(tasks),
+      updateTask,
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+      /* `starvedWaitingColumns` is a PROJECT union (`resolveProjectColumnsForRoles`), so the fake needs
+         `listWorkflowDefinitions`; the per-task selection readers alone leave it resolving nothing and
+         the test would pass for the wrong reason. */
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
+      on: () => {},
+      removeListener: () => {},
+    };
+
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getPlanningTaskIds: () => new Set() });
+    await expect(manager.recoverStarvedRefinementTriageTasks()).resolves.toBe(1);
+    expect(updateTask).toHaveBeenCalledWith("FN-R9", { priority: "normal" });
+    vi.useRealTimers();
+  });
+
   it("does not escalate non-refinement triage tasks", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-15T11:00:00.000Z"));
