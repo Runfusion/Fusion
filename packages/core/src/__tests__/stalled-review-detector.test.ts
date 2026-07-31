@@ -111,4 +111,44 @@ describe("detectStalledReview", () => {
 
     expect(signal?.heuristic).toBe("reenqueue-churn");
   });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (fleet — the review lane, resolved):
+  The renamed-board arm. Before the `reviewColumns` parameter this detector compared against the
+  literal `"in-review"`, so on a board whose review lane is called anything else it returned
+  `undefined` for EVERY card and the stall was unreportable — while the adjacent
+  `getInReviewStallReason` on the very next line in `reads.ts` resolved the real lane. Two stall
+  signals for one card, disagreeing by construction.
+
+  Both arms are asserted, because the literal default is load-bearing: every caller outside
+  `reads.ts` still omits the parameter and must keep today's behaviour exactly.
+  */
+  const churnLog = [
+    entry("2026-05-12T11:30:00.000Z", STALLED_REVIEW_REENQUEUE_PATTERN),
+    entry("2026-05-12T11:40:00.000Z", `noise ${STALLED_REVIEW_REENQUEUE_PATTERN}`),
+    entry("2026-05-12T11:50:00.000Z", STALLED_REVIEW_REENQUEUE_PATTERN),
+  ];
+
+  it("RENAMED BOARD — detects the stall when the resolved review lane is passed", () => {
+    const task = { column: "checking", paused: false, log: churnLog };
+
+    // The unconverted call shape: silent on this board, which is the defect.
+    expect(detectStalledReview(task, { now })).toBeUndefined();
+
+    // The resolved answer the reads.ts hydration passes.
+    const signal = detectStalledReview(task, { now, reviewColumns: new Set(["in-review", "checking"]) });
+    expect(signal?.heuristic).toBe("reenqueue-churn");
+    expect(signal?.matchCount).toBe(STALLED_REVIEW_REENQUEUE_THRESHOLD);
+  });
+
+  it("DEFAULT BOARD — the literal default is unchanged, and a resolved set still gates", () => {
+    const task = { column: "in-review", paused: false, log: churnLog };
+
+    // No parameter: exactly today's behaviour, which is what every caller outside reads.ts relies on.
+    expect(detectStalledReview(task, { now })?.heuristic).toBe("reenqueue-churn");
+
+    // A resolved set that does NOT contain the card's column must still say "not in review" — the
+    // parameter is a real gate, not a widening that makes every card eligible.
+    expect(detectStalledReview(task, { now, reviewColumns: new Set(["checking"]) })).toBeUndefined();
+  });
 });

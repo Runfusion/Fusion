@@ -84,12 +84,23 @@ function getLatestAgentLogActivityMs(store: TaskStore, taskId: string): number |
  * TaskStore.hasFreshAgentLogActivitySinceTaskUpdate, which the PostgreSQL
  * cutover's store split predated.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (fleet — the review lane, resolved):
+`reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
+
+Same defect as `detectStalledReview` and the same blast radius: this gate decides whether a streaming
+merge/review agent SUPPRESSES the stall badges. Against the literal it answered `false` for every card
+on a renamed board, so `executingTaskIds` stayed empty and the board showed "Stalled"/"Merge stalled"
+while a merger was visibly making progress — the precise regression the FNXC note below says this
+function was restored to prevent.
+*/
 function hasFreshAgentLogActivitySinceTaskUpdate(
   store: TaskStore,
   task: Pick<Task, "id" | "column" | "updatedAt">,
   now: number,
+  reviewColumns?: ReadonlySet<string>,
 ): boolean {
-  if (task.column !== "in-review") return false;
+  if (!(reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")) return false;
   const latestAgentLogMs = getLatestAgentLogActivityMs(store, task.id);
   if (latestAgentLogMs == null) return false;
 
@@ -220,7 +231,10 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
       main's FNXC:WorkflowLifecycle 2026-07-01-23:27 behavior, which the
       PostgreSQL cutover's store split predated.
       */
-      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now);
+      /* FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (fleet): hoisted ABOVE the fresh-activity gate
+         so that gate can resolve too — it is now the FIRST signal, and the note below is the rule. */
+      const reviewColumnsForTask: InReviewStallContext["reviewColumns"] = await resolveReviewColumnsForTask(store, task.id);
+      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now, reviewColumnsForTask);
       const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       /*
       FNXC:WorkflowLifecycleColumns 2026-07-30-20:50:
@@ -245,7 +259,6 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
       on that ratchet while genuinely wired. Naming the types is the smaller fix than appending to a
       list the guard says may only ever shorten.
       */
-      const reviewColumnsForTask: InReviewStallContext["reviewColumns"] = await resolveReviewColumnsForTask(store, task.id);
       task.inReviewStall = mergeQueuedTaskIds.has(task.id)
         ? undefined
         : getInReviewStallReason(task, {
@@ -267,7 +280,7 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         } satisfies InReviewStalledContext);
-      task.stalledReview = mergeQueuedTaskIds.has(task.id) || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
+      task.stalledReview = mergeQueuedTaskIds.has(task.id) || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForTask });
       task.retrySummary = computeRetrySummary(task);
       /*
       FNXC:TaskDetailPromptResilience 2026-07-10-15:00 (merge port from main):
@@ -409,9 +422,9 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       main's FNXC:WorkflowLifecycle 2026-07-01-23:27 behavior, which the
       PostgreSQL cutover's store split predated.
       */
-      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now);
-      const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       const reviewColumnsForRow = await resolveReviewColumnsForTask(store, task.id, listPassIrCache);
+      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now, reviewColumnsForRow);
+      const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       task.inReviewStall = isMergeQueued ? undefined : getInReviewStallReason(task, {
         now,
         reviewColumns: reviewColumnsForRow,
@@ -471,7 +484,7 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         if (!(err instanceof RangeError)) throw err;
         task.ageStaleness = undefined;
       }
-      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
+      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow });
       task.retrySummary = computeRetrySummary(task);
       if (slim) {
         task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
@@ -619,9 +632,9 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
       main's FNXC:WorkflowLifecycle 2026-07-01-23:27 behavior, which the
       PostgreSQL cutover's store split predated.
       */
-      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now);
-      const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       const reviewColumnsForRow = reviewColumnsByTaskId.get(task.id) ?? new Set<string>(["in-review"]);
+      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now, reviewColumnsForRow);
+      const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       task.inReviewStall = isMergeQueued ? undefined : getInReviewStallReason(task, {
         now,
         reviewColumns: reviewColumnsForRow,
@@ -687,7 +700,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
         }
       }
       task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
-      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
+      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow });
       task.retrySummary = computeRetrySummary(task);
       task.log = [];
       return task;
@@ -750,11 +763,14 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       main's FNXC:WorkflowLifecycle 2026-07-01-23:27 behavior, which the
       PostgreSQL cutover's store split predated.
       */
-      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now);
+      /* FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (fleet): resolved ONCE for this row — it was
+         resolved inline twice below, and the fresh-activity gate could not see it at all. */
+      const reviewColumnsForRow = await resolveReviewColumnsForTask(store, task.id, searchPassIrCache);
+      const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now, reviewColumnsForRow);
       const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       task.inReviewStall = isMergeQueued ? undefined : getInReviewStallReason(task, {
         now,
-        reviewColumns: await resolveReviewColumnsForTask(store, task.id, searchPassIrCache),
+        reviewColumns: reviewColumnsForRow,
         executingTaskIds,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -763,13 +779,13 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
-        reviewColumns: await resolveReviewColumnsForTask(store, task.id, searchPassIrCache),
+        reviewColumns: reviewColumnsForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       } satisfies InReviewStalledContext);
-      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now });
+      task.stalledReview = isMergeQueued || hasFreshAgentLogActivity ? undefined : detectStalledReview(task, { now, reviewColumns: reviewColumnsForRow });
       task.retrySummary = computeRetrySummary(task);
       if (slim) {
         task.timedExecutionMs = store.computeTimedExecutionMs(task.log);
