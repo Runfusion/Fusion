@@ -11,7 +11,7 @@ const severityAuditLog = createLogger("core-async-mission-store");
  * events; reusable SQL and row mapping live in async-mission-store-queries.ts.
  */
 import { EventEmitter } from "node:events";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "./mission-types.js";
@@ -1348,6 +1348,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * generic intake path to archive feature.taskId.
    */
   async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
+    /* Resolved once, outside the transaction: both guards below ask the same question. */
+    const claimedArchivedLanes = await this.archivedLanesFor(input.taskId);
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Project-agnostic legacy stores remain scoped to their reserved RLS
@@ -1372,7 +1374,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.taskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          sql`${schema.project.tasks.column} <> 'archived'`,
+          notInArray(schema.project.tasks.column, [...claimedArchivedLanes]),
         ));
       if (!claimed[0]) throw new Error(`Cannot reconcile defined-feature bootstrap duplicate: claimed task ${input.taskId} is not live`);
       /*
@@ -1384,13 +1386,31 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       */
       const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
       if (duplicateFeature) return;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:10:
+      THE ARCHIVE TARGET IS RESOLVED, not the literal `archived`.
+
+      This writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
+      lifecycle census (which reads comparisons) nor the move-target census (which reads
+      `moveTask` call arguments) could see it. On a board whose archive lane is named anything
+      else, it parked the duplicate in a column that workflow does not declare — a card in a lane
+      the board cannot render.
+
+      `archivedLanesFor` already exists on this class for the guards above and returns the legacy
+      id when the task has no resolvable workflow, so an unconverted board is byte-identical.
+      A board declaring several archive lanes is arbitrated by taking the first; that is the same
+      choice `resolveLifecycleColumns` makes, and multiple archive lanes are not a shape the
+      builtin lineages produce.
+      */
+      const duplicateArchivedLanes = await this.archivedLanesFor(input.duplicateTaskId);
+      const archiveTarget = [...duplicateArchivedLanes][0] ?? "archived";
       await tx.update(schema.project.tasks)
-        .set({ column: "archived", updatedAt: new Date().toISOString() })
+        .set({ column: archiveTarget, updatedAt: new Date().toISOString() })
         .where(and(
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.duplicateTaskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          sql`${schema.project.tasks.column} <> 'archived'`,
+          notInArray(schema.project.tasks.column, [...duplicateArchivedLanes]),
         ));
     });
   }

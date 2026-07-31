@@ -36,6 +36,7 @@ import {
   listMissionEvents,
   listMissions as listMissionRows,
 } from "../../async-mission-store.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../index.js";
 
 const pgTest = pgDescribe;
 
@@ -391,6 +392,74 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "todo" });
     expect(await m.getFeature(siblingFeature.id)).toMatchObject({ taskId: siblingTask.id, status: "triaged" });
     expect(await m.getFeature(firstFeature.id)).toMatchObject({ taskId: claimedTask.id, status: "triaged" });
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-10:20:
+  THE BOOTSTRAP DUPLICATE WAS PARKED IN A LANE THE BOARD DOES NOT DECLARE.
+
+  This path writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
+  lifecycle census (which reads comparisons) nor the move-target census (which reads `moveTask`
+  arguments) could see the literal `archived`. On a board whose archive lane is renamed, the
+  duplicate landed in a column that workflow does not declare — a card in a lane the board cannot
+  render, from a path that runs during ordinary feature bootstrap.
+
+  DIFFERENTIAL: `filed` collides with no legacy id, so a surviving `"archived"` cannot pass by luck.
+  */
+  it("archives a bootstrap duplicate into the RENAMED archive lane", async () => {
+    const m = missions();
+    const taskStore = h.store();
+
+    const ir = JSON.parse(JSON.stringify(BUILTIN_CODING_WORKFLOW_IR)) as {
+      id: string; nodes?: { column?: string }[]; columns?: { id: string }[];
+    };
+    ir.id = "custom:renamed-archive-missions";
+    for (const node of ir.nodes ?? []) if (node.column === "archived") node.column = "filed";
+    for (const column of ir.columns ?? []) if (column.id === "archived") column.id = "filed";
+    expect((ir.columns ?? []).map((c) => c.id)).not.toContain("archived");
+    const definition = await taskStore.createWorkflowDefinition({ name: "Renamed archive", kind: "workflow", ir } as never);
+    const workflowId = (definition as unknown as { id: string }).id;
+
+    const mission = await m.createMission({ title: "Renamed archive bootstrap" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+
+    const claimedTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await m.linkFeatureToTask(feature.id, claimedTask.id);
+    const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await taskStore.writeTaskWorkflowSelection(duplicateTask.id, workflowId, []);
+
+    await m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    });
+
+    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "filed" });
+  });
+
+  /* Control: with no renamed workflow the duplicate still lands in the legacy archive lane, so an
+     unconverted board is byte-identical. */
+  it("archives a bootstrap duplicate into `archived` on the default lineage", async () => {
+    const m = missions();
+    const taskStore = h.store();
+    const mission = await m.createMission({ title: "Default archive bootstrap" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+
+    const claimedTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await m.linkFeatureToTask(feature.id, claimedTask.id);
+    const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+
+    await m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    });
+
+    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "archived" });
   });
 
   /*
