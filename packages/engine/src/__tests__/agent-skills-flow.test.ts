@@ -13,7 +13,7 @@ can call existsSync before const mockFiles initializes (TDZ), same class as skil
 */
 const { mockPiLog, mockFiles, mockDirCounter } = vi.hoisted(() => ({
   mockPiLog: {
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   },

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS } from "../test/apiRequestHeaders";
 import {
   fetchDiscoveredSkills,
   toggleExecutionSkill,
@@ -59,7 +60,7 @@ describe("fetchDiscoveredSkills", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/discovered",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });
@@ -73,7 +74,7 @@ describe("fetchDiscoveredSkills", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/discovered?projectId=proj_123",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });
@@ -238,7 +239,7 @@ describe("fetchSkillsCatalog", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/catalog",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });
@@ -259,7 +260,7 @@ describe("fetchSkillsCatalog", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/catalog?q=react&limit=10",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });
@@ -280,7 +281,7 @@ describe("fetchSkillsCatalog", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/catalog?projectId=proj_789",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });
@@ -301,7 +302,7 @@ describe("fetchSkillsCatalog", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/skills/catalog?q=typescript&limit=5&projectId=proj_abc",
       expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }),
     );
   });

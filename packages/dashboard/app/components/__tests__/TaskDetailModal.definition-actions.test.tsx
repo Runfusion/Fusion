@@ -67,7 +67,7 @@ describe("TaskDetailModal", () => {
         </FileBrowserProvider>,
       );
 
-      const actionRow = container.querySelector(".detail-spec-edit-trigger");
+      const actionRow = document.querySelector(".detail-spec-edit-trigger");
       expect(actionRow).toBeTruthy();
       const promptButton = screen.getByRole("button", { name: "Open PROMPT.md" });
       expect(actionRow?.contains(promptButton)).toBe(true);
@@ -91,10 +91,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const planSection = container.querySelector(".detail-section--plan-prompt");
+      const planSection = document.querySelector(".detail-section--plan-prompt");
       expect(planSection).toBeTruthy();
       // Initially showing markdown view
-      const markdown = container.querySelector(".markdown-body");
+      const markdown = document.querySelector(".markdown-body");
       expect(markdown).toBeTruthy();
       expect(planSection?.contains(markdown)).toBe(true);
 
@@ -102,9 +102,9 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByText("Edit"));
 
       // Should show spec edit textarea (query by class for specificity)
-      const editMode = container.querySelector(".spec-editor-edit-mode");
-      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
-      const feedback = container.querySelector(".spec-editor-feedback");
+      const editMode = document.querySelector(".spec-editor-edit-mode");
+      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
+      const feedback = document.querySelector(".spec-editor-feedback");
       expect(editMode).toBeTruthy();
       expect(textarea).toBeTruthy();
       expect(feedback).toBeTruthy();
@@ -128,8 +128,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const planSection = container.querySelector(".detail-section--plan-prompt");
-      const fallback = container.querySelector(".detail-prompt");
+      const planSection = document.querySelector(".detail-section--plan-prompt");
+      const fallback = document.querySelector(".detail-prompt");
       expect(planSection).toBeTruthy();
       expect(fallback).toBeTruthy();
       expect(planSection?.contains(fallback)).toBe(true);
@@ -150,13 +150,13 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(container.querySelector(".task-detail-content--embedded")).toBeTruthy();
-      const planSection = container.querySelector(".detail-section--plan-prompt");
+      expect(document.querySelector(".task-detail-content--embedded")).toBeTruthy();
+      const planSection = document.querySelector(".detail-section--plan-prompt");
       fireEvent.click(screen.getByText("Edit"));
 
-      const editMode = container.querySelector(".spec-editor-edit-mode");
-      const textarea = container.querySelector(".spec-editor-textarea");
-      const feedback = container.querySelector(".spec-editor-feedback");
+      const editMode = document.querySelector(".spec-editor-edit-mode");
+      const textarea = document.querySelector(".spec-editor-textarea");
+      const feedback = document.querySelector(".spec-editor-feedback");
       expect(planSection).toBeTruthy();
       expect(planSection?.contains(editMode)).toBe(true);
       expect(planSection?.contains(textarea)).toBe(true);
@@ -178,15 +178,15 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByText("Edit"));
-      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
+      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "Modified content" } });
 
       // Click Cancel
       fireEvent.click(screen.getByText("Cancel"));
 
       // Should show markdown view with original content
-      expect(container.querySelector(".markdown-body")).toBeTruthy();
-      expect(container.querySelector(".spec-editor-textarea")).toBeNull();
+      expect(document.querySelector(".markdown-body")).toBeTruthy();
+      expect(document.querySelector(".spec-editor-textarea")).toBeNull();
     });
 
     it("saving updates the task and returns to view mode", async () => {
@@ -208,7 +208,7 @@ describe("TaskDetailModal", () => {
       );
 
       fireEvent.click(screen.getByText("Edit"));
-      const textarea = container.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
+      const textarea = document.querySelector(".spec-editor-textarea") as HTMLTextAreaElement;
       fireEvent.change(textarea, { target: { value: "# Updated" } });
 
       fireEvent.click(screen.getByText("Save"));
@@ -218,7 +218,7 @@ describe("TaskDetailModal", () => {
       });
 
       // Should return to view mode
-      expect(container.querySelector(".markdown-body")).toBeTruthy();
+      expect(document.querySelector(".markdown-body")).toBeTruthy();
     });
 
     it("AI revision feedback section appears in edit mode", () => {
@@ -294,7 +294,7 @@ describe("TaskDetailModal", () => {
       // the operator flow as Comments → Terminal → Cost → Artifacts, so neither "Cost after Chat" nor "Terminal at end"
       // holds anymore. In-progress tasks show exactly 13 tabs:
       // Activity, Chat, Plan, Changes, Review, Comments, Terminal, Cost, Artifacts, Model, Workflow, Stats, Routing
-      const tabs = container.querySelectorAll(".detail-tab");
+      const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
@@ -318,7 +318,7 @@ describe("TaskDetailModal", () => {
 
       // FNXC:CostAndTerminalTabs see note above: Terminal then Cost sit between Comments and Artifacts.
       // In-progress task with workflow steps: 13 tabs (Review after Changes, Workflow after Model)
-      const tabs = container.querySelectorAll(".detail-tab");
+      const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
@@ -343,7 +343,7 @@ describe("TaskDetailModal", () => {
 
       // FNXC:CostAndTerminalTabs see note above. Done task adds Summary after Chat; Terminal then Cost between Comments and Artifacts.
       // Done task with commit SHA: Activity, Chat, Summary, Plan, Changes, Review, Comments, Terminal, Cost, Artifacts, Model, Workflow, Stats, Routing (14 tabs, no Commits)
-      const tabs = container.querySelectorAll(".detail-tab");
+      const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Summary", "Plan", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
@@ -371,7 +371,7 @@ describe("TaskDetailModal", () => {
 
       // FNXC:CostAndTerminalTabs see note above.
       // Done task with workflow steps and commit SHA: 14 tabs including Summary, Terminal, Cost and Review (no Commits)
-      const tabs = container.querySelectorAll(".detail-tab");
+      const tabs = document.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Summary", "Plan", "Changes", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
@@ -380,7 +380,20 @@ describe("TaskDetailModal", () => {
     });
 
     it("does NOT show Changes tab for triage/todo tasks", () => {
-      const { container: triageContainer } = render(
+      /*
+      FNXC:TaskDetailModalTests 2026-07-31-16:20:
+      UNMOUNT BETWEEN THE TWO RENDERS — the modal is portalled, so both would share one document root.
+
+      This case rendered the triage modal and the todo modal back to back and told them apart by their
+      `container` handles. That never worked: TaskDetailModal mounts through `createPortal`, so both
+      subtrees hang off `document.body` and both containers are empty — `querySelectorAll` returned []
+      and the tab-list assertion compared [] against twelve labels.
+
+      Querying `document` alone does not fix it here, unlike the rest of this file: with two modals
+      mounted at once a document-rooted `.detail-tab` lookup returns BOTH tab strips concatenated.
+      Unmounting the first render is what makes each assertion about one modal again.
+      */
+      const triageRender = render(
         <TaskDetailModal
           task={makeTask({ column: "triage" })}
           initialTab="definition"
@@ -393,13 +406,15 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const triageTabs = triageContainer.querySelectorAll(".detail-tab");
+      const triageTabs = document.querySelectorAll(".detail-tab");
       // FNXC:CostAndTerminalTabs see note above. Triage has no Changes tab; Terminal then Cost between Comments and Artifacts.
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Plan", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
 
-      const { container: todoContainer } = render(
+      triageRender.unmount();
+
+      render(
         <TaskDetailModal
           task={makeTask({ column: "todo" })}
           initialTab="definition"
@@ -412,7 +427,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const todoTabs = todoContainer.querySelectorAll(".detail-tab");
+      const todoTabs = document.querySelectorAll(".detail-tab");
       // FNXC:CostAndTerminalTabs see FN-7820/FN-7826 note above (todo, same as triage).
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
         "Activity", "Chat", "Plan", "Review", "Comments", "Terminal", "Cost", "Artifacts", "Model", "Workflow", "Stats", "Routing",
@@ -1619,14 +1634,14 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
       // The submit button should be inside .detail-refine-input-group (the input area)
-      const inputGroup = container.querySelector(".detail-refine-input-group");
+      const inputGroup = document.querySelector(".detail-refine-input-group");
       expect(inputGroup).toBeTruthy();
       const submitButton = inputGroup!.querySelector("button.btn-primary");
       expect(submitButton).toBeTruthy();
       expect(submitButton!.textContent).toBe("Create Refinement Task");
 
       // The submit button should NOT be in the footer .modal-actions
-      const modalActions = container.querySelector(".detail-refine-modal .modal-actions");
+      const modalActions = document.querySelector(".detail-refine-modal .modal-actions");
       expect(modalActions).toBeTruthy();
       expect(modalActions!.querySelector("button.btn-primary")).toBeNull();
     });
@@ -1686,7 +1701,7 @@ describe("TaskDetailModal", () => {
       // Click Refine from the dropdown
       fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
 
-      const inputGroup = container.querySelector(".detail-refine-input-group")!;
+      const inputGroup = document.querySelector(".detail-refine-input-group")!;
       expect(inputGroup.querySelector(".detail-refine-char-count")).toBeTruthy();
       expect(inputGroup.querySelector("button.btn-primary")).toBeTruthy();
     });

@@ -1,3 +1,4 @@
+import { isWipColumnRole, type ColumnRoleFlags } from "./columnRoles";
 import type { Task, TaskLogEntry, WorkflowStepResult } from "@fusion/core";
 
 export interface TimingEvent {
@@ -96,11 +97,27 @@ export function getEndToEndDurationMs(
 export function getActiveRuntimeMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "columnMovedAt">,
   nowMs: number,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-10:10:
+  THE DASHBOARD HAS ITS OWN COPY OF THIS FUNCTION, and converting core's did not touch it.
+
+  `@fusion/core`'s `task-timing.ts` exports a `getTotalAgentActiveMs` that was converted onto
+  `isWipColumnRole` — but the card chip imports THIS module instead, so that conversion never
+  reached the surface an operator actually looks at. Two implementations of one calculation, one
+  converted and one not, is the same drift `column-roles.ts` was created to end.
+
+  Keyed on the literal, the LIVE execution segment was dropped on a renamed board, so the card
+  under-reported the run in flight by exactly its elapsed time — and healed itself the moment the
+  card moved on and the segment was persisted.
+
+  Omitted flags keep the legacy id via `isWipColumnRole`'s own degraded mode.
+  */
+  columnFlags?: ColumnRoleFlags,
 ): number | null {
   const persisted = task.cumulativeActiveMs;
   const base = persisted ?? 0;
 
-  if (task.column === "in-progress") {
+  if (isWipColumnRole(columnFlags, task.column)) {
     const startedMs = parseTimestampToMs(task.executionStartedAt);
     if (startedMs != null) {
       return base + Math.max(0, nowMs - startedMs);
@@ -114,16 +131,18 @@ export function getActiveRuntimeMs(
   return null;
 }
 
-/** FNXC:TaskTiming 2026-08-01-10:00: rendered task totals include planning AI
+/** FNXC:TaskTiming 2026-07-20-10:00: rendered task totals include planning AI
  * segments while getActiveRuntimeMs intentionally remains execution-only. */
 export function getTotalAgentActiveMs(
   task: Pick<Task, "column" | "cumulativeActiveMs" | "executionStartedAt" | "cumulativePlanningMs" | "planningStartedAt">,
   nowMs: number,
+  /** Resolved trait flags for the card's column; omitted keeps the legacy id. */
+  columnFlags?: ColumnRoleFlags,
 ): number | null {
-  const execution = getActiveRuntimeMs(task, nowMs) ?? 0;
+  const execution = getActiveRuntimeMs(task as never, nowMs, columnFlags) ?? 0;
   const planningStart = parseTimestampToMs(task.planningStartedAt);
   const planning = Math.max(0, task.cumulativePlanningMs ?? 0) + (planningStart != null ? Math.max(0, nowMs - planningStart) : 0);
-  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (task.column === "in-progress" && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
+  return task.cumulativeActiveMs != null || task.cumulativePlanningMs != null || (isWipColumnRole(columnFlags, task.column) && parseTimestampToMs(task.executionStartedAt) != null) || planningStart != null
     ? execution + planning
     : null;
 }

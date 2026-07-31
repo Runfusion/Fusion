@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS, API_JSON_HEADERS_NO_ATTRIBUTION } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -161,8 +162,14 @@ describe("fetchTaskDetail", () => {
 
     expect(result.id).toBe("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    /*
+    `fetchTaskDetail` calls `fetch()` DIRECTLY rather than through `api()`, so it does NOT carry the
+    `x-fusion-client` attribution header. Asserted with the bypassing constant so the gap stays visible
+    — see the note in test/apiRequestHeaders.ts. If this route is moved onto `api()`, this fails and
+    says why.
+    */
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS_NO_ATTRIBUTION,
     });
   });
 
@@ -241,7 +248,7 @@ describe("fetchTaskCommitAssociations", () => {
     await fetchTaskCommitAssociations("FN-001");
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/commit-associations", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 
@@ -256,7 +263,7 @@ describe("fetchTaskCommitAssociations", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/tasks/FN-001/commit-associations?projectId=project-abc",
-      { headers: { "Content-Type": "application/json" } },
+      { headers: API_JSON_HEADERS },
     );
   });
 });
@@ -424,7 +431,7 @@ describe("updateTask", () => {
 
     expect(result.dependencies).toEqual(["FN-002"]);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ dependencies: ["FN-002"] }),
     });
@@ -443,7 +450,7 @@ describe("updateTask", () => {
 
     expect(result.executionMode).toBe("fast");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ executionMode: "fast" }),
     });
@@ -456,7 +463,7 @@ describe("updateTask", () => {
 
     expect(result.executionMode).toBe("standard");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ executionMode: "standard" }),
     });
@@ -469,7 +476,7 @@ describe("updateTask", () => {
 
     expect(result.executionMode).toBeUndefined();
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ executionMode: null }),
     });
@@ -482,7 +489,7 @@ describe("updateTask", () => {
 
     expect(result.autoMerge).toBe(true);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ autoMerge: true }),
     });
@@ -495,7 +502,7 @@ describe("updateTask", () => {
 
     expect(result.autoMerge).toBeUndefined();
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ autoMerge: null }),
     });
@@ -521,7 +528,7 @@ describe("updateTask", () => {
     await updateTask("FN-001", { branch: null, baseBranch: "main" });
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ branch: null, baseBranch: "main" }),
     });
@@ -552,7 +559,7 @@ describe("updateTask", () => {
 
     expect(result.sourceIssue).toEqual(sourceIssue);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ sourceIssue }),
     });
@@ -564,7 +571,7 @@ describe("updateTask", () => {
     await updateTask("FN-001", { sourceIssue: null });
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ sourceIssue: null }),
     });
@@ -784,7 +791,7 @@ describe("assignTask and fetchAgentTasks", () => {
 
     expect(result.assignedAgentId).toBe("agent-001");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/assign", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ agentId: "agent-001" }),
     });
@@ -798,7 +805,7 @@ describe("assignTask and fetchAgentTasks", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.id).toBe("FN-001");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/agent-001/tasks", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 });
@@ -831,7 +838,7 @@ describe("task comments api", () => {
 
     expect(result).toEqual(comments);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 
@@ -842,7 +849,7 @@ describe("task comments api", () => {
 
     expect(result).toEqual(FAKE_TASK);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ text: "Hello", author: "user" }),
     });
@@ -854,7 +861,7 @@ describe("task comments api", () => {
     await updateTaskComment("FN-001", "c1", "Updated");
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments/c1", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "PATCH",
       body: JSON.stringify({ text: "Updated" }),
     });
@@ -866,7 +873,7 @@ describe("task comments api", () => {
     await deleteTaskComment("FN-001", "c1");
 
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments/c1", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "DELETE",
     });
   });
@@ -891,7 +898,7 @@ describe("plugin dashboard view API wrappers", () => {
 
     expect(result).toHaveLength(1);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/plugins/dashboard-views?projectId=project-a", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 
@@ -912,7 +919,7 @@ describe("plugin dashboard view API wrappers", () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toHaveProperty("slot");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/plugins/ui-slots?projectId=project-a", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 });
@@ -938,7 +945,7 @@ describe("fetchModels", () => {
 
     expect(result).toEqual(response);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/models", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 
@@ -978,7 +985,7 @@ describe("fetchBatchStatus", () => {
 
     expect(result).toEqual(response.results);
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/github/batch/status", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ taskIds: ["FN-001"] }),
     });
@@ -1020,7 +1027,7 @@ describe("batchUpdateTaskModels", () => {
       "/api/tasks/batch-update-models",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
         body: JSON.stringify({
           taskIds: ["FN-001"],
           modelProvider: "openai",
@@ -1286,6 +1293,6 @@ describe("deleteTask", () => {
     expect(parsed.searchParams.get("projectId")).toBe("proj-1");
     expect(parsed.searchParams.get("removeDependencyReferences")).toBe("true");
     expect(parsed.searchParams.get("allowResurrection")).toBeNull();
-    expect(init).toMatchObject({ method: "DELETE", headers: { "Content-Type": "application/json" } });
+    expect(init).toMatchObject({ method: "DELETE", headers: API_JSON_HEADERS });
   });
 });

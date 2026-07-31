@@ -981,7 +981,6 @@ export {
   unregisterNode,
   unregisterProject,
   updateDockerNodeConfig,
-  updateGlobalConcurrency,
   updateNode,
   updateProject,
   upsertProjectPathMapping,

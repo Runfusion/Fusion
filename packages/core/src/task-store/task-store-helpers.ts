@@ -11,8 +11,9 @@
  */
 
 import { TaskStore } from "../store.js";
-import { resolveCapacityPoolId } from "../workflow-capacity.js";
 import { isBuiltinWorkflowId } from "../builtin-workflows.js";
+import { parseWorkflowIr } from "../workflow-ir.js";
+import { columnsWithFlag } from "../workflow-lifecycle-traits.js";
 import { InsightStore } from "../insight-store.js";
 import { ResearchStore } from "../research-store.js";
 import { type TaskRow } from "./persistence.js";
@@ -76,17 +77,74 @@ export async function recordBranchGroupMemberLandedImpl(store: TaskStore,
     });
 }
 
-export function areAllDependenciesDoneImpl(store: TaskStore, dependencies: string[], tasksById: Map<string, Task>): boolean {
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-17:45 (fleet — the SAME "satisfied" answer as #2720):
+A DEPENDENCY IS SATISFIED IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived), unioned with the legacy
+ids. This is the third place that question is asked, and it now gives the same answer as the store's
+`blockedBy` computation (#2720) and the merge blocker — three surfaces, one rule, which is the whole reason
+I refused to settle it inside a vocabulary sweep the first two times it came up.
+
+Injected: this helper takes a pre-loaded map of dependency rows (it is used inside batch passes), so the
+caller resolves lanes once for the batch rather than once per dependency.
+*/
+export function areAllDependenciesDoneImpl(
+  store: TaskStore,
+  dependencies: string[],
+  tasksById: Map<string, Task>,
+  satisfiedColumns?: ReadonlySet<string>,
+): boolean {
+    const satisfied = satisfiedColumns ?? LEGACY_SATISFIED_COLUMNS;
     return dependencies.every((dependencyId) => {
       const dependency = tasksById.get(dependencyId);
-      return dependency?.column === "done" || dependency?.column === "archived";
+      return dependency !== undefined && satisfied.has(dependency.column);
     });
 }
+
+/** The satisfied ids from before workflows owned the vocabulary. */
+const LEGACY_SATISFIED_COLUMNS: ReadonlySet<string> = new Set(["done", "archived"]);
 
 export function resolveWorkflowBypassGuardsImpl(store: TaskStore,
     moveSource: NonNullable<MoveTaskOptions["moveSource"]>,
     options?: MoveTaskOptions,
   ): boolean {
+  /*
+  FNXC:WorkflowColumns 2026-07-30-11:00 (PR #2655 review — BOTH findings are right, and they are
+  the same defect seen from two sides. REVERTED to reading `options?.moveSource`.)
+
+  Round 1 said an optionless `moveTask(id, target)` LOSES bypass, because the call site resolves
+  `moveSource` to "engine" while this read the absent option. I switched to the resolved value.
+  Round 2 said that grants privileged bypass to PUBLIC callers. Both are correct, because an absent
+  `moveSource` is genuinely ambiguous — measured on this tree:
+
+    18 optionless calls in packages/engine (self-healing, project-engine) — genuine engine moves
+     8 optionless calls in packages/dashboard HTTP routes (reset, rebound, respecify, unassign)
+       — operator-initiated, and they must NOT skip merge blockers or plugin gates
+
+  Reading the resolved value hands bypass to those eight routes. Reading the option leaves the
+  eighteen engine calls unbypassed, which is what has shipped all along.
+
+  So this reverts to the shipped read. A flag-resolution PR is the wrong place to change who gets to
+  skip merge blockers: it is a behaviour change with a security shape, it is not required by the
+  flip, and "the tests pass" is not evidence for it. The real fix is to make `moveSource` EXPLICIT at
+  those 26 call sites so the default never has to be guessed — filed as follow-up work, not smuggled
+  in here.
+
+  The `void moveSource;` below is kept for the same reason it existed: the parameter is part of the
+  signature and deliberately unused until that follow-up lands.
+
+  `void moveSource;` discarded the parameter and re-read the raw option, so an OPTIONLESS call —
+  `moveTask(id, target)` — resolved `moveSource` to "engine" at every call site and then computed
+  `bypassGuards === false`, because `options` was undefined. The two disagreed about what kind of
+  move it was.
+
+  Harmless while the move-path flag gated validation, because nothing consumed the answer. The flag
+  is gone, so seam 2's guards now run for these calls and an internal executor/merger/recovery move
+  made without an options object would be judged as if a user had made it.
+
+  The `void` was a deliberate unused-parameter suppression, i.e. someone noticed the argument was
+  unused and silenced the lint instead of wiring it up. Using it aligns bypass with the `moveSource`
+  every caller already resolves the same way.
+  */
     void moveSource;
     return options?.recoveryRehome === true ||
       (options?.bypassGuards ??
@@ -103,6 +161,19 @@ params: {
   }): boolean {
     if (params.bypassGuards) return true;
     if (params.options?.recoveryRehome === true) return true;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-17:55 (fleet):
+    THE HARD-CANCEL SHAPE — a USER dragging a card from the wip lane back to the hold lane — is what
+    AGENTS.md's Move-Task contract calls a hard cancel, and it is the one move allowed to bypass workflow
+    transition guards. Spelled as literals, the bypass never applied on a renamed board: the operator's drag
+    was rejected by the transition validator, so a card could not be cancelled from the board at all.
+
+    FLAGGED, NOT CONVERTED: this function is SYNCHRONOUS and receives only column strings — no task id, no
+    store — so there is nothing to resolve from and no caller-injected set today. Converting it means adding
+    lanes to `MoveTaskOptions` (the moves path already resolves them; see moves.ts) and threading them here.
+    That is a moves-path change, and moves.ts is owned by another worker's PR, so this is a deliberate hand-off
+    rather than a literal nobody noticed. DELIBERATE-LITERAL until the moves path passes its snapshot down.
+    */
     return params.moveSource === "user" && params.fromColumn === "in-progress" && params.toColumn === "todo";
 }
 
@@ -156,9 +227,60 @@ export function getWorkflowWorkItemByIdentityImpl(store: TaskStore,
     return row ? store.rowToWorkflowWorkItem(row) : null;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+THE QUERY WAS THE DEFECT, not the predicate below it.
+
+`isLegacyAutoMergeStampCandidate` gained an optional resolved `reviewColumns` and no caller passed
+it. Wiring that parameter here would have changed NOTHING, because the read above it asked
+`listTasks({ column: "in-review" })` — a QUERY filter with the literal. On a renamed board that query
+returns zero rows, so the backfill iterated an empty list and reported success over nothing; the
+predicate was never reached.
+
+This is the third unwired parameter in this sweep whose caller held the larger defect
+(`blocker-fanout` emitted no warning at all; the analytics routes reported a silent zero). An
+optional parameter nobody fills is worth reading as a SYMPTOM of an unexamined caller rather than as
+a cosmetic gap.
+
+WHY A UNION ACROSS DEFINITIONS: there is no task to resolve from before the read, which is what makes
+the query class hard. The project's declared workflows are the only lane vocabulary available at this
+point, so every review-bearing column any of them declares is queried, unioned with the legacy id so
+a board mid-rename (rows still stored under the old id) is not skipped. Over-inclusion costs one
+extra query and is filtered by the predicate; under-inclusion silently backfills nothing, which is
+the failure being fixed.
+*/
+/**
+ * The review-lane vocabulary for the legacy auto-merge stamp backfill, resolved from the PROJECT's
+ * declared workflows because there is no task to resolve from before the read.
+ *
+ * Exported so the candidate query and the two re-checks that follow it share ONE answer. Deriving it
+ * separately per site is how a read and its re-check end up disagreeing.
+ */
+export async function resolveLegacyStampReviewColumns(store: TaskStore): Promise<ReadonlySet<string>> {
+    /* DELIBERATE-LITERAL — unioned, not replaced: a board mid-rename still has rows stored under the
+       old id, and skipping them is the failure this fixes. Reviewed 2026-07-31-13:00. */
+    const reviewColumns = new Set<string>(["in-review"]);
+    try {
+      for (const definition of await store.listWorkflowDefinitions()) {
+        const ir = typeof definition.ir === "string" ? parseWorkflowIr(definition.ir) : definition.ir;
+        if (!ir) continue;
+        for (const id of columnsWithFlag(ir, "mergeOrchestration")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "mergeBlocker")) reviewColumns.add(id);
+        for (const id of columnsWithFlag(ir, "humanReview")) reviewColumns.add(id);
+      }
+    } catch {
+      /* Unreadable definitions leave the legacy id alone — exactly the previous behaviour. */
+    }
+    return reviewColumns;
+}
+
 export async function listLegacyAutoMergeStampCandidatesImpl(store: TaskStore): Promise<Task[]> {
-    const inReview = await store.listTasks({ column: "in-review" });
-    return inReview.filter((task) => store.isLegacyAutoMergeStampCandidate(task));
+    const reviewColumns = await resolveLegacyStampReviewColumns(store);
+    const byId = new Map<string, Task>();
+    for (const column of reviewColumns) {
+      for (const task of await store.listTasks({ column })) byId.set(task.id, task);
+    }
+    return [...byId.values()].filter((task) => store.isLegacyAutoMergeStampCandidate(task, reviewColumns));
 }
 
 export function deleteTaskByIdImpl(store: TaskStore, taskId: string): void {
@@ -284,11 +406,6 @@ export async function resolveOriginWorkflowOverrideIdImpl(
 export function resolveTaskCustomFieldDefsSyncImpl(store: TaskStore, taskId: string): WorkflowFieldDefinition[] {
     const ir = store.resolveTaskWorkflowIrSync(taskId);
     return ir.version === "v2" ? (ir.fields ?? []) : [];
-}
-
-export function resolveEffectiveWorkflowIdSyncImpl(store: TaskStore, taskId: string): string {
-    const selection = store.getTaskWorkflowSelection(taskId);
-    return resolveCapacityPoolId(selection?.workflowId);
 }
 
 export async function clearTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): Promise<void> {

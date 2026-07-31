@@ -9,6 +9,8 @@
 import {TaskStore, storeLog, type TaskDependencyMutation} from "../store.js";
 import {buildRefinementSeedPrompt} from "../mesh-task-replication.js";
 import {SelfDefeatingDependencyError, detectSelfDefeatingDependency} from "./errors.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import type {WorkflowIr} from "../workflow-ir-types.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
@@ -24,9 +26,35 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 export async function refineTaskImpl(store: TaskStore, id: string, feedback: string): Promise<Task> {
     const sourceTask = await store.getTask(id);
 
-    if (sourceTask.column !== "done" && sourceTask.column !== "in-review") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-02:10 (fleet: task-store dependency + refine guards):
+    REFINE IS ALLOWED FROM THE BOARD'S COMPLETE OR REVIEW LANE. Spelled as literals, `fn_task_refine` was
+    unavailable on every renamed board — and the error text named two columns the operator does not have,
+    which sends them looking for a column that does not exist. The message now names the real ones.
+    */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-02:50 (the LEGACY-ROW union, and the existing suite caught it):
+    UNIONED WITH THE LEGACY IDS, because a row can outlive the column it is stored in. My first version
+    compared ONLY the resolved lanes, and `refine-duplicate-task.pg.test.ts` immediately failed with
+    "task is in 'done', must be in 'published' or 'editorial-review'" — a row sitting in `done` on a board
+    that declares `published`. That row is real (U11 leaves exactly this shape behind), and refusing an
+    operator action on it is a worse outcome than accepting one extra column name.
+
+    OVER-INCLUSION IS THE SAFE DIRECTION HERE: this gate answers "may the operator refine this?", so being
+    too permissive occasionally allows a refine from a column that is not really terminal, while being too
+    strict makes `fn_task_refine` unavailable for a legitimately finished task with no recourse. Same
+    reasoning, and the same union, as `resolveTerminalColumnsFor` in the executor.
+    */
+    const refineLifecycle = await resolveTaskLifecycleColumns(store, id);
+    const refineFrom = [...new Set([
+      refineLifecycle?.complete ?? "done",
+      refineLifecycle?.review ?? "in-review",
+      "done",
+      "in-review",
+    ])];
+    if (!refineFrom.includes(sourceTask.column)) {
       throw new Error(
-        `Cannot refine ${id}: task is in '${sourceTask.column}', must be in 'done' or 'in-review'`,
+        `Cannot refine ${id}: task is in '${sourceTask.column}', must be in ${refineFrom.map((c) => `'${c}'`).join(" or ")}`,
       );
     }
 
@@ -309,6 +337,23 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
        */
       const readDepTask = async (depId: string): Promise<Task | null> => {
         /*
+        FNXC:PostgresCutover 2026-07-31-17:10 (DEADLOCK, same class as PR #2809):
+        THE TASK WE ALREADY HOLD THE LOCK FOR IS ALREADY IN SCOPE. This closure runs inside
+        `store.withTaskLock(id, ...)` (the wrapper at the top of `updateTaskDependenciesImpl`), and
+        `store.getTask()` acquires that same lock — `getTaskImpl` opens with `withTaskLock(id, ...)`
+        and the per-task lock is NON-REENTRANT. Re-reading `id` through it waits forever on a lock
+        this frame holds.
+
+        REACHED VIA `task.blockedBy`, whose only caller passes exactly that. `blockedBy === id` is
+        writable today: `updateTask({ blockedBy })` has no self-reference guard, unlike the
+        dependencies list, which rejects `dependencyId === id` a few lines above (that guard is why
+        the sibling `assertTaskExists` read on this same lock is safe and is left unchanged).
+
+        Returning the in-lock copy is also strictly more correct than a re-read: it is the state this
+        mutation is reasoning about, not whatever a concurrent writer left behind.
+        */
+        if (depId === id) return task;
+        /*
         FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
         Treat not-found as null; rethrow unexpected PostgreSQL failures.
         */
@@ -321,15 +366,54 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
         }
       };
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-02:20 (fleet — THE "WHAT DOES SATISFIED MEAN" DECISION):
+      A DEPENDENCY IS SATISFIED WHEN IT RESTS IN ITS OWN BOARD'S TERMINAL PAIR (complete or archived).
+      I flagged this question in three files rather than guessing at it — executor.ts, the task routes, and
+      here — because the answer had to be the same in all three or the scheduler and the store would
+      disagree about which cards are blocked. It is settled here, in the store, which is where the blocker
+      is actually written:
+
+        SATISFIED  = complete OR archived. Archived counts because an archived dependency is finished work
+                     the operator has filed away; treating it as unsatisfied blocks its dependents forever
+                     with no way to clear them short of editing the graph.
+        NOT REVIEW = a card in review is not done; its branch has not landed. (The task ROUTES guard also
+                     excluded `in-review`, which is the same rule stated as an exclusion.)
+
+      Each dependency resolves through its OWN workflow — dependencies can live on different boards — with
+      one shared IR cache for the set. On a renamed board this comparison matched nothing, so EVERY
+      dependency read as unresolved and `blockedBy` was set to the first one forever: the dependents never
+      unblocked even after the work landed.
+      */
       const allDepTasks = await Promise.all(nextDependencies.map(readDepTask));
-      const unresolvedDependencyIndex = allDepTasks.findIndex(
-        (dep) => dep?.column !== "done" && dep?.column !== "archived",
-      );
+      const depIrCache = new Map<string, WorkflowIr>();
+      const isDependencySatisfied = async (dep: { id: string; column: string } | null): Promise<boolean> => {
+        if (!dep) return false;
+        const lifecycle = await resolveTaskLifecycleColumns(store, dep.id, depIrCache);
+        /*
+        Unioned with the legacy ids for the same reason as the refine gate above: a dependency row can
+        still be stored in a column its workflow no longer declares, and reading such a row as UNSATISFIED
+        blocks its dependents permanently with no operator recourse short of editing the graph.
+        */
+        /*
+        DELIBERATE-LITERAL — reviewed 2026-07-31-02:40 (batch-core feed). The legacy half of this
+        union is load-bearing, not leftover: it is what lets a dependency row stored in a column its
+        workflow no longer declares still read as SATISFIED. Deleting it strands every dependent
+        permanently with no operator recourse short of editing the graph. The comment above already
+        argued this; the marker is what keeps the census from re-listing it as unconverted work.
+        */
+        return dep.column === (lifecycle?.complete ?? "done")
+          || dep.column === (lifecycle?.archived ?? "archived")
+          || dep.column === "done"
+          || dep.column === "archived";
+      };
+      const depSatisfaction = await Promise.all(allDepTasks.map(isDependencySatisfied));
+      const unresolvedDependencyIndex = depSatisfaction.findIndex((satisfied) => !satisfied);
       const unresolvedDependency = unresolvedDependencyIndex >= 0 ? nextDependencies[unresolvedDependencyIndex] : undefined;
 
       if (unresolvedDependency) {
         const currentBlocker = task.blockedBy ? await readDepTask(task.blockedBy) : null;
-        const currentBlockerResolved = currentBlocker?.column === "done" || currentBlocker?.column === "archived";
+        const currentBlockerResolved = await isDependencySatisfied(currentBlocker);
         if (!task.blockedBy || !nextDependencies.includes(task.blockedBy) || !currentBlocker || currentBlockerResolved) {
           task.blockedBy = unresolvedDependency;
         }
@@ -339,14 +423,43 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       task.updatedAt = new Date().toISOString();
       task.log ??= [];
       let movedToTriage = false;
-      if (hasNewDependencies && task.column === "todo") {
-        task.column = "triage";
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-02:30 (fleet — GUARD AND DESTINATION together):
+      A new dependency on a card still resting in the HOLD lane sends it back to INTAKE for
+      re-specification. Both ends were literals, so this never fired on a renamed board — and converting
+      only the guard would have written an `intake` column the board may not declare directly into the row,
+      which is worse than not firing: the store would hold a card in a column that does not exist.
+
+      A board declaring no intake column keeps the card where it is; the dependency is still recorded and
+      still blocks, so nothing is lost except a re-specification hop that board has no lane for.
+      */
+      const respecifyLifecycle = await resolveTaskLifecycleColumns(store, id);
+      const holdColumn = respecifyLifecycle?.hold ?? "todo";
+      const intakeColumn = respecifyLifecycle?.intake;
+      const respecifyFromColumn = task.column;
+      if (hasNewDependencies && task.column === holdColumn && intakeColumn !== undefined) {
+        task.column = intakeColumn;
         movedToTriage = true;
         task.status = undefined;
-        task.columnMovedAt = task.updatedAt;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
+        `columnMovedAt` IS THE MOVE TIMESTAMP, so it may only move when the column does. On the default
+        lineage post-U11 hold and intake are the SAME column, so this branch runs without the card going
+        anywhere — and refreshing the stamp there restarts time-in-column and every staleness calculation
+        that reads it, on a card that has not moved. A dependency edit would quietly look like a fresh
+        arrival to the stall sweeps.
+
+        The move EVENT below already guards on exactly this condition; the timestamp did not, so the two
+        disagreed about whether a move had happened. Same condition, one answer.
+        */
+        if (intakeColumn !== respecifyFromColumn) {
+          task.columnMovedAt = task.updatedAt;
+        }
         task.log.push({
           timestamp: task.updatedAt,
-          action: "Moved to triage for re-specification — new dependency added",
+          action: intakeColumn === respecifyFromColumn
+            ? "Re-specification requested — new dependency added"
+            : `Moved to ${intakeColumn} for re-specification — new dependency added`,
           ...(runContext ? { runContext } : {}),
         });
       }
@@ -373,8 +486,25 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       await store.atomicWriteTaskJsonWithAudit(dir, task, auditEvent);
       // FNXC:BoardConsistency 2026-06-21-08:31: updateTaskDependencies' todo→triage re-spec move can also carry title/blocker changes, and leaving taskCache on the pre-move row made watch/SSE/board consumers surface one task ID in two columns (FN-6851/FN-6812). Sync the cache after the authoritative write like sibling mutation paths.
       if (store.isWatching) store.taskCache.set(id, { ...task });
-      if (movedToTriage) {
-        store.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine" });
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-03:10 (fleet — THE EVENT IS A DESTINATION TOO):
+      The emitted `from`/`to` were hardcoded `todo`/`triage`. That is not cosmetic: `task:moved` is what the
+      GitHub tracking poster, the auto-merge handoff and the executor's listeners react to, so this handed
+      every listener a column pair that need not exist. On TODAY'S DEFAULT BOARD `triage` is gone — U11
+      merged Todo into Planning keeping the id `todo` — so this event has been announcing a deleted column
+      to every subscriber.
+
+      The real endpoints are emitted now. When intake and hold are the SAME column (which is the default
+      lineage post-U11) there is no move to announce, so no event is emitted — announcing a move to the
+      column the card is already in is what re-runs reset-on-entry effects downstream.
+      */
+      if (movedToTriage && respecifyFromColumn !== task.column) {
+        store.emit("task:moved", {
+          task,
+          from: respecifyFromColumn as Column,
+          to: task.column as Column,
+          source: "engine",
+        });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);
       return task;

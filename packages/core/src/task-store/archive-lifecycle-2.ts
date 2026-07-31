@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
@@ -42,7 +44,31 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       description: task.description,
       priority: normalizeTaskPriority(task.priority),
       column: "archived",
-      preArchiveColumn: task.preArchiveColumn,
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-01-11:30 (PR #2824's finding, fixed):
+      CAPTURE THE COLUMN THE CARD WAS IN. This field was only ever COPIED — here, back out of the
+      entry on restore, and through serialization — and never SET from anywhere, so it was `undefined`
+      for every archive that has ever happened. `unarchiveTaskImpl` then fell to its `?? "todo"` and
+      the restore destination was decided by a literal instead of by history.
+
+      On the default board `todo` is a declared column, so restores landed in the queue and looked
+      right — which is why this survived three separate fixes to `resolveUnarchiveTargetColumnImpl`,
+      all of which were correcting how it interprets a value that never arrived. On a renamed board
+      `todo` is declared nowhere, so the resolver took its "no usable history" branch and returned the
+      COMPLETE lane: a card archived mid-implementation came back marked finished. Proven end to end
+      in `workflow-unarchive-target-live-e2e.pg.test.ts`.
+
+      `task.column` is the pre-archive column at this point — the entry's own `column` is set to
+      `"archived"` on the line above, so this is the last place the original is still in hand. The
+      `??` keeps an already-captured value, so a re-archive of a restored card does not overwrite the
+      history with an intermediate lane.
+
+      DEFAULT-BOARD BEHAVIOUR CHANGES, deliberately: a card archived from `done` restored to `todo`
+      under the literal and now restores to `done`. Returning finished work to the queue was the
+      fallback showing through, not a rule anyone chose — the resolver's own branches say a card
+      archived from a declared column goes back to it.
+      */
+      preArchiveColumn: task.preArchiveColumn ?? (task.column as ArchivedTaskEntry["preArchiveColumn"]),
       dependencies: task.dependencies,
       steps: task.steps,
       currentStep: task.currentStep,
@@ -241,6 +267,28 @@ export async function deleteTaskIfBackendImpl(
   });
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+The archived lanes for one task, resolved from its own workflow. Shared by the archive and unarchive
+guards below so the two cannot disagree about what "archived" means — one refusing a card the other
+would accept is the half-converted-pair shape.
+
+A workflow expressing NO trait on any column is a v1 upgrade (`synthesizeDefaultColumns` emits
+`traits: []` everywhere) rather than a board without an archive lane, so it keeps the legacy id — as
+does a workflow that cannot be read.
+*/
+async function archivedLanesForTask(store: TaskStore, taskId: string): Promise<ReadonlySet<string>> {
+  const lanes = new Set<string>(["archived"]);
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir && declaresAnyLifecycleTrait(ir)) {
+      for (const id of columnsWithFlag(ir, "archived")) lanes.add(id);
+    }
+  } catch { /* degraded: the legacy id */ }
+  return lanes;
+}
+
 export async function archiveTaskBackendImpl(store: TaskStore, id: string, optionsOrCleanup: boolean | { cleanup?: boolean; removeLineageReferences?: boolean },): Promise<Task> {
     const layer = store.asyncLayer!;
     const cleanup = typeof optionsOrCleanup === "boolean" ? optionsOrCleanup : optionsOrCleanup.cleanup !== false;
@@ -251,7 +299,12 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     if (!task) {
       throw new Error(`Task ${id} not found`);
     }
-    if (task.column === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:20 (batch-core):
+    Keyed on the literal, a renamed board let an ALREADY-archived card be archived again — a second
+    archive pass over a row the archive already owns.
+    */
+    if ((await archivedLanesForTask(store, id)).has(task.column)) {
       throw new Error(`Cannot archive ${id}: task is already archived`);
     }
 
@@ -392,12 +445,43 @@ export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<T
       throw new Error(`Cannot unarchive ${id}: task is missing from active storage and not found in archive`);
     }
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-18:50 DELIBERATE-LITERAL: the value is literally "archived" by construction.
+
+    I converted this and then proved the conversion INERT, which is worth recording so it is not
+    attempted a third time. `task` here comes from the archive entry, and `archiveEntryToTask`
+    (serialization.ts:353) hardcodes `column: "archived"` on every task it reconstructs. So this
+    comparison can only ever see the literal, on every board, renamed or not — resolving lanes here
+    changes no outcome and only makes the guard look converted.
+
+    The board's own archive lane is not involved: a card in cold storage has left the board entirely.
+    If archived rows ever start carrying their originating board's lane id, this becomes a real guard
+    and should be converted then.
+    */
     if (task.column !== "archived") {
       throw new Error(`Cannot unarchive ${id}: task is in '${task.column}', must be in 'archived'`);
     }
 
-    const preArchiveColumn = task.preArchiveColumn ?? "todo";
-    const toColumn = store.resolveUnarchiveTargetColumn(preArchiveColumn);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-12:40 (PR #2824's finding, fixed — read the SNAPSHOT):
+    THE HISTORY LIVES IN COLD STORAGE, NOT ON THE ROW. `preArchiveColumn` has no column in
+    `project.tasks` — it exists on the `Task` type and in the archive entry, and nowhere else. So the
+    in-place restore above cannot carry it, `store.getTask(id)` reads a live row that never had it,
+    and `task.preArchiveColumn` was `undefined` for every unarchive that has ever run. The `?? "todo"`
+    then decided the destination by literal instead of by history.
+
+    On the default board `todo` is declared, so restores landed in the queue and looked right — which
+    is why this survived three separate fixes to `resolveUnarchiveTargetColumnImpl`, every one of them
+    correcting how it interprets a value that never arrived. On a renamed board `todo` is declared
+    nowhere, so the resolver took its "no usable history" branch and returned the COMPLETE lane: a
+    card archived mid-implementation came back marked finished.
+
+    `entry` is the snapshot this function already loaded, and it is the only place the original column
+    survives. Preferred over the row, which falls back to it, which falls back to the literal for a
+    row so old it was archived before the column was captured at all.
+    */
+    const preArchiveColumn = entry?.preArchiveColumn ?? task.preArchiveColumn ?? "todo";
+    const toColumn = await store.resolveUnarchiveTargetColumn(preArchiveColumn, id);
 
     /*
      * FNXC:SqliteFinalRemoval 2026-06-25:

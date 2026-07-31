@@ -177,12 +177,27 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
     if (isBuiltinWorkflowId(id)) throw new Error("Built-in workflows cannot be edited");
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
     const layer: AsyncDataLayer = store.asyncLayer!;
-    // U5 (R20): flag-ON edits that remove an occupied column block with a typed
-    // OccupiedColumnsError unless `rehomeTo` is supplied. Computed before taking
-    // the config lock (pure DB reads) so the lock body stays focused.
-    const flagOn = await store.workflowColumnsFlagOn();
+    /*
+    U5 (R20): an edit that removes an OCCUPIED column blocks with a typed
+    OccupiedColumnsError unless `rehomeTo` is supplied. Computed before taking the
+    config lock (pure DB reads) so the lock body stays focused.
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The `flagOn` conjunct is DELETED. It read the RAW
+    `experimentalFeatures.workflowColumns` key, which no production writer sets, so
+    this guard has NEVER fired for a real project: removing a column with cards in it
+    silently succeeded and left those cards in a column their workflow no longer
+    declares. The typed rejection and the `rehomeTo` re-home are the whole point of
+    the guard; gating them on a retired flag made the API contract a fiction.
+
+    Operator-visible consequence, deliberate: saving a workflow edit that drops an
+    occupied column now FAILS with OccupiedColumnsError instead of succeeding. The
+    dashboard editor's re-home flow (which passes `rehomeTo`) becomes reachable for
+    the first time. Cards are moved by the editor's explicit choice rather than
+    stranded silently.
+    */
     let pendingRehome: { rehomeTo: string; occupantTaskIds: string[] } | undefined;
-    if (flagOn && updates.ir !== undefined) {
+    if (updates.ir !== undefined) {
       const existingForCheck = await store.getWorkflowDefinition(id);
       if (!existingForCheck) throw new Error(`Workflow '${id}' not found`);
       const nextIrForCheck = parseWorkflowIr(updates.ir);
@@ -295,7 +310,14 @@ export async function updateWorkflowDefinitionImpl(store: TaskStore, id: string,
         name: next.name,
         description: next.description,
         icon: next.icon ?? null,
-        ir: flagOn ? next.ir : downgradeIrToV1IfPure(next.ir),
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, BEHAVIOUR-PRESERVING):
+        v1-IR rollback-compat persistence (#1405), now unconditional — which is what it
+        already was. The flag read it used to branch on is retired and always false, so
+        every real project has always taken the downgrade arm. See the fuller note on
+        the create path in `project-store-ops.ts`; the downgrade is kept on purpose.
+        */
+        ir: downgradeIrToV1IfPure(next.ir),
         layout: next.layout,
         updatedAt: next.updatedAt,
       }).where(eq(schema.project.workflows.id, id));
@@ -338,11 +360,24 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     if (isBuiltinWorkflowId(id)) throw new Error("Built-in workflows cannot be deleted");
     /* FNXC:SqliteDualPathCleanup 2026-07-26-14:08: workflow definition deletes require AsyncDataLayer. */
     const layer: AsyncDataLayer = store.asyncLayer!;
-    // U5 (R20): flag-ON, capture the occupant task ids BEFORE the cascade clears
-    // their selection rows, so we can re-home them to the DEFAULT workflow's
-    // entry column once their selection resolves back to the default (KTD-1).
-    const flagOn = await store.workflowColumnsFlagOn();
-    const occupantTaskIds = flagOn ? await store.listWorkflowOccupantTaskIds(id, false) : [];
+    /*
+    U5 (R20): capture the occupant task ids BEFORE the cascade clears their selection
+    rows, so we can re-home them to the DEFAULT workflow's entry column once their
+    selection resolves back to the default (KTD-1).
+
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9, USER-VISIBLE):
+    The `flagOn ? … : []` gate is DELETED. Reading the retired raw flag meant the
+    capture returned an empty list for every real project, so the re-home below was
+    dead: deleting a workflow left its cards sitting in that workflow's columns with
+    their selection cleared, resolving to the default workflow which does not declare
+    those columns. The startup sweep `reconcileUndeclaredTaskColumns` would eventually
+    re-home them, but only on the next engine start — until then the cards sat in
+    lanes the board could not draw.
+
+    Operator-visible consequence, deliberate: deleting a workflow now moves its cards
+    to the default workflow's entry column immediately, instead of at next startup.
+    */
+    const occupantTaskIds = await store.listWorkflowOccupantTaskIds(id, false);
 
     
     // FNXC:PostgresCutover 2026-06-28: async deletes for backend mode
@@ -394,7 +429,7 @@ export async function deleteWorkflowDefinitionImpl(store: TaskStore, id: string)
     // workflow's entry column. Their selection rows are already cleared above,
     // so they now resolve to the built-in default workflow (KTD-1); the re-home
     // move preserves task fields (preserveProgress) and emits one audit per card.
-    if (flagOn && occupantTaskIds.length > 0) {
+    if (occupantTaskIds.length > 0) {
       const defaultEntry = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR);
       if (defaultEntry) {
         for (const taskId of occupantTaskIds) {

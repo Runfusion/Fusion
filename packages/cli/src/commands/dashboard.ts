@@ -34,7 +34,37 @@ import {
   FUSION_NON_RETRYABLE_EXIT_CODE,
   isPostgresUniqueError,
   ProjectPartitionRekeyError,
+  resolveTaskLifecycleColumns,
+  type WorkflowIr,
 } from "@fusion/core";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-08:50 (fleet: CLI dashboard/serve stats):
+"ACTIVE" IS THE BOARD'S WIP AND REVIEW LANES, counted once for a whole task list.
+
+The same aggregation appears FOUR times in this file (the TUI stats refresh, the serve summary, the status
+line and the agent-stats pass), each comparing the default lineage's two ids. On a renamed board every one of
+them reported `active=0` while the board was plainly busy — and this number is the operator's first read of a
+new project, so it is the surface most likely to be believed.
+
+ONE resolution per WORKFLOW, not per task: the shared IR cache means a 500-card board costs one read per
+distinct workflow. Extracted rather than inlined four times, because four copies of a lifecycle decision is
+how copies drift — these four were identical by accident, not by construction.
+*/
+export async function countActiveTasks(
+  store: unknown,
+  tasks: Array<{ id: string; column: string }>,
+): Promise<number> {
+  const irCache = new Map<string, WorkflowIr>();
+  let active = 0;
+  for (const task of tasks) {
+    const lifecycle = await resolveTaskLifecycleColumns(store as never, task.id, irCache);
+    if (task.column === (lifecycle?.wip ?? "in-progress") || task.column === (lifecycle?.review ?? "in-review")) {
+      active += 1;
+    }
+  }
+  return active;
+}
 import {
   createServer,
   refreshAllCustomProviderModels,
@@ -805,9 +835,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           for (const task of tasks) {
             counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
           }
-          const active = tasks.filter((task) =>
-            task.column === "in-progress" || task.column === "in-review"
-          ).length;
+          const active = await countActiveTasks(store, tasks);
           const agents = await agentStore.listAgents();
           const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
           for (const agent of agents) {
@@ -1136,9 +1164,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(taskStore, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {
@@ -1326,9 +1352,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       taskSummary = `tasks=${tasks.length} active=${active} columns=${Array.from(counts.entries())
         .map(([column, count]) => `${column}:${count}`)
         .join(",")}`;
@@ -2917,9 +2941,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {

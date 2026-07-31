@@ -34,11 +34,88 @@ function columnsOf(ir: WorkflowIr): WorkflowIrColumn[] {
  * trait→columnIds expansion. Deterministic (declared column order). Empty for a
  * column-less IR or when no column carries the flag.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-21:15 (a DECLARATION is not a GUARD — I conflated them and
+published the mistake, so it is written down here):
+
+The census counts COMPARISONS against a legacy column id. It does not count a workflow DECLARING a
+column with that id, and the two answer different questions:
+
+    triage column guards in the tree            0     (no code compares against the literal)
+    `triage` declared by the default lineage    yes   (builtin-coding-workflow-ir.ts:49, the intake lane)
+
+Both are true at once. "The backlog reached zero for `triage`" means nothing in the code branches on
+that NAME any more; it does not mean the column stopped existing, and a reader who takes it that way
+will conclude a resolver's `?? "triage"` fallback is dead when it is the default board's actual intake
+answer.
+
+I asserted the stronger version in a review audit and it was wrong. One grep of
+`builtin-coding-workflow-ir.ts` would have caught it, which is the cheap check worth doing before any
+claim about what a lineage contains.
+*/
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-19:20 (an EMPTY result has TWO meanings — measured, not assumed):
+
+Everything below returns nothing for a column set that carries no traits, and there are two very
+different reasons a board can look like that:
+
+  DECLARED AND EMPTY   a v2 workflow the operator wrote that genuinely has no complete lane. "No such
+                       lane" is the right answer, and a guard should act on it.
+
+  SYNTHESIZED          a v1 graph upgraded to v2. `synthesizeDefaultColumns` (workflow-ir.ts) emits
+                       `{ id, name: id, traits: [] }` for the five default ids — placement only, by
+                       design, with the real trait set living in BUILTIN_CODING_WORKFLOW_IR. Those
+                       columns ARE the legacy lanes; the traits were simply never expressed.
+
+MEASURED on such an IR:
+    resolveLifecycleColumns  ->  {}                      (every role undefined)
+    resolveReviewColumns     ->  []
+    columnsWithFlag(wip)     ->  []
+    resolveTerminalColumns   ->  ["done","archived"]     (its own legacy fallback saves it)
+
+CONSEQUENCE FOR CONVERTED GUARDS. A consumer that reads "resolved and empty" as "this board declares
+no such lane" is CORRECT for the first case and WRONG for the second — on a v1-upgraded board it
+withdraws every role at once. Callers that kept a `length > 0 ? resolved : legacy` guard are unaffected.
+
+I introduced that reading deliberately in #2731/#2733/#2734 to fix the opposite bug (a legacy fallback
+masking a genuinely absent lane), and it is right for hand-written v2. This note exists because it is
+NOT right for the upgrade path, and the difference is invisible at the call site — both arrive here as
+an empty array.
+
+The root fix would be for the upgrade to carry the real traits rather than placeholders; that changes
+behaviour for every persisted v1 workflow, so it is flagged here rather than made in passing.
+*/
 export function columnsWithFlag(ir: WorkflowIr, flag: keyof TraitFlags): string[] {
   const registry = getTraitRegistry();
   return columnsOf(ir)
     .filter((c) => registry.resolveColumnFlags(c)[flag] === true)
     .map((c) => c.id);
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-10:40 (batch-core):
+DOES THIS WORKFLOW EXPRESS ANY LIFECYCLE TRAITS AT ALL?
+
+The distinction this program keeps paying for is "could not read" vs "read, and the answer is none".
+There is a THIRD state that looks identical to the second and means the opposite:
+`synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph by emitting every default
+column with `traits: []`. Such a board resolves cleanly and answers EMPTY for every role, while its
+`done` and `in-review` columns plainly exist and hold cards.
+
+A caller that treats an empty role set as a real answer is correct for a v2 board that deliberately
+declares no such lane, and wrong for a v1 upgrade — where it silently disables whatever the guard
+protected. This predicate separates the two: a workflow that expresses NO trait on ANY column has not
+made a statement about its lifecycle, so its callers should keep the legacy vocabulary rather than
+conclude the role is absent.
+
+Cheap by construction: it stops at the first column carrying anything.
+*/
+export function declaresAnyLifecycleTrait(ir: WorkflowIr): boolean {
+  const registry = getTraitRegistry();
+  return columnsOf(ir).some((c) => {
+    const flags = registry.resolveColumnFlags(c);
+    return Object.values(flags).some((v) => v === true);
+  });
 }
 
 /** Convenience predicate: does `columnId` carry `flag` in this IR? */
@@ -58,6 +135,65 @@ export function resolveCompleteColumn(ir: WorkflowIr): string | undefined {
   return columnsWithFlag(ir, "complete")[0];
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:20 (the divergence four consumers each solved differently):
+REVIEW IS A SET, AND `humanReview` COUNTS.
+
+`resolveLifecycleColumns().review` is a SINGLE id derived from ONE flag (`mergeOrchestration`). The
+domain is not that shape: a lane can host human review without orchestrating a merge, and a board may
+declare more than one review lane. So every consumer asking "is this card in review" re-derived its own
+answer, and they drifted:
+
+  #2713  routes    terminal columns needed membership; fixed there only
+  #2722  notifier  a `humanReview`-only lane resolved to nothing — review notifications never fired
+  #2723  routes    the union was broader than core's single id
+  #2728  CLI       `fn task retry` refused a card `POST /tasks/:id/retry` accepted
+
+Four files, four patches, and a fifth site inside #2722 itself that the first pass missed. The shared
+answer belongs here.
+
+ADDITIVE ON PURPOSE. `resolveLifecycleColumns().review` is untouched, so nothing that reads it changes
+behaviour — this is the missing helper, not a reshaping of the existing one. `.review` remains correct
+for its own question ("which single lane does the merge gate live in"); this answers the other one
+("is this card ALREADY in a review lane"), which is the question every drifting consumer was asking.
+
+MONOTONIC, which the #2723 review round argued about: a column carrying BOTH `humanReview` and
+`mergeOrchestration` is included. Adding a trait must never remove a lane from this set, or a card
+stops counting as in review because its column gained an unrelated capability.
+*/
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-11:30 (a flaw in this helper as merged, found by trying to
+migrate its consumers onto it):
+THIS IS THE BROAD SET, AND IT IS THE WRONG ANSWER FOR STATE-CHANGING ADMISSION.
+
+Two different questions were being answered by one name:
+
+  BROAD   "is this card in a lane where review happens?"  -> every mergeOrchestration lane, plus every
+          mergeBlocker and humanReview lane. Safe when over-admission is harmless: notifications, badges,
+          read-only surfaces. This function.
+
+  NARROW  "is this card in THE review lane the engine acts on?" -> `resolveLifecycleColumns().review` is
+          `columnsWithFlag(ir, "mergeOrchestration")[0]`, ONE lane, and that is what the executor, the
+          scheduler and project-engine act on. A caller that ADMITS on the broad set and then MOVES the
+          card will move cards the engine does not consider in review.
+
+`register-task-workflow-routes.ts` keeps its own narrower resolver for exactly that reason (#2723): its
+re-engagement moves the card, so admitting a SECOND merge lane is a state change the engine will not
+agree with. That local copy is not drift from this helper — it is the other question, and migrating it
+onto this one would reintroduce the over-admission its review round reasoned away.
+
+Stated here because the name does not carry the distinction: a future consumer reaching for "the review
+columns" on a state-changing path wants the narrow form. The pair below is pinned in
+`workflow-lifecycle-traits.test.ts`.
+*/
+export function resolveReviewColumns(ir: WorkflowIr): string[] {
+  return [...new Set([
+    ...columnsWithFlag(ir, "mergeOrchestration"),
+    ...columnsWithFlag(ir, "mergeBlocker"),
+    ...columnsWithFlag(ir, "humanReview"),
+  ])];
+}
+
 /**
  * U7 — the workflow's MERGE-ORCHESTRATION column: the first column carrying the
  * `mergeOrchestration` trait (where the merge-gate node lives). Merge-failure
@@ -67,6 +203,32 @@ export function resolveCompleteColumn(ir: WorkflowIr): string | undefined {
  */
 export function resolveMergeOrchestrationColumn(ir: WorkflowIr): string | undefined {
   return columnsWithFlag(ir, "mergeOrchestration")[0];
+}
+
+/**
+ * The workflow's TERMINAL column pair — where a card rests when there is nothing
+ * left to do. Returns `[complete, archived]`.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
+ * THE FALLBACK IS PER-ROLE, NOT PER-SET, and that distinction is the whole reason
+ * this is a shared function instead of two inline expressions.
+ *
+ * A per-SET fallback — "if the workflow resolved any terminal role, use what it
+ * declared" — collapses to a one-element set for a workflow that declares
+ * `complete` but no `archived`, silently dropping the archived half of every
+ * already-finished check. That is a real P1 (PR #2471 review): an archived card
+ * then fell through a merge short circuit and threw "must be in 'in-review'" for
+ * a task whose actual state was "already done".
+ *
+ * Resolving each role against its OWN legacy id keeps both halves for a
+ * partially-declared workflow. `merger-ai` learned this the hard way and the
+ * logic lived only there; `executor`'s equivalent guard was still the raw
+ * `column === "done" || column === "archived"` literal pair and would have
+ * re-made the same mistake on conversion. One function, one lesson.
+ */
+export function resolveTerminalColumns(ir: WorkflowIr): readonly [string, string] {
+  const lifecycle = resolveLifecycleColumns(ir);
+  return [lifecycle?.complete ?? "done", lifecycle?.archived ?? "archived"] as const;
 }
 
 /**
@@ -113,6 +275,34 @@ caller must be able to tell "this workflow declares no hold column" (hold: undef
 struct present) apart from "this workflow has no column vocabulary at all" (undefined).
 The first is a real workflow shape to honor; the second means the caller has no basis to
 decide and must skip-and-log rather than guess a legacy literal.
+*/
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-07:00 (arity contract, after two production bugs):
+EACH FIELD IS **ONE** COLUMN, EVEN WHEN THE WORKFLOW DECLARES SEVERAL.
+
+Uniqueness is validated for exactly ONE trait. `TraitRegistry.validateColumnTraits` raises
+`multiple-intake-columns` when more than one column carries `intake` — and raises nothing for
+`hold`, `countsTowardWip`, `mergeBlocker`, `humanReview`, `complete` or `archived`. Those may
+legitimately repeat: a workflow can split `mergeBlocker` and `humanReview` across a merge lane and a
+separate sign-off lane, or declare two terminal columns. `columnsWithFlag` returns an array and
+`first()` below picks its head, so this struct names only one of each.
+
+So `intake` is safe to compare by equality; every other field is not.
+
+That makes these fields safe for ONE question and unsafe for another:
+
+  SAFE    "where should this card GO"      — a move target must be exactly one column
+  UNSAFE  "is this card ALREADY there"     — that is membership; use `columnsWithFlag(ir, flag)`
+                                             and test `.includes(task.column)`
+
+Two shipped bugs came from the unsafe use, both in PR #2713: a task in a second terminal column was
+rejected with a 409, and a task in a human-review lane split from the merge lane was classified as
+outside review entirely, suppressing comment re-engagement. Both read like ordinary conversions.
+
+Known call sites comparing `task.column` against these fields:
+  packages/engine/src/self-healing.ts     `columns.intake` SAFE (validated unique);
+                                          `columns.hold`   AT RISK — hold has no uniqueness rule
+  packages/core/src/builtin-workflows.ts  `lifecycle.intake` SAFE (validated unique)
 */
 export interface LifecycleColumns {
   /** Where new cards land. */
@@ -198,3 +388,76 @@ export async function resolveTaskLifecycleColumns(
     return undefined;
   }
 }
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-20:50 (census-invisible moveTask destinations):
+MOVE-TARGET resolvers, kept beside `resolveTaskLifecycleColumns` because they answer the same question
+for the other half of a conversion.
+
+The lifecycle-column census is an AST scan for COMPARISONS, so a `moveTask` DESTINATION — a call
+argument — is invisible to it. A share of those deliberately pass `recoveryRehome: true` (the #1411
+legacy safe-landing escape, which must not be converted); the rest are rejected outright on a board
+that does not declare the target, now that U12 hoisted the `workflowHasColumn` check out of its dead
+flag-gated branch. See
+`docs/solutions/architecture-patterns/hardcoded-movetask-destinations-are-census-invisible.md`.
+
+THE COUNTS THAT USED TO BE HERE ARE GONE ON PURPOSE. This note read "51 such destinations exist in
+production; 22 deliberately pass `recoveryRehome: true`". Both were true when measured and neither is
+now — the program has been converting them since — and unlike the census totals there is no command
+that regenerates these, so the figures could only rot. A comment that states an un-reproducible count
+about other files is a comment that will eventually lie; the shape is what matters here, and the
+current numbers are one grep away:
+
+    grep -rnE 'moveTask\([^,]+, *"(todo|in-progress|in-review|done|archived|triage)"' packages \
+      --include='*.ts' | grep -v __tests__
+
+(approximate — it sees single-line call sites only, which is precisely why it was never a total worth
+pinning in prose).
+
+Both fall back to the legacy id: `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+throwing, so a board whose workflow cannot be read behaves exactly as before.
+
+ONE definition each, rather than a copy per call site — four sites already needed the rebound target and
+they must not drift apart.
+*/
+export async function resolveReboundTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const target = resolveReboundTarget(ir);
+      if (target) return target;
+    }
+  } catch { /* degraded: legacy id */ }
+  return "todo";
+}
+
+/**
+ * The WIP lane this task's workflow declares, or the legacy id. See above.
+ *
+ * FIRST `countsTowardWip` column, deliberately: this answers "where does a card go when it re-enters
+ * execution?", which is a single destination, not a membership test. Callers asking "is this card in
+ * WIP?" want `columnsWithFlag(ir, "countsTowardWip")` instead — a board may declare several.
+ */
+export async function resolveWipTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const wip = columnsWithFlag(ir, "countsTowardWip");
+      if (wip.length > 0) return wip[0];
+    }
+  } catch { /* degraded: legacy id */ }
+  return "in-progress";
+}
+
+/** The archive lane this task's workflow declares, or the legacy id. See above. */
+export async function resolveArchiveTargetForTask(store: WorkflowIrResolverStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const archived = columnsWithFlag(ir, "archived");
+      if (archived.length > 0) return archived[0];
+    }
+  } catch { /* degraded: legacy id */ }
+  return "archived";
+}
+

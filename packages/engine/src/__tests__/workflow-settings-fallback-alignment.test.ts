@@ -94,7 +94,18 @@ describe("workflow-settings fallback alignment (KTD-3, item 4)", () => {
       maxParallelSteps: 2, // executor.ts / step-session-executor.ts: ?? 2
       buildRetryCount: 0, // merger.ts: ?? 0
       verificationFixRetries: 3, // executor.ts: ?? 3; merger.ts aligned to ?? 3 (was ?? 2, dead)
-      maxPostReviewFixes: 3, // self-healing.ts + executor.ts: ?? 3
+      /*
+      FNXC:WorkflowOptionalStepCycle 2026-07-31-01:10:
+      Raised 3 -> 10 deliberately, and the read sites no longer inline a literal at all: they import
+      `DEFAULT_MAX_POST_REVIEW_FIXES` from core (builtin-workflow-settings.ts:555), whose own comment
+      records that the declaration default and two inline `?? 3`s had drifted apart — "raising the
+      declaration alone would have left every unset-settings path on the old value".
+
+      Case (b) above already passed because it scans for literal `?? <n>` fallbacks and there are none
+      left for this key; only this human-readable audit table lagged. Updating it keeps the drift
+      detector honest rather than pinning a value the product abandoned.
+      */
+      maxPostReviewFixes: 10, // executor.ts / self-healing.ts: ?? DEFAULT_MAX_POST_REVIEW_FIXES
       requirePrApproval: false, // no engine read; default-false elsewhere
       requirePlanApproval: false, // triage.ts: truthy check → false
       reviewHandoffPolicy: "disabled", // executor.ts: === "comment-triggered" → "disabled"

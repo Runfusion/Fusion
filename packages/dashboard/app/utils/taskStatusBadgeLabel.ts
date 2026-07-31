@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import { isActiveMergeStatus } from "../../../core/src/active-merge-status";
 
 /*
-FNXC:TaskStatusBadge 2026-08-19-00:00:
+FNXC:TaskStatusBadge 2026-07-22-00:00:
 FN-8475 restores truthful status visibility: Coding (Ideas) deliberately plans in Todo,
 so a real non-queued task status must not be hidden based only on its board column.
 Queued remains an intake-only presentation exclusion at TaskCard and ListView call sites.

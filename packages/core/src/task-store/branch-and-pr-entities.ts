@@ -19,9 +19,12 @@ import { ensureBranchGroupForSource as ensureBranchGroupForSourceAsync, ensurePr
 import { getWorkflowWorkItem as getWorkflowWorkItemAsync } from "./async-workflow-workitems.js";
 import { MergeRequestRow, PrEntityRow, WorkflowWorkItemRow } from "./row-types.js";
 import { BranchGroup, BranchGroupCreateInput, ColumnId, MergeRequestRecord, MergeRequestState, PrEntity, PrEntityCreateInput, PrThreadOutcome, PrThreadState, RunMutationContext, Task, TaskLogEntry, TaskPriority, TaskVerificationRequest, TaskVerificationResultSummary, TaskVerificationStatus, WorkflowWorkItem, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch } from "../types.js";
-import { validateNodeOverrideChange } from "../node-override-guard.js";
+import { validateNodeOverrideChange, resolveNodeOverrideLanes } from "../node-override-guard.js";
+import { isTaskTerminalNodeIdAsync } from "../workflow-ir-resolver.js";
 import { WorkflowMovePolicyInput } from "../workflow-extension-types.js";
 import { resolveWorkflowIrById } from "../workflow-ir-resolver.js";
+import { resolveTaskLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import type { WorkflowIr } from "../workflow-ir-types.js";
 import { WorkflowSettingDefinition } from "../workflow-ir-types.js";
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { existsSync } from "node:fs";
@@ -373,6 +376,30 @@ export async function getActiveMergingTaskImpl(store: TaskStore, excludeTaskId?:
     return rows[0]?.id;
 }
 
+/*
+FNXC:TaskCreationDeduplication 2026-07-30-04:20:
+The duplicate-guard WINDOW POLICY as a pure function, extracted so it can be asserted without a
+TaskStore. Byte-identical to the expression that was inlined below.
+
+Why extracted: the three tests that own this policy drove it through a store fake modelling the
+deleted SQLite path (`db.prepare().all()`), and read the window back out of a captured cutoff string.
+That fake broke when the query moved to `asyncLayer` + Drizzle (TypeError on `layer.projectId`), and
+rebuilding it would have meant reconstructing a Drizzle chain to recover a number this function
+already returns. Narrow seam over mock-the-world, per docs/testing.md.
+*/
+export function resolveFingerprintWindowMs(requestedWindowMs?: number): number {
+  const requested = requestedWindowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
+  /*
+  FNXC:TaskCreationDeduplication 2026-07-30-05:40 (coderabbit, major):
+  NaN must fall back, not propagate. `Math.trunc(NaN)` is NaN and both clamps pass it through, so the
+  caller's `new Date(Date.now() - windowMs).toISOString()` threw "Invalid time value" — a crash rather
+  than a bounded window. This hole is PRE-EXISTING (the inline expression this replaced was
+  byte-identical); naming the policy is what made it reachable by a test.
+  */
+  if (!Number.isFinite(requested)) return FINGERPRINT_WINDOW_DEFAULT_MS;
+  return Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requested)));
+}
+
 export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     fingerprint: string,
     options?: { windowMs?: number; includeArchived?: boolean },
@@ -389,8 +416,7 @@ export async function findRecentTasksByContentFingerprintImpl(store: TaskStore,
     window at five minutes and made its ceiling unreachable — the guard asked for ten minutes
     and silently got five. One policy, one pair of bounds.
     */
-    const requestedWindowMs = options?.windowMs ?? FINGERPRINT_WINDOW_DEFAULT_MS;
-    const windowMs = Math.max(1, Math.min(FINGERPRINT_WINDOW_MAX_MS, Math.trunc(requestedWindowMs)));
+    const windowMs = resolveFingerprintWindowMs(options?.windowMs);
     const cutoffIso = new Date(Date.now() - windowMs).toISOString();
     const includeArchived = options?.includeArchived ?? false;
 
@@ -470,12 +496,36 @@ export async function getTasksByAssignedAgentImpl(store: TaskStore,
      * In backend mode, use listTasks and filter in-memory instead of raw SQL.
      */
         const allTasks = await store.listTasks();
-    return allTasks.filter((task) => {
+    const assigned = allTasks.filter((task) => {
       if (task.assignedAgentId !== agentId) return false;
       if (options?.pausedOnly && !task.paused) return false;
-      if (options?.excludeArchived && task.column === "archived") return false;
       return true;
     });
+    if (options?.excludeArchived !== true) return assigned;
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-13:40:
+    `excludeArchived` asks each card's OWN workflow, not the literal id.
+
+    Found by auditing an unwired optional parameter one level up: `rankAssignedTasksForWakeDelta`
+    gained a resolved terminal answer that no caller passed, and reading the caller showed the real
+    gap was HERE — on a renamed board `column === "archived"` matched nothing, so archived cards were
+    returned as open assigned work and the Wake Delta inventory asked a coordinator to unblock or
+    reassign tasks that had already been archived.
+
+    That is the fourth unwired parameter in this sweep whose CALLER held the larger defect.
+
+    Resolution runs only over the rows that already matched `agentId` — a handful — not the whole
+    board, and shares one IR cache. A card whose workflow will not resolve keeps the literal.
+    */
+    const archivedIrCache = new Map<string, WorkflowIr>();
+    const live: Task[] = [];
+    for (const task of assigned) {
+      const lanes = await resolveTaskLifecycleColumns(store, task.id, archivedIrCache).catch(() => undefined);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-13:40. */
+      const isArchived = lanes === undefined ? task.column === "archived" : task.column === lanes.archived;
+      if (!isArchived) live.push(task);
+    }
+    return live;
 }
 
 export function resolveWorkflowMoveActorImpl(store: TaskStore,
@@ -540,10 +590,38 @@ export async function updateTaskImpl(store: TaskStore,
     explicit error instead of letting updateTaskUnlocked write a no-op nodeId field.
     */
     if (updates.nodeId !== undefined) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:20 (#2821 review — greptile):
+      THE COLUMN IS READ AFTER THE AWAIT, NOT BEFORE IT.
+
+      My first version read the task, then awaited lane resolution, then validated — so a move landing
+      in that window was judged with a STALE column against freshly resolved lanes. The dangerous
+      direction is the obvious one: a task that entered a WIP lane during the gap still carried its
+      pre-move column, and the mid-flight guard passed for a task that had started running.
+
+      Resolving the lanes FIRST closes it. `resolveNodeOverrideLanes` needs only the task id, so the
+      order is free, and the column then comes from the latest read before validation. This does not
+      make the check atomic — `updateTaskUnlocked` runs outside the per-task lock by design, as the
+      note above explains — but it removes the window this change introduced rather than leaving a
+      new one behind a resolved-lane improvement.
+      */
+      const overrideLanes = await resolveNodeOverrideLanes(store, id);
       const currentTask = await store.getTask(id).catch(() => null);
       if (currentTask) {
+        /*
+        FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+        RESOLVED BEFORE the guard, because the guard's callback is synchronous and the real answer
+        needs an await. `validateNodeOverrideChange` asks the question at most once, for
+        `updates.nodeId`, so pre-resolving that single answer is equivalent — and this frame is
+        already async.
+        */
+        const terminal = updates.nodeId == null
+          ? false
+          : await isTaskTerminalNodeIdAsync(store, id, updates.nodeId);
         const validation = validateNodeOverrideChange(currentTask, updates.nodeId ?? null, {
-          isTerminalNodeId: (nodeId) => isTaskTerminalNodeIdImpl(store, id, nodeId),
+          /* Resolved above; `overrideLanes` stays exactly as main computes it. */
+          isTerminalNodeId: () => terminal,
+          ...overrideLanes,
         });
         if (!validation.allowed) {
           throw new Error(validation.message);
@@ -566,23 +644,16 @@ export async function updateTaskImpl(store: TaskStore,
     return store.withTaskLock(id, () => store.updateTaskUnlocked(id, updates, runContext));
 }
 
-/**
- * FNXC:StateMachine 2026-07-07-12:00:
- * Resolve whether `nodeId` is the task's resolved workflow terminal `end` node (kind === "end"),
- * for the nodeId='end' finalize-on-proof-or-error contract (FN-7641 Signature 2). Falls back to
- * the literal id check when the workflow IR cannot be resolved or does not contain the node, which
- * still matches every built-in workflow's terminal node id.
- */
-function isTaskTerminalNodeIdImpl(store: TaskStore, taskId: string, nodeId: string): boolean {
-  try {
-    const ir = store.resolveTaskWorkflowIrSync(taskId);
-    const node = ir.nodes.find((n) => n.id === nodeId);
-    if (node) return node.kind === "end";
-  } catch {
-    // Fall through to the literal-id fallback below.
-  }
-  return nodeId === "end";
-}
+/*
+FNXC:StateMachine 2026-07-31-20:15 (PR #2793's finding, fixed):
+`isTaskTerminalNodeIdImpl` LIVED HERE and is deleted, not kept as a fallback. It resolved the task's
+graph through `store.resolveTaskWorkflowIrSync`, which answers with the DEFAULT workflow for every
+task under PostgreSQL — so it reported on a board the card is not on. Its replacement,
+`isTaskTerminalNodeIdAsync`, keeps the identical literal fail-soft for an unresolvable workflow.
+
+Keeping both would have re-created the half-conversion this program keeps finding: one caller
+resolved, one not, and no way to tell from a call site which it got.
+*/
 
 export function mergeCustomFieldPatchImpl(store: TaskStore,
     current: Record<string, unknown> | undefined,
@@ -625,8 +696,19 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
      *       central-registry project (e.g. "proj_2f4be0f31a404d2c"). This is the
      *       id the rest of the system partitions by, so workflow settings MUST
      *       key by it too.
-     *   (b) `store.db.getProjectIdentity()?.id` — legacy SQLite identity id.
-     *   (c) `store.rootDir` — absolute filesystem path, last-resort legacy key.
+     *   (b) `store.rootDir` — absolute filesystem path, last-resort key.
+     *
+     * FNXC:CentralProjectIdentity 2026-07-30-13:00 (documentation corrected):
+     * There USED to be a middle step reading `store.db.getProjectIdentity()?.id`, and this block still
+     * described it long after `FNXC:SqliteDualPathCleanup 2026-07-26-14:15` removed it. It is not
+     * merely unused — it is unreachable BY CONSTRUCTION: `dbImpl` throws unconditionally and ignores
+     * its store argument (`task-id-integrity.ts:58`), so `store.db` can never yield a usable SQLite
+     * handle in any mode.
+     *
+     * Two cases in `workflow-settings-project-identity.pg.test.ts` were red on main because they
+     * asserted that removed step, using a store double whose `getProjectIdentity()` returns a value —
+     * a shape production cannot produce. Stale documentation is what made that look like a code bug
+     * rather than a stale test, so both are fixed together.
      *
      * BUG this fixes: the old code went straight to (b). In backend mode
      * `store.db` is a SQLite stub whose `getProjectIdentity()` THROWS
@@ -645,10 +727,15 @@ export function getWorkflowSettingsProjectIdImpl(store: TaskStore): string {
     An unscoped backend store (asyncLayer present but projectId empty) must NOT
     reach `store.db` below — it throws the removed-SQLite stub, which the catch
     then swallows, so the throw was invisible. Return the same rootDir key the
-    swallow produced, without the spurious stub throw. Only the true legacy
-    (non-backend) path consults the SQLite identity.
+    swallow produced, without the spurious stub throw.
     */
-    /* FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG. */
+    /*
+    FNXC:SqliteDualPathCleanup 2026-07-26-14:15: project id for workflow settings is rootDir under PG.
+    Unconditional on purpose — see the corrected resolution order above. The comment block immediately
+    before this once said "Only the true legacy (non-backend) path consults the SQLite identity",
+    which has been false for every caller since that cleanup; it is removed rather than left to
+    mislead the next reader the way it misled me.
+    */
     return store.rootDir;
 }
 

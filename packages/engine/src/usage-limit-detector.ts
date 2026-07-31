@@ -11,6 +11,9 @@
  */
 
 import type { Task, TaskStore } from "@fusion/core";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: `agentType` is an AGENT ROLE, not a column.
+// The planner lane is named `triage` and keeps that name; only the COLUMN was removed by U11.
+import { PLANNER_AGENT_ROLE, resolveTaskLifecycleColumns, type WorkflowIr } from "@fusion/core";
 import {
   resolveExecutorSessionModel,
   resolveMergerSessionModel,
@@ -121,19 +124,67 @@ export class UsageLimitPauser {
     provider: string,
     settings: Awaited<ReturnType<TaskStore["getSettings"]>>,
     agentType: string,
+    preImplementationColumns?: ReadonlySet<string>,
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:10:
+    The WIP and REVIEW lanes of this task's own workflow, resolved by the caller from the same per-workflow
+    IR cache as `preImplementationColumns`. Optional so an unresolvable workflow keeps the legacy literals.
+    */
+    activeLanes?: { wip?: string; review?: string },
   ): boolean {
-    const providersByActiveLane = agentType === "triage"
-      ? (task.column === "triage" ? [
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:20 (P0 audit after the Planning-column merge):
+    The planning lane was identified by the LITERAL `triage`. The default coding lineage no
+    longer declares that column, so this comparison stopped matching for every default-workflow
+    card — silently. Nothing throws; the lane simply resolves to no providers, so when a provider
+    hits a usage limit during a PLANNING session the fan-out that pauses other tasks on that same
+    provider skips every default card, and they keep hammering the rate-limited provider. The
+    triggering task is still paused by the explicit fallback below, so no card is stranded — what
+    is lost is the blast-radius containment.
+
+    A planning session runs while the card is PRE-IMPLEMENTATION. The caller has already excluded
+    `done`/`archived`, so that is exactly "not the implementation column and not the review
+    column" — which matches `todo`, `triage`, `ideas`, and a renamed planner alike. The two
+    literals that remain here name the wip and review lanes and belong to the executor/scheduler
+    vocabulary conversion, not to this fix.
+    */
+    const isPreImplementation = preImplementationColumns?.has(task.column) === true;
+    const providersByActiveLane = agentType === PLANNER_AGENT_ROLE
+      ? (isPreImplementation ? [
           resolvePlanningSessionModel(task.planningModelProvider, task.planningModelId, settings).provider,
           resolveValidatorSessionModel(task.validatorModelProvider, task.validatorModelId, settings).provider,
         ] : [])
       : agentType === "executor"
-        ? (task.column === "in-progress" ? [
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-31-22:15:
+        THE EXECUTOR AND MERGER LANES ARE RESOLVED TOO. The note above describes exactly this failure for the
+        PLANNER lane and says it was fixed there — these two were left as literals, so the same silent hole
+        stayed open one lane over: on a renamed board an actively-executing card in the WIP column resolved NO
+        providers, so a provider rate limit never paused it and the engine kept hammering the limited provider
+        with that card.
+
+        MEASURED before the fix, renamed board (`building` = wip), executor limit on a peer card: only the
+        TRIGGERING task was paused, and that only because of the always-include-the-trigger fallback below.
+        The peer executing on the same rate-limited provider was left running.
+
+            FNXC:WorkflowLifecycleColumns 2026-07-31-23:10 (PR #2672 review, greptile P1):
+        THE FALLBACK IS PER ROLE, not per object. My first version keyed it on whether `activeLanes` existed
+        at all, so a workflow that RESOLVES but declares no wip (or no review) column suppressed the legacy
+        id and resolved no providers — reintroducing this very bug for the partial-vocabulary case. A missing
+        ROLE is not the same fact as a missing WORKFLOW, and only the second one means "no basis".
+
+        Falling back per role can only ADD pauses, for a card sitting in a legacy-named column on a board that
+        declares no such role — which is the safe direction here and the one the note above states: the cost
+        of a wrong include is pausing work that was fine.
+        */
+        ? (((activeLanes?.wip ?? "in-progress") === task.column) ? [
             resolveExecutorSessionModel(task.modelProvider, task.modelId, settings).provider,
             resolveValidatorSessionModel(task.validatorModelProvider, task.validatorModelId, settings).provider,
           ] : [])
         : agentType === "merger"
-          ? (task.column === "in-review" ? [resolveMergerSessionModel(settings, undefined, task).provider] : [])
+          ? (((activeLanes?.review ?? "in-review") === task.column)
+            ? [resolveMergerSessionModel(settings, undefined, task).provider]
+            : [])
           : [];
     const resolvedProviders = providersByActiveLane;
     return resolvedProviders.some((candidate) => candidate?.trim().toLowerCase() === provider);
@@ -170,12 +221,103 @@ export class UsageLimitPauser {
       // FNXC:ArchitectureHotPath 2026-07-22-17:20: slim payload — this scan only reads column/pause/model-provider scalars, never heavy detail fields.
       this.store.listTasks({ slim: true }),
     ]);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-20:50 (P0 audit, PR #2572 review — greptile):
+    The planning lane is resolved PER TASK from its own workflow, not inferred by excluding two
+    literals. "Not `in-progress` and not `in-review`" reads any custom non-terminal column — a
+    second processing lane, a manual hold, a bespoke review stage — as pre-implementation, so a
+    planning-provider limit would pause cards that are nowhere near planning. Trait-derived
+    intake/hold is the only answer that holds for a workflow this code has never seen.
+
+    One IR read per WORKFLOW, not per task: the cache is caller-owned (the U1 contract) and shared
+    across the whole fan-out, so a 400-card board spanning three workflows reads three IRs. A task
+    whose workflow cannot be resolved yields an empty set and is skipped rather than guessed into
+    the lane — conservative, because the cost of a wrong include is pausing work that was fine.
+    */
+    const irCache = new Map<string, WorkflowIr>();
+    const preImplementationByTask = new Map<string, ReadonlySet<string>>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:20:
+    Resolved for EVERY agent type, because the executor and merger lanes need it and only the
+    pre-implementation lane is planner-only. Shares `irCache`, so this is still one IR read per WORKFLOW
+    across the whole fan-out — a task whose workflow cannot be resolved yields `undefined` and the callee
+    keeps the legacy literal for it.
+    */
+    const activeLanesByTask = new Map<string, { wip?: string; review?: string } | undefined>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (PR #2672 review, greptile P2):
+    RESOLVE ONLY THE CANDIDATES. The first version resolved every task on the board before filtering, so a
+    rate limit on a 400-card board paid 400 resolutions to pause a handful — and terminal or paused cards,
+    which can never be affected, were resolved too. The cheap predicates run first now, so the resolution
+    cost tracks the number of plausible tasks rather than the size of the board.
+
+    KNOWN AND UNCHANGED: concurrent misses on the same workflow can still both read, because `irCache` fills
+    after the await. That is a property this path shares with the planner-lane resolution above it, and
+    serialising to fix it would trade a bounded duplicate read for latency on the pause — which is the
+    operation an operator is waiting on. Named rather than silently accepted.
+    */
+    /*
+    DELIBERATE-LITERAL — a cheap SUPERSET prefilter, kept literal on purpose (#2672 review).
+
+    Its only job is to avoid resolving the whole board. Keeping literals is safe in the direction
+    that matters: a renamed board declares no `done`/`archived` id, so nothing is wrongly EXCLUDED
+    and every plausible card is still resolved. Converting it would reintroduce exactly the
+    whole-board resolution that review removed.
+    */
+    const laneCandidates = tasks.filter((task) =>
+      task.paused !== true && task.column !== "done" && task.column !== "archived");
+    await Promise.all(laneCandidates.map(async (task) => {
+      const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
+      activeLanesByTask.set(task.id, columns ? { wip: columns.wip, review: columns.review } : undefined);
+    }));
+    if (agentType === PLANNER_AGENT_ROLE) {
+      await Promise.all(tasks.map(async (task) => {
+        const columns = await resolveTaskLifecycleColumns(this.store, task.id, irCache).catch(() => undefined);
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-29-22:10 (PR #2572 review — greptile, 2nd):
+        INTAKE ONLY. `hold` is not a synonym for "planning": a workflow may carry a hold trait on
+        a MID-PIPELINE wait — manual release, timed, dependency, external event — and a card
+        parked there is downstream of implementation, not queued for planning. Including hold
+        would pause it on a planning-provider limit, which is the same over-classification as the
+        literal-exclusion predicate this replaced, just further along.
+
+        The planning session is the one that runs on an intake card, so intake is the lane. When a
+        workflow's hold column IS its pre-implementation queue it is normally the same column as
+        intake (the merged Planning lane declares both traits) and is covered by that; where they
+        differ, the hold column is a wait and is deliberately excluded.
+        */
+        const lanes = new Set<string>();
+        if (columns?.intake) lanes.add(columns.intake);
+        preImplementationByTask.set(task.id, lanes);
+      }));
+    }
+    /*
+    DELIBERATE-LITERAL — REVIEWED AND PROVEN REDUNDANT, not overlooked.
+
+    This is a documented FALSE POSITIVE for the lifecycle-column census, and it has now drawn in two
+    separate workers, which is why the marker is going on rather than only the prose above. A card in
+    a renamed terminal lane is ALREADY excluded downstream: `taskUsesProvider` resolves the task's
+    active lane, and a finished card matches no active lane, so it resolves no providers and cannot
+    be affected. The test suite states the same thing and pins it
+    (`pauses a PEER executing in the renamed WIP column` asserts `FN-SHIPPED` is not paused).
+
+    So converting this changes NOTHING at runtime — it would be pure churn that lowers the census
+    count while the behaviour is identical, which is the shape this program keeps warning about. The
+    marker removes it from the work order so the next reader does not re-derive all of the above.
+    */
     const affectedTasks = tasks.filter((task) =>
       task.column !== "done"
       && task.column !== "archived"
       && task.paused !== true
       && providerId !== "unknown"
-      && this.taskUsesProvider(task, providerId, settings, agentType));
+      && this.taskUsesProvider(
+        task,
+        providerId,
+        settings,
+        agentType,
+        preImplementationByTask.get(task.id),
+        activeLanesByTask.get(task.id),
+      ));
 
     // Always include the task that produced the 429 even if its actual provider
     // came from a runtime fallback not represented in persisted task settings.

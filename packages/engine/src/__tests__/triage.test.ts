@@ -1751,7 +1751,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1789,7 +1788,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1827,7 +1825,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1847,7 +1844,7 @@ Planner rewrote mission without the raw request.
 
     /*
     FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling maxTriageConcurrent purely from semaphore.availableCount.
+    When an in-progress executor already counts toward the live running-agent total, triage must leave room under the global cap instead of filling the planning lane purely from semaphore.availableCount.
     */
     it("leaves global concurrency room for live in-progress agents when admitting planners", async () => {
       const tasks: Task[] = [
@@ -1867,7 +1864,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 4,
-          maxTriageConcurrent: 4,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1911,7 +1907,6 @@ Planner rewrote mission without the raw request.
         getTask: vi.fn().mockImplementation(async (id: string) => tasksById.get(id) ?? null),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -1950,10 +1945,22 @@ Planner rewrote mission without the raw request.
 
   /*
   FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
-  FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked (never auto-dispatched via `eligibleTriageTasks`, which only matches `column === "triage"`), while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
+  FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked, while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
+
+  FNXC:ManualIntakeAdmission 2026-07-30-04:45 — READ THIS BEFORE TRUSTING THE FIRST CASE BELOW:
+  the parked-ideas case passes here for a reason unrelated to the rule. Its store has NO workflow
+  readers, so lifecycle resolution falls back to `triage`/`todo` and an `ideas` card matches neither
+  admission branch. The mechanism this comment used to name — "only matches column === triage" — was
+  removed when discovery started resolving intake BY TRAIT, at which point `ideas` BECAME the resolved
+  intake column and parked ideas were auto-planned. This test kept passing throughout.
+
+  The real guard, with a store that resolves the workflow, is
+  `manual-intake-admission.test.ts`. This case is kept as the legacy-store shape (which is also a
+  real configuration) rather than deleted, but it is not the FN-7596 guard and must not be relied on
+  as one.
   */
   describe("Coding (Ideas) manual-intake discovery (FN-7596)", () => {
-    it("excludes a parked ideas-column task from the poll's specify-dispatch set", async () => {
+    it("excludes a parked ideas-column task when the workflow cannot be resolved (legacy-store shape, NOT the FN-7596 guard)", async () => {
       const tasks: Task[] = [
         createTriageTask({ id: "FN-IDEAS-PARKED", column: "ideas" as any, priority: "urgent" }),
       ];
@@ -1962,7 +1969,6 @@ Planner rewrote mission without the raw request.
         listTasks: vi.fn().mockResolvedValue(tasks),
         getSettings: vi.fn().mockResolvedValue({
           maxConcurrent: 10,
-          maxTriageConcurrent: 10,
           pollIntervalMs: 10_000,
           groupOverlappingFiles: false,
           autoMerge: true,
@@ -2001,7 +2007,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([promotedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2044,7 +2049,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([plannedTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2094,7 +2098,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([replanTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -2144,7 +2147,6 @@ Planner rewrote mission without the raw request.
           listTasks: vi.fn().mockResolvedValue([refineTask]),
           getSettings: vi.fn().mockResolvedValue({
             maxConcurrent: 10,
-            maxTriageConcurrent: 10,
             pollIntervalMs: 10_000,
             groupOverlappingFiles: false,
             autoMerge: true,
@@ -7233,5 +7235,118 @@ describe("TriageProcessor.sweepStalePlanningStatuses", () => {
       createTriageTask({ id: "FN-OTHER", status: "needs-replan", updatedAt: STALE }),
     ]);
     expect(store.updateTask).not.toHaveBeenCalled();
+  });
+});
+
+/*
+FNXC:RecoverApprovedIntakePostU11 2026-07-30-00:40 (the test PR #2593's review asked for):
+
+WHY THIS TOOK THREE ATTEMPTS TO WRITE HONESTLY. The guard under test is the ORPHAN arm of
+`inPlannerColumn` — `task.column === "triage" && !declaresLegacyTriage`. On a bare mock store the arm
+is NEVER REACHED: `resolvePlannerLanes` reads `resolveTaskWorkflowIrSync`, which a bare mock does not
+define, so it returns LEGACY_PLANNER_LANES (`intake: "triage"`) and a `triage` card matches the FIRST
+arm. Every earlier fixture I wrote passed through that short-circuit and proved nothing.
+
+So all three cases below stub `resolveTaskWorkflowIrSync` with the MERGED DEFAULT shape, which is what
+production resolves: `intake` and `hold` both `todo`. That makes the first arm fail for a `triage` card
+and leaves the orphan arm as the only thing deciding the outcome.
+
+The three cases differ ONLY in the workflow readers, so the outcome difference can have no other cause.
+Case B is the positive control: without it, "returns false" is unfalsifiable — every case would pass if
+the arm were dead.
+*/
+describe("recoverApprovedTask — the orphan-`triage` arm, with the intake short-circuit disabled", () => {
+  const MERGED_DEFAULT = {
+    version: "v2", id: "builtin:coding", nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never;
+  const customIr = (id: string, withTriage: boolean) => ({
+    version: "v2", id, nodes: [], edges: [],
+    columns: [
+      { id: "todo", name: "Planning", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+      ...(withTriage ? [{ id: "triage", name: "Code review", traits: [{ trait: "review" }] }] : []),
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+  } as never);
+
+  const PLAN = "## Objective\nDo the thing.\n\n## Steps\n1. Step one\n";
+  let root = "";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "fusion-orphan-triage-"));
+    await mkdir(join(root, ".fusion", "tasks", "FN-ORPHAN"), { recursive: true });
+    await writeFile(join(root, ".fusion", "tasks", "FN-ORPHAN", "PROMPT.md"), PLAN);
+  });
+  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+  /** Identical in every case except the workflow readers passed in. */
+  const run = async (workflowReaders: Partial<TaskStore>): Promise<boolean> => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10000,
+        groupOverlappingFiles: false, autoMerge: true, requirePlanApproval: true,
+      } as Settings),
+      // Production resolves the MERGED default here, so `lanes.intake` is `todo`, not `triage`.
+      resolveTaskWorkflowIrSync: vi.fn(() => MERGED_DEFAULT),
+      ...workflowReaders,
+    } as Partial<TaskStore>);
+    return new TriageProcessor(store, root).recoverApprovedTask({
+      id: "FN-ORPHAN",
+      description: "Orphaned triage row",
+      column: "triage",
+      status: "planning",
+      approvedPlanFingerprint: computePlanApprovalFingerprint(PLAN),
+      dependencies: [], steps: [], currentStep: 0,
+      log: [{ timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" }],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as never);
+  };
+
+  it("B (POSITIVE CONTROL) recovers the orphan when the workflow RESOLVES and declares no `triage`", async () => {
+    // Proves the arm is reachable and returns true. Without this the two false cases below are
+    // unfalsifiable.
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:no-triage", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:no-triage", false) })),
+    } as Partial<TaskStore>)).toBe(true);
+  });
+
+  it("A (BEHAVIOR PIN — does NOT discriminate) declines when the workflow cannot be resolved", async () => {
+    /*
+    HONEST LABEL, from the mutation run. I wrote this as THE regression case and it is not: reverting
+    to the pre-fix sync read leaves it GREEN. It returns false in both worlds, so something other
+    than `declaresLegacyTriage` decides it — most likely a later gate that needs the selection this
+    case deliberately withholds. Kept as a fail-closed behavior pin, explicitly NOT as proof of the
+    fix; case C below is what actually discriminates.
+
+    Left in with the wrong-looking result documented rather than deleted, because a future edit that
+    makes this case flip would be informative — it would mean the orphan arm had become reachable
+    here, which is a real change in the guard's scope.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: undefined,
+      getTaskWorkflowSelection: vi.fn(() => undefined),
+    } as Partial<TaskStore>)).toBe(false);
+  });
+
+  it("C (THE REGRESSION) declines when the workflow DECLARES `triage` as a non-intake lane", async () => {
+    /*
+    THE DISCRIMINATOR, confirmed by mutation: reverting `recoverApprovedTask` to the pre-fix
+    `resolveTaskWorkflowIrSync` read makes THIS case fail (and only this one, of the three). The sync
+    reader ignores the selection and hands back the default IR, which declares no `triage`, so the
+    orphan arm fires and the card is finalized out of a custom workflow's CODE REVIEW column —
+    bypassing that column's transition. This is the greptile P1 case, and it is the one that proves
+    the provenance fix does work.
+    */
+    expect(await run({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:triage-review", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: customIr("custom:triage-review", true) })),
+    } as Partial<TaskStore>)).toBe(false);
   });
 });

@@ -47,12 +47,7 @@ let engine: ProjectEngine | null = null;
 // The child doesn't need full CentralCore functionality
 const createStubCentralCore = (): CentralCore => {
   return {
-    getGlobalConcurrencyState: async () => ({
-      globalMaxConcurrent: 4,
-      currentlyActive: 0,
-      queuedCount: 0,
-      projectsActive: {},
-    }),
+    getLiveRunningAgentCounts: async () => ({ currentlyActive: 0, projectsActive: {} }),
     recordTaskCompletion: async () => {},
   } as unknown as CentralCore;
 };

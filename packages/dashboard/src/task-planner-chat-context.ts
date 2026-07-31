@@ -116,6 +116,14 @@ function formatProgress(task: UnknownRecord): string | undefined {
     return `step ${currentStep + 1} of ${steps.length}`;
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:00 DELIBERATE-LITERAL: a STEP status, not a board column.
+
+  `"done"` here is a `StepStatus` read off a workflow STEP (`readString(step, "status")`), counting
+  completed steps for the "N/M steps done" label. Steps and columns share the spelling and nothing
+  else — there is no task column in scope. The census matches on the string, so it reads as an
+  unconverted lifecycle guard; resolving it against a workflow would be a category error.
+  */
   const done = steps.filter((step) => isRecord(step) && readString(step, "status") === "done").length;
   if (steps.length > 0) {
     return `${done}/${steps.length} steps done`;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isWipColumnRole } from "../utils/columnRoles";
 import type { RefObject } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -17,6 +18,8 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { ViewHeader } from "./ViewHeader";
 
 interface DevServerViewProps {
+  /** Per-task resolved column flags, from MainContent. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Parameters<typeof isWipColumnRole>[0]>;
   addToast: (msg: string, type?: ToastType) => void;
   projectId?: string;
   tasks?: Array<Task | TaskDetail>;
@@ -169,7 +172,7 @@ function truncateCommand(command: string): string {
   return `${command.slice(0, maxLength)}…`;
 }
 
-export function DevServerView({ addToast, projectId, tasks }: DevServerViewProps) {
+export function DevServerView({ addToast, projectId, tasks, columnFlagsByTaskId }: DevServerViewProps) {
   const { t } = useTranslation("app");
 
   useEffect(() => {
@@ -243,9 +246,27 @@ export function DevServerView({ addToast, projectId, tasks }: DevServerViewProps
   The board and right dock pass live task data into DevServerView so the dev server can target the checked-out worktree of an executing task instead of only the integration worktree.
   Only in-progress tasks with concrete worktree paths are targetable because a missing cwd cannot be safely passed to the start endpoint.
   */
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:30 (batch-dashboard-app):
+  WIP role, resolved PER TASK. This list is the dev-server's set of live worktrees to attach to;
+  keyed on the literal it was EMPTY on a renamed board, so the view offered nothing to attach to
+  while agents were running with worktrees on disk.
+
+  Per-task rather than per-column id: `columnFlagsByTaskId` is what MainContent already threads to
+  its other children, and an id-keyed map would answer with a neighbouring workflow's traits when
+  two workflows reuse a column id.
+
+  BOTH RENDER SURFACES ARE NOW COVERED. This view also mounts through `overflowViewRegistry` into the
+  right dock, and that path used to answer on the legacy id because the registry's render props
+  carried no flags — recorded here as unfixed while it was. `OverflowViewRenderProps` now carries
+  `columnFlagsByTaskId`, threaded from App through `useRightDockController`, so the dock surface
+  resolves the same way this one does.
+  */
   const executingTasks = useMemo(
-    () => (tasks ?? []).filter((task) => task.column === "in-progress" && typeof task.worktree === "string" && task.worktree.length > 0),
-    [tasks],
+    () => (tasks ?? []).filter((task) =>
+      isWipColumnRole(columnFlagsByTaskId?.get(task.id), task.column)
+      && typeof task.worktree === "string" && task.worktree.length > 0),
+    [tasks, columnFlagsByTaskId],
   );
   const selectedTask = useMemo(
     () => executingTasks.find((task) => task.id === selectedTaskId) ?? null,

@@ -25,6 +25,7 @@ import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../task-age-staleness.js";
+import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {detectStalledReview} from "../stalled-review-detector.js";
 import {computeRetrySummary} from "../retry-summary.js";
 // FNXC:TaskLookup404 2026-07-26-11:20: typed miss signal so API boundaries can
@@ -134,6 +135,35 @@ async function resolveHoldColumnForTask(
   }
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-29-15:20:
+The REVIEW half of the same threading `resolveHoldColumnForTask` does for hold.
+
+B1 gave `getStalePausedTodoSignal` a `holdColumn` parameter and PR #2470's review
+caught that both hydration sites here omitted it — a correct guard comparing against
+the literal, so the badge was silent on a renamed board. That P1 was fixed for hold and
+NOT for its sibling role: `getStalePausedReviewSignal` and `getInReviewStalledSignal`
+both take `reviewColumn`, and all six call sites in this file left it defaulted to
+"in-review". Same defect, same file, one role over.
+
+Fail-soft to "in-review" for the same reason as the hold helper: this is read-path badge
+hydration, so a workflow lookup failure must degrade to today's behavior rather than
+break a board list. Cache is caller-owned so a list pass reads one IR per workflow.
+*/
+async function resolveReviewColumnForTask(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<string> {
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
+    return lifecycle?.review ?? "in-review";
+  } catch {
+    return "in-review";
+  }
+}
+
+
 export async function getTaskImpl(store: TaskStore, id: string, options?: { activityLogLimit?: number; includeDeleted?: boolean }): Promise<TaskDetail> {
     return store.withTaskLock(id, async () => {
       // FNXC:RuntimePersistenceAsync 2026-06-24-10:50:
@@ -190,11 +220,13 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
+      const reviewColumnForTask = await resolveReviewColumnForTask(store, task.id);
       task.inReviewStalled = mergeQueuedTaskIds.has(task.id)
         ? undefined
         : getInReviewStalledSignal(task, {
           now,
           executingTaskIds,
+          reviewColumn: reviewColumnForTask,
           thresholdMs: settings.inReviewStalledThresholdMs,
           autoMerge: allowsAutoMergeProcessing(task, settings),
           engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -351,15 +383,18 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
+      const reviewColumnForRow = await resolveReviewColumnForTask(store, task.id, listPassIrCache);
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+        reviewColumn: reviewColumnForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: reviewColumnForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -380,11 +415,21 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       Guard age-staleness: invalid threshold pairs throw RangeError — swallow so one bad setting cannot 500 the whole board list.
       */
       try {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+        Resolved through the SAME per-pass `listPassIrCache` the hold-column read above already uses, so
+        one workflow is read once per pass rather than once per card.
+
+        Cost stated: the hold-column read is conditional on `task.paused`, this one is not, because the
+        lanes it needs are exactly what decides whether the signal applies at all — there is no cheaper
+        gate available ahead of it. With the cache that is a struct build per card, not an IR read.
+        */
         task.ageStaleness = getTaskAgeStalenessSignal(task, {
           now,
           thresholds: staleThresholds,
           engineActiveSinceMs: settings.engineActiveSinceMs,
           engineActivationGraceMs: settings.engineActivationGraceMs,
+          lifecycle: await resolveTaskLifecycleColumns(store, task.id, listPassIrCache),
         });
       } catch (err) {
         if (!(err instanceof RangeError)) throw err;
@@ -506,10 +551,22 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     */
     const pageRows = pgRows.slice(0, resolvedLimit);
     const holdColumnByTaskId = new Map<string, string>();
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-15:20:
+    The review column is pre-resolved here for the same reason the hold column is: the
+    row mapping below is SYNCHRONOUS, so a per-row `await` is not available to it. Both
+    share one IR cache, so a page spanning three workflows reads three IRs regardless of
+    card count. Unlike hold — which only matters for a paused card — the review signals
+    apply to any row, so this resolves for every row on the page.
+    */
+    const reviewColumnByTaskId = new Map<string, string>();
+    const lifecycleByTaskId = new Map<string, Awaited<ReturnType<typeof resolveTaskLifecycleColumns>>>();
     {
       const irCache = new Map<string, WorkflowIr>();
       for (const pgRow of pageRows) {
         const row = store.pgRowToTaskRow(pgRow);
+        reviewColumnByTaskId.set(row.id, await resolveReviewColumnForTask(store, row.id, irCache));
+        lifecycleByTaskId.set(row.id, await resolveTaskLifecycleColumns(store, row.id, irCache));
         if (store.rowToTask(row).paused !== true) continue;
         holdColumnByTaskId.set(row.id, await resolveHoldColumnForTask(store, row.id, irCache));
       }
@@ -535,15 +592,18 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
+      const reviewColumnForRow = reviewColumnByTaskId.get(task.id) ?? "in-review";
       task.stalePausedReview = getStalePausedReviewSignal(task, {
         now,
         thresholdMs: settings.stalePausedReviewThresholdMs,
+        reviewColumn: reviewColumnForRow,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: reviewColumnForRow,
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,
@@ -561,6 +621,20 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
           task.ageStaleness = getTaskAgeStalenessSignal(task, {
             now,
             thresholds: staleThresholds,
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-31-09:00 (fleet — the omitted sibling site):
+            THE MODIFIED-SINCE PASS NEEDS THE LANES TOO. #2746 threaded `lifecycle` into the list
+            pass above and left this one on the defaults, so a renamed board still produced no
+            age-staleness badge for any card arriving through the incremental refresh — which is the
+            path a live board actually uses after first load.
+
+            This is the third occurrence of one specific mistake in this one file: the helper gains a
+            resolved-role parameter and one of the two hydration sites is missed. The notes above
+            record it for `holdColumn` (PR #2470) and then for `reviewColumn` ("same defect, same
+            file, one role over"). Pinned now by reads-age-staleness-lane-hydration.test.ts, which
+            asserts BOTH sites pass it rather than trusting the next reader to notice.
+            */
+            lifecycle: lifecycleByTaskId.get(task.id),
             engineActiveSinceMs: settings.engineActiveSinceMs,
             engineActivationGraceMs: settings.engineActivationGraceMs,
           });
@@ -625,6 +699,8 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
     const now = Date.now();
     const settings = await store.getSettingsFast();
     const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
+    // Shared across the page so one workflow is read once, not once per hit.
+    const searchPassIrCache = new Map<string, WorkflowIr>();
     const tasks = await Promise.all(pgRows.map(async (pgRow) => {
       const task = store.rowToTask(store.pgRowToTaskRow(pgRow));
       const isMergeQueued = mergeQueuedTaskIds.has(task.id);
@@ -649,6 +725,7 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       task.inReviewStalled = isMergeQueued ? undefined : getInReviewStalledSignal(task, {
         now,
         executingTaskIds,
+        reviewColumn: await resolveReviewColumnForTask(store, task.id, searchPassIrCache),
         thresholdMs: settings.inReviewStalledThresholdMs,
         autoMerge: allowsAutoMergeProcessing(task, settings),
         engineActiveSinceMs: settings.engineActiveSinceMs,

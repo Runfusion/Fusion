@@ -37,7 +37,7 @@ import {
 } from "../skill-resolver.js";
 
 vi.mock("../logger.js", () => ({
-  piLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  piLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 const CE_STAGES = [

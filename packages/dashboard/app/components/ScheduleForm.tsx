@@ -194,11 +194,25 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
     }
     return "";
   });
+  /*
+  FNXC:Automations 2026-07-30-23:55 DELIBERATE-LITERAL (greptile #2652 — a SECOND form, not just RoutineEditor):
+  Defaults to no column, and coerces a persisted `triage` to the same. U11 deletes that column from the
+  default workflow, and an explicit column of any value bypasses workflow entry-column resolution, so the
+  old default seeded tasks into a column the board does not declare — and a schedule saved earlier held a
+  value the operator could not see once it stopped being offered.
+
+  The literal is a MIGRATION of a stored value, not a lifecycle decision: a schedule names no workflow,
+  so there is no role to resolve, and recognising that exact legacy string is the point.
+
+  RoutineEditor had the identical pair. Fixing one form left this one intact, which is the same
+  per-caller shape as the three runner sites.
+  */
   const [taskColumn, setTaskColumn] = useState(() => {
     if (schedule?.steps && schedule.steps.length === 1 && schedule.steps[0].type === "create-task" && !schedule.command) {
-      return schedule.steps[0].taskColumn ?? "triage";
+      const persisted = schedule.steps[0].taskColumn ?? "";
+      return persisted === "triage" ? "" : persisted;
     }
-    return "triage";
+    return "";
   });
 
   // Model dropdown state
@@ -400,7 +414,8 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
               name: name.trim(),
               taskTitle: taskTitle.trim() || undefined,
               taskDescription: taskDescription.trim(),
-              taskColumn: taskColumn,
+              // Empty means "let the workflow decide" — an explicit column overrides entry resolution.
+              taskColumn: taskColumn || undefined,
               modelProvider: modelProvider.trim() || undefined,
               modelId: modelId.trim() || undefined,
               thinkingLevel: normalizeThinkingLevel(thinkingLevel),
@@ -759,8 +774,14 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                   value={taskColumn}
                   onChange={(e) => setTaskColumn(e.target.value)}
                 >
-                  <option value="triage">{t("schedule.columnTriage", "Planning")}</option>
-                  <option value="todo">{t("schedule.columnTodo", "To Do")}</option>
+                  {/*
+                  `triage` REMOVED, matching RoutineEditor: leaving it offered lets an operator pick a
+                  column the default workflow no longer declares, and it was labelled "Planning" — the
+                  name the merged `todo` column now displays — so it was the natural choice. `todo` is
+                  relabelled to match the board; "Automatic" resolves each workflow's own intake.
+                  */}
+                  <option value="">{t("schedule.columnAuto", "Automatic (workflow intake)")}</option>
+                  <option value="todo">{t("schedule.columnPlanning", "Planning")}</option>
                 </select>
               </div>
 

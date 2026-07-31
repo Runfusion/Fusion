@@ -208,7 +208,7 @@ interface PendingAttachment {
 }
 
 /*
-FNXC:ChatAttachments 2026-08-03-00:00:
+FNXC:ChatAttachments 2026-07-23-00:00:
 Chat must offer precisely the task-store attachment MIME set so picker, paste, and drop never stage
 files that its upload routes reject. Keep this list aligned with CHAT_ALLOWED_MIME_TYPES on the API.
 */
@@ -1678,7 +1678,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     /*
-    FNXC:ChatAttachments 2026-08-03-00:00:
+    FNXC:ChatAttachments 2026-07-23-00:00:
     Chat paste must use the same MIME validation path as picker and drop. Filtering clipboard data
     to images made supported text files disappear before the authoritative server validation ran.
     */
@@ -1921,7 +1921,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
     const sentFiles = new Set(files);
     /*
-    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    FNXC:QuickAddAttachments 2026-07-23-00:00:
     Keep direct-chat previews alive until useChat confirms multipart delivery. A direct-session
     upload fails asynchronously, so clearComposerState() here would revoke the only retryable File
     references before its stream error handler can report the rejection.

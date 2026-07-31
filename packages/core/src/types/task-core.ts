@@ -1133,7 +1133,7 @@ export interface Task {
    *  never cleared by reopen flows. */
   cumulativeActiveMs?: number;
   /**
-   * FNXC:TaskTiming 2026-08-01-10:00:
+   * FNXC:TaskTiming 2026-07-23-10:00:
    * Monotonic active AI planning duration. Unlike column dwell this is only
    * accrued by a live planning session and is never cleared by reopen.
    */

@@ -316,7 +316,17 @@ async function executeCreateTaskStep(
     const task = await taskStore.createTask({
       title: step.taskTitle?.trim() || undefined,
       description: step.taskDescription.trim(),
-      column: (step.taskColumn as import("@fusion/core").Column) || "triage",
+      /*
+      FNXC:Automations 2026-07-30-23:55 (greptile #2652 — the THIRD site of one substitution):
+      Was `|| "triage"`. U11 deletes that column from the default workflow, and an EXPLICIT column
+      bypasses the workflow entry-column resolution used for column-less creates, so a manually-run
+      step with no target created its task into a column the board does not declare.
+
+      Same line existed in routine-runner.ts and cron-runner.ts. Fixing those two left THIS path
+      re-injecting it, so a step that behaved correctly on a schedule misbehaved when an operator
+      pressed Run — the failure mode is per-CALLER, and there were three callers.
+      */
+      column: step.taskColumn ? (step.taskColumn as import("@fusion/core").Column) : undefined,
       modelProvider: step.modelProvider?.trim() || undefined,
       modelId: step.modelId?.trim() || undefined,
       thinkingLevel: (step.thinkingLevel?.trim() || undefined) as import("@fusion/core").TaskCreateInput["thinkingLevel"],

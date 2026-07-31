@@ -84,12 +84,6 @@ const emptyWorkflowPayload: BoardWorkflowsPayload = {
   taskWorkflowIds: {},
 };
 
-const flagOffPayload: BoardWorkflowsPayload = {
-  flagEnabled: false,
-  defaultWorkflowId: "builtin:coding",
-  workflows: [],
-  taskWorkflowIds: {},
-};
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -146,9 +140,9 @@ type Breakpoint = "desktop" | "mobile";
 
 function renderSurface(surface: Surface, projectId = "project-a") {
   if (surface === "Board") {
-    return render(<Board {...boardProps} projectId={projectId} workflowColumnsEnabled settingsLoaded />);
+    return render(<Board {...boardProps} projectId={projectId} />);
   }
-  return render(<ListView {...listProps} projectId={projectId} workflowColumnsEnabled settingsLoaded />);
+  return render(<ListView {...listProps} projectId={projectId} />);
 }
 
 function expectWorkflowLayout(surface: Surface) {
@@ -161,19 +155,6 @@ function expectWorkflowLayout(surface: Surface) {
 
   expect(screen.getByTestId("workflow-switcher")).toBeInTheDocument();
   expect(screen.queryByTestId("list-workflows-skeleton")).toBeNull();
-}
-
-function expectLegacyLayout(surface: Surface) {
-  if (surface === "Board") {
-    expect(document.querySelector(".board-workflow-columns")).toBeNull();
-    expect(document.querySelector(".board-workflows-skeleton")).toBeNull();
-    expect(document.querySelectorAll('.column[data-workflow-mode="false"]').length).toBeGreaterThan(0);
-    return;
-  }
-
-  expect(screen.queryByTestId("list-workflows-skeleton")).toBeNull();
-  expect(screen.queryByTestId("workflow-switcher")).toBeNull();
-  expect(screen.getByTestId("list-split-layout")).toBeInTheDocument();
 }
 
 function expectSkeleton(surface: Surface, empty = false) {
@@ -207,19 +188,6 @@ describe("no legacy-board flash before workflow lanes load (FN-6776)", () => {
     cleanup();
     window.sessionStorage.clear();
     vi.unstubAllGlobals();
-  });
-
-  it.each<Surface>(["Board", "ListView"])("%s renders legacy immediately when workflowColumns is known off", (surface) => {
-    mockViewport(1024);
-    apiMocks.fetchBoardWorkflows.mockReturnValue(new Promise(() => {}));
-
-    if (surface === "Board") {
-      render(<Board {...boardProps} projectId="project-a" workflowColumnsEnabled={false} settingsLoaded />);
-    } else {
-      render(<ListView {...listProps} projectId="project-a" workflowColumnsEnabled={false} settingsLoaded />);
-    }
-
-    expectLegacyLayout(surface);
   });
 
   it.each<[Surface, Breakpoint]>([
@@ -269,19 +237,6 @@ describe("no legacy-board flash before workflow lanes load (FN-6776)", () => {
     expectLegacyLayoutHiddenForEmpty(surface);
   });
 
-  it.each<Surface>(["Board", "ListView"])("%s renders skeleton while settings are not loaded", (surface) => {
-    mockViewport(1024);
-    apiMocks.fetchBoardWorkflows.mockReturnValue(new Promise(() => {}));
-
-    if (surface === "Board") {
-      render(<Board {...boardProps} projectId="project-a" workflowColumnsEnabled={false} settingsLoaded={false} />);
-    } else {
-      render(<ListView {...listProps} projectId="project-a" workflowColumnsEnabled={false} settingsLoaded={false} />);
-    }
-
-    expectSkeleton(surface);
-  });
-
   it.each<Surface>(["Board", "ListView"])("%s keeps the skeleton on a failed first fetch instead of flashing legacy (non-authoritative failure)", async (surface) => {
     mockViewport(1024);
     apiMocks.fetchBoardWorkflows.mockRejectedValue(new Error("network"));
@@ -306,23 +261,35 @@ describe("no legacy-board flash before workflow lanes load (FN-6776)", () => {
     expectWorkflowLayout(surface);
 
     if (surface === "Board") {
-      view.rerender(<Board {...boardProps} projectId="project-b" workflowColumnsEnabled settingsLoaded />);
+      view.rerender(<Board {...boardProps} projectId="project-b" />);
     } else {
-      view.rerender(<ListView {...listProps} projectId="project-b" workflowColumnsEnabled settingsLoaded />);
+      view.rerender(<ListView {...listProps} projectId="project-b" />);
     }
 
     expectSkeleton(surface);
   });
 
-  it.each<Surface>(["Board", "ListView"])("%s ignores another project's cache when flag-off payload is cached locally", (surface) => {
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Was "ignores another project's cache when flag-off payload is cached locally".
+  The flag-off payload was only the VEHICLE for making the two projects' cached
+  payloads observably different; the invariant under test is per-project cache
+  isolation. Rewritten to use an EMPTY-lane payload for project-a instead, so the
+  invariant keeps its coverage after the flag is gone: project-b's lanes must not
+  be rendered for project-a, and project-a's own cached payload wins.
+  */
+  it.each<Surface>(["Board", "ListView"])("%s ignores another project's cache when this project has its own cached payload", (surface) => {
     mockViewport(1024);
     writeBoardWorkflowsCache("project-b", workflowPayload);
-    writeBoardWorkflowsCache("project-a", flagOffPayload);
+    writeBoardWorkflowsCache("project-a", emptyWorkflowPayload);
     apiMocks.fetchBoardWorkflows.mockReturnValue(new Promise(() => {}));
 
     renderSurface(surface, "project-a");
 
-    expectLegacyLayout(surface);
+    // project-a cached an empty-lane payload, so it must show the EMPTY state —
+    // never project-b's lanes, and never the generic still-loading skeleton.
+    expectSkeleton(surface, true);
+    expectLegacyLayoutHiddenForEmpty(surface);
   });
 });
 

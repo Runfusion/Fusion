@@ -502,7 +502,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setAgents([]);
     setAgentsProjectId(undefined);
     /*
-    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    FNXC:QuickAddAttachments 2026-07-23-00:00:
     Pending files belong to the project where they were selected. Clear them on a project switch so
     an attachment cannot be uploaded into the next project's newly created task, and release image URLs.
     */
@@ -729,7 +729,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   /*
-  FNXC:QuickAddAttachments 2026-08-03-00:00:
+  FNXC:QuickAddAttachments 2026-07-23-00:00:
   Quick Add must accept exactly the task-store attachment MIME set through picker, paste, and drop.
   Only images receive object URLs and preview controls; all other accepted files remain uploadable file chips.
   */

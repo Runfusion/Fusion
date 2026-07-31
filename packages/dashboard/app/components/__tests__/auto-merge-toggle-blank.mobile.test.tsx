@@ -7,7 +7,40 @@ import { MOBILE_MEDIA_QUERY } from "../../hooks/useViewportMode";
 import type { Task } from "@fusion/core";
 
 vi.mock("../../api", () => ({
-  fetchBoardWorkflows: vi.fn().mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} }),
+  /*
+  FNXC:WorkflowColumns 2026-07-30-07:10:
+  The board needs a RESOLVED lane payload or it renders the skeleton forever. Board.tsx:874 shows
+  `BoardWorkflowSkeleton` whenever `boardWorkflows === null || boardWorkflows.workflows.length === 0`,
+  so an empty `workflows: []` leaves the board at `data-testid="board-workflows-skeleton"` with no
+  lanes, no task cards and no Auto-merge toggle — which is why every query here failed with
+  "Unable to find an accessible element".
+
+  This fixture passed `flagEnabled: false` to get the LEGACY board. U12/R9 deleted that path and
+  dropped the `flagEnabled` conjunct from the skeleton condition, so the flag now selects nothing and
+  the empty lane list is all that remains. These are the default lifecycle lanes a real board sends.
+
+  Inlined rather than referencing a module const: `vi.mock` factories are HOISTED above const
+  declarations, so a named payload above this block fails with "Cannot access before initialization"
+  and the file reports "no tests".
+  */
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({
+    flagEnabled: true,
+    defaultWorkflowId: "builtin:coding",
+    workflows: [
+      {
+        id: "builtin:coding",
+        name: "Coding",
+        columns: [
+          { id: "todo", name: "Todo", flags: { intake: true, hold: true } },
+          { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
+          { id: "in-review", name: "In Review", flags: { mergeBlocker: true, humanReview: true } },
+          { id: "done", name: "Done", flags: { complete: true } },
+          { id: "archived", name: "Archived", flags: { archived: true } },
+        ],
+      },
+    ],
+    taskWorkflowIds: {},
+  }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
 }));
 
@@ -202,6 +235,25 @@ function installAnimationFrame() {
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
 }
 
+/*
+FNXC:WorkflowColumns 2026-07-30-07:30:
+Render, then FLUSH the board-workflows promise before asserting. `Board` resolves its lane payload
+asynchronously and shows `BoardWorkflowSkeleton` until it lands (Board.tsx:874), so a synchronous
+assertion right after `render()` always saw "Loading workflow lanes" and no lanes. These fixtures
+used to pass `flagEnabled: false` and get the LEGACY board, which rendered synchronously — U12/R9
+deleted that path, so the await is now required rather than optional.
+
+Wrapped in `act` so the resulting state update is applied before the queries run, and kept to a
+microtask flush (not a timer advance) because this suite runs on fake timers.
+*/
+async function renderBoardWithLanes(ui: React.ReactElement) {
+  const result = render(ui);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return result;
+}
+
 function expectBoardVisible() {
   expect(document.querySelector("main.board")).not.toBeNull();
   expect(screen.getByText("In Review")).toBeInTheDocument();
@@ -219,7 +271,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the mobile board visible after an Android viewport resize triggered by toggling auto-merge", () => {
+  it("keeps the mobile board visible after an Android viewport resize triggered by toggling auto-merge", async () => {
     const viewportSpy = mockViewport(375);
     const visualViewport = createVisualViewport(1);
     Object.defineProperty(window, "visualViewport", {
@@ -228,7 +280,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
     installAnimationFrame();
 
-    render(<BoardHarness tasks={[createTask("FN-5936", "in-review")]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[createTask("FN-5936", "in-review")]} />);
 
     const board = document.querySelector("main.board") as HTMLElement;
     expect(screen.getByTestId("task-card-FN-5936")).toHaveTextContent("true");
@@ -261,7 +313,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("round-trips auto-merge on mobile Android with an empty in-review column without blanking", () => {
+  it("round-trips auto-merge on mobile Android with an empty in-review column without blanking", async () => {
     const viewportSpy = mockViewport(375);
     const visualViewport = createVisualViewport(1);
     Object.defineProperty(window, "visualViewport", {
@@ -270,7 +322,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
     installAnimationFrame();
 
-    render(<BoardHarness tasks={[]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[]} />);
     const board = document.querySelector("main.board") as HTMLElement;
 
     act(() => {
@@ -303,7 +355,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("keeps populated task-card and worktree surfaces visible when auto-merge toggles on mobile", () => {
+  it("keeps populated task-card and worktree surfaces visible when auto-merge toggles on mobile", async () => {
     const viewportSpy = mockViewport(375);
     const visualViewport = createVisualViewport(1);
     Object.defineProperty(window, "visualViewport", {
@@ -312,7 +364,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
     installAnimationFrame();
 
-    render(
+    await renderBoardWithLanes(
       <BoardHarness
         showWorktreeGrouping
         tasks={[
@@ -337,7 +389,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("re-anchors on the mobile iOS pageshow path after toggling auto-merge", () => {
+  it("re-anchors on the mobile iOS pageshow path after toggling auto-merge", async () => {
     const viewportSpy = mockViewport(375);
     Object.defineProperty(window, "visualViewport", {
       configurable: true,
@@ -345,7 +397,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
     installAnimationFrame();
 
-    render(<BoardHarness tasks={[createTask("FN-IOS", "in-review")]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[createTask("FN-IOS", "in-review")]} />);
     const board = document.querySelector("main.board") as HTMLElement;
 
     act(() => {
@@ -367,11 +419,11 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("keeps the board visible on tablet where the mobile stabilization effect is disabled", () => {
+  it("keeps the board visible on tablet where the mobile stabilization effect is disabled", async () => {
     const viewportSpy = mockViewport(900);
     installAnimationFrame();
 
-    render(<BoardHarness tasks={[createTask("FN-TABLET", "in-review")]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[createTask("FN-TABLET", "in-review")]} />);
 
     const toggle = screen.getByRole("checkbox", { name: "Auto-merge" });
     expect(toggle).toBeChecked();
@@ -384,11 +436,11 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("keeps the board visible on desktop after toggling auto-merge", () => {
+  it("keeps the board visible on desktop after toggling auto-merge", async () => {
     const viewportSpy = mockViewport(1280);
     installAnimationFrame();
 
-    render(<BoardHarness tasks={[createTask("FN-DESKTOP", "in-review")]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[createTask("FN-DESKTOP", "in-review")]} />);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Auto-merge" }));
 
@@ -406,7 +458,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     });
     installAnimationFrame();
 
-    render(<RollbackBoardHarness tasks={[createTask("FN-ROLLBACK", "in-review")]} />);
+    await renderBoardWithLanes(<RollbackBoardHarness tasks={[createTask("FN-ROLLBACK", "in-review")]} />);
 
     const toggle = screen.getByRole("checkbox", { name: "Auto-merge" });
     expect(toggle).toBeChecked();
@@ -423,7 +475,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     viewportSpy.mockRestore();
   });
 
-  it("shows a visible page error boundary fallback instead of a blank board when a board child throws", () => {
+  it("shows a visible page error boundary fallback instead of a blank board when a board child throws", async () => {
     const viewportSpy = mockViewport(375);
     const visualViewport = createVisualViewport(1);
     Object.defineProperty(window, "visualViewport", {
@@ -433,7 +485,7 @@ describe("auto-merge toggle mobile blank regression", () => {
     installAnimationFrame();
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    render(<BoardHarness tasks={[createTask("FN-ERROR", "in-review")]} />);
+    await renderBoardWithLanes(<BoardHarness tasks={[createTask("FN-ERROR", "in-review")]} />);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Auto-merge" }));
 

@@ -8,7 +8,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
+import {TaskStore} from "../store.js";
 import {resolveEntryColumnId} from "../workflow-reconciliation.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import * as schema from "../postgres/schema/index.js";
@@ -32,6 +32,7 @@ import {AsyncGoalStore} from "../async-goal-store.js";
 import {normalizeTaskCommitAssociation} from "../task-lineage.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
+import {preserveResolvedTaskWedgeEpisode} from "../task-store/persistence.js";
 import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkflowSerialization} from "../task-store/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async-audit.js";
@@ -102,6 +103,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
         return;
       }
       const existingRow = store.pgRowToTaskRow(pgRow);
+      preserveResolvedTaskWedgeEpisode(existingRow, task);
       const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
       if (deletedAt) {
         store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
@@ -347,8 +349,14 @@ export async function getTaskColumnsImpl(store: TaskStore, ids: string[]): Promi
 export async function prepareWorkflowMovePolicyPreflightImpl(store: TaskStore, id: string, toColumn: ColumnId, options: MoveTaskOptions | undefined, internal: MoveTaskInternalOptions,): Promise<MoveTaskInternalOptions["movePolicyPreflight"]> {
     const task = await store.readTaskForMove(id);
     const moveSource = options?.moveSource ?? "engine";
-    const mergedSettingsForMove = await store.getSettingsFast();
-    if (!isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove)) return undefined;
+    /*
+    FNXC:WorkflowColumns 2026-07-30-04:00 (U12 — flipped ATOMICALLY with moves.ts):
+    The compatibility-flag gate is DELETED. This preflight computes the `movePolicyPreflight` that
+    `moves.ts` consumes and validates, so the two could never be flipped independently: un-gating
+    this alone would evaluate workflow move policies — with their plugin-gate side effects — while
+    the branch consuming the result stayed off, and un-gating `moves.ts` alone would validate against
+    a preflight that was never computed. Both readers go in the same commit for that reason.
+    */
     if (task.column === toColumn) return undefined;
 
     /* FNXC:WorkflowModelLanes 2026-07-14-16:31: PostgreSQL move preflight must validate against the task's migrated workflow selection, not the synchronous builtin:coding fallback. */

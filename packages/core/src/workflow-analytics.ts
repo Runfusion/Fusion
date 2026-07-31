@@ -1,3 +1,5 @@
+import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
@@ -16,6 +18,18 @@ export interface WorkflowAnalyticsQuery {
   pricingOverrides?: ModelPricingOverrides;
   /** Workflow id used for tasks without an explicit task_workflow_selection row. */
   defaultWorkflowId?: string;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-03:20 (batch-core feed):
+  Resolved trait flags per column NAME, so the wip/review tallies below come from the board's own
+  lanes. Omitted, core's role helpers fall back to the legacy ids — that degraded mode lives in
+  `column-roles.ts` and is tested there, so this file carries no hand-written fallback.
+
+  The failure this fixes is a SILENT ZERO. On a renamed board neither literal matched any row, so the
+  analytics surface reported `tasksInProgress: 0` and `tasksInReview: 0` beside token and cost totals
+  that were entirely correct. Plausible-looking numbers are worse than missing ones: a zero next to a
+  populated cost column reads as "nobody is working", not as "this metric is broken".
+  */
+  columnFlagsByName?: ReadonlyMap<string, ColumnRoleTraitFlags>;
 }
 
 export interface WorkflowMetricTotals {
@@ -278,8 +292,9 @@ function buildWorkflowAnalytics(
 
   for (const row of rows.currentRows) {
     const summary = ensureSummary(row.workflowId);
-    if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
-    if (row.columnName === "in-review") summary.tasksInReview = row.count;
+    const columnFlags = query.columnFlagsByName?.get(row.columnName);
+    if (isWipColumnRole(columnFlags, row.columnName)) summary.tasksInProgress = row.count;
+    if (isReviewColumnRole(columnFlags, row.columnName)) summary.tasksInReview = row.count;
   }
 
   for (const row of rows.fileRows) {
@@ -336,10 +351,27 @@ function buildWorkflowAnalytics(
 export async function aggregateWorkflowAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: WorkflowAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-18:30:
+  The store, used ONLY to resolve which columns carry the complete / wip / human-review traits.
+
+  These queries filtered on `t."column" = 'done'` and `IN ('in-progress','in-review')`. Those ids sit
+  inside SQL strings, which the lifecycle census cannot see because it parses TypeScript comparisons —
+  so the sweep that converted this file's TS guards left the queries alone and the file scored as
+  converted. On a renamed board every per-workflow completed count and throughput figure reads ZERO
+  while the board is busy, with no error.
+
+  Resolved per PROJECT: this aggregates a whole project, so the union of a role's columns across its
+  workflows is the right set and a bound IN list is enough. (Per-task lanes need the
+  superset-then-decide-in-JS shape instead — see cleanupStaleMergeQueueRowsInTransaction.)
+
+  Omitted, the legacy ids answer, so an unconverted caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<WorkflowAnalytics> {
   const defaultWorkflowId = query.defaultWorkflowId ?? "builtin:coding";
   if ("ping" in dbOrLayer) {
-    return aggregateWorkflowAnalyticsAsync(dbOrLayer, query, defaultWorkflowId);
+    return aggregateWorkflowAnalyticsAsync(dbOrLayer, query, defaultWorkflowId, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -426,11 +458,62 @@ export async function aggregateWorkflowAnalytics(
  * returns it parsed) so it is re-stringified to feed the shared
  * countModifiedFiles helper unchanged.
  */
+/* The legacy active ids are always retained: the classifier's fallback recognises them, so they can
+   never be the "selected but unclassifiable" case this filter exists to prevent. */
+const LEGACY_ACTIVE_LANES: readonly string[] = ["in-progress", "in-review"];
+
 async function aggregateWorkflowAnalyticsAsync(
   layer: AsyncDataLayer,
   query: WorkflowAnalyticsQuery,
   defaultWorkflowId: string,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<WorkflowAnalytics> {
+  /*
+  FNXC:PostgresCommandCenterAnalytics 2026-07-30-21:20 (#2866 review — greptile P1 x2, and the second
+  one is a self-contradiction rather than an imprecision):
+
+  THE SQL FILTER AND THE ROW CLASSIFIER MUST DROP THE SAME COLUMNS.
+
+  `resolveProjectColumnsForRoles` unions every column any workflow gives the role, so a column id two
+  workflows reuse with DIFFERENT traits stays in the filter. `columnFlagsByName` — built by the
+  Command Center route and consumed ~200 lines below — deliberately DROPS such an id as conflicting,
+  on the argument that a merged entry double-counts (see its own note, #2803 review).
+
+  The two together produce rows that are SELECTED and then classified by nothing:
+  `columnFlagsByName.get("checking")` is undefined, so `isWipColumnRole` and `isReviewColumnRole` both
+  fall back to the legacy ids, `checking` matches neither, and the count silently evaporates. Worse
+  than either half alone — the filter says the lane counts, the classifier says it cannot say, and the
+  operator sees a workflow sitting at zero.
+
+  Aligning on the CLASSIFIER's answer is the conservative direction: a column it refuses to judge is
+  removed from the filter too, so the rows are never selected rather than selected and discarded. The
+  totals are unchanged (they were already lost); what changes is that the two halves now agree, and a
+  reader is not left hunting for where the rows went.
+
+  CONSEQUENTLY THIS IS UNCOVERED, AND THAT IS INHERENT, NOT AN OMISSION. Mutating the filter away
+  leaves the renamed-lane suite green, because the counts were already zero on both sides — the only
+  observable difference is whether a workflow with no other rows appears with zeros or is absent.
+  A test pinning THAT would be asserting an artifact of , not the invariant. The
+  invariant worth covering is the one the first finding names, and it needs the per-workflow map.
+
+  The FIRST finding — a project-wide union admitting one workflow's rows into another's completed
+  count — is real and NOT fixed here: unlike `team-analytics`, these rows carry a workflow id, so a
+  per-workflow lane map is feasible and is the right fix. It needs the lane resolution keyed by
+  workflow rather than by project, which changes this function's contract with its caller. Recorded on
+  the PR rather than folded into a review-response commit.
+  */
+  const droppedAsConflicting = (lane: string): boolean =>
+    query.columnFlagsByName !== undefined && !query.columnFlagsByName.has(lane);
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  const activeLanes = (laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["countsTowardWip", "humanReview"])]
+    : ["in-progress", "in-review"]
+  ).filter((lane) => LEGACY_ACTIVE_LANES.includes(lane) || !droppedAsConflicting(lane));
+  /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
+     into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
+  const inList = (lanes: readonly string[]) => sql.join(lanes.map((lane) => sql`${lane}`), sql`, `);
   const wfExpr = sql`COALESCE(NULLIF(s.workflow_id, ''), ${defaultWorkflowId})`;
 
   const tokFrom = query.from !== undefined ? sql`AND t.token_usage_last_used_at >= ${query.from}` : sql``;
@@ -470,7 +553,7 @@ async function aggregateWorkflowAnalyticsAsync(
     sql`SELECT ${wfExpr} AS "workflowId", count(*)::int AS count
         FROM project.tasks t
         LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
-        WHERE t."column" = 'done' AND t.column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        WHERE t."column" IN (${inList(completeLanes)}) AND t.column_moved_at IS NOT NULL ${compFrom} ${compTo}
         GROUP BY 1`,
   )) as Array<{ workflowId: string; count: number }>;
   const completedRows: CountByWorkflowRow[] = completedRowsRaw.map((r) => ({
@@ -484,7 +567,7 @@ async function aggregateWorkflowAnalyticsAsync(
     sql`SELECT ${wfExpr} AS "workflowId", t."column" AS "columnName", count(*)::int AS count
         FROM project.tasks t
         LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
-        WHERE t."column" IN ('in-progress', 'in-review') ${curFrom} ${curTo}
+        WHERE t."column" IN (${inList(activeLanes)}) ${curFrom} ${curTo}
         GROUP BY 1, t."column"`,
   )) as Array<{ workflowId: string; columnName: string; count: number }>;
   const currentRows: Array<CountByWorkflowRow & { columnName: string }> = currentRowsRaw.map((r) => ({

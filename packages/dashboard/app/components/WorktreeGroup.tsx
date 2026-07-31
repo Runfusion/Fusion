@@ -109,7 +109,15 @@ function WorktreeGroupComponent({
   const resolveNearDuplicateCanonicalInactive = (task: Task): boolean | undefined => {
     const nearDuplicateOf = task.sourceMetadata?.nearDuplicateOf;
     if (typeof nearDuplicateOf !== "string" || !allTasks) return undefined;
-    return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
+    const canonical = allTasks.find((candidate) => candidate.id === nearDuplicateOf);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:30 (repo-wide seam scan):
+    Supply the CANONICAL's own flags — the second parameter core added and no caller here passed.
+    Without it `isActiveNearDuplicateColumn` falls to the legacy ids, so on a renamed board a
+    canonical resting in an active lane read as INACTIVE and the duplicate badge stopped warning
+    about a live twin. `getTaskColumnFlags` is defined just below and already resolves per task.
+    */
+    return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
   };
   const getTaskContextMenuColumns = (task: Task) => taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns;
   const getTaskColumnFlags = (task: Task) => getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags;

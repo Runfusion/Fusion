@@ -2,6 +2,7 @@ import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
 import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
+import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
 
@@ -44,6 +45,17 @@ export interface ColumnLifecycleClass {
   archived: boolean;
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-10:15 DELIBERATE-LITERAL:
+The named legacy default of the injected-classifier seam, and the only place these two ids remain in this
+file. It is the answer when no workflow can be resolved — the documented degraded mode — not an
+unconverted guard: `decideIssueAction`'s `classify` parameter defaults to it so a caller without an IR
+keeps today's mapping exactly.
+
+Marked deliberate only now that the production caller actually passes a RESOLVED classifier. Before that
+this default was the live path on every move, and exempting it would have hidden the real defect behind a
+marker — which is why the wiring change and this marker are in the same commit.
+*/
 export const legacyColumnLifecycleClass = (columnId: string): ColumnLifecycleClass => ({
   complete: columnId === "done",
   archived: columnId === "archived",
@@ -168,12 +180,72 @@ export class GitHubTrackingStateService {
   }
 
   private async handleTaskMoved(store: TaskStore, event: TaskMovedEvent): Promise<void> {
-    const decision = decideIssueAction(event.from, event.to);
-    if (!decision) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-10:15 (fleet phase — THE SEAM WAS NEVER WIRED):
+    `decideIssueAction` has taken an injectable `classify` since U12/R2, and the header above states the
+    defect it fixed: "a user-authored workflow whose terminal column is called something else never closed
+    its linked GitHub issue". But this — the ONLY production caller — passed no classifier, so every real
+    move fell through to `legacyColumnLifecycleClass` and the described bug was still live. The seam was
+    reachable from tests only.
+
+    That is the same shape as this branch's earlier finding on the tracking-comment guard: a conversion
+    that reads as done, with the resolved path unreachable in production. The lesson is that adding the
+    seam and wiring it are two changes, and only the second one fixes anything.
+
+    ORDER MATTERS, and it is inverted from the original. `decideIssueAction` ran FIRST here, before the
+    tracking-enabled check, because comparing two strings is free. Resolving a workflow is not, so the
+    cheap property read now short-circuits first and only tracked tasks resolve — the same ordering
+    `github-tracking-comments.ts` and its GitLab twin settled on. Behaviour is unchanged for untracked
+    tasks: they returned without acting before and still do.
+    */
+    if (event.task.githubTracking?.enabled !== true) {
       return;
     }
 
-    if (event.task.githubTracking?.enabled !== true) {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (PR #2754 review — greptile):
+    EVERY TERMINAL LANE, NOT THE FIRST ONE. `LifecycleColumns` names one column per role by design
+    (#2721 pinned that), so a workflow declaring `complete` or `archived` on two columns had the second
+    invisible here: moving a card there left the linked GitHub issue OPEN, and moving it back out never
+    reopened one.
+
+    Core's `resolveTerminalColumns` does not help — it is the same singular pair, one `complete` and one
+    `archived`. The flag sets are the membership answer.
+
+    RESOLUTION FAILURE vs A RESOLVED ABSENCE, the distinction this program keeps paying for (#2731,
+    #2733, #2734): `ir === undefined` means the workflow could not be READ, and the legacy ids are the
+    only answer available. A resolved IR that declares no complete lane is an ANSWER — moving a card
+    somewhere is not "completing" it on a board with no completion lane — so the empty set is used as-is
+    rather than falling back to `done`.
+    */
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-10:45 (batch-core — the THIRD state):
+    The note above draws the right line between "could not read" and "read, and there is no complete
+    lane". There is a third case that looks exactly like the second and means the opposite, and this
+    classifier was silently on the wrong side of it.
+
+    `synthesizeDefaultColumns` upgrades a v1 graph by emitting every default column with `traits: []`.
+    Such a board resolves cleanly, so `ir !== undefined`, and every flag set comes back EMPTY — while
+    its `done` column plainly exists and holds finished cards. Treating that as "this board does not
+    complete anything" made `decideIssueAction` return null for every transition, so on a v1-upgraded
+    board GitHub tracking NEVER closed a source issue. And because the source-issue commenter defers to
+    this service whenever tracking targets the same issue, neither of them posted: the completion
+    comment disappeared entirely, with nothing logged as an error.
+
+    `declaresAnyLifecycleTrait` separates the two. A workflow that expresses no trait on ANY column has
+    not made a statement about its lifecycle and keeps the legacy vocabulary; a v2 board that declares
+    traits elsewhere but no complete lane still gets the empty set used as-is, which is the behaviour
+    the note above argues for and which remains correct.
+    */
+    const ir = await resolveWorkflowIrForTask(store, event.task.id).catch(() => undefined);
+    const traitsExpressed = ir !== undefined && declaresAnyLifecycleTrait(ir);
+    const completeLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "complete");
+    const archivedLanes = ir === undefined || !traitsExpressed ? undefined : columnsWithFlag(ir, "archived");
+    const decision = decideIssueAction(event.from, event.to, (columnId) => ({
+      complete: completeLanes === undefined ? columnId === "done" : completeLanes.includes(columnId),
+      archived: archivedLanes === undefined ? columnId === "archived" : archivedLanes.includes(columnId),
+    }));
+    if (!decision) {
       return;
     }
 

@@ -35,7 +35,7 @@ vi.mock("../../pi.js", () => ({
 }));
 
 vi.mock("../../logger.js", () => ({
-  createLogger: vi.fn(() => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() })),
+  createLogger: vi.fn(() => ({ log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() })),
 }));
 
 vi.mock("../../agent-session-helpers.js", async (importOriginal) => {

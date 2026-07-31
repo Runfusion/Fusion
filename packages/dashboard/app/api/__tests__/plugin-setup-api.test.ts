@@ -17,10 +17,24 @@ describe("plugin setup API helpers", () => {
     const result = await fetchPluginSetupStatus("plugin/id");
 
     expect(result).toEqual({ hasSetup: true, status: "installed" });
+    /*
+    FNXC:TaskDeleteAttribution 2026-07-30-06:20:
+    Header keys are LOWERCASE and now include the client stamp. `app/api/client.ts` builds request
+    headers through a `Headers` object (which lower-cases every key) and sets
+    `x-fusion-client: dashboard-ui` on every dashboard-originated request so the server can attribute
+    the caller — the FN-8609 delete-attribution surface.
+
+    This asserted `"Content-Type"`, and `objectContaining` compares keys case-SENSITIVELY, so it broke
+    on the casing alone. Rather than just lower-casing the key, this now pins the client stamp too:
+    that header is the point of the feature, and nothing else in this file covered it.
+    */
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/plugins/plugin%2Fid/setup-status",
       expect.objectContaining({
-        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        headers: expect.objectContaining({
+          "content-type": "application/json",
+          "x-fusion-client": "dashboard-ui",
+        }),
       }),
     );
   });

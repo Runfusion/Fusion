@@ -5,7 +5,7 @@ import { createLogger } from "../logger.js";
 import { logSeverityManifest } from "../../../engine/src/__tests__/log-severity-manifest.js";
 
 /*
-FNXC:EngineDiagnostics 2026-08-01-10:46:
+FNXC:EngineDiagnostics 2026-07-26-10:46:
 Core mirrors engine FUSION_DEBUG behavior; both implementations must preserve
 silent-by-default routine diagnostics and the TUI's info severity marker.
 */
@@ -31,7 +31,7 @@ describe("core logger debug gating", () => {
 });
 
 /*
-FNXC:EngineDiagnostics 2026-08-01-11:12:
+FNXC:EngineDiagnostics 2026-07-26-11:12:
 FN-8603 requires core diagnostics to use the shared logger rather than bare
 console output, preserving severity markers and FUSION_DEBUG gating.
 */

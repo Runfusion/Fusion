@@ -412,3 +412,59 @@ describe("getUnifiedTaskProgress", () => {
     expect(progress.completed).toBe(2);
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-15:50:
+
+THE INVARIANT: the running-gate badge appears in the board's OWN review lane.
+
+CENSUS-INVISIBLE, in a HALF-CONVERTED file. `REVIEW_LANE_COLUMNS` is a `Set` literal — a definition,
+not a comparison — sitting under a Plan Review badge whose own column restriction had already been
+removed. One converted badge and one unconverted one, deciding sibling questions about the same card.
+
+Keyed on the literal, the code-review / browser-verification / post-merge badges never appeared on a
+renamed board: the gate WAS running and the card showed nothing, which reads as an idle card rather
+than a missing badge. Cosmetic in consequence, but it is the surface an operator watches to know a
+review is in flight.
+
+The caller is wired in the same change — `ListView` already owns `columnFlagsById`, so the resolved
+answer was one lookup away. An unwired parameter is the class this program's caller audit found five
+times; adding a sixth would have been careless.
+
+REVERT PROOF, measured: restore the literal gate and the renamed-lane case returns undefined.
+*/
+describe("the running-gate badge resolves the review lane", () => {
+  const REVIEW_FLAGS = { mergeBlocker: true } as never;
+  /* `makeTask` is file-scoped but `runningCodeReview` is not, so the shape is restated here. My
+     first draft hand-rolled `status: "in-progress"` and produced no RUNNING item at all — a gate
+     counts as running only when it is `pending` WITH a `startedAt` — so the renamed case failed for
+     the wrong reason. The fixture has to match the branch under test. */
+  const codeReviewRunning = (column: string) => ({
+    ...makeTask({
+      enabledWorkflowSteps: ["code-review"],
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        status: "pending" as const,
+        startedAt: "2026-07-11T12:00:00.000Z",
+      }],
+    }),
+    column,
+  }) as never;
+
+  it("badges a card in a RENAMED review lane", () => {
+    /* testId is `code-review`, not the plan-review badge's `reviewing` — I asserted the latter first
+       and the failure was mine, not the product's. */
+    expect(getRunningOptionalGateBadge(codeReviewRunning("signoff"), REVIEW_FLAGS)?.testId).toBe("code-review");
+  });
+
+  it("still does not badge a card outside the review lane", () => {
+    // The gate must stay a gate — badging everywhere is its own bug.
+    expect(getRunningOptionalGateBadge(codeReviewRunning("building"), { countsTowardWip: true } as never)).toBeUndefined();
+  });
+
+  it("keeps the legacy id when no flags are supplied", () => {
+    expect(getRunningOptionalGateBadge(codeReviewRunning("in-review"))?.testId).toBe("code-review");
+    expect(getRunningOptionalGateBadge(codeReviewRunning("signoff"))).toBeUndefined();
+  });
+});

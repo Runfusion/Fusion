@@ -365,6 +365,125 @@ describe("execute requeue loop guard", () => {
     });
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:50 (PR #2568 review — greptile):
+  Both fixes below were UNPROVEN when written: I mutated each and the existing 17
+  cases stayed green, which is the same "converted but untested" state this program
+  keeps finding in other people's work. These two pin them.
+  */
+  it("treats a LEGACY terminal column as terminal even on a renamed board", async () => {
+    /*
+    `resolveWorkflowIrForTask` does not throw when a definition is missing or corrupt —
+    it returns the BUILT-IN IR. So the catch alone left the common degraded case
+    resolving terminals that exclude the card's own column, and the guard went inert
+    exactly as it did before the conversion.
+
+    Union with the legacy pair closes it. Over-inclusion is the safe direction here:
+    skipping a park costs a cycle, while moving a FINISHED card out of its terminal
+    column is the failure the conversion exists to prevent.
+
+    The renamed workflow is driven through the store rather than assumed — the shared
+    mock resolves `builtin:coding` by default, whose terminals already contain `done`,
+    so without this override the assertion would pass whether or not the union exists.
+    */
+    const h = harness(
+      task({
+        id: "FN-2568-LEGACY-TERMINAL",
+        column: "done",
+        blockedBy: "FN-BLOCKER",
+        steps: [],
+      }),
+      [task({ id: "FN-BLOCKER", column: "todo" })],
+    );
+    const renamedIr = {
+      version: "v2",
+      id: "custom:renamed",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "queued", name: "Q", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "building", name: "B", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "shipped", name: "S", traits: [{ trait: "complete" }] },
+      ],
+    };
+    h.store.getTaskWorkflowSelection.mockReturnValue({ workflowId: "custom:renamed", stepIds: [] });
+    h.store.getTaskWorkflowSelectionAsync.mockResolvedValue({ workflowId: "custom:renamed", stepIds: [] });
+    (h.store as unknown as { getWorkflowDefinition: unknown }).getWorkflowDefinition =
+      vi.fn().mockResolvedValue({ ir: renamedIr });
+
+    const parked = await (h.executor as any).parkCompletedBlockedTask(
+      await h.store.getTask("FN-2568-LEGACY-TERMINAL"),
+      "dependency",
+      "test",
+      true,
+    );
+
+    expect(parked).toBe(false);
+    expect(h.live).toMatchObject({ column: "done" });
+    expect(h.live.pausedReason).not.toBe(COMPLETED_BLOCKED_PAUSE_REASON);
+  });
+
+  it("uses the LIVE column, not the stale snapshot, when deciding whether to move", async () => {
+    /*
+    The second half of the post-await re-read, and it needed its own case: the pause
+    test above passes even when the MOVE guard still reads the stale snapshot, so
+    without this one half of that fix was unproven.
+
+    Here the card has already reached the rebound column while the resolution was in
+    flight. Reading the stale snapshot issues a redundant move; reading the live row
+    correctly skips it.
+    */
+    const h = harness(
+      task({
+        id: "FN-2568-STALE-COLUMN",
+        column: "in-progress",
+        blockedBy: "FN-BLOCKER",
+        steps: [],
+      }),
+      [task({ id: "FN-BLOCKER", column: "todo" })],
+    );
+
+    const staleSnapshot = { ...(await h.store.getTask("FN-2568-STALE-COLUMN")) };
+    // Something else lands the card in the rebound column mid-await.
+    await h.store.moveTask("FN-2568-STALE-COLUMN", "todo" as never, { preservePause: true } as never);
+    h.store.moveTask.mockClear();
+
+    await (h.executor as any).parkCompletedBlockedTask(staleSnapshot, "dependency", "test", true);
+
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("honours a pause that lands DURING the workflow resolution await", async () => {
+    /*
+    The conversion introduced the first `await` between this method's pause guard and
+    its writes, so the caller's `task` snapshot can be stale by the time they run. A
+    user pause arriving in that window is the least forgivable case to steamroll.
+    */
+    const h = harness(
+      task({
+        id: "FN-2568-RACE",
+        column: "in-progress",
+        blockedBy: "FN-BLOCKER",
+        steps: [],
+      }),
+      [task({ id: "FN-BLOCKER", column: "todo" })],
+    );
+
+    const staleSnapshot = { ...(await h.store.getTask("FN-2568-RACE")) };
+    // The operator pauses while the IR resolution is in flight.
+    await h.store.updateTask("FN-2568-RACE", { paused: true, userPaused: true } as never);
+
+    const parked = await (h.executor as any).parkCompletedBlockedTask(
+      staleSnapshot,
+      "dependency",
+      "test",
+      true,
+    );
+
+    expect(parked).toBe(false);
+    expect(h.live).toMatchObject({ column: "in-progress", userPaused: true });
+  });
+
   it("parks the stale in-progress self-requeue marker path when completed work is blocked", async () => {
     const h = harness(
       task({

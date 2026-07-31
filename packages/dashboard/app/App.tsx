@@ -944,7 +944,7 @@ function AppInner() {
       handleChangeTaskView("board");
     }
     /*
-    FNXC:Navigation 2026-08-01-00:00:
+    FNXC:Navigation 2026-07-30-00:00:
     FN-8352 promotes Ideation to a default-off experimental top-level view.
     Redirect persisted and deep-linked disabled views to Board so MainContent
     never leaves users on a blank unavailable surface.
@@ -1449,8 +1449,22 @@ function AppInner() {
         moveTask,
         openAuthenticationSettings: () => openSettingsWithNav("authentication" as SectionId),
         addToast,
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+        Resolve Cancel's destination from the card's OWN workflow. Without this the banner moved to a
+        hardcoded `"todo"`, which `moves.ts` REJECTS on a board that does not declare it — the button
+        threw instead of cancelling. Wired here rather than left optional: an unsupplied parameter is
+        the inert shape this program has already found five times.
+        */
+        resolveCancelColumn: (taskId: string) => {
+          if (!footerBoardWorkflows) return undefined;
+          const workflow = footerBoardWorkflows.workflows.find(
+            (candidate) => candidate.id === (footerBoardWorkflows.taskWorkflowIds[taskId] ?? footerBoardWorkflows.defaultWorkflowId),
+          );
+          return workflow?.columns.find((column) => column.flags?.hold === true)?.id;
+        },
       }),
-    [addToast, currentProject?.id, modalManager, moveTask, retryTask],
+    [addToast, currentProject?.id, footerBoardWorkflows, modalManager, moveTask, retryTask],
   );
 
   const [shellOnboardingComplete, setShellOnboardingComplete] = useState(false);
@@ -1514,7 +1528,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1710,6 +1724,9 @@ function AppInner() {
     capacityRiskDismissed,
     capacityRiskSignal,
     handleDismissCapacityRisk,
+    // FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: reuse the footer's per-task column traits
+    // so main-content views resolve lifecycle roles instead of matching column names.
+    columnFlagsByTaskId: footerColumnFlagsByTaskId,
     AgentsView,
     ChatView,
     CommandCenter,

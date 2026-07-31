@@ -1,4 +1,5 @@
 import { createLogger } from "../logger.js";
+import { resolveLegacyStampReviewColumns } from "./task-store-helpers.js";
 
 const severityAuditLog = createLogger("core-task-mutation-ops");
 /**
@@ -12,16 +13,13 @@ const severityAuditLog = createLogger("core-task-mutation-ops");
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {TaskDeletedError} from "./errors.js";
+import {TaskDeletedError, TaskNotFoundError} from "./errors.js";
 import type {LegacyAutoMergeStampReconcileResult} from "../store.js";
 import {randomUUID} from "node:crypto";
 import {mkdir, readFile, writeFile, rename, unlink} from "node:fs/promises";
 import {join} from "node:path";
 import {existsSync} from "node:fs";
 import type {Task, TaskCreateInput, TaskAttachment, BoardConfig, ActivityLogEntry, ActivityEventType, Artifact, ArtifactCreateInput, RunMutationContext, MergeQueueEntry, BranchGroup, BranchGroupUpdate, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemKind, PrEntity, PrEntityUpdate} from "../types.js";
-import {COLUMNS} from "../types.js";
-import {resolveEntryColumnId} from "../workflow-reconciliation.js";
-import {BUILTIN_CODING_WORKFLOW_IR} from "../builtin-coding-workflow-ir.js";
 import {validateSettingValuePatch, WorkflowSettingRejectionError} from "../workflow-settings.js";
 import "../builtin-traits.js";
 import {toJson} from "../db.js";
@@ -29,7 +27,7 @@ import {resolveSameAgentDuplicateIntake} from "./task-creation.js";
 import {type TaskRow, TASK_COLUMN_DESCRIPTORS} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName} from "../task-store/shell-safety.js";
-import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, resolveActiveTaskWedgeEpisodeRow} from "../task-store/async-persistence.js";
 import {upsertArchivedTaskEntry} from "./async-archive-lineage.js";
 import {purgeTaskWorkflowSelectionRowsAsyncImpl} from "./workflow-definitions.js";
 import * as schema from "../postgres/schema/index.js";
@@ -44,6 +42,7 @@ import {appendConfigurationRevision, createConfigurationRevision, getConfigurati
 import {readProjectConfig, writeProjectConfig} from "./async-settings.js";
 import {publishSettingsUpdated} from "./settings-ops.js";
 import type {ConfigChangedBy, ConfigurationRevision} from "../types.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
     const columns = [
@@ -375,6 +374,61 @@ export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater
     });
   }
 
+export async function resolveTaskWedgeNotificationEpisodeImpl(
+  store: TaskStore,
+  id: string,
+  episodeId: string,
+): Promise<{ task: Task; resolved: boolean }> {
+  const layer = store.asyncLayer!;
+  const row = await resolveActiveTaskWedgeEpisodeRow(layer, id, episodeId, new Date().toISOString());
+  if (row) {
+    const task = await layer.transactionImmediate(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(schema.project.tasks)
+        .where(and(
+          eq(schema.project.tasks.projectId, layer.projectId?.trim() || "__legacy_unscoped__"),
+          eq(schema.project.tasks.id, id),
+        ))
+        .for("update");
+      const currentRow = rows[0];
+      /*
+      FNXC:TaskStateReconciliation 2026-07-29-22:17:
+      The live API must not return a stale successful resolution when deletion wins between the compare-and-set and projection lock. Reclassify the authoritative locked row through the same not-found/deleted contract used by the non-resolved path.
+      */
+      if (!currentRow) throw new TaskNotFoundError(id);
+      if (currentRow.deletedAt) throw new TaskDeletedError(id, currentRow.deletedAt as string);
+
+      const currentTask = store.rowToTask(store.pgRowToTaskRow(currentRow));
+      /*
+      FNXC:TaskStateReconciliation 2026-07-29-22:01:
+      Derived task JSON, cache, and lifecycle publication must remain ordered with PostgreSQL wedge mutations across processes. Lock and re-read the durable row before publication so a replacement episode either publishes first and is selected here, or waits and publishes after this resolved episode.
+
+      FNXC:TaskStateReconciliation 2026-07-29-17:43:
+      PostgreSQL commits wedge resolution before the task JSON projection runs. A projection failure must not report the committed mutation as failed; keep cache and lifecycle observers current while startup reconciliation repairs the derived file.
+      */
+      await store.writeTaskJsonFile(store.taskDir(id), currentTask).catch((error) => {
+        severityAuditLog.warn("Failed to project committed wedge resolution to task JSON", {
+          taskId: id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      if (store.isWatching) store.taskCache.set(id, { ...currentTask });
+      store.emitTaskLifecycleEventSafely("task:updated", [currentTask]);
+      return currentTask;
+    });
+    return { task, resolved: true };
+  }
+
+  const currentRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
+  if (!currentRow) throw new TaskNotFoundError(id);
+  if (currentRow.deletedAt) throw new TaskDeletedError(id, currentRow.deletedAt as string);
+  return {
+    task: store.rowToTask(store.pgRowToTaskRow(currentRow)),
+    resolved: false,
+  };
+}
+
 export function getWorkflowPromptOverridesImpl(_store: TaskStore, _workflowId: string, _projectId: string): Record<string, string> {
     /*
      * FNXC:SqliteFinalRemoval 2026-06-26:
@@ -598,6 +652,7 @@ export async function setCompletionHandoffAcceptedMarkerImpl(store: TaskStore, t
 
 export async function reconcileLegacyAutoMergeStampsImpl(store: TaskStore, options?: { apply?: boolean }): Promise<LegacyAutoMergeStampReconcileResult[]> {
     const candidates = await store.listLegacyAutoMergeStampCandidates();
+    const stampReviewColumns = await resolveLegacyStampReviewColumns(store);
     const results: LegacyAutoMergeStampReconcileResult[] = [];
 
     if (options?.apply !== true) {
@@ -606,7 +661,14 @@ export async function reconcileLegacyAutoMergeStampsImpl(store: TaskStore, optio
 
     for (const candidate of candidates) {
       const current = await store.getTask(candidate.id);
-      if (!current || !store.isLegacyAutoMergeStampCandidate(current)) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-13:00:
+      Re-check the freshly read row against the SAME resolved review vocabulary the candidate list
+      used. Left on the literal, this second check discarded every candidate the widened query had
+      just found on a renamed board — a half-converted pair where the read is resolved and the
+      re-check is not, which is the shape that makes a fix look applied and behave as before.
+      */
+      if (!current || !store.isLegacyAutoMergeStampCandidate(current, stampReviewColumns)) {
         continue;
       }
 
@@ -894,7 +956,7 @@ export async function registerArtifactImpl(store: TaskStore, input: ArtifactCrea
         FNXC:SqliteDualPathCleanup 2026-07-26-14:07:
         Artifact row insert is PostgreSQL-only via insertArtifactRowAsync.
         */
-        return insertArtifactRowAsync(store.asyncLayer!, input, stored);
+        return insertArtifactRowAsync(store.asyncLayer!, input, stored, await resolveArchivedLanes(store));
       } catch (error) {
         if (stored.absolutePath) {
           await unlink(stored.absolutePath).catch(() => undefined);
@@ -1113,52 +1175,6 @@ export async function listWorkflowOccupantTaskIdsImpl(store: TaskStore, workflow
     }
     return ids;
 }
-
-export async function evacuateCustomColumnsToLegacyImpl(store: TaskStore, trigger: "flag-off-init" | "flag-toggled-off",): Promise<{ scanned: number; evacuated: number }> {
-    let scanned = 0;
-    let evacuated = 0;
-
-    const legacyColumns = new Set<string>(COLUMNS);
-    // Nearest legacy landing column: the default workflow's entry column
-    // (triage). Falls back to "triage" defensively if the IR can't be resolved.
-    const targetColumn = resolveEntryColumnId(BUILTIN_CODING_WORKFLOW_IR) ?? "triage";
-
-    /*
-    FNXC:SqliteDualPathCleanup 2026-07-26-14:32:
-    Custom-column evacuation scans live tasks via PostgreSQL only.
-    */
-    const rows: Array<{ id: string; col: string }> = await store.asyncLayer!.db
-      .select({ id: schema.project.tasks.id, col: schema.project.tasks.column })
-      .from(schema.project.tasks)
-      .where(and(isNull(schema.project.tasks.deletedAt), taskProjectScope(store.asyncLayer!)));
-
-    for (const { id, col } of rows) {
-      scanned += 1;
-      // Already in a legacy column (the common case) — nothing to evacuate.
-      if (legacyColumns.has(col)) continue;
-      // Never disturb terminal cards (legacy terminal semantics — these column
-      // ids are never legacy here, but guard defensively for parity with the
-      // integrity pass).
-      if (col === "done" || col === "archived") continue;
-
-      await store.rehomeOccupant(id, targetColumn, "workflow-edit-rehome", {
-        evacuation: true,
-        trigger,
-        invalidColumn: col,
-      });
-      evacuated += 1;
-    }
-
-    if (evacuated > 0) {
-      storeLog.log("workflowColumns ON→OFF evacuation completed", {
-        phase: "evacuate-custom-columns",
-        trigger,
-        scanned,
-        evacuated,
-      });
-    }
-    return { scanned, evacuated };
-  }
 
 export async function listApprovedCliAutonomyAdaptersImpl(store: TaskStore): Promise<string[]> {
     const settings = await store.getSettings();

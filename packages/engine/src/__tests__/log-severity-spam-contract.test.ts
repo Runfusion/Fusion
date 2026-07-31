@@ -29,7 +29,7 @@ function withoutComments(source: string): string {
 }
 
 /*
-FNXC:EngineDiagnostics 2026-08-01-10:46:
+FNXC:EngineDiagnostics 2026-07-26-10:46:
 FN-8603 pins every demoted engine call-site by a stable message anchor. The
 source check rejects a reversion to log, warn, error, or bare console output.
 */

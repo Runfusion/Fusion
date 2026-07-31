@@ -96,13 +96,29 @@ describe("buildBoardWorkflowsPayload built-in column labels", () => {
     );
     const workflow = payload.workflows.find(({ id }) => id === "builtin:coding");
     const named = Object.fromEntries((workflow?.columns ?? []).map((column) => [column.id, column.name]));
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-03-03:30 (red on main — the deleted-column class again):
+    THE DEFAULT LINEAGE HAS FIVE LIFECYCLE COLUMNS, NOT SIX. #2515 merged Todo into Planning: the id `todo`
+    survives carrying the label "Planning", and `triage` is gone. This expectation still asserted both a
+    `triage: "Planning"` key and a `todo: "Todo"` one, so it described a board that has not shipped since that
+    change.
+
+    Same class as the 23 assertions corrected in #2758 and the two in #2720, and the same tell: the failure
+    reads like a canonicalisation bug ("expected triage: Planning") when the canonicalisation is right and the
+    expectation is stale.
+
+    The invariant this case exists for is unchanged and still asserted: the built-in coding workflow'"'"'s columns
+    carry their CANONICAL labels rather than raw ids — which is what the sibling case above contrasts against a
+    built-in that deliberately renames one.
+    */
     expect(named).toMatchObject({
-      triage: "Planning",
-      todo: "Todo",
+      todo: "Planning",
       "in-progress": "In Progress",
       "in-review": "In Review",
       done: "Done",
       archived: "Archived",
     });
+    // And the merged column is gone, so nothing should be canonicalising a `triage` label any more.
+    expect(named).not.toHaveProperty("triage");
   });
 });

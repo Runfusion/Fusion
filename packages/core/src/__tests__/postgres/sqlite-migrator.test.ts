@@ -1134,12 +1134,10 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     try {
       legacy.exec(`
         CREATE TABLE centralSettings (id INTEGER PRIMARY KEY, defaultProjectId TEXT, updatedAt TEXT NOT NULL);
-        CREATE TABLE globalConcurrency (id INTEGER PRIMARY KEY, globalMaxConcurrent INTEGER, currentlyActive INTEGER, queuedCount INTEGER, updatedAt TEXT);
         CREATE TABLE plugin_installs (id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, path TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL);
         CREATE TABLE project_plugin_states (projectPath TEXT NOT NULL, pluginId TEXT NOT NULL, enabled INTEGER NOT NULL, state TEXT NOT NULL, error TEXT, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, PRIMARY KEY (projectPath, pluginId));
       `);
       legacy.prepare(`INSERT INTO centralSettings VALUES (?, ?, ?)`).run(1, "project-default", "2026-06-01");
-      legacy.prepare(`INSERT INTO globalConcurrency VALUES (?, ?, ?, ?, ?)`).run(1, 10, 0, 0, "2026-06-02");
       legacy.prepare(`INSERT INTO plugin_installs VALUES (?, ?, ?, ?, ?, ?)`).run("plugin-a", "A", "1.0.0", "/a", "2026-06-01", "2026-06-01");
       legacy.prepare(`INSERT INTO plugin_installs VALUES (?, ?, ?, ?, ?, ?)`).run("plugin-b", "B", "1.0.0", "/b", "2026-06-01", "2026-06-01");
       const insertState = legacy.prepare(`INSERT INTO project_plugin_states VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -1152,17 +1150,26 @@ pgDescribe("SQLite-to-PostgreSQL migrator", () => {
     const report = await migrateTest(ctx!.db, [
       { sqlitePath, pgSchema: "central" as const },
     ]);
-    for (const table of ["central_settings", "global_concurrency", "project_plugin_states"]) {
+    /*
+    FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+    `global_concurrency` leaves this list with the table itself (migration 0037).
+    A legacy SQLite `globalConcurrency` table now has no destination and is simply
+    not migrated, which is the intent: its cap is deleted and its
+    currently_active/queued_count counters were never written by production code.
+    */
+    for (const table of ["central_settings", "project_plugin_states"]) {
       expect(report.tables).toContainEqual(expect.objectContaining({ table, verified: true }));
     }
     const settings = await ctx!.db.execute(sql`
       SELECT default_project_id, updated_at FROM central.central_settings WHERE id = 1
     `) as unknown as Array<{ default_project_id: string; updated_at: string }>;
     expect(settings).toEqual([{ default_project_id: "project-default", updated_at: "2026-06-01" }]);
-    const concurrency = await ctx!.db.execute(sql`
-      SELECT global_max_concurrent, updated_at FROM central.global_concurrency WHERE id = 1
-    `) as unknown as Array<{ global_max_concurrent: number; updated_at: string }>;
-    expect(concurrency).toEqual([{ global_max_concurrent: 10, updated_at: "2026-06-02" }]);
+    // The dropped table must be GONE, not merely unread — a lingering table with
+    // plausible counters invites a future reader to trust it.
+    const remaining = await ctx!.db.execute(sql`
+      SELECT to_regclass('central.global_concurrency') AS present
+    `) as unknown as Array<{ present: string | null }>;
+    expect(remaining[0]?.present ?? null).toBeNull();
   });
 
   /*

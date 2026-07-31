@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, resolveWorkflowIrForTask, resolveReviewColumns, resolveReboundTarget } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-git-github");
 import { type NextFunction, type Request, type Response } from "express";
@@ -224,6 +224,38 @@ function ensureSafeGitRef(value: string, fieldName = "branch"): string {
 function getExecErrorCode(error: unknown): number | undefined {
   const code = (error as { code?: unknown } | undefined)?.code;
   return typeof code === "number" ? code : undefined;
+}
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:40 (batch-core):
+"Is this card in a review lane?" for the PR routes below, resolved from the task's OWN workflow.
+
+MEMBERSHIP, so it takes the BROAD review set (`mergeOrchestration` u `mergeBlocker` u `humanReview`)
+rather than the single narrow lane: a board may declare a merge-orchestration lane AND a separate
+human sign-off lane, and a PR is legitimately opened from either. These guards only refuse or permit,
+never MOVE the card, so admitting one lane too many costs an operator nothing while admitting one too
+few refuses a request that should have worked.
+
+EMPTY MEANS UNEXPRESSED, NOT ABSENT — the v1 hazard, and the reason this is a shared helper rather
+than four inline resolutions. `synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph
+by emitting every default column with `traits: []`, so a v1-upgraded workflow resolves to an EMPTY
+review set while its `in-review` column plainly exists and holds its cards. Treating empty as "this
+board has no review lane" would refuse these routes on every pre-v2 project. Empty therefore takes the
+same legacy fallback as an unresolvable workflow.
+
+The CLI twin of this guard is `fn pr create` (packages/cli/src/commands/pr.ts); the two must agree,
+which is why both resolve the same way.
+*/
+export async function reviewColumnsForTask(store: TaskStore, taskId: string): Promise<Set<string>> {
+  const ir = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
+  const resolved = ir === undefined ? [] : resolveReviewColumns(ir);
+  return new Set(resolved.length > 0 ? resolved : ["in-review"]);
+}
+
+/** Renders a resolved review set for an operator-facing refusal, e.g. `'in-review'` or `'a' or 'b'`. */
+export function namedReviewColumns(columns: Set<string>): string {
+  return [...columns].map((c) => `'${c}'`).join(" or ");
 }
 
 async function runPrShellCommand(command: string, cwd: string, timeoutMs: number): Promise<string> {
@@ -2231,14 +2263,14 @@ async function syncPrReviewsToTask(store: TaskStore, task: Task, snapshot: PrRev
   }
 }
 
-async function applyChangesRequestedTransition(
+export async function applyChangesRequestedTransition(
   store: TaskStore,
   task: Task,
   snapshot: PrReviewSnapshot,
   prInfo: PrInfo,
 ): Promise<void> {
   if (snapshot.decision !== "CHANGES_REQUESTED") return;
-  if (task.column !== "in-review") return;
+  if (!(await reviewColumnsForTask(store, task.id)).has(task.column)) return;
   if (task.prInfo?.lastReviewDecision === "CHANGES_REQUESTED") return;
 
   const reviewItems = snapshot.items.filter((item) => item.id.startsWith("gh-review-") && item.state === "CHANGES_REQUESTED");
@@ -2257,7 +2289,25 @@ async function applyChangesRequestedTransition(
     content: feedbackBody || "Reviewer requested changes.",
     author: "system",
   });
-  await store.moveTask(task.id, "todo", {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2780 review — greptile, and it caught my own half-conversion):
+  THE GUARD AND THE MOVE MUST RESOLVE THE SAME WAY.
+
+  Broadening the entry guard above to accept any resolved review lane, while leaving this move on the
+  literal `todo`, made the pair WORSE than before: on a board that renames its review lane but declares
+  no `todo`, the guard now admits the task and this move is then rejected. The card keeps its
+  review-feedback document, never re-enters rework, and sits in review looking handled. Before the
+  broadening it simply never got this far.
+
+  That is the half-converted-pair shape this program has hit repeatedly — a role-resolved guard in
+  front of a name-matched action. Whenever one half moves, the other has to move with it.
+
+  `resolveReboundTarget` is the shared answer for "where does a card go to be worked again": hold, else
+  intake, else the first declared column. `todo` stays only for a workflow that cannot be resolved.
+  */
+  const reboundIr = await resolveWorkflowIrForTask(store, task.id).catch(() => undefined);
+  const reworkColumn = (reboundIr === undefined ? undefined : resolveReboundTarget(reboundIr)) ?? "todo";
+  await store.moveTask(task.id, reworkColumn, {
     preserveProgress: true,
     preserveWorktree: true,
     moveSource: "engine",
@@ -5326,8 +5376,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
       // Get task and validate
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to create a PR");
+      const prReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!prReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(prReviewColumns)} column to create a PR`);
       }
 
       if (!title || typeof title !== "string") {
@@ -5431,8 +5482,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to push PR branch");
+      const pushReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!pushReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(pushReviewColumns)} column to push PR branch`);
       }
 
       if (req.body?.base !== undefined && typeof req.body.base !== "string") {
@@ -5500,8 +5552,9 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore, engine } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      if (task.column !== "in-review") {
-        throw badRequest("Task must be in 'in-review' column to resolve PR conflicts");
+      const conflictReviewColumns = await reviewColumnsForTask(scopedStore, task.id);
+      if (!conflictReviewColumns.has(task.column)) {
+        throw badRequest(`Task must be in ${namedReviewColumns(conflictReviewColumns)} column to resolve PR conflicts`);
       }
 
       if (req.body?.base !== undefined && typeof req.body.base !== "string") {

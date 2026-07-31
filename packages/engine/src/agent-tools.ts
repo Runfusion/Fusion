@@ -1183,6 +1183,14 @@ async function findDefinedFeatureBootstrapDuplicate(
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
   const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+  Resolved AHEAD of the synchronous `flatMap` below, which cannot await. NOT the query-filter class: this
+  query passes `includeArchived: true`, so the predicate inside the callback is the ONLY archived guard on
+  this path — on a renamed archive lane an archived sibling became a bootstrap canonical, and
+  `claimDefinedFeatureTask` then rejects the non-live row, so the claim fails outright.
+  */
+  const isArchivedCandidate = await resolveArchivedColumnsForTasks(store, candidates);
   const matches = findSameAgentDuplicates({
     title: input.title,
     description: input.description,
@@ -1195,7 +1203,7 @@ async function findDefinedFeatureBootstrapDuplicate(
     task boundary. An archived sibling cannot be a bootstrap canonical because
     claimDefinedFeatureTask rejects non-live task rows.
     */
-    if (Number.isNaN(createdAt) || task.deletedAt || task.column === "archived") return [];
+    if (Number.isNaN(createdAt) || task.deletedAt || isArchivedCandidate(task)) return [];
     return [{
       id: task.id,
       title: task.title ?? "",
@@ -1225,6 +1233,67 @@ async function carryCanonicalTaskRouting(
     task = await store.moveTask(task.id, input.column);
   }
   return task;
+}
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:05 (batch-engine — the agent tools listed finished cards as active):
+`fn_task_list` describes itself as "list active tasks that aren't done or archived", and `fn_task_search`
+offers `includeDone: false`. Both filtered with `task.column !== "done"`, so on a board whose complete lane
+is renamed a FINISHED card came back as active — to an AGENT, which then reasons and acts on it as
+outstanding work. `includeArchived: false` is handled by the query, but "done" was only ever a TS predicate.
+
+MEMBERSHIP over the complete AND archived roles, unioned with the legacy pair: `resolveWorkflowIrForTask`
+returns the BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a
+degraded renamed board would resolve a terminal set that excludes its own terminal lane and the filter
+would go inert.
+
+ONE CACHE per call, so a list spanning three workflows reads three IRs rather than one per task.
+*/
+export async function resolveTerminalColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const terminalByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (terminalByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["done", "archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) {
+        for (const id of fusionCore.columnsWithFlag(ir, "complete")) columns.add(id);
+        for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+      }
+    } catch { /* degraded: legacy pair only */ }
+    terminalByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
+}
+
+/**
+ * MEMBERSHIP over the `archived` role for a fixed task set, unioned with the legacy id.
+ *
+ * Split from `resolveTerminalColumnsForTasks` rather than parameterised: the two callers ask genuinely
+ * different questions — "is this finished?" (complete OR archived) versus "is this archived?" — and
+ * collapsing them would make an archived-only guard also reject completed rows.
+ */
+async function resolveArchivedColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const archivedByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (archivedByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    archivedByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => archivedByTaskId.get(task.id)?.has(task.column) === true;
 }
 
 export async function createAgentTask(
@@ -1279,11 +1348,19 @@ export async function createAgentTask(
       try {
         const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
         const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-        const candidates = (await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
+        const searched = await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
           slim: true,
           includeArchived: false,
-        }))
-          .filter((candidate) => candidate.column !== "done" && candidate.column !== "archived")
+        });
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+        On a renamed complete lane a FINISHED diagnostic card passed this filter, so the dedup guard
+        adopted it as canonical and returned `wasDuplicate: true` — silently absorbing new diagnostic
+        work into a task nobody is working on. Same shape as the eval-followup dedup defect.
+        */
+        const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, searched);
+        const candidates = searched
+          .filter((candidate) => !isTerminalCandidate(candidate))
           .filter((candidate) => Date.parse(candidate.createdAt) >= cutoffMs)
           .filter((candidate) => !acknowledged.has(candidate.id))
           .filter((candidate) => computeCrossParentDiagnosticClaimId({
@@ -1642,7 +1719,8 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
     parameters: taskListParams,
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
-      const active = tasks.filter((task) => task.column !== "done");
+      const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
+      const active = tasks.filter((task) => !isTerminal(task));
       const lines = active.map(formatTaskSummaryLine);
       return {
         content: [{ type: "text" as const, text: formatTaskReadLines(lines, "No active tasks.") }],
@@ -1675,7 +1753,8 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
         limit,
       });
       const includeDone = params.includeDone ?? true;
-      const filtered = includeDone ? results : results.filter((task) => task.column !== "done");
+      const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
+      const filtered = includeDone ? results : results.filter((task) => !isTerminalResult!(task));
       const lines = filtered.map(formatTaskSummaryLine);
       const text = formatTaskReadLines(
         lines.length > 0 ? [`Search results for "${query}" (${filtered.length}):`, ...lines] : [],
@@ -2871,6 +2950,30 @@ export function createWorkflowSelectTool(store: TaskStore, currentTaskId: string
         };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+        TRANSLATE the switch re-home failure so the agent gets an actionable, retryable
+        result instead of an opaque message. `selectionCommitted` is the field that
+        matters: false means nothing was written and the task is intact (destination
+        column full, caught before any commit) so the agent can make room and retry;
+        true means the selection committed and the re-home then lost a race, so the
+        task is INCONSISTENT and the agent must not treat the switch as done.
+        */
+        if (err?.name === "WorkflowSwitchRehomeFailedError") {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${err.message}` }],
+            details: {
+              code: "workflow-switch-rehome-failed",
+              taskId: err.taskId,
+              workflowId: err.workflowId,
+              fromColumn: err.fromColumn,
+              intendedColumn: err.intendedColumn,
+              selectionCommitted: err.committed === true,
+              ...(err.reason !== undefined ? { reason: err.reason } : {}),
+            },
+            isError: true,
+          };
+        }
         return {
           content: [{ type: "text" as const, text: `ERROR: Failed to select workflow: ${err?.message ?? err}` }],
           details: {},

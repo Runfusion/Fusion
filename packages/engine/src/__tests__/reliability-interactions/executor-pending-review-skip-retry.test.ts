@@ -144,7 +144,17 @@ describe("reliability interactions: FN-5436 executor pending-review skip", () =>
       error: "executor-exit-while-review-pending",
     });
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-5436-RI-C", expect.objectContaining({ taskDoneRetryCount: 3 }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-C", "in-review");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-22:00:
+    The review handoff now carries move options, so the two-argument form no longer matches. Asserting
+    the PROVENANCE rather than `expect.anything()` (which the sibling assertions in this file use):
+    this pins that the move came from the review-pending-handoff node with progress preserved, so a
+    move made by some other path to the same destination cannot satisfy it.
+    */
+    expect(store.moveTask).toHaveBeenCalledWith("FN-5436-RI-C", "in-review", expect.objectContaining({
+      preserveProgress: true,
+      workflowMoveMetadata: expect.objectContaining({ nodeId: "review-pending-handoff" }),
+    }));
   });
 
   it("FN-5436 composition: recoverApprovedStepsOnResume leaves pending-review skip disabled after approval resolves step", async () => {

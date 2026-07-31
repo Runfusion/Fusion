@@ -101,7 +101,7 @@ function useSubViews(nodesEnabled: boolean): SubView[] {
     ...(nodesEnabled ? [{ id: "nodes" as const, label: t("commandCenter.tabs.nodes", "Nodes") }] : []),
     { id: "reliability", label: t("commandCenter.tabs.reliability", "Reliability") },
     /*
-    FNXC:Navigation 2026-08-01-00:00:
+    FNXC:Navigation 2026-07-19-00:00:
     FN-8352 removes Ideation from Command Center because its experimental
     top-level navigation view is now the single canonical host.
     */
@@ -218,7 +218,7 @@ function OverviewTab({
   const agentRunsTotal = activity.data?.agentRuns?.total ?? 0;
   const tasksDone = activity.data?.funnel?.doneInRange ?? 0;
   /*
-  FNXC:LiveActivity 2026-08-03-00:00:
+  FNXC:LiveActivity 2026-07-20-00:00:
   FN-8429 requires the Overview's live metrics to share Mission Control's
   SSE-plus-poll snapshot and in-progress aliases. Date-range analytics remain
   historical; they must not overwrite current board work with funnel entries.

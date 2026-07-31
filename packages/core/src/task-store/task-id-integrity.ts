@@ -36,6 +36,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DependencyCycleError, TaskDeletedError, TombstonedTaskResurrectionError, coreLog, detectDependencyCycle, storeLog } from "../store.js";
+import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
 
 export function trackDeferredTaskCreatedWorkImpl(store: TaskStore, work: () => Promise<void>): Promise<void> {
     if (store.closing) return Promise.resolve();
@@ -423,6 +424,22 @@ export function isTaskArchivedImpl(store: TaskStore, id: string): boolean {
     from async callers. In backend mode use the in-memory task cache when the
     row is already hydrated; otherwise false (caller should have used async).
     */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL, and narrow):
+    `cached.column` is a real board lane, so a renamed archived column is not recognised and this
+    sync check answers false for a card the board shows as archived.
+
+    Narrow because of what it already concedes: the note above says this path exists only for a row
+    that happens to be hydrated in the cache, and every async caller is told to use
+    `isTaskArchivedAsyncImpl` instead. The authoritative path (below) reads `getLiveTaskColumn`, whose
+    own comparison is the one worth converting — fixing it there makes this file's sentinel check
+    correct without touching it.
+
+    Left counted so the census keeps pointing here, and deliberately NOT converted in isolation: a
+    sync function with no store-scoped workflow read cannot resolve a lane, and converting this one
+    while `getLiveTaskColumn` still keys on the literal would leave the two disagreeing about what
+    archived means.
+    */
         const cached = store.taskCache.get(id);
     return cached?.column === "archived";
 }
@@ -435,8 +452,21 @@ getLiveTaskColumn, plus cold archive.archived_tasks presence.
 export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Promise<boolean> {
     
     const layer = store.asyncLayer!;
-    const live = await getLiveTaskColumn(layer.db, id, layer.projectId);
+    const live = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
     // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+    
+    This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
+    "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
+    which is why the neighbouring line tests null separately. It is a protocol value, not a column id.
+    
+    STILL TRUE NOW THAT THE HELPER RESOLVES LANES. `getLiveTaskColumn` now takes the board's archived
+    lanes, which was the one genuinely-owed conversion this family pointed at (#2820). That changes which
+    rows it CLASSIFIES as archived; it does not change the SENTINEL it returns, which still collapses
+    archived and soft-deleted into one string. Converting this comparison would therefore keep passing on
+    the built-in board and start FAILING on a renamed one — a soft-deleted task would read as not-archived.
+    */
     if (live === "archived") return true;
     if (live !== null) return false;
     return isTaskIdPresentInArchivedTasksTableAsyncImpl(store, id);

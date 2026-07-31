@@ -262,3 +262,55 @@ describe("formatTaskPlannerChatMetrics", () => {
     expect(result.metrics.timing.malformedTimestamps).toContain("not-a-date");
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-16:25 (batch-dashboard-src):
+
+THE LIVE TAIL OF ACTIVE RUNTIME MUST ACCRUE ON A RENAMED EXECUTION LANE.
+
+`activeRuntimeMs` adds the wall-clock since `executionStartedAt` only while the card is in a WIP
+lane. Keyed on the literal `in-progress`, that tail was dropped for every card on a board whose
+execution lane is named anything else, so the planner's own metrics tool reported active time frozen
+at whatever the last completed segment left in `cumulativeActiveMs`. The number stayed plausible,
+which is why nothing surfaced it.
+
+WHY THE CASES COME IN PAIRS. A "renamed lane accrues" test alone also passes if the guard is deleted
+outright and every column accrues; the negative is what proves the WIP question is still being asked.
+The `undefined` case pins the documented degraded answer so a future change cannot quietly turn the
+no-metadata path into "accrue everywhere" either.
+*/
+describe("formatTaskPlannerChatMetrics: active runtime keys on the WIP role", () => {
+  const runningTask = (column: string) => makeTask({
+    column,
+    executionStartedAt: "2026-07-01T10:00:00.000Z",
+    cumulativeActiveMs: 60_000,
+  });
+  const at = { nowMs: Date.parse("2026-07-01T10:05:00.000Z") };
+
+  it("accrues the live tail in a RENAMED wip lane when the caller supplies its lanes", () => {
+    const result = formatTaskPlannerChatMetrics(runningTask("building"), {
+      ...at,
+      wipColumns: new Set(["building"]),
+    });
+
+    /* 60s banked + 300s since executionStartedAt. With the literal this was 60_000 — frozen. */
+    expect(result.metrics.timing.activeRuntimeMs).toBe(360_000);
+  });
+
+  it("does NOT accrue for a card outside its board's wip lanes", () => {
+    const result = formatTaskPlannerChatMetrics(runningTask("checking"), {
+      ...at,
+      wipColumns: new Set(["building"]),
+    });
+
+    expect(result.metrics.timing.activeRuntimeMs).toBe(60_000);
+  });
+
+  it("falls back to the legacy id when no lanes are supplied", () => {
+    /* The pure formatter is callable without a store; that path keeps today's answer exactly. */
+    expect(formatTaskPlannerChatMetrics(runningTask("in-progress"), at).metrics.timing.activeRuntimeMs)
+      .toBe(360_000);
+    expect(formatTaskPlannerChatMetrics(runningTask("building"), at).metrics.timing.activeRuntimeMs)
+      .toBe(60_000);
+  });
+});

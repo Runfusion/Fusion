@@ -245,7 +245,7 @@ describe("MailboxModal", () => {
     const { container } = render(<MailboxModal {...defaultProps} />);
 
     await waitFor(() => {
-      const times = Array.from(container.querySelectorAll(".mailbox-item-time")).map((node) => node.textContent);
+      const times = Array.from(document.querySelectorAll(".mailbox-item-time")).map((node) => node.textContent);
       expect(times).toEqual(expect.arrayContaining([
         "Just now",
         "5m ago",
@@ -1376,9 +1376,9 @@ describe("MailboxModal", () => {
       fireEvent.click(screen.getByTestId("mailbox-item-msg-001"));
 
       await waitFor(() => {
-        expect(container.querySelector(".mailbox-message-detail-header")).toBeTruthy();
-        expect(container.querySelector(".mailbox-message-detail-actions")).toBeTruthy();
-        expect(container.querySelector(".mailbox-message-participants")).toBeTruthy();
+        expect(document.querySelector(".mailbox-message-detail-header")).toBeTruthy();
+        expect(document.querySelector(".mailbox-message-detail-actions")).toBeTruthy();
+        expect(document.querySelector(".mailbox-message-participants")).toBeTruthy();
       });
     });
   });

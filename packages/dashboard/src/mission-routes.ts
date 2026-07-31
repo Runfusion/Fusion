@@ -16,6 +16,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   TaskStore,
+  createLogger,
   resolvePlanningSettingsModel,
   AgentStore,
   THINKING_LEVELS,
@@ -71,12 +72,47 @@ import {
 import type { AiSessionStore } from "./ai-session-store.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection } from "./routes/branch-selection.js";
 
+const missionRoutesLog = createLogger("dashboard-mission-routes");
+
 /** Resolve the mission-start override through the planning settings hierarchy. */
 export function resolveMissionInterviewThinkingLevel(
   settings: Partial<Settings> | undefined,
   thinkingLevel: ThinkingLevel | undefined,
 ): ThinkingLevel | undefined {
   return resolvePlanningThinkingLevel(settings, thinkingLevel) as ThinkingLevel | undefined;
+}
+
+type MissionTaskHierarchy = {
+  milestones: Array<{
+    slices: Array<{
+      features: Array<{ taskId?: string }>;
+    }>;
+  }>;
+};
+
+export async function pauseMissionTasksForOperatorStop(
+  store: Pick<TaskStore, "pauseTask">,
+  hierarchy: MissionTaskHierarchy,
+): Promise<string[]> {
+  const pausedTaskIds: string[] = [];
+  for (const milestone of hierarchy.milestones) {
+    for (const slice of milestone.slices) {
+      for (const feature of slice.features) {
+        if (!feature.taskId) continue;
+        try {
+          await store.pauseTask(feature.taskId, true, undefined, { userPaused: true });
+          pausedTaskIds.push(feature.taskId);
+        } catch (error) {
+          // Continue stopping the mission if a linked task is already gone, but
+          // keep unexpected pause failures visible to operators.
+          missionRoutesLog.warn(
+            `Failed to pause mission-linked task ${feature.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    }
+  }
+  return pausedTaskIds;
 }
 
 // ── Validation Utilities ────────────────────────────────────────────────────
@@ -3012,22 +3048,8 @@ export function createMissionRouter(
       // Set mission status to blocked
       const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
 
-      // Pause all tasks linked to features in this mission
-      const pausedTaskIds: string[] = [];
-      for (const milestone of hierarchy.milestones) {
-        for (const slice of milestone.slices) {
-          for (const feature of slice.features) {
-            if (feature.taskId) {
-              try {
-                await store.pauseTask(feature.taskId, true);
-                pausedTaskIds.push(feature.taskId);
-              } catch (_err) {
-                // Log but don't fail — task may already be paused or not found
-              }
-            }
-          }
-        }
-      }
+      // Pause all tasks linked to features in this mission.
+      const pausedTaskIds = await pauseMissionTasksForOperatorStop(getScopedStore(), hierarchy);
 
       res.json({ ...updated, pausedTaskIds });
     })

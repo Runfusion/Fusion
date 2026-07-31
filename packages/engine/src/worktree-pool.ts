@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import type { ColumnId, SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
+import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
 /*
@@ -25,6 +25,7 @@ import { removeDesktopBuildArtifacts } from "./worktree-desktop-artifacts.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import type { RunAuditor } from "./run-audit.js";
 import { pruneWorktreeAdminEntries } from "./worktree-prune.js";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 export {
   NativeWorktreeBackend,
@@ -912,10 +913,36 @@ export async function scanIdleWorktrees(
   // Find worktree paths assigned to non-done tasks (active worktrees)
   const tasks = await store.listTasks({ slim: true, includeArchived: false, startupMemo: true });
   const activeWorktrees = new Set<string>();
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (batch-engine tail):
+  "Still holding its worktree" excludes tasks that have FINISHED. Keyed on the id, a renamed complete
+  lane kept every shipped task's worktree in the ACTIVE set, so this reclaim pass never returned it and
+  the board walked into worktree exhaustion — a stall whose cause is invisible from the symptom.
+
+  NOT the query-filter class: this listTasks call passes no `column`.
+
+  Resolved per TASK (each may run its own workflow) and ONLY for tasks that actually record a worktree,
+  with one IR cache for the pass. Unioned with the legacy id because `resolveWorkflowIrForTask` degrades
+  to the BUILT-IN IR rather than throwing — without the union a degraded board would hold every worktree
+  forever, which is this bug.
+  */
+  const reclaimIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const completeByTaskId = new Map<string, ReadonlySet<string>>();
   for (const task of tasks) {
-    if (task.worktree && task.column !== "done" && registeredWorktrees.has(resolve(task.worktree))) {
+    if (!task.worktree) continue;
+    const columns = new Set<string>(["done"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, reclaimIrCache);
+      if (ir) for (const id of columnsWithFlag(ir, "complete")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    completeByTaskId.set(task.id, columns);
+  }
+  const isUnfinished = (task: { id: string; column: string }) =>
+    completeByTaskId.get(task.id)?.has(task.column) !== true;
+  for (const task of tasks) {
+    if (task.worktree && isUnfinished(task) && registeredWorktrees.has(resolve(task.worktree))) {
       activeWorktrees.add(resolve(task.worktree));
-    } else if (task.worktree && task.column !== "done") {
+    } else if (task.worktree && isUnfinished(task)) {
       worktreePoolLog.debug(`Ignoring task ${task.id} worktree metadata because it is not a registered git worktree: ${task.worktree}`);
     }
   }
@@ -1173,7 +1200,6 @@ export async function reapOrphanWorktrees(
 }
 
 /** Columns where merger/finalization owns branch lifecycle. */
-const MERGER_MANAGED_COLUMNS: ReadonlySet<ColumnId> = new Set<ColumnId>(["in-review", "done"]);
 
 /**
  * Return local `fusion/*` branches not associated with any active task.
@@ -1200,10 +1226,34 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
   if (allBranches.length === 0) return [];
 
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (batch-engine — census-invisible membership, #2763 class):
+  A branch is "active" (and so must not be reclaimed) unless the merger owns the card or it is archived.
+  Both tests were hardcoded, so on a renamed board a card in review or complete was NOT recognised as
+  merger-managed and its branch was treated as reclaimable — deleting a branch out from under an in-flight
+  merge. One IR cache for the pass; the predicates below stay synchronous.
+  */
+  const poolIrCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+  const poolLanes = new Map<string, { managed: Set<string>; archived: Set<string> }>();
+  for (const task of tasks) {
+    if (poolLanes.has(task.id)) continue;
+    const managed = new Set<string>(["in-review", "done"]);
+    const archived = new Set<string>(["archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, poolIrCache);
+      if (ir) {
+        for (const flag of ["mergeOrchestration", "mergeBlocker", "humanReview", "complete"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) managed.add(id);
+        }
+        for (const id of columnsWithFlag(ir, "archived")) archived.add(id);
+      }
+    } catch { /* degraded: legacy ids */ }
+    poolLanes.set(task.id, { managed, archived });
+  }
   const activeBranches = new Set<string>();
   for (const task of tasks) {
-    if (MERGER_MANAGED_COLUMNS.has(task.column)) continue;
-    if (task.column === "archived") continue;
+    if (poolLanes.get(task.id)?.managed.has(task.column) === true) continue;
+    if (poolLanes.get(task.id)?.archived.has(task.column) === true) continue;
     if (task.branch) activeBranches.add(task.branch);
     activeBranches.add(canonicalFusionBranchName(task.id));
   }

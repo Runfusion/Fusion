@@ -14,7 +14,7 @@ vi.mock("../../../api/legacy", () => ({
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   fetchOrgTree: vi.fn().mockResolvedValue([]),
   fetchExecutorStats: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, maxConcurrent: 2 }),
-  fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 1, maxWorktrees: 5 }),
+  fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 5 }),
   fetchConfig: vi.fn().mockResolvedValue({ maxConcurrent: 2, rootDir: "/" }),
   updateSettings: vi.fn().mockResolvedValue({}),
 }));

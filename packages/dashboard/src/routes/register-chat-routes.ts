@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { archivedColumnsForTask } from "../task-lifecycle-lanes.js";
 import { createReadStream } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -221,7 +222,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         return;
       }
 
-      if (task.column === "archived") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-06:50 (batch-core):
+      Planner chat is refused for archived tasks. Keyed on the literal, a renamed board started
+      planner sessions against archived cards, whose rows the archive treats as immutable.
+      */
+      if ((await archivedColumnsForTask(scopedStore, task.id)).has(task.column)) {
         throw badRequest(`Task ${task.id} is archived; planner chat cannot be started for archived tasks`);
       }
 
@@ -242,7 +248,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   });
 
   /*
-  FNXC:ChatTags 2026-08-05-10:55:
+  FNXC:ChatTags 2026-07-25-10:55:
   Tags are a Direct-conversation taxonomy, not room metadata. Every endpoint
   resolves the project-scoped ChatStore and passes its project identity into the
   store mutation, preventing unqualified tag/session IDs from crossing scopes.

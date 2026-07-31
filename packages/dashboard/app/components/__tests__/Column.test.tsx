@@ -810,7 +810,7 @@ describe("Column pagination", () => {
 describe("Column QuickEntryBox", () => {
   it("renders QuickEntryBox in triage column when onQuickCreate is provided", () => {
     const tasks = [makeTask("FN-001")];
-    render(<Column {...defaultProps} tasks={tasks} onQuickCreate={vi.fn()} />);
+    render(<Column {...defaultProps} workflowMode columnFlags={{ intake: true }} tasks={tasks} onQuickCreate={vi.fn()} />);
     expect(screen.getByTestId("quick-entry-box")).toBeTruthy();
   });
 
@@ -828,14 +828,14 @@ describe("Column QuickEntryBox", () => {
 
   it("passes autoExpand={false} to QuickEntryBox in triage column (collapsed by default)", () => {
     const tasks = [makeTask("FN-001")];
-    render(<Column {...defaultProps} tasks={tasks} onQuickCreate={vi.fn()} />);
+    render(<Column {...defaultProps} workflowMode columnFlags={{ intake: true }} tasks={tasks} onQuickCreate={vi.fn()} />);
     const quickEntry = screen.getByTestId("quick-entry-box");
     expect(quickEntry.getAttribute("data-auto-expand")).toBe("false");
   });
 
   it("wires QuickEntry Start moves through the host state-updating callback", async () => {
     const onMoveTask = vi.fn().mockResolvedValue(makeTask("FN-created"));
-    render(<Column {...defaultProps} tasks={[]} onQuickCreate={vi.fn()} onMoveTask={onMoveTask} />);
+    render(<Column {...defaultProps} workflowMode columnFlags={{ intake: true }} tasks={[]} onQuickCreate={vi.fn()} onMoveTask={onMoveTask} />);
     fireEvent.click(screen.getByTestId("quick-entry-move"));
     await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-created", "todo"));
   });
@@ -1331,6 +1331,8 @@ describe("Column same-column drop", () => {
         <Column
           {...defaultProps}
           column="triage"
+          workflowMode
+          columnFlags={{ intake: true }}
           tasks={[]}
           onQuickCreate={vi.fn().mockResolvedValue({})}
           favoriteProviders={["anthropic"]}
@@ -1352,6 +1354,8 @@ describe("Column same-column drop", () => {
         <Column
           {...defaultProps}
           column="triage"
+          workflowMode
+          columnFlags={{ intake: true }}
           tasks={[]}
           onQuickCreate={vi.fn().mockResolvedValue({})}
         />,

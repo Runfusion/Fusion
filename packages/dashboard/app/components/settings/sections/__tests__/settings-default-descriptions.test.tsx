@@ -211,10 +211,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   pushRemote: "merge.gitRemoteToPushToEGOrigin",
   // NodeRouting / node sync covered above
   // SchedulingSection
-  globalMaxConcurrent: "scheduling.maximumConcurrentAgentsAcrossAllProjects",
   maxConcurrent: "scheduling.maxConcurrentTasksHint",
   maxConcurrentVerifications: "scheduling.maxConcurrentVerificationsHint",
-  maxTriageConcurrent: "scheduling.maximumConcurrentPlanningAgents",
   pollIntervalMs: "scheduling.pollIntervalMsHint",
   heartbeatScopeDiscipline: "scheduling.strictDefault",
   engineerBacklogAutoClaim: "scheduling.backlogNoTaskAutoClaimIsExecutorOnly",
@@ -241,6 +239,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   overlapIgnorePaths: "scheduling.optionalFileOrDirectoryPathsToIgnoreWhen",
   // WorktreesSection
   maxWorktrees: "worktrees.limitsTotalGitWorktreesIncludingInReviewTasks",
+  worktreeLimitEnabled: "worktrees.worktreeLimitEnabledHelp",
   worktreeInitCommand: "worktrees.shellCommandToRunInEachNewWorktree",
   recycleWorktrees: "worktrees.offByDefaultOptInWhenEnabledCompleted",
   showWorktreeGrouping: "worktrees.showWorktreeGroupingHelp",
@@ -582,8 +581,6 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
   prerebaseAutoEnabled: "internal pre-rebase tuning constant, no UI field",
   prerebaseHotFiles: "internal pre-rebase tuning constant, no UI field",
   prerebaseDivergenceThreshold: "internal pre-rebase tuning constant, no UI field",
-  maxSpawnedAgentsPerParent: "internal spawn-limit constant, no UI field",
-  maxSpawnedAgentsGlobal: "internal spawn-limit constant, no UI field",
   // FNXC:Round10 2026-07-13: FN-7907/FN-7908 added chat default model/agent/session settings.
   // These are configured via the chat New Session defaults picker, not plain description fields.
   chatNewSessionMode: "chat new-session default mode, configured via the chat defaults picker, not a plain description field",

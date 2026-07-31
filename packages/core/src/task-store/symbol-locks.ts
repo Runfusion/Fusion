@@ -1,4 +1,7 @@
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import type { WorkflowIr } from "../workflow-ir-types.js";
 import * as schema from "../postgres/schema/index.js";
 import { projectOwnershipPartition, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import type { DbTransaction } from "../postgres/data-layer.js";
@@ -209,9 +212,37 @@ export async function reconcileStaleSymbolLocksAsync(store: TaskStore): Promise<
   const held = await layer.db.select().from(schema.project.symbolLocks).where(and(eq(schema.project.symbolLocks.projectId, projectId), eq(schema.project.symbolLocks.status, "held")));
   const stale: Array<{ symbolKey: string; ownerTaskId: string; expiresAt: string }> = [];
   const skipped: string[] = [];
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-16:05 (batch-core):
+  "Is the lock OWNER finished?" resolved from that owner's own workflow. Keyed on the literal pair, a
+  renamed board never recognised a finished owner, so its symbol lock was never reclaimed — held until
+  expiry while every other task needing that symbol waited behind a task that had already completed.
+
+  Resolved per OWNER, because owners can run different workflows, and through a shared IR cache so a
+  sweep over N locks costs one workflow read per distinct workflow rather than per lock.
+
+  A workflow expressing no trait at all is a v1 upgrade rather than a board without terminal lanes, so
+  it keeps the legacy pair — as does an unresolvable one. Failing to reclaim is the harm here, and the
+  fallback stays exactly as permissive as before.
+  */
+  const terminalIrCache = new Map<string, WorkflowIr>();
+  const terminalLanesFor = async (taskId: string): Promise<ReadonlySet<string>> => {
+    const lanes = new Set<string>(["done", "archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, taskId, terminalIrCache);
+      if (ir && declaresAnyLifecycleTrait(ir)) {
+        for (const id of columnsWithFlag(ir, "complete")) lanes.add(id);
+        for (const id of columnsWithFlag(ir, "archived")) lanes.add(id);
+      }
+    } catch { /* degraded: the legacy pair */ }
+    return lanes;
+  };
+
   for (const lock of held) {
     const owner = await store.getTask(lock.ownerTaskId, { includeDeleted: true }).catch(() => undefined);
-    const terminal = !owner || owner.deletedAt != null || owner.column === "done" || owner.column === "archived" || owner.status === "failed";
+    const terminal = !owner || owner.deletedAt != null
+      || (await terminalLanesFor(lock.ownerTaskId)).has(owner.column)
+      || owner.status === "failed";
     if (lock.expiresAt <= nowIso || terminal) {
       stale.push({ symbolKey: lock.symbolKey, ownerTaskId: lock.ownerTaskId, expiresAt: lock.expiresAt });
     } else {

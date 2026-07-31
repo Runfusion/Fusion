@@ -54,14 +54,26 @@ pgTest("TaskStore moveTask column transitions (PostgreSQL)", () => {
     expect(done.column).toBe("done");
   });
 
-  it("allows moving an in-progress task back to triage", async () => {
+  it("moves an in-progress task back to the workflow's planning column, and REFUSES `triage`", async () => {
+    /*
+    FNXC:WorkflowColumns 2026-07-30-04:45 (U12 — the move-path flag is resolved):
+    Was "allows moving an in-progress task back to triage". The default lineage stopped declaring
+    `triage` at #2515, and the move path now resolves targets against the task's own workflow instead
+    of a hardcoded legacy adjacency table — so that move is refused rather than stranding the card in
+    a column with no trait flags, invisible to every trait-driven sweep.
+
+    Both halves are asserted: the backward move that SHOULD work still works, so this reads as a
+    narrowing rather than a blanket refusal.
+    */
     const store = h.store();
     const task = await store.createTask({ description: "backward move" });
     await store.moveTask(task.id, "todo", { moveSource: "user" });
     await store.moveTask(task.id, "in-progress", { moveSource: "user" });
 
-    const moved = await store.moveTask(task.id, "triage");
-    expect(moved.column).toBe("triage");
+    await expect(store.moveTask(task.id, "triage")).rejects.toThrow(/Unknown column for this workflow/);
+
+    const moved = await store.moveTask(task.id, "todo");
+    expect(moved.column).toBe("todo");
   });
 
   it("updates columnMovedAt timestamp on each move", async () => {

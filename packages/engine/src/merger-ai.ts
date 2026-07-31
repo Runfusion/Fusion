@@ -53,7 +53,7 @@ import {
   resolveValidatorSettingsModel,
   resolveMergerFallbackModel,
   resolveReboundTarget,
-  resolveLifecycleColumns,
+  resolveTerminalColumns,
   resolveWorkflowIrForTask,
   type MergeDetails,
   type MergeResult,
@@ -1056,26 +1056,15 @@ export async function resolveFinalizeReboundColumn(store: TaskStore, taskId: str
 async function isAlreadyFinalizedColumn(store: TaskStore, task: Task): Promise<boolean> {
   let terminal: readonly string[] = LEGACY_TERMINAL_COLUMNS;
   try {
-    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, task.id));
-    if (lifecycle) {
-      /*
-      FNXC:WorkflowLifecycleColumns 2026-07-28-02:10 (PR #2471 review, P1):
-      The fallback is PER-ROLE, not per-set. The first cut replaced the whole
-      legacy pair whenever ANY terminal role resolved, so a workflow declaring
-      `complete` but no `archived` collapsed to a one-element set and silently
-      lost the archived short-circuit — an archived card then fell through to
-      `getTaskMergeBlocker` and threw "must be in 'in-review'".
-
-      Resolving each role against its OWN legacy id keeps both halves of the
-      guard for a partially-declared workflow. The two roles are independent:
-      a per-set rule passes for whichever role happens to be declared and fails
-      for the other, which is why both directions are tested.
-      */
-      terminal = [
-        lifecycle.complete ?? LEGACY_COMPLETE_COLUMN,
-        lifecycle.archived ?? LEGACY_ARCHIVED_COLUMN,
-      ];
-    }
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
+    Delegated to core's `resolveTerminalColumns`. The per-role fallback below was
+    the ONLY copy of that rule, and executor's equivalent guard was still a raw
+    literal pair that would have re-made the same P1 on conversion. Same values,
+    one owner. Behaviour-preserving: proven by workflow-already-finalized-live-e2e,
+    whose per-set mutation still fails.
+    */
+    terminal = resolveTerminalColumns(await resolveWorkflowIrForTask(store, task.id));
   } catch {
     terminal = LEGACY_TERMINAL_COLUMNS;
   }

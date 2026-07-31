@@ -922,35 +922,59 @@ describe("SettingsModal", () => {
   describe("deferred settings fetches", () => {
     /*
     FNXC:SettingsConcurrency 2026-07-15-18:52:
-    `/Scheduling/` now matches two nav buttons — the section split into a Global/Project pair — so the selector names the exact one. The deferral requirement is unchanged: the global-concurrency endpoint is not hit until a scheduling section is opened.
+    FNXC:CapacityModel 2026-07-29-03:10 (drop the cross-project cap — settings half):
+    DELETED. This asserted that opening a Scheduling section triggers the
+    global-concurrency fetch. SettingsModal no longer performs that fetch at all —
+    the machine-wide cap it loaded is gone (capacity is two numbers PER PROJECT) and
+    the modal has no global-concurrency state left to defer.
+
+    The deferral REQUIREMENT it encoded — do not hit an endpoint until its section is
+    opened — is still covered for the surfaces that still fetch (e.g. the memory
+    backend-status hook test below).
     */
-    it("does not fetch global concurrency until a Scheduling section is selected", async () => {
-      renderModal();
-      await waitForSettingsModalReady();
-
-      expect(mockFetchGlobalConcurrency).not.toHaveBeenCalled();
-
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
-
-      await waitFor(() => {
-        expect(mockFetchGlobalConcurrency).toHaveBeenCalledTimes(1);
-      });
-    });
 
     /*
     FNXC:SettingsConcurrency 2026-07-15-18:52:
-    The invariant is unchanged — a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback. Only its surface moved: the global cap now lives in its own section, so the assertion follows it across both halves of the pair rather than reading them all off one screen.
+    The invariant is unchanged — a concurrency input stays disabled until its live value arrives, so an operator cannot overwrite a resolved limit with a blank fallback.
+
+    FNXC:CapacityModel 2026-07-29-03:10 (drop the cross-project cap — settings half):
+    The global half of this case is gone with the cap and its section; capacity is two
+    numbers PER PROJECT and both live in the settings form. The gate that enforces the
+    invariant also moved: it read the GLOBAL-concurrency fetch, which was never the
+    right source for project inputs, and now reads the form's own load.
     */
-    it("disables concurrency inputs until their actual values load", async () => {
-      mockFetchGlobalConcurrency.mockReturnValue(new Promise(() => {}));
-      renderModal();
+    it("does not render concurrency inputs until their actual values load", async () => {
+      /*
+      FNXC:CapacityModel 2026-07-29-03:25 (drop the cross-project cap — settings half):
+      The invariant is unchanged — an operator must never be able to edit a
+      concurrency input showing a blank fallback and overwrite a resolved limit. HOW
+      it holds changed, and the assertion follows the mechanism rather than pinning a
+      `disabled` attribute that can no longer be observed.
+
+      Previously the inputs rendered immediately and were DISABLED while the separate
+      global-concurrency fetch was in flight. Both remaining numbers (maxConcurrent,
+      maxWorktrees) now come from the settings form itself, and the modal renders
+      "Loading…" instead of any section until that form resolves — so the input does
+      not EXIST until its value does. Structural, and strictly stronger than
+      disabled: there is nothing to focus, type into, or re-enable via devtools.
+
+      Measured while fixing this: repointing `concurrencyLoading` at the form's own
+      `loading` makes it unobservable for exactly this reason. Keeping the old
+      `toBeDisabled()` assertion would have required the input to render during load,
+      which is the weaker behaviour.
+      */
+      mockFetchSettings.mockReturnValue(new Promise(() => {}));
+      renderModal({ initialSection: "scheduling" });
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+      expect(screen.queryByLabelText("Max Concurrent Tasks")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Max Worktrees")).not.toBeInTheDocument();
+
+      // ...and once it resolves, the input is present and editable.
+      mockFetchSettings.mockResolvedValue({});
+      cleanup();
+      renderModal({ initialSection: "scheduling" });
       await waitForSettingsModalReady();
-
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Global" }));
-      expect(screen.getByLabelText("Global Max Concurrent")).toBeDisabled();
-
-      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling · Project" }));
-      expect(screen.getByLabelText("Max Concurrent Tasks")).toBeDisabled();
+      expect(await screen.findByLabelText("Max Concurrent Tasks")).not.toBeDisabled();
       // FNXC:SettingsConcurrency 2026-07-24-03:10: FN-8453 (eef5eb751) removed
       // the duplicate "Max Triage Concurrent" control when concurrency
       // accounting was unified; it must stay gone.
@@ -2114,13 +2138,14 @@ describe("SettingsModal", () => {
       vi.useRealTimers();
     });
 
-    it("persists global concurrency and scoped MCP edits without Save", async () => {
-      renderModal({ initialSection: "scheduling-global" });
-      await waitForSettingsModalReady();
-      fireEvent.change(await screen.findByLabelText("Global Max Concurrent"), { target: { value: "7" } });
-      await waitFor(() => expect(mockUpdateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 7 }));
-
-      cleanup();
+    /*
+    FNXC:CapacityModel 2026-07-29-03:10 (drop the cross-project cap — settings half):
+    The global-concurrency half of this auto-save case is deleted with the control it
+    edited; `updateGlobalConcurrency` no longer exists. The scoped-MCP half is the
+    part that still exercises save-without-Save, so it is kept and the case renamed
+    to what it now covers.
+    */
+    it("persists scoped MCP edits without Save", async () => {
       renderModal({ initialSection: "mcp" });
       await waitForSettingsModalReady();
       fireEvent.click(await screen.findByLabelText("Enable MCP servers for this scope"));

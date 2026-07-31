@@ -120,7 +120,7 @@ const FLOATING_WINDOW_OUTSIDE_POINTER_SAFE_SURFACE_SELECTOR = [
 ].join(", ");
 
 /*
-FNXC:ModalTouchGeometry 2026-08-13-12:00:
+FNXC:ModalTouchGeometry 2026-07-27-12:00:
 FN-8619: Task Detail's body-portaled activity-view menu is a logical child of its modal.
 Treating it as safe prevents a preference-enabled outside pointer-down from closing the host.
 
@@ -632,7 +632,7 @@ export function FloatingWindow({
       aria-labelledby={ariaLabelledBy}
       data-testid={testId ?? `floating-window-overlay-${windowKey}`}
       {...backdropMouseHandlers}
-      // FNXC:ModalTouchGeometry 2026-08-13-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
+      // FNXC:ModalTouchGeometry 2026-07-27-12:00: FN-8619 keeps Agent Detail's paired mouse-only backdrop contract at the shared modal backdrop; this deliberately does not alter pointer-down dismissal.
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}
     >

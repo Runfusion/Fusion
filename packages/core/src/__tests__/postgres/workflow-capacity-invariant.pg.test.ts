@@ -46,6 +46,7 @@ radius is reported for an operator decision first.
 */
 
 import { afterEach, beforeEach, expect, it, beforeAll, afterAll } from "vitest";
+import { taskAdvisoryLockKey } from "../../task-store/task-advisory-lock.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
@@ -71,21 +72,23 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
   tautological "passes" respectively. A both-paths suite without this probe
   reports what it assumed, not what happened.
   */
-  async function setPath(path: "inline" | "hooks"): Promise<void> {
+  /*
+  FNXC:WorkflowColumns 2026-07-30-04:45 (U12 — the move-path flag is resolved):
+  There is only ONE path now, so this no longer selects between them. It is kept rather than deleted
+  because the probe half is still worth doing: it proves the move path is live and rejecting before
+  a capacity case draws conclusions from a rejection, so a capacity test cannot pass because moves
+  were broken for some unrelated reason.
+
+  The `inline`/`hooks` parameter and the `updateGlobalSettings` flag write are gone with the flag.
+  */
+  async function assertMovePathLive(): Promise<void> {
     const store = h.store();
-    await store.updateGlobalSettings(
-      path === "hooks"
-        ? { experimentalFeatures: { workflowColumns: true } }
-        : { experimentalFeatures: { workflowColumns: false } },
-    );
-    const probe = await store.createTask({ description: `path probe ${path}` });
+    const probe = await store.createTask({ description: "path probe" });
     const err = await store
       .moveTask(probe.id, "not-a-column-any-workflow-declares")
       .then(() => null, (e: unknown) => e as Error);
-    expect(err, `${path}: probe move should have been rejected`).toBeInstanceOf(Error);
-    expect(err!.message, `${path} path not active`).toContain(
-      path === "hooks" ? "Unknown column for this workflow" : "Valid targets:",
-    );
+    expect(err, "probe move should have been rejected").toBeInstanceOf(Error);
+    expect(err!.message, "move path not active").toContain("Unknown column for this workflow");
     await store.deleteTask(probe.id);
   }
 
@@ -111,33 +114,31 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     return { error, secondColumn: (await store.getTask(contender.id))?.column };
   }
 
-  it("DEFECT (R2, STILL LIVE): on the production inline path the in-txn capacity check cannot run at all", async () => {
+  it("FIXED (R2): the capacity check now runs on the PRODUCTION inline path too", async () => {
     /*
-    FNXC:WorkflowCapacity 2026-07-28-19:05:
-    R1 IS FIXED; R2 IS NOT, and this test is the standing evidence. The whole
-    capacity block sits inside `if (useWorkflow && …)`, and `useWorkflow` reads
-    `experimentalFeatures.workflowColumns === true`, which NOTHING in production
-    sets (it is absent from DEFAULT_GLOBAL_SETTINGS and has no writer outside
-    tests). So on the path real projects take, the gate still does not run at all
-    and cards still enter wip past the cap.
+    FNXC:WorkflowCapacity 2026-07-28-10:20 (R2 fix):
+    Was `DEFECT (R2, STILL LIVE)`, asserting that a second card entered a full wip
+    column on the path every real project takes. Both reasons the invariant failed
+    are now closed: R1 was the pool-id sentinel, R2 was this — the whole capacity
+    block sat inside `if (useWorkflow && …)`, reading a settings key with no
+    production writer.
 
-    Concretely, measured on this suite's fixture with maxConcurrent 1:
-        flag OFF, no selection  -> ADMITTED   (this test)
-        flag OFF, selection     -> ADMITTED
-        flag ON,  no selection  -> REFUSED    (was ADMITTED before the R1 fix)
-        flag ON,  selection     -> REFUSED
-    Making the gate bind for real projects means removing the `useWorkflow`
-    condition from the capacity block — a separate, larger blast radius than the
-    sentinel fix, and an operator decision rather than a drive-by.
+    THIS IS THE USER-VISIBLE HALF of the change. Before it, a project with
+    `maxConcurrent: N` could hold more than N cards in its wip column and nothing
+    said so; now the move is refused with `capacity-exhausted`, which the graph
+    column boundary parks on and the promote route surfaces. Flipping this
+    expectation is the acceptance test for that behavior change.
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("inline");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
-    expect(error).toBeNull();
-    expect(secondColumn).toBe("in-progress"); // limit of 1, two occupants
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect(secondColumn).toBe("todo"); // refused, stays put
   });
 
   it("FIXED (R1): flag-ON, a NO-SELECTION task is now REFUSED at the limit", async () => {
@@ -151,7 +152,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("hooks");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond();
 
@@ -173,7 +174,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     */
     const store = h.store();
     await store.updateSettings({ maxConcurrent: 1 });
-    await setPath("hooks");
+    await assertMovePathLive();
 
     const { error, secondColumn } = await fillWipThenAdmitSecond({ selectWorkflow: "builtin:coding" });
 
@@ -208,7 +209,7 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
     async () => {
       const store = h.store();
       await store.updateSettings({ maxConcurrent: 1 });
-      await setPath("hooks");
+      await assertMovePathLive();
 
       const { error, secondColumn } = await fillWipThenAdmitSecond();
 
@@ -219,4 +220,232 @@ pgTest("in-transaction column capacity — ground truth (Phase A3)", () => {
       expect(secondColumn).toBe("todo");
     },
   );
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-16:10 (PR #2499 review — greptile: split capacity state):
+  THE SPLIT-SNAPSHOT RATCHET.
+
+  The capacity gate derives TWO things from the task's workflow selection: the
+  LIMIT (from the resolved IR) and the POOL KEY the occupancy count buckets on.
+  Before this fix they came from two INDEPENDENT reads — the pool id from a
+  pre-transaction `getTaskWorkflowSelectionAsync`, the IR from a second one inside
+  `resolveTaskWorkflowIrForMove`. Neither was serialized with the count, which runs
+  on the move's transaction handle. A selection change landing between them made
+  the gate measure workflow A's (empty) pool against workflow B's finite limit and
+  admit into a full column.
+
+  That is the R1 sentinel defect in a new costume: gate and counter describing
+  different pools, so a finite limit cannot bind. It matters precisely BECAUSE this
+  PR is where capacity starts binding — a gate that leaks under concurrent
+  selection change is a defect introduced exactly where operators begin relying on
+  it.
+
+  HOW THIS DISCRIMINATES, deterministically rather than by racing threads: the
+  pre-transaction reader is stubbed to report a workflow that DIFFERS from the one
+  actually persisted — which is what a concurrent selection change looks like from
+  inside the move. The stubbed workflow's pool is empty; the persisted one's is
+  full. Old code trusts the stub for both the pool key and the IR, so it measures
+  an empty pool against a finite limit and admits. The fix reads the selection once
+  through the transaction handle, so the PERSISTED value decides and the move is
+  refused.
+
+  FIRST ATTEMPT AT THIS TEST WAS WORTHLESS, and the revert-proof is the only reason
+  that is known: it stubbed a per-CALL sequence to hand the two old reads different
+  values, but the pre-transaction telemetry read silently consumed the first entry,
+  so both capacity reads landed on the same value and the reverted code passed. The
+  order-independent form below does not depend on how many times the reader is
+  called — which is the property a ratchet needs, since call counts are exactly the
+  kind of thing a later refactor changes without noticing.
+  */
+  it("RATCHET: a workflow-selection change mid-move cannot split the limit from the counting pool", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await assertMovePathLive();
+
+    // Fill builtin:coding's wip pool to its limit of 1.
+    const holder = await store.createTask({ description: "split-snapshot holder" });
+    await store.selectTaskWorkflow(holder.id, "builtin:coding");
+    await store.moveTask(holder.id, "todo");
+    await store.moveTask(holder.id, "in-progress");
+
+    const contender = await store.createTask({ description: "split-snapshot contender" });
+    await store.selectTaskWorkflow(contender.id, "builtin:coding");
+    await store.moveTask(contender.id, "todo");
+
+    /*
+    The stub diverges from what is PERSISTED: it reports builtin:coding-ideas (whose
+    wip pool holds zero occupants and whose in-progress column still carries a
+    finite maxConcurrent-backed limit), while the row says builtin:coding (pool
+    full). Restored in `finally` so a failure cannot leak a patched store into the
+    next test.
+    */
+    const realReader = store.getTaskWorkflowSelectionAsync.bind(store);
+    let stubCalls = 0;
+    (store as unknown as { getTaskWorkflowSelectionAsync: (taskId: string) => Promise<unknown> })
+      .getTaskWorkflowSelectionAsync = async (taskId: string) => {
+        if (taskId !== contender.id) return realReader(taskId);
+        stubCalls++;
+        return { workflowId: "builtin:coding-ideas", stepIds: [] };
+      };
+
+    let error: Error | null;
+    try {
+      error = await store
+        .moveTask(contender.id, "in-progress")
+        .then(() => null, (e: unknown) => e as Error);
+    } finally {
+      (store as unknown as { getTaskWorkflowSelectionAsync: unknown }).getTaskWorkflowSelectionAsync = realReader;
+    }
+
+    // The stub was actually exercised — otherwise this would pass for the wrong reason.
+    expect(stubCalls, "the pre-transaction selection reader was never called").toBeGreaterThan(0);
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect((await store.getTask(contender.id))?.column).toBe("todo");
+  });
+
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process selection race):
+  THE LOCK RATCHET. Fails if the capacity read moves back outside the lock.
+
+  The snapshot fix closed the INTRA-process split (one read feeding both the limit
+  and the pool key). It did nothing about the CROSS-process one: the read ran at
+  READ COMMITTED, where a plain SELECT takes no row lock, so another TaskStore on
+  another node sharing the same central database could change this task's workflow
+  selection immediately after the read. The move would enforce the OLD workflow's
+  pool and limit while committing the task under the NEW one.
+
+  `withTaskLock` — which the selection writer holds — cannot cover this: it is an
+  in-process promise chain over a Map, so it serializes one store instance and
+  nothing across nodes. Multi-node is several nodes against ONE PostgreSQL
+  database, so this is a supported deployment shape.
+
+  HOW THIS PROVES THE LOCK rather than racing it. A raw admin connection stands in
+  for the other node — more faithful than a second TaskStore, because it bypasses
+  every in-process lock by construction. It takes the SAME per-task advisory lock
+  and HOLDS it in an open transaction. The move must then block: if
+  `moves.ts` no longer acquires the lock before its capacity read, the move settles
+  immediately while the other node holds it, and the "still pending" assertion
+  fails. Releasing the lock lets the move proceed and be correctly refused.
+
+  The key comes from the exported `taskAdvisoryLockKey`, NOT a literal restated
+  here. A guard that restates the convention it is checking is how the R1 sentinel
+  survived: both ends had the shared constant available and one still wrote its own.
+  */
+  it("RATCHET: the capacity read is taken UNDER the per-task lock, not merely inside the transaction", async () => {
+    const store = h.store();
+    await store.updateSettings({ maxConcurrent: 1 });
+    await assertMovePathLive();
+
+    const holder = await store.createTask({ description: "xproc holder" });
+    await store.selectTaskWorkflow(holder.id, "builtin:coding");
+    await store.moveTask(holder.id, "todo");
+    await store.moveTask(holder.id, "in-progress");
+
+    const contender = await store.createTask({ description: "xproc contender" });
+    await store.selectTaskWorkflow(contender.id, "builtin:coding");
+    await store.moveTask(contender.id, "todo");
+
+    const projectId = h.layer().projectId;
+    const lockKey = taskAdvisoryLockKey(projectId, contender.id);
+    const other = h.adminSql();
+
+    /*
+    "Another node" grabs the per-task lock and holds it in an open transaction.
+    `acquired` is resolved from INSIDE that transaction, after the lock statement
+    returns, so the assertion below cannot run before the lock is genuinely held —
+    a sleep here would make this test pass whenever the machine was slow.
+    */
+    let signalAcquired!: () => void;
+    const acquired = new Promise<void>((r) => { signalAcquired = r; });
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((r) => { releaseLock = r; });
+
+    const otherNodeHoldsLock = other.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      signalAcquired();
+      await lockHeld;
+    });
+    await acquired;
+
+    let settled = false;
+    const move = store
+      .moveTask(contender.id, "in-progress")
+      .then(() => { settled = true; return null; }, (e: unknown) => { settled = true; return e as Error; });
+
+    /*
+    try/finally so a FAILING assertion still releases the lock and settles the
+    holding transaction. Without it the reverted-code run leaves an open
+    transaction behind and postgres reports an unhandled CONNECTION_CLOSED at
+    teardown — noise that vitest itself warns can produce false positives in
+    sibling tests. A ratchet must fail cleanly, not destabilise the run it fails in.
+    */
+    let error: Error | null;
+    try {
+      // Give the move ample opportunity to run to completion if it is NOT blocked.
+      await new Promise((r) => setTimeout(r, 750));
+      expect(
+        settled,
+        "the move completed while another node held the per-task lock — the capacity read is not under the lock",
+      ).toBe(false);
+    } finally {
+      releaseLock();
+      await otherNodeHoldsLock.catch(() => undefined);
+      error = await move;
+    }
+
+    expect((error as unknown as { rejection?: { code?: string } })?.rejection?.code).toBe(
+      "capacity-exhausted",
+    );
+    expect((await store.getTask(contender.id))?.column).toBe("todo");
+  });
+
+
+  /*
+  FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process selection race):
+  THE OTHER HALF. Mutual exclusion needs BOTH sides to take the lock, and the
+  move-side ratchet above cannot detect a writer that skips it: with only the move
+  locking, another node's selection write still lands mid-gate and the leak stands.
+  A one-sided lock is a lock that does not work, so it gets its own proof.
+  */
+  it("RATCHET: the selection WRITER also takes the per-task lock", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "writer-lock task" });
+
+    const lockKey = taskAdvisoryLockKey(h.layer().projectId, task.id);
+    const other = h.adminSql();
+
+    let signalAcquired!: () => void;
+    const acquired = new Promise<void>((r) => { signalAcquired = r; });
+    let releaseLock!: () => void;
+    const lockHeld = new Promise<void>((r) => { releaseLock = r; });
+
+    const otherNodeHoldsLock = other.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      signalAcquired();
+      await lockHeld;
+    });
+    await acquired;
+
+    let settled = false;
+    const write = store
+      .selectTaskWorkflow(task.id, "builtin:coding-ideas")
+      .then(() => { settled = true; }, () => { settled = true; });
+
+    try {
+      await new Promise((r) => setTimeout(r, 750));
+      expect(
+        settled,
+        "the selection write completed while another node held the per-task lock — the writer is unlocked",
+      ).toBe(false);
+    } finally {
+      releaseLock();
+      await otherNodeHoldsLock.catch(() => undefined);
+      await write;
+    }
+
+    expect((await store.getTaskWorkflowSelectionAsync(task.id))?.workflowId).toBe("builtin:coding-ideas");
+  });
 });

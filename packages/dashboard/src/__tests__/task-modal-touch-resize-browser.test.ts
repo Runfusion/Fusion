@@ -116,7 +116,7 @@ async function targetCenter(page: Page, selector: string): Promise<Point> {
 }
 
 /*
-FNXC:TaskModalResize 2026-08-12-15:12:
+FNXC:TaskModalResize 2026-07-26-15:12:
 Browser CDP gestures are required because jsdom cannot resolve CSS hit targets. This fixture mounts
 both production resize paths and sends CSS-pixel touch input through Chromium so elementFromPoint,
 pointer capture, persistence, and header-drag isolation use the same browser input path.

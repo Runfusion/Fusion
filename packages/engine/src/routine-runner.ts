@@ -512,7 +512,18 @@ export class RoutineRunner {
       const taskInput: TaskCreateInput = {
         title: step.taskTitle?.trim() || undefined,
         description: step.taskDescription.trim(),
-        column: (step.taskColumn as Column) || "triage",
+      /*
+      FNXC:Automations 2026-07-30-16:40 (greptile #2652 — the UI fix was only half of it):
+      Was `(step.taskColumn as Column) || "triage"`. U11 deletes `triage` from the default workflow, so
+      a step with no explicit column created its task into a column the board does not declare — and it
+      did so for EVERY routine, including ones saved through the fixed editor, because this substitution
+      happens after the step is read. Fixing the form's default alone changed nothing at runtime.
+
+      Omitted instead of defaulted: `createTask` resolves the workflow's own intake column when no
+      column is given (#2589), which is the only answer correct for every board, custom workflows
+      included. An explicit column on the step is still honoured.
+      */
+        column: step.taskColumn ? (step.taskColumn as Column) : undefined,
         modelProvider: step.modelProvider?.trim() || undefined,
         modelId: step.modelId?.trim() || undefined,
         thinkingLevel: (step.thinkingLevel?.trim() || undefined) as TaskCreateInput["thinkingLevel"],
