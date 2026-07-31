@@ -297,6 +297,117 @@ describe("processPullRequestMergeTask", () => {
         expect.objectContaining({ owner: "central-owner", repo: "central-repo", number: 88, method: "squash" }),
       );
     });
+
+    /*
+    FNXC:ForkAwarePrHead 2026-07-30-21:35 (#2377 review — coderabbit):
+    THE FORK-QUALIFIED HEAD MUST REACH BOTH GITHUB CALLS ON BOTH processPullRequestMergeTask PATHS.
+
+    #2377 qualified `createPr` on all three surfaces but left `findPrForBranch` on the bare branch.
+    That filter matches by `owner:branch`, so on a fork it never finds a PR whose head is
+    `fork-owner:branch`: the existing PR reads as absent and the path falls through to push +
+    createPr. The per-task path then opens a duplicate, and the shared-branch path re-opens a group
+    PR the coordinator already persisted.
+
+    The two cases below are the shared-branch and per-task paths the original change touched;
+    `createGroupPrCallback` is covered separately above. Asserting BOTH calls, because asserting
+    only `createPr` is what let the lookup half ship unqualified.
+    */
+    it("qualifies BOTH findPrForBranch and createPr with the fork owner on the per-task path", async () => {
+      vi.mocked(getPushRepo).mockReturnValue({ owner: "fork-owner", repo: "central-repo" });
+      const task: MockTask = { id: "FN-9403", title: "t", description: "d", column: "in-review" };
+      const branch = getTaskBranchName(task.id);
+      const store = makeStatefulStore(task);
+      execMock.mockReturnValue("");
+
+      const github = {
+        findPrForBranch: vi.fn(async () => null),
+        createPr: vi.fn(async () => ({
+          number: 91,
+          url: "https://github.com/central-owner/central-repo/pull/91",
+          status: "open" as const,
+          headBranch: branch,
+          baseBranch: "main",
+        })),
+        getPrMergeStatus: vi.fn(async () => ({
+          prInfo: { number: 91, url: "https://github.com/central-owner/central-repo/pull/91", status: "open" as const },
+          reviewDecision: null,
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })),
+        mergePr: vi.fn(async () => ({
+          number: 91,
+          url: "https://github.com/central-owner/central-repo/pull/91",
+          status: "merged" as const,
+        })),
+      };
+
+      await processPullRequestMergeTask(store as never, "/projects/repo-a", task.id, github as never, () => undefined);
+
+      expect(github.findPrForBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ head: `fork-owner:${branch}` }),
+      );
+      expect(github.createPr).toHaveBeenCalledWith(
+        expect.objectContaining({ head: `fork-owner:${branch}` }),
+      );
+    });
+
+    it("qualifies BOTH findPrForBranch and createPr with the fork owner on the shared-branch-group path", async () => {
+      vi.mocked(getPushRepo).mockReturnValue({ owner: "fork-owner", repo: "central-repo" });
+      const task: MockTask = {
+        id: "FN-9404",
+        title: "t",
+        description: "d",
+        column: "in-review",
+        branchContext: { groupId: "planning:g5", source: "planning", assignmentMode: "shared" },
+      };
+      const store = makeStore(task, { baseBranch: "main" });
+      (store.getBranchGroup as ReturnType<typeof vi.fn>).mockReturnValue({
+        id: "BG-5",
+        sourceType: "planning",
+        sourceId: "planning:g5",
+        branchName: "fusion/groups/planning-g5",
+        autoMerge: true,
+        prState: "none",
+        status: "open",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      (store.listTasksByBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue([task]);
+      execMock.mockImplementation((cmd: string) => (cmd.includes("rev-list --count") ? "1\n" : ""));
+
+      const github = {
+        findPrForBranch: vi.fn(async () => null),
+        createPr: vi.fn(async () => ({
+          number: 92,
+          url: "https://github.com/central-owner/central-repo/pull/92",
+          status: "open" as const,
+          headBranch: "fusion/groups/planning-g5",
+          baseBranch: "main",
+        })),
+        getPrMergeStatus: vi.fn(async () => ({
+          prInfo: { number: 92, url: "https://github.com/central-owner/central-repo/pull/92", status: "open" as const },
+          reviewDecision: null,
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })),
+        mergePr: vi.fn(async () => ({
+          number: 92,
+          url: "https://github.com/central-owner/central-repo/pull/92",
+          status: "merged" as const,
+        })),
+      };
+
+      await processPullRequestMergeTask(store as never, "/projects/repo-a", task.id, github as never, () => undefined);
+
+      expect(github.findPrForBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ head: "fork-owner:fusion/groups/planning-g5" }),
+      );
+      expect(github.createPr).toHaveBeenCalledWith(
+        expect.objectContaining({ head: "fork-owner:fusion/groups/planning-g5" }),
+      );
+    });
   });
 
   it("pushes the per-task branch to origin before creating a new PR", async () => {
@@ -1905,6 +2016,17 @@ describe("createGroupPrCallback", () => {
         repo: "central-repo",
         head: "fork-owner:fusion/groups/fork",
       }),
+    );
+    /*
+    FNXC:ForkAwarePrHead 2026-07-30-21:25 (#2377 review — coderabbit):
+    THE LOOKUP MUST USE THE SAME QUALIFIED HEAD AS THE CREATE, or the idempotency check is blind on
+    a fork. `findPrForBranch` filters by `owner:branch`; searching the UNQUALIFIED branch never
+    matches a PR whose head is `fork-owner:branch`, so an existing group PR reads as absent and the
+    path falls through to push + createPr — the duplicate-PR failure createGroupPrCallback's
+    idempotency exists to prevent.
+    */
+    expect(github.findPrForBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ head: "fork-owner:fusion/groups/fork" }),
     );
   });
 });

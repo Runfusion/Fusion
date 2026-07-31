@@ -323,7 +323,7 @@ export function createGroupPrCallback(
     if (!repo) {
       throw new Error("createGroupPr: could not determine repository");
     }
-    const existing = await github.findPrForBranch({ owner: repo.owner, repo: repo.repo, head: headBranch, state: "open" });
+    const existing = await github.findPrForBranch({ owner: repo.owner, repo: repo.repo, head: qualifyForkAwarePrHead(cwd, repo.owner, headBranch), state: "open" });
     if (existing) {
       return { prNumber: existing.number, prUrl: existing.url, prState: toBranchGroupPrState(existing) };
     }
@@ -889,7 +889,7 @@ export async function processPullRequestMergeTask(
       // terminal PR for this head branch must NOT be reattached (that reintroduces
       // the terminal-PR reuse bug createGroupPrCallback fixed); treat it as
       // not-found and fall through to push + createPr for a fresh open PR.
-      groupPrInfo = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: branchGroup.branchName, state: "open" });
+      groupPrInfo = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: qualifyForkAwarePrHead(cwd, prRepo.owner, branchGroup.branchName), state: "open" });
       if (!groupPrInfo) {
         await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
         try {
@@ -993,7 +993,7 @@ export async function processPullRequestMergeTask(
   if (!prInfo) {
     await store.updateTask(task.id, { status: "creating-pr" });
 
-    const existingPr = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: branch, state: "all" });
+    const existingPr = await github.findPrForBranch({ owner: prRepo.owner, repo: prRepo.repo, head: qualifyForkAwarePrHead(cwd, prRepo.owner, branch), state: "all" });
     if (!existingPr) {
       // gh pr create / GitHub REST require the head branch to exist on
       // origin. Nothing else in the merge path publishes the per-task

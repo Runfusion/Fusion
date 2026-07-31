@@ -1280,7 +1280,18 @@ export class GitHubClient {
   private async findPrForBranchWithApi(params: FindPrParams): Promise<PrInfo | null> {
     const { owner, repo } = this.resolveRepo(params.owner, params.repo);
     const searchParams = new URLSearchParams();
-    searchParams.set("head", `${owner}:${params.head}`);
+    /*
+    FNXC:ForkAwarePrHead 2026-07-30-21:20:
+    An ALREADY-QUALIFIED head must not be prefixed again.
+
+    The REST `head` filter takes `owner:branch`. This unconditionally prepended the UPSTREAM owner,
+    so a fork-qualified head (`forkOwner:branch`, which is what `gh pr list --head` wants and what
+    the PR-create path now sends) became `upstreamOwner:forkOwner:branch` and matched nothing.
+
+    Without this, making the lookup fork-aware fixes the `gh` backend and silently breaks the API
+    one — the two take the same argument and disagree about whether it is qualified.
+    */
+    searchParams.set("head", params.head.includes(":") ? params.head : `${owner}:${params.head}`);
     searchParams.set("state", params.state ?? "all");
     searchParams.set("per_page", "1");
 
