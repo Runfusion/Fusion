@@ -42,6 +42,9 @@ export const LANE_ARGUMENT_NAMES = new Set([
   "isReviewColumn",
   "isWipColumn",
   "holdColumn",
+  /* FNXC:WorkflowLifecycleColumns 2026-07-30-22:00: the MEMBERSHIP form, added with the surfacing
+     family's split-role fix — without it the gate cannot see a dropped `holdColumns`. */
+  "holdColumns",
 ]);
 
 function parse(file) {

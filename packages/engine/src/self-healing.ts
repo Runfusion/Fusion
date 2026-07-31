@@ -8702,8 +8702,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         logPrefix: "Stale paused todo surfaced",
         role: "hold",
         isEligible: (task) => task.paused === true,
-        evaluate: (task, thresholdMs, now, activation, roleColumn) =>
-          getStalePausedTodoSignal(task, { now, thresholdMs, holdColumn: roleColumn, ...activation }),
+        evaluate: (task, thresholdMs, now, activation, roleColumns) =>
+          getStalePausedTodoSignal(task, { now, thresholdMs, holdColumns: roleColumns, ...activation }),
         describe: (_task, signal, thresholdMs) =>
           `paused ${hours(signal.ageMs)}h beyond ${hours(thresholdMs)}h threshold; disposition options — unpause, move to triage, archive, or create follow-up task. pausedReason=${(_task as { pausedReason?: string }).pausedReason ?? "none"}`,
       },
@@ -8719,8 +8719,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         logPrefix: "Stale paused review surfaced",
         role: "review",
         isEligible: (task) => task.paused === true,
-        evaluate: (task, thresholdMs, now, activation, roleColumn) =>
-          getStalePausedReviewSignal(task, { now, thresholdMs, reviewColumn: roleColumn, ...activation }),
+        evaluate: (task, thresholdMs, now, activation, roleColumns) =>
+          getStalePausedReviewSignal(task, { now, thresholdMs, reviewColumns: roleColumns, ...activation }),
         describe: (_task, signal) =>
           `paused ${hours(signal.ageMs)}h; disposition options — unpause, retry, archive, or create follow-up task. pausedReason=${(_task as { pausedReason?: string }).pausedReason ?? "none"}`,
       },
@@ -8754,14 +8754,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           task.id !== activeMergeTaskId &&
           !executingTaskIds.has(task.id),
         isEligibleAsync: async (task) => !(await this.isMergeLaneOwned(task.id)),
-        evaluate: (task, thresholdMs, now, activation, roleColumn) => {
+        evaluate: (task, thresholdMs, now, activation, roleColumns) => {
           const signal = getInReviewStalledSignal(task, {
             now,
             thresholdMs,
             autoMerge: true,
             activeMergeTaskId,
             executingTaskIds,
-            reviewColumn: roleColumn,
+            reviewColumns: roleColumns,
             ...activation,
           });
           return signal ? { ...signal, code: signal.code, ageMs: signal.quietMs } : undefined;

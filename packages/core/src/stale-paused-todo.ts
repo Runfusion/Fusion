@@ -26,6 +26,16 @@ export interface StalePausedTodoContext {
   `resolveLifecycleColumns(ir).hold` instead.
   */
   holdColumn?: string;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the lane seam, MEMBERSHIP not one column):
+  `holdColumn` is `resolveLifecycleColumns().hold` — the FIRST column carrying the hold trait. A
+  board declaring more than one hold lane (a capacity wait beside a blocked-on-dependency park) has
+  several, and a card resting in the second read as not-on-hold and was never surfaced.
+
+  Mirrors `reviewColumns` in in-review-stalled.ts / stale-paused-review.ts. Optional, with today's
+  behaviour preserved as the fallback, so a caller that does not pass it is byte-identical.
+  */
+  holdColumns?: ReadonlySet<string>;
   now?: number;
   thresholdMs?: number;
   engineActiveSinceMs?: number;
@@ -38,8 +48,11 @@ export function getStalePausedTodoSignal(
   task: Pick<Task, "column" | "paused" | "columnMovedAt" | "updatedAt" | "pausedReason" | "pausedByAgentId">,
   context: StalePausedTodoContext = {},
 ): StalePausedTodoSignal | undefined {
-  const holdColumn = context.holdColumn ?? "todo";
-  if (task.column !== holdColumn || task.paused !== true) return undefined;
+  const onHoldLane = context.holdColumns
+    ? context.holdColumns.has(task.column)
+    /* DELIBERATE-LITERAL — the no-metadata fallback; a supplied set always wins. */
+    : task.column === (context.holdColumn ?? "todo");
+  if (!onHoldLane || task.paused !== true) return undefined;
 
   const thresholdMs = context.thresholdMs ?? DEFAULT_STALE_PAUSED_TODO_THRESHOLD_MS;
   if (!Number.isFinite(thresholdMs) || thresholdMs <= 0) return undefined;

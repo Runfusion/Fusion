@@ -32,6 +32,8 @@ const FAMILY = [
     role: "hold" as const,
     column: "todo",
     renamedColumn: "drafting",
+    /* The SECOND column carrying this row's role in `irSplitRole`. */
+    splitColumn: "blocked",
     task: (over: Partial<Task> = {}) => ({ paused: true, pausedReason: "manual-hold", ...over }),
   },
   {
@@ -41,6 +43,7 @@ const FAMILY = [
     role: "review" as const,
     column: "in-review",
     renamedColumn: "checking",
+    splitColumn: "signoff",
     task: (over: Partial<Task> = {}) => ({ paused: true, pausedReason: "manual-hold", ...over }),
   },
   {
@@ -50,6 +53,7 @@ const FAMILY = [
     role: "review" as const,
     column: "in-review",
     renamedColumn: "checking",
+    splitColumn: "signoff",
     // This one watches ACTIVE review work, so the card must NOT be paused.
     task: (over: Partial<Task> = {}) => ({ paused: false, ...over }),
   },
@@ -87,6 +91,29 @@ function ir(hold: string, review: string): WorkflowIr {
       { id: hold, name: hold, traits: [{ trait: "hold", config: { release: "capacity" } }] },
       { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
       { id: review, name: review, traits: [{ trait: "merge" }] },
+      { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+    ],
+  } as unknown as WorkflowIr;
+}
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:50 (a role is a TRAIT, so several columns may carry it):
+A board that parks dependency-blocked cards in their own hold lane, and splits human sign-off from
+the merge lane, carries each role TWICE. `resolveLifecycleColumns()[role]` answers with the first
+only, which is what made the surfacing family skip every card resting in the second.
+*/
+function irSplitRole(): WorkflowIr {
+  return {
+    version: "v2",
+    id: WF,
+    nodes: [],
+    edges: [],
+    columns: [
+      { id: "todo", name: "todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "blocked", name: "blocked", traits: [{ trait: "hold", config: { release: "dependency" } }] },
+      { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "in-review", name: "in-review", traits: [{ trait: "merge" }] },
+      { id: "signoff", name: "signoff", traits: [{ trait: "human-review" }] },
       { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
     ],
   } as unknown as WorkflowIr;
@@ -185,6 +212,71 @@ describe("surfacing family — shared invariants (one row per sweep)", () => {
         [makeTask("building", spec.task())],
         { [spec.thresholdKey]: CUSTOMIZED_MS },
         ir("todo", "in-review"),
+      );
+
+      expect(await run(h.manager)).toBe(0);
+    });
+
+    it("fires for a card in the SECOND column carrying its role", async () => {
+      /*
+      The defect this replaces: the role gate compared `task.column` against the FIRST column
+      carrying the role, so a card resting in a board's second hold/review lane was skipped
+      entirely — no diagnostic, no error, and every other assertion in this file still green
+      because the single-role-column fixture could not express the case.
+      */
+      const h = harness(
+        [makeTask(spec.splitColumn, spec.task())],
+        { [spec.thresholdKey]: CUSTOMIZED_MS },
+        irSplitRole(),
+      );
+
+      expect(await run(h.manager)).toBe(1);
+      expect(h.logEntry).toHaveBeenCalledWith("FN-1", expect.stringContaining(spec.logPrefix));
+    });
+
+    it("still fires for a card in the FIRST role column when the role is split", async () => {
+      /* Membership must WIDEN the gate, not move it. */
+      const h = harness(
+        [makeTask(spec.column, spec.task())],
+        { [spec.thresholdKey]: CUSTOMIZED_MS },
+        irSplitRole(),
+      );
+
+      expect(await run(h.manager)).toBe(1);
+    });
+
+    it("reads the recovery policy of the card's OWN role column, not the first one", async () => {
+      /*
+      A second first-match bug hides inside the fix for the first: resolving membership but still
+      reading `roleColumns[0]`'s declared policy applies the merge lane's threshold to a card in the
+      sign-off lane. Here the FIRST role column declares a policy that would suppress the signal and
+      the card's own column declares one that fires — so reading the wrong column returns 0.
+      */
+      const workflow = irSplitRole() as unknown as { columns: Array<{ id: string; recovery?: unknown }> };
+      workflow.columns.find((c) => c.id === spec.column)!.recovery = {
+        stalenessMs: BUILTIN_DEFAULT_MS,
+        onStale: { action: "surface", code: spec.logPrefix },
+      };
+      workflow.columns.find((c) => c.id === spec.splitColumn)!.recovery = {
+        stalenessMs: CUSTOMIZED_MS,
+        onStale: { action: "surface", code: spec.logPrefix },
+      };
+
+      const h = harness(
+        [makeTask(spec.splitColumn, spec.task())],
+        { [spec.thresholdKey]: BUILTIN_DEFAULT_MS },
+        workflow as unknown as WorkflowIr,
+      );
+
+      expect(await run(h.manager)).toBe(1);
+    });
+
+    it("does NOT fire for a card outside every column carrying its role", async () => {
+      /* Membership must still narrow: `building` carries neither role. */
+      const h = harness(
+        [makeTask("building", spec.task())],
+        { [spec.thresholdKey]: CUSTOMIZED_MS },
+        irSplitRole(),
       );
 
       expect(await run(h.manager)).toBe(0);
