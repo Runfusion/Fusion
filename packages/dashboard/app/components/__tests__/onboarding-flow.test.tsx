@@ -522,7 +522,7 @@ describe("onboarding flow integration", () => {
         ],
       });
 
-      const { container } = renderModal();
+      renderModal();
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-anthropic-api-key")).toBeInTheDocument();
@@ -530,7 +530,14 @@ describe("onboarding flow integration", () => {
 
       const subscriptionCard = screen.getByTestId("onboarding-provider-card-anthropic-subscription");
       const anthropicCard = screen.getByTestId("onboarding-provider-card-anthropic-api-key");
-      const renderedAnthropicAuthCards = container.querySelectorAll(
+      /*
+      FNXC:OnboardingTests 2026-07-30-15:10:
+      `document`, not `render()`'s `container` — the onboarding modal mounts through a portal, so
+      `container` is empty and this counted 0 cards while the `screen.getByTestId` calls two lines
+      up found both. That split is what made this failure read as an onboarding-provider bug rather
+      than a query-root bug.
+      */
+      const renderedAnthropicAuthCards = document.querySelectorAll(
         '[data-testid^="onboarding-provider-card-anthropic"]',
       );
       expect(renderedAnthropicAuthCards).toHaveLength(2);
