@@ -72,6 +72,35 @@ describe("archiving a task releases its active-session registry entries (FN-7717
     ).not.toThrow();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-21:30 (fleet):
+  The archive branch keyed on `to === "archived"`. On a board whose terminal lane is renamed it matched
+  nothing, so archiving never released the task's active-session entry — and the registry entry is what
+  blocks a SUCCESSOR task from acquiring the same path. The leak is therefore not cosmetic: the next
+  task to want that path fails to register.
+
+  Lanes come from the emitter, so this drives the listener exactly as `moves.ts` now emits. The literal
+  is deliberately absent from the payload's lane: `shipped` matches no legacy id, so the branch fires
+  only if the payload is actually consulted.
+  */
+  it("releases the session when archiving into a RENAMED terminal lane", async () => {
+    const { executor, store } = makeExecutor();
+    (executor as any).setActiveWorkflowStepSession("TASK-R", {}, SHARED_ROOT);
+    const [heldPath] = activeSessionRegistry.pathsForTask("TASK-R");
+    expect(heldPath).toBeDefined();
+
+    store.emit("task:moved", {
+      task: makeTask("TASK-R"),
+      from: "signoff",
+      to: "shipped",
+      source: "user",
+      lanes: { hold: "backlog", wip: "building", archived: "shipped" },
+    });
+
+    await (executor as any).pendingTaskDisposals.get("TASK-R");
+    expect(activeSessionRegistry.pathsForTask("TASK-R")).toHaveLength(0);
+  });
+
   it("releases executor and step-session surfaces archived from planning/todo columns", async () => {
     const { executor, store } = makeExecutor();
 

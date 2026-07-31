@@ -3553,8 +3553,8 @@ export class TaskExecutor {
     });
 
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-31-23:20 (FLAGGED AND LEFT COUNTED — do NOT convert with
-    `resolveTaskWorkflowIrSync` / `resolvePlannerLanes`):
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:20 (was FLAGGED AND LEFT COUNTED; RESOLVED below —
+    still do NOT convert with `resolveTaskWorkflowIrSync` / `resolvePlannerLanes`):
 
     Four lifecycle literals live in this listener and they are genuinely wrong on a renamed board:
     execution never starts on a move INTO the board's own wip lane, terminal session release never
@@ -3597,10 +3597,58 @@ export class TaskExecutor {
     either a sync reader that answers for custom workflows AND survives a writer on another node, or
     restructuring the disposal bookkeeping so nothing is read in-tick — the constraints are written up
     in `sync-workflow-ir-second-blocker.test.ts`.
+
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:55 — RESOLVED BY A THIRD ROUTE, and the analysis above
+    is kept because it is what rules the other two out.
+
+    The block reduces to "no resolver can be CALLED here". It never required that the answer be
+    unavailable — only that this listener cannot go and fetch it. So the lanes are resolved ONCE by
+    the emitter, which is already async, and ride along on the event payload (`moves.ts`). Every
+    objection above is about calling a resolver in-tick, so none of them survive the move:
+
+      - (2)/the PostgreSQL sync-IR dead end: no sync resolver is used, so neither blocker applies.
+      - (A) the in-tick `pendingTaskDisposals` race: NO await is introduced. Destructuring one more
+        field is as synchronous as reading `to`, so branch selection still happens in this tick and
+        the FN-5256 fast-bounce serialisation is untouched.
+      - (B) the entangled if / else-if chain: satisfied rather than dodged — all four convert in
+        this one commit, so no move can fall into a different branch than before.
+
+    THE RESIDUAL RISK MOVES TO THE EMITTER, AND IT IS NOT YET CLOSED — stated plainly because the
+    tempting version of this note is the false one. `lanes` is OPTIONAL on the payload
+    (`store.ts`: `lanes?: TaskMoveLanes`) and the fallback below is the LEGACY LITERAL, so a
+    `task:moved` published without it leaves these four guards exactly as inert as before, on a
+    renamed board, with nothing failing. The conversion is only as good as the emitters.
+
+    That is a strictly better position than the flagged state — the fallback is reached on one path
+    instead of every path, and `moves.ts` (the move path these branches actually serve) does pass
+    lanes — but it is NOT the compile-time guarantee it would be if the field were required.
+    Requiring it is the right end state and is deliberately NOT done here: it retypes every
+    `task:moved` emitter, which is its own change with its own blast radius, and bundling it would
+    put a mechanical retype in the same commit as this behavior change.
+
+    FOLLOW-UP, tracked with the emitter-side work: either make `lanes` required, or add a gate that
+    asserts every `task:moved` emit site supplies it. Until one of those lands, treat the fallback
+    as a live inertness path rather than defensive dead code.
     */
-    store.on("task:moved", ({ task, from, to, source }) => {
+    store.on("task:moved", ({ task, from, to, source, lanes }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
-      if (to === "in-progress") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-21:30 (fleet):
+      Lanes come from the EMITTER (see `moves.ts`), not from a resolver called here.
+
+      This listener is synchronous and its branches start execution, dispose worktrees and release
+      sessions, so its prologue is load-bearing — an await ahead of those branches would defer the
+      `execute()` dispatch itself. The sync IR resolver is not an option either: it answers with the
+      DEFAULT workflow under PostgreSQL, so a guard written through it is inert.
+
+      Fail-soft to the legacy ids when the emit path could not resolve, matching every other consumer
+      of this payload. `wipLane`/`archivedLane`/`holdLane` are read as SINGLE ids rather than sets
+      because each branch below is a lane-identity test on one column, which is what the literals were.
+      */
+      const wipLane = lanes?.wip ?? "in-progress";
+      const archivedLane = lanes?.archived ?? "archived";
+      const holdLane = lanes?.hold ?? "todo";
+      if (to === wipLane) {
         this.userCanceledTaskIds.delete(task.id);
         if (this.recoveringCompleted.has(task.id)) {
           executorLog.debug(`[event:task:moved] Skipping execute() for ${task.id} — completed-task recovery in progress`);
@@ -3624,7 +3672,7 @@ export class TaskExecutor {
         })().catch((err) =>
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
-      } else if (to === "archived") {
+      } else if (to === archivedLane) {
         /*
         FNXC:WorkflowLifecycle 2026-07-09-00:05:
         Archived is terminal, so it must release every active-session registry entry the
@@ -3675,7 +3723,7 @@ export class TaskExecutor {
             userCanceled: source === "user",
           }).then(async () => { await this.releasePreExecutionWorktree(task.id, `moved to ${to}`); }),
         );
-      } else if (from === "in-progress") {
+      } else if (from === wipLane) {
         if (this.workflowLifecycleMovesInFlight.has(task.id) && this.graphRouting.has(task.id)) {
           executorLog.log(
             `[event:task:moved] Preserving graph run for ${task.id} across its own ${from} → ${to} boundary`,
@@ -3685,7 +3733,7 @@ export class TaskExecutor {
         this.trackTaskDisposal(
           task.id,
           this.awaitAbortInFlightTaskWork(task.id, `parent moved from in-progress to ${to}`, {
-            userCanceled: source === "user" && to === "todo",
+            userCanceled: source === "user" && to === holdLane,
           }),
         );
       }
