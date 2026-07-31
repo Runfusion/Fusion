@@ -319,6 +319,44 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     ]));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
+  `mergeTempTerminalColumns` was UNCOVERED on the #3115 map. The two cases around this one use `done`
+  and `archived` — the ids — so blinding the resolver leaves them green.
+
+  The terminal check picks the SHORTER grace: a finished task's temp merge worktree is reaped after
+  DONE_TASK_TEMP_WORKTREE_GRACE_MS instead of the full stale window. Keyed on the ids, a card in a
+  renamed completion lane never qualified, so its worktree lingered for the long window — disk held
+  by work that finished, and the audit reason reads "stale" rather than "done-task-stale", so the
+  sweep's own record misattributes why it eventually acted.
+  */
+  it("uses the done-task grace for a task in a RENAMED terminal lane", async () => {
+    const stale = tempMergeDir("fusion-ai-merge-fn-999-renamedterminal");
+    makeDoneTaskStale(stale);
+    const { manager, audits } = makeManager({}, taskWithColumn("shipped"));
+    (manager as unknown as { store: Record<string, unknown> }).store.listWorkflowDefinitions =
+      vi.fn(async () => [{
+        id: "custom:renamed",
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+
+    await expect(sweep(manager)).resolves.toBe(1);
+
+    expect(existsSync(stale)).toBe(false);
+    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ success: true, reason: "done-task-stale" }) }),
+    ]));
+  });
+
   it("removes worktree for archived task after grace period", async () => {
     const stale = tempMergeDir("fusion-ai-merge-fn-999-archivedtask");
     makeDoneTaskStale(stale);
