@@ -1,0 +1,90 @@
+---
+category: workflow-learnings
+module: scripts
+tags: [ratchets, gates, measurement, tooling, false-green]
+problem_type: process-learning
+applies_when: trusting a ratchet's number, or probing a ratchet to test what it can see
+---
+
+# Probe the instrument the way CI runs it
+
+Companion to [silence-is-not-success](./silence-is-not-success.md) and
+[a-falling-count-is-not-evidence](./a-falling-count-is-not-evidence.md). Those are about misreading
+what the code did. This one is about misreading **the tool you are using to check the code** — the
+layer that is supposed to be the ground truth when everything else is in doubt.
+
+A ratchet reports a number. The number is only as good as two things nobody looks at: **which files
+the tool decided exist**, and **whether the invocation you used can fail at all**. Both failed in one
+session, on different tools, and each looked exactly like a pass.
+
+## 1. A tool that cannot fail from the command line you typed
+
+`check-move-target-literals` is report-only by default; `--strict` is what makes it exit non-zero, and
+`package.json` supplies it:
+
+```jsonc
+"check:move-target-literals": "node scripts/check-move-target-literals.mjs --strict"
+```
+
+Probing it directly — `node scripts/check-move-target-literals.mjs` — returned **exit 0 for every
+probe**, including a blatant `moveTask(id, "in-review")` pasted into `scheduler.ts`. That is
+indistinguishable from a dead ratchet, and it was nearly reported as one. The guard was fine; the
+invocation could not fail.
+
+The output makes this worse, not better: a report-only run prints its normal summary line and exits 0,
+so the terminal looks identical to a genuine pass. There is no "(report-only)" in the transcript to
+catch your eye.
+
+**Rule:** invoke a checker exactly as `package.json` does, or call the `pnpm check:*` script. If you
+are testing what a tool can see, confirm first that your invocation can fail *at all* — introduce an
+obvious violation and watch it go red before you trust a single green.
+
+## 2. A tool that cannot see the file you just wrote
+
+`lifecycle-column-census` and `check-move-target-literals` both discovered files with `git ls-files`,
+which lists **tracked files only**. Everything else in the program walks the filesystem. So a new file
+was invisible until it was committed:
+
+| state of a new file containing a plain legacy guard | result |
+| --- | --- |
+| added to an already-tracked file | caught |
+| new file, untracked | **missed, exit 0** |
+| identical file, `git add`ed | caught, exit 1 |
+
+Nothing is wrong with the detector in either tool — the literal is flagged the instant the file is
+staged. The blindness is in discovery, and it lands at the exact moment the number is consulted: you
+add a helper, run the census against your own work, read zero, and commit. The violation surfaces
+later in someone else's CI run, attributed to a push rather than to the edit that introduced it.
+
+The tool was answering a question about the last commit while being asked one about the working tree.
+
+## 3. The compounding cost: instruments that disagree about reality
+
+The two failures above are individually cheap. Together they are not.
+
+`check-inert-sync-lane-conversions` walks the filesystem; the census used `git ls-files`. When the same
+probe file was measured against both, one caught it and one missed it — and that differential was read
+as a claim about *expression walking*, which is where a full investigation went before the real cause
+turned out to be that the two tools disagreed about **which files exist**.
+
+When instruments in one program disagree about their own domain, every differential between them is
+unreadable until someone notices. Align the scopes, or the next person spends a day attributing a
+discrepancy to the thing being measured instead of to the measuring.
+
+## What to actually do
+
+- Before trusting a ratchet's number, run it once with a deliberate violation and confirm it goes red.
+  A ratchet nobody has seen fail is a ratchet nobody has verified.
+- When probing what a tool can see, use `pnpm check:*`, not a bare `node scripts/...`.
+- Prefer one discovery mechanism across a family of tools. If a tool must differ, say so in its header
+  and say why, so a cross-tool differential is readable.
+- `git ls-files --cached --others --exclude-standard` is the tracked-plus-untracked form (dedupe the
+  result: a path can appear under both flags in some index states). Ignored paths stay excluded, so
+  build output does not leak into the count.
+
+## Provenance
+
+Both defects were found by probing, not by reading: staged probe files measured against the tools with
+before/after counts, working tree confirmed clean after each. The report-only trap was caught by a
+result that was *too* clean — every shape passing, including ones that obviously should not — which is
+the same tell as a suite where nothing fails.
