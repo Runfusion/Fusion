@@ -1873,7 +1873,19 @@ function TaskCardComponent({
     const landedFilesCount = task.mergeDetails?.landedFiles?.length ?? "";
     const filesChanged = task.mergeDetails?.filesChanged ?? "";
     return `${landedFilesCount}:${filesChanged}`;
-  }, [task.column, task.mergeDetails?.landedFiles?.length, task.mergeDetails?.filesChanged]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:25:
+  `isCompleteColumn` BELONGS IN THIS LIST — it derives from the async `taskColumnFlags` prop.
+
+  Without it the signature is computed once, during the pre-load render where the flags are undefined
+  and the role helper falls back to the legacy id. On a renamed board that answers false, so the key
+  is `undefined`; and for a card already merged when the board loaded, neither `mergeDetails` field
+  changes afterwards either, so nothing ever recomputes and `useTaskDiffStats` loses the signal that
+  a merge changed what the card should show.
+
+  A legacy board hid it: `column === "done"` is already true on the first paint.
+  */
+  }, [task.column, task.mergeDetails?.landedFiles?.length, task.mergeDetails?.filesChanged, isCompleteColumn]);
 
   // Viewport-gated diff stats fetching - only fetch when card is visible
   const { stats: diffStats, loading: diffLoading } = useTaskDiffStats(
