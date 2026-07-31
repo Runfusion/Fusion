@@ -2233,6 +2233,11 @@ export class Scheduler {
       const isTerminalColumnTask = (task: Task): boolean => {
         const flags = columnFlagsForTask(task);
         if (flags) return flags.complete === true || flags.archived === true;
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: DELIBERATE-LITERAL — the fallback arm.
+           `columnFlagsForTask` returning undefined means this card's board could not be resolved;
+           the legacy ids are then the only answer, and dropping them would make an unresolvable card
+           count as NON-terminal and consume capacity it does not hold. The live arm above is the
+           resolved one. Marked so the census reads this as reviewed rather than as new debt. */
         return task.column === "done" || task.column === "archived";
       };
       const wipTaskIdSet = new Set(wipTaskIds);
