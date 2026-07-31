@@ -131,7 +131,16 @@ describe("SubtaskBreakdownModal", () => {
 
     const { container } = renderModal();
     await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
-    const modal = container.querySelector(".planning-modal");
+    /*
+    FNXC:PortalQueryRoot 2026-07-31-20:10:
+    document, not container — the planning modal renders through a PORTAL.
+
+    `container.querySelector(".planning-modal")` returned null, and the `?.` below turned that into
+    `undefined`, so the failure surfaced as "the given combination of arguments (undefined and
+    string) is invalid for this assertion" rather than as a missing element. Optional chaining is
+    what disguised a query-root bug as an assertion-type error.
+    */
+    const modal = document.querySelector(".planning-modal");
 
     expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
     expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
