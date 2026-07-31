@@ -156,7 +156,7 @@ export function WorkflowAddStepModal({
       suspendGeometryPersistenceOnShortViewport
       closeOnOutsidePointerDown
     >
-      <div className="wf-add-step-dialog" aria-label={t("workflowNodes.addStepTitle", "Add a step")}>
+      <div className="wf-add-step-dialog">
         <header className="wf-add-step-header">
           <h3>{t("workflowNodes.addStepTitle", "Add a step")}</h3>
           <button

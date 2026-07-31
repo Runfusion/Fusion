@@ -105,7 +105,7 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
   return (
     /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
     <FloatingWindow windowKey="group-task" title={t("groupTask.title", "Branch Group")} ariaLabel={t("groupTask.ariaLabel", "Branch group details")} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--group-task" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:group-task" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
-      <div className="modal modal-lg group-task-modal" aria-label={t("groupTask.ariaLabel", "Branch group details")}>
+      <div className="modal modal-lg group-task-modal">
         <div className="modal-header">
           <h2>{t("groupTask.title", "Branch Group {{id}}", { id: groupId })}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label={t("actions.closeModal", "Close modal")}>

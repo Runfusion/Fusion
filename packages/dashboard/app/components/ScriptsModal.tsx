@@ -194,7 +194,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
       /* FNXC:ModalTouchGeometry 2026-07-26-16:10: Preserve Scripts' globally default-off backdrop preference while the shared window keeps drag gestures from being mistaken for outside dismissals. */
       closeOnOutsidePointerDown={dismissOnOutsidePointerDown}
     >
-      <div className="modal scripts-modal" aria-label={t("scripts.title", "Scripts")}>
+      <div className="modal scripts-modal">
         {/* Header */}
         <div className="modal-header">
           <h2>

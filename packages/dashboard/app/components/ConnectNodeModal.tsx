@@ -169,10 +169,7 @@ export function ConnectNodeModal({ open, onClose, onConnected, addToast, onSubmi
   return (
     /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
     <FloatingWindow windowKey="connect-node" title={t("nodes.modal.title", "Connect to Node")} ariaLabel={t("nodes.modal.title", "Connect to Node")} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--connect-node" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:connect-node" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
-      <div
-        className="modal modal-md connect-node-modal"
-        aria-label={t("nodes.modal.title", "Connect to Node")}
-      >
+      <div className="modal modal-md connect-node-modal">
         <div className="modal-header">
           <h3>{t("nodes.modal.title", "Connect to Node")}</h3>
           <button className="modal-close" onClick={onClose} disabled={isSubmitting} aria-label={t("nodes.modal.closeButton", "Close connect node modal")}>

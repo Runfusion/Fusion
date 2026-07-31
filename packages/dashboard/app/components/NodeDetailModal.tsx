@@ -442,7 +442,6 @@ export function NodeDetailModal({
     <FloatingWindow windowKey="node-detail" title={t("nodes.modalTitle", "Node Details")} ariaLabel={t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--node-detail" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:node-detail" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       <div
         className="modal modal-lg node-detail-modal"
-        aria-label={t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })}
       >
         <div className="modal-header">
           <h3>{t("nodes.modalTitle", "Node Details")}</h3>
