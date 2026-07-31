@@ -326,3 +326,46 @@ describe("self-healing task:moved fan-out column vocabulary", () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-16:05 (fleet — pause-abort requeue TARGET):
+The recovery requeued to a hardcoded "todo". A hardcoded target is a worse failure than a stale guard:
+a stale guard stops matching, but a move to a column the board does not declare is a write into nowhere.
+Asserted on `moveTask`, because the target is the whole point of this conversion — a test that only
+checked the guards would pass with the write still hardcoded.
+*/
+describe("self-healing pause-abort requeue target vocabulary", () => {
+  function recoveryStoreFor(ir: WorkflowIr | undefined, parkedTask: Task) {
+    const moveTask = vi.fn(async () => undefined);
+    const store = {
+      ...storeFor(ir),
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false, autoMerge: true })),
+      listTasks: vi.fn(async () => [parkedTask]),
+      getTask: vi.fn(async () => parkedTask),
+      updateTask: vi.fn(async () => ({})),
+      moveTask,
+      logEntry: vi.fn(async () => undefined),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+      getRootDir: vi.fn(() => "/tmp/test-project"),
+    } as unknown as TaskStore;
+    return { store, moveTask };
+  }
+
+  it("requeues to the board's own HOLD lane, not a hardcoded todo", async () => {
+    const parkedInWip = parked("building");
+    const { store, moveTask } = recoveryStoreFor(RENAMED_WITH_REVIEW, parkedInWip);
+    const manager = managerFor(store) as unknown as { recoverPausedAbortFailures(): Promise<number> };
+    await manager.recoverPausedAbortFailures();
+    expect(moveTask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(moveTask).mock.calls[0]?.[1]).toBe("backlog");
+  });
+
+  it("still requeues to todo when the workflow will not resolve", async () => {
+    const parkedInWip = parked("in-progress");
+    const { store, moveTask } = recoveryStoreFor(undefined, parkedInWip);
+    const manager = managerFor(store) as unknown as { recoverPausedAbortFailures(): Promise<number> };
+    await manager.recoverPausedAbortFailures();
+    expect(moveTask).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(moveTask).mock.calls[0]?.[1]).toBe("todo");
+  });
+});
