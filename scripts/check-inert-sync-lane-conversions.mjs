@@ -120,13 +120,47 @@ function syncLaneSources(sf) {
 }
 
 /** Locals assigned from one of those sources: `const parked = resolveTaskParkedColumnsSync(...)`. */
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:59 (the check evaded its own check, SECOND shape):
+THE INITIALIZER IS NOT ALWAYS THE CALL.
+
+This registered a local only when the initializer WAS a call expression. The correct
+payload-first/sync-fallback shape puts the call inside a conditional:
+
+    const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
+    const hold = moveLanes?.hold ?? sync?.hold ?? "todo";
+
+`sync` was never registered, so its guards were never counted. MEASURED: writing `executor.ts` in
+exactly that shape took it from 4 counted guards to ZERO while the sync resolver was still there and
+still answering with the default board whenever the payload is absent.
+
+That is the same class of evasion the note below records for the inline spelling, and it matters more
+here because the shape it misses is the RECOMMENDED one — a fallback to the sync resolver is better
+than a fallback to legacy literals, so authors are actively steered toward the form the scan cannot
+see. A ratchet that goes quiet exactly when the code is written well is worse than no ratchet.
+
+Conditionals and `??`/`||` chains are now unwrapped, so any branch containing a sync source registers
+the local. Still a NAME match, not dataflow — the limits section above still applies.
+*/
+function unwrapForSyncCall(node) {
+  const out = [];
+  const walk = (n) => {
+    if (!n) return;
+    if (ts.isAwaitExpression(n) || ts.isParenthesizedExpression(n)) return walk(n.expression);
+    if (ts.isConditionalExpression(n)) { walk(n.whenTrue); walk(n.whenFalse); return; }
+    if (ts.isBinaryExpression(n)) { walk(n.left); walk(n.right); return; }
+    out.push(n);
+  };
+  walk(node);
+  return out;
+}
+
 function syncLaneLocals(sf, sources) {
   const locals = new Set();
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
-      let call = node.initializer;
-      if (ts.isAwaitExpression(call)) call = call.expression;
-      if (ts.isCallExpression(call)) {
+      for (const call of unwrapForSyncCall(node.initializer)) {
+        if (!ts.isCallExpression(call)) continue;
         const callee = ts.isPropertyAccessExpression(call.expression)
           ? call.expression.name.getText(sf)
           : call.expression.getText(sf);
