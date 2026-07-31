@@ -22,6 +22,17 @@
 import type { AgentStore, AgentState, Agent, TaskStore, Task, Settings } from "@fusion/core";
 import { isEphemeralAgent, resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-15:45 (fleet — the WIP half of an existing fallback):
+DELIBERATE-LITERAL — the unresolvable-workflow default, alongside `TERMINAL_TASK_COLUMNS`.
+
+That block already answers its terminal question through a named set and its WIP question through an
+inline `!== "in-progress"`. Both are the same documented fallback; only one was counted, because the
+census reads inline comparisons regardless of the branch they sit in while a named set is a
+definition. Naming this one makes the pair consistent and stops it reading as unconverted debt.
+*/
+const LEGACY_WIP_LANES: ReadonlySet<string> = new Set(["in-progress"]);
+
 export interface TaskOwner {
   agentId: string;
   /** True for runtime-spawned workers; false for durable assigned agents. */
@@ -368,7 +379,7 @@ export class EphemeralWorkerManager {
       if (ir === undefined) {
         /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-06:10. */
         if (TERMINAL_TASK_COLUMNS.has(task.column)) return true;
-        return task.column !== "in-progress";
+        return !LEGACY_WIP_LANES.has(task.column);
       }
       const terminalLanes = new Set<string>([
         ...columnsWithFlag(ir, "complete"),

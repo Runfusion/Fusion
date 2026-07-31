@@ -27,7 +27,6 @@
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
     "packages/engine/src/backlog-pressure-reporter.ts": 1,
-    "packages/engine/src/ephemeral-worker-manager.ts": 1,
     "packages/engine/src/merger.ts": 1,
     "packages/engine/src/restart-recovery-coordinator.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
