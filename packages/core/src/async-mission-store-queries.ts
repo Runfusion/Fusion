@@ -2173,9 +2173,19 @@ export async function listLiveLinkedTaskIds(handle: QueryHandle, taskIds: string
   return new Set(rows.map((row) => row.id));
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+`column` is the lane the card ACTUALLY reached, not the built-in name for its role.
+
+These two arms pinned `"done"` and `"archived"` in the TYPE, which is the census-invisible shape that
+blocks a conversion from the other end: the resolver below could not report the real column without a
+compile error, so the type would have forced the literal back in even after the predicate was fixed.
+`kind` already carries the role — that is what a consumer switches on — so the column field is free to
+carry the truth.
+*/
 export type TerminalTaskEvidence =
-  | { kind: "done"; id: string; column: "done" }
-  | { kind: "archived"; id: string; column: "archived" }
+  | { kind: "done"; id: string; column: string }
+  | { kind: "archived"; id: string; column: string }
   | { kind: "nonterminal"; id: string; column: string }
   | { kind: "invalid-deleted"; id: string; column?: string }
   | { kind: "missing" };
@@ -2184,7 +2194,11 @@ export type TerminalTaskEvidence =
  * FNXC:MissionReconciliation 2026-07-20-08:34:
  * Terminal evidence repair must distinguish a supported archive (the retained archived task tombstone plus its project-scoped cold snapshot) from an arbitrary soft/hard deletion. Read both representations on the caller's transaction handle so validation and feature linkage share one snapshot.
  */
-export async function getTerminalTaskEvidence(handle: QueryHandle, taskId: string): Promise<TerminalTaskEvidence> {
+export async function getTerminalTaskEvidence(
+  handle: QueryHandle,
+  taskId: string,
+  terminalColumns?: { complete?: ReadonlySet<string>; archived?: ReadonlySet<string> },
+): Promise<TerminalTaskEvidence> {
   const taskRows = await handle
     .select({
       id: schema.project.tasks.id,
@@ -2218,12 +2232,27 @@ export async function getTerminalTaskEvidence(handle: QueryHandle, taskId: strin
   set threaded in by the caller — the same shape `getLiveTaskColumn` needs, and it should land with
   it so the two cannot disagree about what "finished" means.
   */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+  The lane sets arrive from the caller; omitted, the legacy ids answer exactly as before.
+
+  I deferred this twice on the premise that `AsyncMissionStore` "holds a layer, not a store" and so
+  could not resolve anything. It holds an OPTIONAL `taskStore`, and the single production construction
+  site supplies it (`workflow-definitions.ts`: `new AsyncMissionStore(layer, store)`). That is the
+  third deferral of mine to dissolve on inspection, which is why the premise is now recorded next to
+  the fix rather than in a note claiming it cannot be done.
+  */
+  const isComplete = (column: string) =>
+    terminalColumns?.complete ? terminalColumns.complete.has(column) : column === "done";
+  const isArchived = (column: string) =>
+    terminalColumns?.archived ? terminalColumns.archived.has(column) : column === "archived";
+
   if (!task) return hasArchiveSnapshot ? { kind: "invalid-deleted", id: taskId } : { kind: "missing" };
-  if (task.deletedAt === null && task.column === "done") return { kind: "done", id: task.id, column: "done" };
-  if (task.deletedAt !== null && task.column === "archived" && hasArchiveSnapshot) {
-    return { kind: "archived", id: task.id, column: "archived" };
+  if (task.deletedAt === null && isComplete(task.column)) return { kind: "done", id: task.id, column: task.column };
+  if (task.deletedAt !== null && isArchived(task.column) && hasArchiveSnapshot) {
+    return { kind: "archived", id: task.id, column: task.column };
   }
-  if (task.deletedAt !== null || task.column === "archived") {
+  if (task.deletedAt !== null || isArchived(task.column)) {
     return { kind: "invalid-deleted", id: task.id, column: task.column };
   }
   return { kind: "nonterminal", id: task.id, column: task.column };
