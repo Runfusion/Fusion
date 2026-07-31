@@ -125,6 +125,44 @@ describe("SelfHealingManager.reclaimPrConflictForTask", () => {
     expect(result.outcome).toBe("reclaimed");
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:20:
+  `prConflictWipColumns` builds the worktree-owner index behind `ownedByOtherInProgressTask` — the
+  guard that stops this sweep DELETING a worktree another live task is executing in. Keyed on the id
+  that index is empty on a renamed board, so every worktree reads as unowned.
+
+  ASSERTS ON `removeWorktree`, NOT ON `result.outcome`. My first attempt asserted the outcome and
+  failed while the fix was in place: `reclaimed` is reachable through a second path this guard does
+  not gate, so the outcome cannot isolate it. `removeWorktree` + `git branch -D` run ONLY on the
+  guarded branch, which makes them the observable that discriminates — and they are also the
+  irreversible part, which is what the guard exists to prevent.
+  */
+  it("does NOT delete a worktree owned by another task in a RENAMED wip lane", async () => {
+    /* Default id/branch pair is kept: the reclaim path also requires the branch to name THIS task
+       (branchOwnerTaskId === taskIdUpper), so overriding one of them alone makes the case vacuous. */
+    const task = makeTask();
+    const otherOwner = { ...makeTask({ id: "FN-OTHER" }), column: "building", worktree: task.worktree } as Task;
+    const store = makeStore(task);
+    const RENAMED_IR = {
+      version: "v2", id: "custom:renamed", nodes: [], edges: [],
+      columns: [{ id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] }],
+    };
+    (store as any).listWorkflowDefinitions = vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]);
+    (store as any).listTasks = vi.fn(async ({ column }: { column?: string } = {}) => (
+      column === "building" ? [otherOwner] : column ? [] : [task, otherOwner]
+    ));
+    vi.spyOn(branchConflicts, "inspectBranchConflict").mockResolvedValue({
+      kind: "fully-subsumed", livePath: task.worktree, tipSha: "abc123", taskAttributedCommitCount: 0, strandedCommits: [],
+    } as any);
+    const removeSpy = vi.spyOn(worktreePool, "removeWorktree").mockResolvedValue(undefined as never);
+    const manager = new SelfHealingManager(store as any, { rootDir: "/tmp/test" } as any);
+
+    await manager.reclaimPrConflictForTask(task.id);
+
+    /* The other task's checkout survives — deleting it is not recoverable. */
+    expect(removeSpy).not.toHaveBeenCalled();
+  });
+
   it("returns paused-unrecoverable when conflict is unrecoverable and dispatcher pauses", async () => {
     const task = makeTask();
     const store = makeStore(task);
