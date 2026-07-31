@@ -249,7 +249,18 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     ).rejects.toThrow("Approval request apr-2 requester mismatch");
 
     // Expiry: backdate decidedAt past the 15-minute grant TTL -> redemption fails closed.
-    const staleDecidedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    /*
+    FNXC:ApprovalLifecycleSecurity 2026-07-30-13:40 (TTL is configurable now — stop hardcoding the default):
+    This offset was written as 16 minutes against the original 15-minute grant TTL. The review follow-up
+    raised the DEFAULT to one hour and made it configurable, which left this assertion asserting nothing:
+    a 16-minute-old grant is simply valid now, so the redemption succeeded and the test failed.
+
+    Pin the TTL for the test instead of chasing the default, so the expiry rule is what is under test
+    rather than whatever the shipping default happens to be.
+    */
+    const { configureApprovalRequestTtls } = await import("../../types/agents.js");
+    configureApprovalRequestTtls({ grantTtlMs: 60_000 });
+    const staleDecidedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     await ctx.layer.db
       .update(schema.project.approvalRequests)
       .set({ decidedAt: staleDecidedAt })
@@ -257,6 +268,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     await expect(markApprovalRequestCompleted(ctx.layer, "apr-2", { actor: requester })).rejects.toThrow(
       "Approval request apr-2 expired",
     );
+    configureApprovalRequestTtls({ grantTtlMs: undefined });
   });
 
   // ── EvalStore ──

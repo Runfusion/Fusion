@@ -2009,22 +2009,32 @@ describe("runServe --daemon flag", () => {
     await triggerSignal("SIGINT");
   });
 
-  it("does not pass daemon to createServer when daemon: false", async () => {
+  /*
+  FNXC:ServeSecureByDefault 2026-07-30-14:15:
+  INVERTED DELIBERATELY. These two cases asserted that `fn serve` passes no daemon token unless
+  `--daemon` was given — the pre-hardening contract, where a plain `fn serve` listened unauthenticated.
+  Token resolution is now UNCONDITIONAL (mirroring the existing `fn dashboard` precedent), so the old
+  assertions were pinning the vulnerability rather than the behaviour.
+
+  The pair is kept rather than deleted, because the opt-out is the part worth guarding: if `--no-auth`
+  ever stops disabling auth, or the default ever stops minting, one of these fails.
+  */
+  it("mints a daemon token by default, with no --daemon flag", async () => {
     const { createServer } = await import("@fusion/dashboard");
 
-    await runServe(4040, { daemon: false });
+    await runServe(4040, {});
 
     expect(createServer).toHaveBeenCalledTimes(1);
     const serverOpts = createServer.mock.calls[0][1];
-    expect(serverOpts.daemon).toBeUndefined();
+    expect(serverOpts.daemon?.token).toEqual(expect.any(String));
 
     await triggerSignal("SIGINT");
   });
 
-  it("does not pass daemon to createServer when daemon option is omitted", async () => {
+  it("passes no daemon token when --no-auth opts out", async () => {
     const { createServer } = await import("@fusion/dashboard");
 
-    await runServe(4040, {});
+    await runServe(4040, { noAuth: true });
 
     expect(createServer).toHaveBeenCalledTimes(1);
     const serverOpts = createServer.mock.calls[0][1];

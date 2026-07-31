@@ -5,10 +5,12 @@ import { fromJson } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncApprovalRequestStore from "./async-approval-request-store.js";
 import * as schema from "./postgres/schema/index.js";
-// FNXC:ApprovalLifecycleSecurity 2026-07-26-12:15:
-// isApprovalRequestExpired is imported from types/agents.js directly because the types.ts pass-through
-// barrel re-exports names explicitly (no `export *`); the barrel is out of this change's file scope.
-import { isApprovalRequestExpired } from "./types/agents.js";
+/*
+FNXC:ApprovalLifecycleSecurity 2026-07-30-14:30 (migration rebase):
+The expiry check moved with the rest of the lifecycle hardening into async-approval-request-store.ts.
+This class no longer has a sync branch to guard — the PostgreSQL cutover deleted it — so the import
+that fed it is gone rather than left dangling.
+*/
 import {
   normalizeApprovalRequestActionCategory,
   type ApprovalRequest,
