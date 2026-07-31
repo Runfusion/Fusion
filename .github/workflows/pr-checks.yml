@@ -58,6 +58,8 @@ jobs:
         run: pnpm check:lifecycle-columns
       - name: SQL-column ratchet
         run: pnpm check:sql-column-literals
+      - name: Move-target ratchet
+        run: pnpm check:move-target-literals
       - name: Inert lane/flag seams
         run: pnpm check:inert-flag-seams
       - name: FNXC stamp dates
