@@ -45,6 +45,15 @@ export const LANE_ARGUMENT_NAMES = new Set([
   /* FNXC:WorkflowLifecycleColumns 2026-07-30-22:00: the MEMBERSHIP form, added with the surfacing
      family's split-role fix — without it the gate cannot see a dropped `holdColumns`. */
   "holdColumns",
+  /*
+  FNXC:LaneWiring 2026-07-31-00:50:
+  The per-TASK trait index, the shape the dashboard threads (`columnFlagsByTaskId`). It is how three
+  dashboard surfaces answer every lane question at once, so a call site that drops it goes back to
+  the legacy vocabulary wholesale — exactly what this census exists to notice. It was missing, so all
+  three of those newly-wired sites still counted as unwired and the gate could not have caught a
+  regression at any of them.
+  */
+  "columnFlagsByTaskId",
 ]);
 
 function parse(file) {
@@ -179,7 +188,30 @@ export function findLaneAcceptingFunctions(files) {
         }
       });
       if (namesByIndex.size > 0 || positions.size > 0) {
-        accepting.set(node.name.text, { namesByIndex, positions });
+        /*
+        FNXC:LaneWiring 2026-07-31-01:05:
+        MERGE on a name collision; a plain `set` let the last declaration win.
+
+        Two different functions legitimately share a name here — core's `computeBlockerFanoutMap` and
+        the dashboard wrapper that calls it — and their lane options sit at DIFFERENT argument
+        indices (2 and 1). Overwriting meant core's callers were checked against the wrapper's
+        signature, so a call passing `terminalColumns` at index 2 was reported unwired. That is the
+        false positive that makes a ratchet's number noise, and the first person to open one of these
+        sites learns not to trust it.
+
+        The census keys by name because it has no type resolution, so a collision cannot be told
+        apart from an overload — union both, and a call satisfying EITHER shape counts.
+        */
+        const existing = accepting.get(node.name.text);
+        if (existing) {
+          for (const [index, names] of namesByIndex) {
+            if (!existing.namesByIndex.has(index)) existing.namesByIndex.set(index, new Set());
+            for (const name of names) existing.namesByIndex.get(index).add(name);
+          }
+          for (const position of positions) existing.positions.add(position);
+        } else {
+          accepting.set(node.name.text, { namesByIndex, positions });
+        }
       }
     });
   }
@@ -212,6 +244,50 @@ function unwrapObjectLiteral(node) {
     current = current.expression;
   }
   return ts.isObjectLiteralExpression(current) ? current : null;
+}
+
+/*
+FNXC:LaneWiring 2026-07-31-00:55:
+CONDITIONAL shapes, the third way a wired call site stayed invisible.
+
+Passing lanes only when they resolved is the CORRECT way to write these — an empty trait index means
+"not loaded yet", not "nothing is terminal", so the caller must fall through to the documented legacy
+default rather than fabricate one. Both idioms it produces were invisible:
+
+    computeBlockerFanoutMap(tasks, flags ? { columnFlagsByTaskId: flags } : {})   // ternary argument
+    computeBlockerFanoutMapCore(tasks, N, { ...(flags ? { classify } : {}) })     // conditional spread
+
+The first is a ConditionalExpression, not an object literal. The second is a SpreadAssignment, whose
+`p.name` is undefined. So the census scored three call sites I had just wired as unwired — and would
+equally have stayed silent had someone deleted the argument.
+
+Answer YES if EITHER branch supplies the lane. A branch that omits it is the deliberate
+fall-through-to-legacy path, not an unwired call; a call site that supplies it in neither branch is
+still counted.
+*/
+function objectLiteralsFrom(node) {
+  let current = node;
+  while (
+    ts.isSatisfiesExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (ts.isConditionalExpression(current)) {
+    return [...objectLiteralsFrom(current.whenTrue), ...objectLiteralsFrom(current.whenFalse)];
+  }
+  return ts.isObjectLiteralExpression(current) ? [current] : [];
+}
+
+/** Does this object literal supply one of `wanted`, looking through conditional spreads? */
+function suppliesLane(bag, wanted) {
+  return bag.properties.some((p) => {
+    if (ts.isSpreadAssignment(p)) {
+      return objectLiteralsFrom(p.expression).some((inner) => suppliesLane(inner, wanted));
+    }
+    return p.name && ts.isIdentifier(p.name) && wanted.has(p.name.text) && suppliesAValue(p);
+  });
 }
 
 /*
@@ -265,11 +341,7 @@ export function findUnwiredCallSites(files, accepting) {
           const passesOption = node.arguments.some((arg, index) => {
             const wanted = accepted.namesByIndex.get(index);
             if (wanted === undefined) return false;
-            const bag = unwrapObjectLiteral(arg);
-            return bag !== null
-              && bag.properties.some(
-                (p) => p.name && ts.isIdentifier(p.name) && wanted.has(p.name.text) && suppliesAValue(p),
-              );
+            return objectLiteralsFrom(arg).some((bag) => suppliesLane(bag, wanted));
           });
           const passesPositional = [...accepted.positions].some(
             (index) => effectiveArgCount(node.arguments) > index,

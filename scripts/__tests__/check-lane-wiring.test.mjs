@@ -56,6 +56,12 @@ function callArgs(source) {
   return found;
 }
 
+/** Run the whole census over one throwaway source and return its unwired sites. */
+function findUnwiredCallSitesIn(source) {
+  const files = fixture(source);
+  return findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
+}
+
 test("a property spelled `undefined` supplies nothing", () => {
   assert.equal(suppliesAValue(firstObjectProperty("f({ reviewColumns: undefined });")), false);
 });
@@ -120,4 +126,62 @@ test("the census does NOT report the same call once the property carries a value
   const unwired = findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
 
   assert.deepEqual(unwired.map((u) => u.fn), []);
+});
+
+/*
+FNXC:LaneWiring 2026-07-31-01:15:
+CONDITIONAL shapes and NAME COLLISIONS — the third and fourth ways a wired call site stayed invisible.
+
+Both were found the same way the earlier holes were: by using the gate and noticing it disagreed with
+what the code plainly said. Three call sites wired in #2990/#3004 still counted as unwired, and a
+correctly-wired call in task-priority.ts started being reported as unwired the moment a second
+same-named function entered the vocabulary.
+
+Every positive below is paired with its NEGATIVE. A shape the census merely stops flagging is not
+progress — the question is whether deleting the argument still fails.
+*/
+const LANE_FN = "export function f(t: unknown, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, o]; }";
+
+test("a lane passed only in a ternary's true branch counts as wired", () => {
+  const unwired = findUnwiredCallSitesIn(`${LANE_FN}\nf(1, cond ? { reviewColumns: r } : {});`);
+  assert.equal(unwired.length, 0);
+});
+
+test("...and a ternary supplying it in NEITHER branch is still unwired", () => {
+  const unwired = findUnwiredCallSitesIn(`${LANE_FN}\nf(1, cond ? { nowMs: 1 } : {});`);
+  assert.equal(unwired.length, 1);
+});
+
+test("a lane passed through a conditional spread counts as wired", () => {
+  const unwired = findUnwiredCallSitesIn(`${LANE_FN}\nf(1, { ...(cond ? { reviewColumns: r } : {}) });`);
+  assert.equal(unwired.length, 0);
+});
+
+test("...and a conditional spread carrying no lane is still unwired", () => {
+  const unwired = findUnwiredCallSitesIn(`${LANE_FN}\nf(1, { ...(cond ? { nowMs: 1 } : {}) });`);
+  assert.equal(unwired.length, 1);
+});
+
+test("two same-named lane functions MERGE rather than clobber", () => {
+  /*
+  The real pair: core's `computeBlockerFanoutMap(tasks, n, opts)` and the dashboard wrapper
+  `computeBlockerFanoutMap(tasks, opts)`. Their lane options sit at different indices, so the last
+  declaration parsed used to replace the first and every caller of the other shape was misreported.
+  */
+  const source = [
+    "export function g(t: unknown, n: number, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, n, o]; }",
+    "export function g(t: unknown, o?: { columnFlagsByTaskId?: ReadonlyMap<string, unknown> }) { return [t, o]; }",
+    "g(1, 2, { reviewColumns: r });",
+    "g(1, { columnFlagsByTaskId: m });",
+  ].join("\n");
+  assert.equal(findUnwiredCallSitesIn(source).length, 0);
+});
+
+test("...and the merge does not excuse a call passing neither shape", () => {
+  const source = [
+    "export function g(t: unknown, n: number, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, n, o]; }",
+    "export function g(t: unknown, o?: { columnFlagsByTaskId?: ReadonlyMap<string, unknown> }) { return [t, o]; }",
+    "g(1, 2, { nowMs: 1 });",
+  ].join("\n");
+  assert.equal(findUnwiredCallSitesIn(source).length, 1);
 });
