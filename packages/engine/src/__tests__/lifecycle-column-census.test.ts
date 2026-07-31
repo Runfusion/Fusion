@@ -1027,3 +1027,96 @@ describe("the backlog-state verdict the bare command prints", () => {
     expect(describeBacklogState({ columnGuards: 0, unexaminedGuards: 3 }).join(" ")).toContain("BACKLOG ZERO");
   });
 });
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-20:30 (u12 — the suite pinned the MATCHER, never the DISCOVERY):
+Every test in this file feeds the classifier a source string, or drives the CLI against the real tree.
+None asserts WHICH FILES REACH the classifier — so the scan could return an empty list and the whole
+suite would still pass.
+
+That is not hypothetical. `git ls-files` lists TRACKED files only, so a brand-new file with a plain
+`task.column === "in-review"` scored 0 until it was staged (#3254), and the identical bug sat in the
+move-target ratchet behind its own 12 matcher tests (#3256) — I wrote those tests specifically to stop
+that gate regressing, and they could not see it, because they import the matcher and never run a scan.
+
+`FUSION_CENSUS_FILE_ROOT` + `FUSION_CENSUS_FILE_LIST` drive a synthetic tree, so discovery is testable
+without creating files inside a live checkout that the operator is writing to concurrently.
+*/
+describe("the census scans the files it claims to scan", () => {
+  const repoRootPath = new URL("../../../../", import.meta.url).pathname;
+  const cli = `${repoRootPath}scripts/lifecycle-column-census.mjs`;
+
+  async function runOnFixture(files: Record<string, string>, args: string[] = []) {
+    const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const { execFile } = await import("node:child_process");
+
+    const root = await mkdtemp(join(tmpdir(), "fusion-census-discovery-"));
+    for (const [rel, body] of Object.entries(files)) {
+      await mkdir(dirname(join(root, rel)), { recursive: true });
+      await writeFile(join(root, rel), body);
+    }
+    const baseline = join(root, "baseline.json");
+    await writeFile(baseline, JSON.stringify({ byFile: {} }));
+
+    return await new Promise<{ code: number; out: string }>((resolve) => {
+      execFile("node", [cli, ...args], {
+        cwd: repoRootPath,
+        env: {
+          ...process.env,
+          FUSION_CENSUS_FILE_ROOT: root,
+          FUSION_CENSUS_FILE_LIST: Object.keys(files).join(","),
+          FUSION_CENSUS_BASELINE_PATH: baseline,
+        },
+      }, (err, stdout, stderr) => {
+        resolve({ code: (err as { code?: number } | null)?.code ?? 0, out: `${stdout}${stderr}` });
+      });
+    });
+  }
+
+  const GUARD = 'export const f = (t: { column: string }) => t.column === "in-review";\n';
+
+  it("REACHES the classifier — a guard in a scanned file is counted", async () => {
+    const { out } = await runOnFixture({ "pkg/src/a.ts": GUARD });
+
+    expect(out).toContain("scanned 1 source files");
+    // The half that matters: discovery delivered the file AND the classifier saw its guard.
+    expect(out).toMatch(/COLUMN guards \(the backlog\):\s+1/);
+  });
+
+  it("fails --strict FOR THE RIGHT REASON on a guard the baseline does not allow", async () => {
+    /*
+    Asserted on the MESSAGE, not just the exit code, and that is not belt-and-braces — the first
+    version checked `code === 1` and passed while discovery was broken. With the injected list
+    ignored, paths come from the real repo while reads resolve against the fixture root, every read
+    misses, and the gate fails CLOSED with exit 1. Right code, unrelated cause: a test that cannot
+    tell "found a guard" from "could not read anything" is not testing the ratchet.
+    */
+    const { code, out } = await runOnFixture({ "pkg/src/a.ts": GUARD }, ["--strict"]);
+
+    expect(code).toBe(1);
+    expect(out).toContain("pkg/src/a.ts");
+    expect(out).not.toContain("ENOENT");
+  });
+
+  it("counts every listed file, not just the first", async () => {
+    const { out } = await runOnFixture({ "pkg/src/a.ts": GUARD, "pkg/src/b.ts": GUARD });
+
+    expect(out).toContain("scanned 2 source files");
+    expect(out).toMatch(/COLUMN guards \(the backlog\):\s+2/);
+  });
+
+  it("reads each file from the SCAN root, not the script's repo", async () => {
+    /*
+    The scan root and the read root were separate values, so an injected list was LISTED against the
+    fixture and READ against the repo — ENOENT on every file, which a `catch { continue }` turned into
+    a clean zero. Asserting a non-zero count here is what pins them to the same value.
+    */
+    const { out, code } = await runOnFixture({ "pkg/src/only-here.ts": GUARD });
+
+    expect(out).not.toContain("ENOENT");
+    expect(code).toBe(0);
+    expect(out).toMatch(/COLUMN guards \(the backlog\):\s+1/);
+  });
+});
