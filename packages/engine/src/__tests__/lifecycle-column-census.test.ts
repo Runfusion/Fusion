@@ -486,6 +486,28 @@ describe("the baseline can always be re-recorded", () => {
     a proxy for it. Same discipline as the self-syncing fixture below — a test about control flow must
     not depend on how much work the fleet has finished.
     */
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-20:40 (what `null` costs, recorded so a green run is not misread):
+    Returns null when the census reports NO file with guards — the state the tree is in now that the
+    backlog reached 0. The two cases below then assert `totals.column === 0` and return early, which is
+    the honest thing to do: with nothing to inflate there is no rise to manufacture.
+
+    But it means those two cases **stop exercising what their names say** at zero backlog. "exits 0 and
+    REWRITES the baseline even when the count rose" and "exits 1 and LEAVES the baseline alone on a
+    rise" are about the CLI's ordering and exit codes; at zero they assert the backlog is empty. If the
+    write-before-exit ordering regressed — the exact bug those cases were written for — both would
+    still pass.
+
+    Worth stating because zero is not a state to wait out. It is the terminal state of this program, so
+    the vacuity is permanent, and this file already legislates against exactly that ("Anti-vacuity: an
+    empty exclusion list would make the assertion below trivially true").
+
+    The durable fix is to stop deriving the fixture from production state — point the scan at a
+    synthetic tree via a file-list override, the way `FUSION_CENSUS_BASELINE_PATH` already lets the
+    baseline be faked. Recorded rather than done here: it needs a content-root correction in the CLI
+    too (`triageFindings` and the sync-resolver check read via `join(REPO_ROOT, …)`, the SCRIPT's
+    location, so an overridden list changes which paths are listed and not where they are read).
+    */
     function fileWithGuards(): { file: string; count: number } | null {
       const out = execFileSync("node", [cliPath, "--json"], { encoding: "utf8", cwd: repoRoot }) as string;
       const parsed = JSON.parse(out) as { byFile: [string, number][] };
