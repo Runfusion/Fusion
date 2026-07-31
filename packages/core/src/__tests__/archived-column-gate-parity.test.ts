@@ -107,10 +107,26 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
  * to exist. Invisible to the column census (not a comparison) and invisible to the Drizzle scan below
  * (not an `eq`/`ne` call), so before this inventory nothing in the repo counted them at all.
  */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (inventory re-recorded — the ratchet caught real movement):
+TWO ENTRIES DROPPED, AND BOTH WERE DELIBERATE CONVERSIONS THAT LANDED WITHOUT UPDATING THIS FILE.
+
+  async-mission-store.ts        2 -> 0   #3046 resolved `archiveDefinedFeatureBootstrapDuplicate`'s
+                                         two `<> 'archived'` guards AND the `column: "archived"` write
+                                         they gate, together — the write is a move TARGET, invisible
+                                         to the column census, so converting the guards alone would
+                                         have been the split brain this file warns about one level in.
+  async-archive-lineage.ts      3 -> 2   #3042 deleted `liveParentFilter`, an export with no callers
+                                         anywhere, which carried one of the three.
+
+Recorded rather than argued: this file's own header notes the guard "FAILED until this inventory was
+updated to match, which is the ratchet working". It went red on `main` for exactly that reason and
+stayed red because neither PR knew this inventory existed — the archived gate is enforced in three
+encodings and only the census-visible one announces itself.
+*/
 const AUDITED_RAW_SQL_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/async-mission-store-queries.ts": 1,
-  "packages/core/src/async-mission-store.ts": 2,
-  "packages/core/src/task-store/async-archive-lineage.ts": 3,
+  "packages/core/src/task-store/async-archive-lineage.ts": 2,
   "packages/core/src/task-store/async-maintenance.ts": 1,
   "packages/core/src/task-store/reads.ts": 1,
 };
@@ -346,6 +362,13 @@ describe("the archived-state gate is enforced in TypeScript AND in SQL", () => {
     raw template, and deleting a red guard is how a class of sites stops being tracked.
     */
     expect(Object.keys(AUDITED_RAW_SQL_SITES).length).toBeGreaterThan(0);
-    expect(Object.values(AUDITED_RAW_SQL_SITES).reduce((a, b) => a + b, 0)).toBe(8);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-16:45: 8 -> 5, tracking the two deliberate conversions
+    recorded at the inventory above (#3046's mission-store pair, #3042's dead-export deletion). The
+    number is re-recorded rather than loosened to `toBeLessThanOrEqual`: a fixed total is what makes
+    a raw template ARRIVING as visible as one leaving, and this guard exists because arrivals are the
+    ones nothing else counts.
+    */
+    expect(Object.values(AUDITED_RAW_SQL_SITES).reduce((a, b) => a + b, 0)).toBe(5);
   });
 });
