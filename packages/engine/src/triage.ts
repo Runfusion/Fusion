@@ -360,6 +360,23 @@ async function resolveNearDuplicateCanonicalFlags(
   return column ? resolveColumnFlags(column) : undefined;
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 DELIBERATE-LITERAL: the migration arm, and only it.
+
+A pre-U11 row can rest in `triage` on a board whose workflow no longer declares that column. The
+condition is literally "this row sits in a column its workflow does not have", so there is no trait
+to resolve and no IR that can answer it — the resolved half is `!declaresTriage`, which is what makes
+this the ORPHAN case rather than a blanket acceptance of the name.
+
+Same shape and same justification as `recoverApprovedTask`'s marked arm; retires with the U11
+migration window, when no row can rest in `triage`. Hoisted into a declaration because the census
+reads markers from leading comments — an inline one attaches to the wrong node and is ignored.
+*/
+function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boolean {
+  return column === "triage" && !declaresTriage;
+}
+
 export class TriageProcessor {
   private running = false;
   private polling = false;
@@ -911,7 +928,7 @@ export class TriageProcessor {
         );
         const inPlannerLane = t.column === lanes.intake
           || t.column === lanes.hold
-          || (t.column === "triage" && !declaresTriage);
+          || isOrphanedLegacyTriageRow(t.column, declaresTriage);
         if (!inPlannerLane) continue;
         stale.push(t);
       }
