@@ -2230,6 +2230,18 @@ export class Scheduler {
       membership — wip cards without a worktree yet still reserve (they are about to acquire), and
       terminal lanes are excluded because their retained worktrees are cleanup-owned, not capacity.
       */
+      /*
+      DELIBERATE-LITERAL — the unresolvable-workflow default, matching the 148 other marked degraded
+      arms in this tree. `columnFlagsForTask` answers by TRAIT wherever the card's workflow resolves;
+      this line runs only when it does not, and returns exactly what the check did before traits
+      existed. Marked rather than converted because there is nothing left to resolve at this point:
+      the resolver already declined.
+
+      FNXC:LifecycleColumnCensus 2026-07-31-23:20 (why the marker is needed at all):
+      The census counts a trait-first/legacy-fallback pair as backlog unless it carries this marker —
+      `traitFallback` is advisory and never changes `kind`. Without it this reviewed fallback read as
+      two fresh guards and turned the census gate RED on main.
+      */
       const isTerminalColumnTask = (task: Task): boolean => {
         const flags = columnFlagsForTask(task);
         if (flags) return flags.complete === true || flags.archived === true;
