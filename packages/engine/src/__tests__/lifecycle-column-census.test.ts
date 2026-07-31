@@ -468,10 +468,35 @@ describe("the baseline can always be re-recorded", () => {
       }
     }
 
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-23:59 (the fixture rotted, and it took main red with it):
+    These two cases pinned the FILE `self-healing.ts` and the NUMBER 1 — "stale baseline says 1, tree
+    has more". Conversions took that file to exactly 1, so `toBeGreaterThan(1)` failed and `main` went
+    red on a test whose subject (does `--update-baseline` write on a rise?) had not changed at all.
+
+    Measured on a clean detached `origin/main`: 1 failed | 39 passed, with nothing from this branch
+    applied. The backlog shrinking is the POINT of this program, so any fixture keyed to a specific
+    file's count is guaranteed to expire — the only question is which cycle.
+
+    So the target and the number are now DERIVED: ask the census which file currently holds guards,
+    then construct a baseline one below that file's real count. The rise is manufactured rather than
+    assumed, and the assertion is exact (`toBe(real)`) instead of an open inequality that was only ever
+    a proxy for it. Same discipline as the self-syncing fixture below — a test about control flow must
+    not depend on how much work the fleet has finished.
+    */
+    function fileWithGuards(): { file: string; count: number } {
+      const out = execFileSync("node", [cliPath, "--json"], { encoding: "utf8", cwd: repoRoot }) as string;
+      const parsed = JSON.parse(out) as { byFile: [string, number][] };
+      const entry = parsed.byFile.find(([, count]) => count > 0);
+      if (!entry) throw new Error("census reports no file with guards — fixture cannot manufacture a rise");
+      return { file: entry[0], count: entry[1] };
+    }
+
     it("exits 0 and REWRITES the baseline under --update-baseline, even when the count rose", () => {
       /* The case the ordering bug broke: a rise used to exit before the write, so the
          one command whose whole job is re-recording could not re-record. */
-      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const { file, count } = fileWithGuards();
+      const stale = { totals: { column: count - 1, role: 0, status: 0, deliberate: 0 }, byFile: { [file]: count - 1 }, byColumnId: {}, queryByFile: {} };
       const r = runCli(["--strict", "--update-baseline"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
       expect(r.status).toBe(0);
       const written = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
@@ -479,15 +504,16 @@ describe("the baseline can always be re-recorded", () => {
       FNXC:LifecycleColumnCensus 2026-07-30-19:10:
       Asserted on the per-file entry rather than `totals`, which the pin no longer stores — the
       derived aggregates were the only lines every conversion PR rewrote, and so the sole cause of
-      fleet-wide conflicts in this file. The claim is unchanged and still specific: the stale pin
-      said 1, and the rewritten pin must carry the tree's real (higher) count for that same file.
+      fleet-wide conflicts in this file. The claim is unchanged and still specific: the stale pin was
+      one BELOW the tree, and the rewritten pin must carry the tree's real count for that same file.
       */
-      expect(written.byFile["packages/engine/src/self-healing.ts"]).toBeGreaterThan(1);
+      expect(written.byFile[file]).toBe(count);
       expect(r.stdout).toContain("ACCEPTED RISES");
     });
 
     it("exits 1 and LEAVES the baseline alone on a rise without --update-baseline", () => {
-      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { "packages/engine/src/self-healing.ts": 1 }, byColumnId: {}, queryByFile: {} };
+      const { file, count } = fileWithGuards();
+      const stale = { totals: { column: 1, role: 0, status: 0, deliberate: 0 }, byFile: { [file]: count - 1 }, byColumnId: {}, queryByFile: {} };
       const r = runCli(["--strict"], stale) as unknown as { status: number; stdout: string; baselinePath: string };
       expect(r.status).toBe(1);
       const after = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
