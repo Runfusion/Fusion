@@ -493,6 +493,61 @@ describe("the baseline can always be re-recorded", () => {
       const after = JSON.parse(fs.readFileSync(r.baselinePath, "utf8"));
       expect(after.totals.column).toBe(1);
     });
+
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-23:58:
+    `--claims` reports which remaining files an open PR already touches. Both cases here run against a
+    STUBBED `gh` on PATH, so the suite makes no network call and does not depend on the repo's live PR
+    list — a test that asserted real PR numbers would go red every time one merged.
+
+    THE FAIL-SOFT CASE IS THE IMPORTANT ONE. When `gh` cannot answer, the degraded report must say so
+    loudly. A claim report that silently renders "nothing is claimed" is worse than no report at all:
+    it actively tells the reader to start work another lane already holds, which is the exact failure
+    this flag exists to prevent (three overlapping conversions on self-healing.ts, two on executor.ts).
+    */
+    function runWithStubbedGh(stub: string, extraArgs: string[] = []): string {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fusion-census-gh-"));
+      const ghPath = path.join(dir, "gh");
+      fs.writeFileSync(ghPath, stub);
+      fs.chmodSync(ghPath, 0o755);
+      try {
+        return execFileSync("node", [cliPath, "--claims", ...extraArgs], {
+          encoding: "utf8",
+          cwd: repoRoot,
+          env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+        }) as string;
+      } catch (err) {
+        return (err as { stdout?: string }).stdout ?? "";
+      }
+    }
+
+    /** The census's own current top file, so the fixture cannot rot as the backlog shrinks. */
+    function topRemainingFile(): string {
+      const plain = execFileSync("node", [cliPath], { encoding: "utf8", cwd: repoRoot }) as string;
+      const match = plain.match(/top files:\n\s+\d+\s+(\S+)/);
+      if (!match) throw new Error("could not read a remaining file from the census output");
+      return match[1];
+    }
+
+    it("attributes a remaining file to the open PR that touches it", () => {
+      const target = topRemainingFile();
+      const payload = JSON.stringify([{ number: 9999, title: "stub pr", files: [{ path: target }] }]);
+      const out = runWithStubbedGh(`#!/bin/sh\ncat <<'JSON'\n${payload}\nJSON\n`);
+
+      const claimed = out.slice(out.indexOf("CLAIMED by an open PR"), out.indexOf("UNCLAIMED:"));
+      expect(claimed).toContain(target);
+      expect(claimed).toContain("#9999");
+      /* And it must LEAVE that file out of the start-here list, which is the half that matters. */
+      expect(out.slice(out.indexOf("UNCLAIMED:"))).not.toContain(`  ${target}\n`);
+    });
+
+    it("says so loudly when gh cannot answer, instead of reporting everything as unclaimed", () => {
+      const out = runWithStubbedGh("#!/bin/sh\nexit 1\n");
+      expect(out).toContain("CLAIMS: unavailable");
+      expect(out).toContain("POSSIBLY CLAIMED");
+      /* The dangerous output is the one that invites a duplicate claim. */
+      expect(out).not.toContain("UNCLAIMED:");
+    });
   });
 
   it("names what it accepted instead of swallowing it", () => {

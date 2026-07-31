@@ -28,7 +28,7 @@ Consequence for conversion PRs, stated because it is a real cost: lowering a cou
 re-recording the baseline in the same PR (`--strict --update-baseline`). That is deliberate — it puts
 the new number in the diff, where a reviewer sees it, instead of in a hand-written claim.
 */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,7 +96,34 @@ const updateBaseline = process.argv.includes("--update-baseline");
 /* `--exact` keeps hard failure on a DROP, for the end state where the count is pinned. */
 const exact = process.argv.includes("--exact");
 const triage = process.argv.includes("--triage");
+const claims = process.argv.includes("--claims");
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:58 (the census says WHERE the work is but not WHO HAS IT):
+`--claims` maps each remaining file to the OPEN PRs already touching it, so "claim the largest
+cluster" can be answered without discovering the collision at merge time.
+
+WHY. Duplicate claims are now the dominant coordination cost of the fleet phase, and they are
+measured, not suspected. `self-healing.ts` took THREE overlapping conversions from different lanes
+while one branch was open (#3049, #3075, #3078) — every one forced a full rebuild of #3094, and each
+conflict was the same shape: same guard, two spellings, different variable names. On 2026-07-31 the
+executor listener took TWO independent conversions in one afternoon (#3112, #3118), reached by two
+workers who each read the census, saw the top cluster, and started. Neither could see the other.
+
+The census is what sends everyone to the same file, so the claim signal belongs here rather than in a
+side channel nobody reads. `--triage` above already measured the underlying fact — 53 of 88 guards
+were inside an open PR — which is the same observation one step short of being actionable.
+
+REPORT-ONLY AND FAIL-SOFT, on the same terms as `--triage`: opt-in, prints beside the totals, changes
+no count and no exit code. It shells to `gh`, so it is unavailable offline, in CI without a token, and
+in sandboxes — all of which print a NOTICE and continue rather than failing the census. A gate must
+not depend on network state, and this is a work-selection aid, not a gate.
+
+HEURISTIC, AND SAID SO. A PR touching a file is not proof it converts THAT file's guards — it may
+edit an unrelated function. It over-reports (a claim that is only adjacent) rather than under-reports,
+which is the safe direction for "check before you start": the cost of a false claim is one comment
+asking, and the cost of a missed one is a rebuilt branch.
+*/
 /*
 FNXC:LifecycleColumnCensus 2026-07-31-23:30 (the headline number stopped tracking work):
 `--triage` splits the backlog into sites that carry a DOCUMENTED reason for staying a literal and
@@ -235,6 +262,68 @@ if (!json) {
       console.log(`    ${String(entry.count).padStart(4)}  ${entry.file}`);
     }
     if (mixed.length > 10) console.log(`    … and ${mixed.length - 10} more`);
+  }
+}
+
+/** Open PRs keyed by the census-relevant files they touch. Returns null when `gh` cannot answer. */
+function openPrClaims(files) {
+  const wanted = new Set(files);
+  let raw;
+  try {
+    /* One bulk call — per-PR `gh pr view` would be a request per PR and is what made this too slow
+       to be habitual. --limit is generous because a partial list reads as "unclaimed". */
+    raw = execFileSync("gh", ["pr", "list", "--state", "open", "--limit", "200", "--json", "number,title,files"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 30_000,
+    });
+  } catch {
+    return null;
+  }
+  let prs;
+  try {
+    prs = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const byFile = new Map();
+  for (const pr of prs) {
+    for (const entry of pr.files ?? []) {
+      const path = entry.path ?? entry;
+      if (!wanted.has(path)) continue;
+      if (!byFile.has(path)) byFile.set(path, []);
+      byFile.get(path).push({ number: pr.number, title: pr.title });
+    }
+  }
+  return byFile;
+}
+
+if (claims && !json) {
+  const remaining = summary.byFile.map(([file]) => file);
+  const byFile = openPrClaims(remaining);
+  if (byFile === null) {
+    /* Loud rather than silent: a claim report that quietly degrades to "nothing is claimed" is worse
+       than no report, because it actively tells the reader to start work someone else holds. */
+    console.log("\n  CLAIMS: unavailable — `gh` did not answer (offline, no token, or not installed).");
+    console.log("  Treat every file below as POSSIBLY CLAIMED and check before starting.");
+  } else {
+    const claimed = summary.byFile.filter(([file]) => byFile.has(file));
+    const unclaimed = summary.byFile.filter(([file]) => !byFile.has(file));
+    const claimedGuards = claimed.reduce((sum, [, count]) => sum + count, 0);
+    console.log(`\n  CLAIMED by an open PR: ${claimed.length} files holding ${claimedGuards} guards`);
+    for (const [file, count] of claimed.slice(0, 12)) {
+      const prs = byFile.get(file).map((p) => `#${p.number}`).join(" ");
+      console.log(`    ${String(count).padStart(4)}  ${file}  ← ${prs}`);
+    }
+    if (claimed.length > 12) console.log(`    … and ${claimed.length - 12} more claimed files`);
+
+    const unclaimedGuards = unclaimed.reduce((sum, [, count]) => sum + count, 0);
+    console.log(`\n  UNCLAIMED: ${unclaimed.length} files holding ${unclaimedGuards} guards — start here`);
+    for (const [file, count] of unclaimed.slice(0, 12)) {
+      console.log(`    ${String(count).padStart(4)}  ${file}`);
+    }
+    if (unclaimed.length > 12) console.log(`    … and ${unclaimed.length - 12} more unclaimed files`);
+    console.log("  A touched file is not proof the PR converts ITS guards — over-reports rather than misses.");
   }
 }
 
