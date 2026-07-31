@@ -39,6 +39,46 @@ deliberate, are both real decisions with real blast radius. Neither is a fleet c
 templates are worse again: one of them is a hand-written `SELECT` string, so its comparison is not even
 a Drizzle expression that could take a bound value without rewriting the query.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE TRIAGE, DONE — 8 SQL sites classified with evidence):
+The scoping note below says the first question is "which of these are LANE questions and which are
+STATE markers?" and that nobody had answered it. Answered here for the Drizzle half, per site, by
+reading what each query is FOR. Nothing is converted; this is the input the conversion needs.
+
+LANE (6) — these select or exclude LIVE work, so a renamed archive lane must be resolved:
+  store.ts                    revert lookup: ne(archived) + ne(done) picking live revert candidates.
+  branch-group-ops.ts:82      near-duplicate marker cleanup over live rows: ne(archived) + ne(done).
+  branch-and-pr-entities:438  content-fingerprint duplicate guard, gated on `!includeArchived`.
+  branch-and-pr-entities:470  recent sibling lookup: ne(archived) + ne(done).
+  async-lifecycle.ts:68       `liveLineageChildFilter` — the name is the classification.
+  async-search.ts:82          `liveSearchPredicate(includeArchived)` — same.
+  Four of these already hold `store`/`this.asyncLayer`; the two predicate builders need one
+  optional parameter each, the shape used throughout this program.
+
+STATE (2) — these are ABOUT the marker `archiveTask` writes, and converting them would be a BUG:
+  task-mutation-ops.ts:1072   `cleanupArchivedTasksImpl` selects eq(column,"archived") and then `rm`s
+                              each row's files. Widening to the resolved archived set would feed cards
+                              merely RESTING in a board's archive lane into a filesystem delete. This
+                              is the most destructive site in the family and it looks identical to the
+                              LANE ones at a glance — same column, same operator.
+  async-self-healing.ts:61    soft-deleted rows whose column DRIFTED from the archive marker
+                              (`isNotNull(deletedAt) && ne(column,"archived")`). Resolving it would
+                              classify a soft-deleted row sitting in a renamed archive lane as drift
+                              and "repair" it.
+
+The raw-SQL half is already partly triaged in place: `async-maintenance.ts` is marked
+DELIBERATE-LITERAL as a STATE marker, and `async-archive-lineage.ts`'s soft-delete path writes
+`column = 'archived', deleted_at IS NOT NULL` as the storage state it has just set — STATE by
+construction.
+
+SO THE SHAPE OF THE WORK: roughly three quarters LANE, one quarter STATE, and the STATE sites are the
+ones that destroy data if converted. That is why "convert all three encodings" cannot be done as a
+sweep, and why the count alone made it look bigger than it is — the number to convert is smaller than
+52, and the number that must NOT be touched is the part worth being careful about.
+
+NOT CONVERTED HERE, and deliberately: the gate requires all three encodings to move together, so a
+conversion is one coordinated change with its inventories updated in the same commit. This supplies
+the classification that change needs; it does not pre-empt it.
+
 FNXC:WorkflowResolvedColumns 2026-07-31-23:50 (one wrong reason for picking the cheap option, removed):
 The second option looks like it has already been taken — `trait-types.ts` annotates the flag
 "RESTRICTED (built-in only)", which reads as "a custom board cannot have its own archive lane". It does
