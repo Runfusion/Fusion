@@ -12,7 +12,7 @@ query ambiguous once the trigger stopped being a mobile-only affordance.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 
 // FNXC:Markdown 2026-06-23-03:30: Mock the heavy `mermaid` library so the shared
 // markdown pipeline's MermaidDiagram resolves without loading the real renderer.
@@ -2105,29 +2105,37 @@ describe("TaskDetailModal", () => {
     });
 
     it("uses the title, description, and id fallback chain for the clamped heading", async () => {
-      const { container: withTitle } = renderDetail({
-        title: "Title wins",
-        description: "Description loses",
-      });
-      expect(withTitle.querySelector("h2.detail-title")?.textContent).toBe("Title wins");
-      expect(withTitle.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
+      /*
+      FNXC:TaskDetailModal 2026-07-30-23:20 (#2895 review — the portal defect, at the sites the reported
+      one did not cover):
+
+      CLEANUP BETWEEN RENDERS, NOT A WIDER SELECTOR.
+
+      These queried the render `container`, and the modal PORTALS out of it, so every one returned
+      null. The obvious repair — swap to `document.querySelector` — is wrong here and I watched it
+      fail: this case renders the modal THREE times, the portals accumulate on `document.body`, and a
+      document-wide query returns the FIRST one. The failure moved from "Title wins" to
+      "Description fallback" rather than going away.
+
+      Unmounting between renders makes the document unambiguous, so each assertion reads the render it
+      belongs to. That also matches what the case is actually testing — three independent fallback
+      inputs, not three coexisting modals.
+      */
+      renderDetail({ title: "Title wins", description: "Description loses" });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Title wins");
+      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
       expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
+      cleanup();
 
       setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      const { container: withDescription } = renderDetail({
-        title: undefined,
-        description: "Description fallback",
-      });
-      expect(withDescription.querySelector("h2.detail-title")?.textContent).toBe("Description fallback");
-      expect(withDescription.querySelector(".detail-description-toggle")).toBeNull();
+      renderDetail({ title: undefined, description: "Description fallback" });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Description fallback");
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
+      cleanup();
 
-      const { container: withId } = renderDetail({
-        id: "FN-FALLBACK",
-        title: undefined,
-        description: undefined,
-      });
-      expect(withId.querySelector("h2.detail-title")?.textContent).toBe("FN-FALLBACK");
-      expect(withId.querySelector(".detail-description-toggle")).toBeNull();
+      renderDetail({ id: "FN-FALLBACK", title: undefined, description: undefined });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("FN-FALLBACK");
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
     });
 
     it.each(["todo", "in-progress", "in-review", "done", "archived"] as const)(
@@ -2292,7 +2300,7 @@ describe("TaskDetailModal", () => {
 
   it("always shows task.id in the detail-id badge regardless of title", () => {
     // With title
-    const { container: withTitle } = render(
+    render(
       <TaskDetailModal
         initialTab="definition"
         task={makeTask({ title: "Some title" })}
@@ -2304,10 +2312,12 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    /* Portaled, and rendered twice — see the cleanup note on the clamped-heading case. */
+    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    cleanup();
 
     // Without title
-    const { container: withoutTitle } = render(
+    render(
       <TaskDetailModal
         initialTab="definition"
         task={makeTask({ title: undefined, description: "A description" })}
@@ -2319,7 +2329,7 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withoutTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
   });
 
   describe("optimistic opening with Task", () => {
@@ -2368,8 +2378,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Modal renders immediately without crashing
-      expect(document.querySelector(".modal-overlay")).toBeTruthy();
+      /* Same obsolete selector as the wrapper case: the shell is FloatingWindow, not `.modal-overlay`. */
+      expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
       expect(screen.getByText("FN-200")).toBeDefined();
     });
 
