@@ -1732,7 +1732,24 @@ function TaskCardComponent({
     }
 
     return true;
-  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:40:
+  THE LANE ROLES BELONG IN THIS LIST, or the card never subscribes on a renamed board.
+
+  `isWipColumn`/`isReviewColumn` derive from the `taskColumnFlags` PROP, which arrives after first
+  paint — the board resolves workflow traits asynchronously. The first computation therefore runs
+  with the flags undefined, the role helpers fall back to the legacy ids, and on a renamed board that
+  answers false. When the flags arrive `task.column` is unchanged, so a list of `task.*` fields alone
+  never recomputes and the pre-load answer sticks: no live elapsed-time indicator, for the life of
+  the mount.
+
+  A legacy board hid this completely, because there the fallback already answers true on the first
+  paint and the stale list costs nothing.
+
+  This repo has no `react-hooks/exhaustive-deps` rule, so the list is maintained by hand and a
+  disable directive for that rule fails CI.
+  */
+  }, [task.column, task.status, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.timedExecutionMs, task.firstExecutionAt, task.cumulativeActiveMs, task.executionStartedAt, task.executionCompletedAt, isWipColumn, isReviewColumn, taskColumnFlags]);
 
   const timeIndicatorNowMs = useLiveTimeTicker(wantsLiveTimeIndicator);
 
