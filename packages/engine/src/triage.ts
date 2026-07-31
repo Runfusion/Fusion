@@ -4443,7 +4443,19 @@ export class TriageProcessor {
       if (!await this.updatePlanningStateIfStillCurrent(task, { title: promptDeclaredTitle })) return;
     }
 
-    const releaseTarget = resolvePlannerLanes(this.store, task.id).hold;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (SYNC -> ASYNC — this one is a MOVE TARGET):
+    `resolvePlannerLanes` answers with the DEFAULT board under PostgreSQL, so on a renamed board this
+    released a finalized plan to the legacy `todo` — a column that board does not declare. The move
+    below is the handoff, and `moveTaskInternal` REJECTS an undeclared target, so the card stayed in
+    the planner lane with a finished spec. The note directly under this line says that failure must
+    never be silent; it was not silent, it was just always failing off the default lineage.
+
+    `finalizeApprovedTaskBody` is `async` and this is a plain statement in its body — the line above
+    already awaits — so there is no ordering constraint here, unlike the two sync `task:*` handlers
+    earlier in this file which stay literal for reasons written at those sites.
+    */
+    const releaseTarget = (await resolvePlannerLanesForTaskAsync(this.store, task.id)).hold;
     if (task.column !== releaseTarget) {
       const moveTaskIf = (this.store as unknown as { moveTaskIf?: TaskStore["moveTaskIf"] }).moveTaskIf;
       if (typeof moveTaskIf !== "function") {

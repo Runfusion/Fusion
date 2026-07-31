@@ -144,10 +144,19 @@ function createStore(task: Task, ir: WorkflowIr | null): { store: TaskStore; mov
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => (ir ? { ir } : null)),
-    resolveTaskWorkflowIrSync: vi.fn(() => {
-      if (!ir) throw new Error("unresolvable");
-      return ir;
-    }),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    THE SYNC READER STUB IS GONE, and its absence is the point.
+
+    This harness fed `resolveTaskWorkflowIrSync` the test's own IR — the shape this repo's learnings
+    call out as feeding the broken reader the right answer. In production that reader answers with the
+    DEFAULT board for every task, so the suite proved the release LOGIC while being structurally
+    unable to notice that the real call site resolved nothing.
+
+    The release target now resolves through the async path (`getTaskWorkflowSelectionAsync` +
+    `getWorkflowDefinition`, both mocked below), which is what production actually takes. Removing the
+    stub is what makes these cases evidence about production rather than about the fixture.
+    */
   };
   return { store: store as unknown as TaskStore, moveTaskIf };
 }
