@@ -19,7 +19,7 @@ const severityAuditLog = createLogger("dashboard-board-workflows");
  */
 
 import {
-  BUILTIN_CODING_WORKFLOW_IR,
+  resolveDefaultWorkflowIr,
   getBuiltinWorkflow,
   isBuiltinWorkflowId,
   parseWorkflowIr,
@@ -190,7 +190,15 @@ async function describeWorkflow(
   }
   // Custom workflow: fetch the definition once and derive both IR and name from
   // it (previously getWorkflowDefinition was called twice per workflow).
-  let ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR;
+  /*
+  FNXC:WorkflowBuiltins 2026-07-31-23:59:
+  THE CATALOG DEFAULT, NOT THE LEGACY IR. This is the placeholder a CUSTOM workflow's description
+  falls back to when `getWorkflowDefinition` returns nothing or throws.
+  `BUILTIN_CODING_WORKFLOW_IR` is `builtin:legacy-coding`, which declares a `triage` column the
+  default board does not have — so a workflow that failed to load was described with a phantom lane.
+  That is the #3178 symptom (TUI board rendering `triage`) reached through the dashboard route.
+  */
+  let ir: WorkflowIr = resolveDefaultWorkflowIr();
   let name = ir.name;
   let icon: string | undefined;
   try {
