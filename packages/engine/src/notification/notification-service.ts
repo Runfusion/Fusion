@@ -11,7 +11,7 @@ import type {
   Task,
 } from "@fusion/core";
 import type { LifecycleColumns, WorkflowIrResolverStore } from "@fusion/core";
-import { DASHBOARD_USER_ID, NotificationDispatcher, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
+import { DASHBOARD_USER_ID, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../transient-merge-error-classifier.js";
@@ -60,6 +60,14 @@ interface NotificationServiceStore {
   getTaskWorkflowSelection?: WorkflowIrResolverStore["getTaskWorkflowSelection"];
   getTaskWorkflowSelectionAsync?: WorkflowIrResolverStore["getTaskWorkflowSelectionAsync"];
   getWorkflowDefinition?: WorkflowIrResolverStore["getWorkflowDefinition"];
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-21:20:
+  The PROJECT-level read `resolveProjectColumnsForRoles` needs. Optional for the same reason as the
+  three above — an absent method degrades to the legacy ids rather than forcing a workflow surface
+  into every notification fake — and, unlike the sync selection readers, this one is answerable under
+  PostgreSQL, which is what makes the lane answers here real rather than decorative.
+  */
+  listWorkflowDefinitions?: () => Promise<ReadonlyArray<{ ir?: unknown }>>;
   on<K extends keyof NotificationServiceStoreEvents>(
     event: K,
     listener: (...args: NotificationServiceStoreEvents[K]) => void,
@@ -118,6 +126,41 @@ export class NotificationService {
   private failureNotificationMode: "sticky-only" | "all" | "terminal-only" = "sticky-only";
   /** Compatibility fallback for lightweight test stores without the durable TaskStore CAS. */
   private readonly activeWedgeReasons = new Map<string, string>();
+  /*
+  FNXC:TaskWedgeNotifications 2026-07-31-21:10:
+  PER-TASK SERIALISATION OF WEDGE HANDLING — the blocker two earlier fleet passes recorded and
+  declined to take on.
+
+  `handleTaskUpdated` is a synchronous `(task) => void` listener that starts `maybeNotifyTaskWedge`
+  fire-and-forget, and one branch of that method RESOLVES an episode while another CLAIMS one. With
+  no ordering between them, any await added before the resolve lets a re-wedge arriving close behind
+  reach `claim` while the previous episode is still `active`; the claim returns `claimed: false` and
+  the second operator notification is silently dropped. That is measured, not theoretical: it is what
+  `task-wedge-notification.test.ts > "sends one actionable push and mailbox message per active
+  terminal episode"` catches, and it is why the column conversion in this file was reverted twice.
+
+  A per-task promise chain fixes the ordering itself rather than the symptom. Handling for one task
+  runs to completion before the next handling for that task begins, so resolve-then-claim keeps its
+  order no matter how many awaits either branch acquires. Different tasks stay concurrent — the chain
+  is keyed by task id, not global.
+
+  The entry is deleted when the chain drains, so this map does not grow with the task table. Chain
+  links never reject: `maybeNotifyTaskWedge` already owns its own error handling, and a rejected link
+  would poison every later notification for that task.
+  */
+  private readonly wedgeHandlingChains = new Map<string, Promise<void>>();
+
+  /** Queues wedge handling for one task behind any handling already in flight for it. */
+  private enqueueWedgeHandling(taskId: string, run: () => Promise<void>): Promise<void> {
+    const previous = this.wedgeHandlingChains.get(taskId) ?? Promise.resolve();
+    const next = previous.then(run, run);
+    this.wedgeHandlingChains.set(taskId, next);
+    /* Drop the entry only if no later link was appended while this one ran. */
+    void next.finally(() => {
+      if (this.wedgeHandlingChains.get(taskId) === next) this.wedgeHandlingChains.delete(taskId);
+    });
+    return next;
+  }
 
   constructor(
     private readonly store: NotificationServiceStore,
@@ -337,7 +380,7 @@ export class NotificationService {
     only operator notification; dispatch-time suppression below covers races.
     */
     if (wedge) this.cancelPendingFailureNotification(task.id, "classified-terminal-wedge");
-    if (!transientFailure) void this.maybeNotifyTaskWedge(task, wedge);
+    if (!transientFailure) void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, wedge));
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
     /*
@@ -489,7 +532,7 @@ export class NotificationService {
   */
   /** Delivers a self-healing no-action escalation through the durable wedge episode seam. */
   async notifyTaskWedge(task: Task, descriptor: TaskWedgeDescriptor): Promise<void> {
-    await this.maybeNotifyTaskWedge(task, descriptor);
+    await this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, descriptor));
   }
 
   private async maybeNotifyTaskWedge(task: Task, suppliedDescriptor?: TaskWedgeDescriptor | null): Promise<void> {
@@ -509,43 +552,32 @@ export class NotificationService {
       // stays in review, so arbitrary in-review/status writes are not resolution
       // evidence. Only an active owner state or real lifecycle advance can close it.
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-30-23:35 (fleet phase — REVERTED AFTER MEASUREMENT, flagged and left counted):
-      These four ids are an enumeration of "every lane except review". I converted them to the four ROLES
-      they name and it PASSED typecheck and the notification suites, then failed
-      `task-wedge-notification.test.ts > sends one actionable push and mailbox message per active terminal
-      episode` — green on main, red with the conversion, `expected 2 calls, got 1`.
+      FNXC:WorkflowResolvedColumns 2026-07-31-21:20 (the blocker is gone, so the conversion lands):
+      These four ids are an enumeration of "every lane except review" — the lanes whose occupancy
+      proves a wedged card's lifecycle has visibly resumed. On a renamed board none of them matched,
+      so a recovered card's episode was never resolved and the operator kept an open wedge alert for
+      work that had moved on.
 
-      The cause is not the test. `handleTaskUpdated` is a synchronous `(task) => void` listener that starts
-      this work fire-and-forget, and THIS is the branch that RESOLVES a wedge episode. Adding an await
-      before the resolve means a re-wedge arriving close behind still sees the previous episode `active`,
-      its claim returns `claimed: false`, and the second operator notification is DROPPED. The awaits added
-      elsewhere in this file are downstream of an existing await or inside a timer callback; this one sits
-      on the only path that closes an episode, so it changes delivery rather than just timing.
+      TWO EARLIER PASSES CONVERTED THIS AND REVERTED IT, both times after
+      `task-wedge-notification.test.ts > "sends one actionable push and mailbox message per active
+      terminal episode"` went red with `expected 2 calls, got 1`. Their diagnosis was right and worth
+      restating: this branch RESOLVES an episode, `handleTaskUpdated` starts it fire-and-forget from a
+      synchronous listener, and ANY await introduced before the resolve lets a re-wedge arriving close
+      behind reach `claim` while the previous episode is still active — `claimed: false`, second
+      notification dropped. Column resolution needs an await, so the conversion could not be made
+      safe from inside this branch.
 
-      Fixing it properly means serialising wedge handling per task (a queue or a per-task lock) so
-      resolution cannot interleave with the next claim. That is a delivery-semantics change to operator
-      notifications, not a column conversion, so it is out of fleet scope and left for whoever owns the
-      wedge episode contract.
+      It is safe now because `enqueueWedgeHandling` serialises wedge handling PER TASK, so
+      resolve-then-claim keeps its order however many awaits either branch acquires. That is the
+      wedge-episode-contract change the earlier notes said this was waiting on; it lands in the same
+      commit, and the named acceptance test is the gate on both halves.
 
-      Left COUNTED with no exemption marker — four of this file's five remaining entries are here, and the
-      census should keep saying so.
-
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (ATTEMPTED, MEASURED, REVERTED — do not retry as written):
-      I converted these four ids to a resolved `progressedLanes` set and it broke an existing gate test
-      (`task-wedge-notification.test.ts` -> "sends one actionable push and mailbox message per active
-      terminal episode": 1 message delivered, 2 expected).
-
-      The cause is the paragraph directly above, and it is stronger than it reads: the hazard is not
-      specific to the resolve/claim ordering, it is ANY await added before the resolve. Column resolution
-      needs one, so a resolved answer here costs a dropped operator notification whenever a re-wedge
-      arrives close behind a recovery. The `task:updated` listeners fire synchronously, so the second
-      emit reaches `claim` while the first episode is still open.
-
-      This is therefore blocked on serialising wedge handling per task, NOT on the conversion being hard.
-      Convert these four only in a change that already owns the wedge-episode contract, and re-run that
-      test as the acceptance check — it fails loudly, which is why this is recorded rather than exempted.
+      MEMBERSHIP over the four roles, not first-match: "has this card moved on" can be true of more
+      than one lane per role on a renamed board, and a first-match answer would silently ignore the
+      others. Legacy-seeded, so an unconverted board resolves exactly the four ids it used to compare.
       */
-      const hasProgressed = task.column === "todo" || task.column === "in-progress" || task.column === "done" || task.column === "archived"
+      const progressedLanes = await resolveProjectColumnsForRoles(this.store, ["hold", "countsTowardWip", "complete", "archived"]);
+      const hasProgressed = progressedLanes.has(task.column)
         || (!isActiveSelfHealingNoAction && typeof task.status === "string" && task.status !== "failed")
         || (isActiveSelfHealingNoAction && ["queued", "planning", "in-progress", "merging", "merging-pr", "merged", "done"].includes(task.status ?? ""));
       if (hasProgressed) {

@@ -1,8 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 26,
-    "packages/engine/src/notification/notification-service.ts": 5,
+    "packages/engine/src/self-healing.ts": 22,
     "packages/engine/src/executor.ts": 4,
     "packages/core/src/task-store/moves.ts": 2,
     "packages/core/src/task-store/project-store-ops.ts": 2,
@@ -19,6 +18,7 @@
     "packages/core/src/task-store/task-id-integrity.ts": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
+    "packages/engine/src/notification/notification-service.ts": 1,
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
