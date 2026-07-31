@@ -584,6 +584,63 @@ describe("execute requeue loop guard", () => {
     );
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:10:
+  `completedBlockedHoldColumns` was UNCOVERED on the #3115 map: every case here seeds the park in
+  `todo`, where the literal is correct, so blinding the resolver leaves the file green.
+
+  A completed-blocked park rests in the board's HOLD lane, which is only called `todo` on the built-in
+  workflow. Keyed on the id the sweep selects nothing on a renamed board, so finished work stays
+  parked behind a blocker that has already cleared — stranded exactly as FN-7926 describes, and
+  silently, because a sweep that selects no rows reports success.
+  */
+  it("auto-advances a completed-blocked park resting in a RENAMED hold lane", async () => {
+    const h = harness(
+      task({
+        id: "FN-RENAMED-PARK",
+        column: "drafting",
+        blockedBy: "FN-BLOCKER",
+        paused: true,
+        pausedReason: COMPLETED_BLOCKED_PAUSE_REASON,
+        status: "queued",
+        steps: [{ name: "Implement", status: "done" }],
+      }),
+      [task({ id: "FN-BLOCKER", column: "shipped" })],
+    );
+    const RENAMED_IR = {
+      version: "v2",
+      id: "custom:renamed",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+      ],
+    };
+    /* The completion-blocker gate resolves the blocker's OWN workflow, so the per-task selection
+       readers are needed too — `listWorkflowDefinitions` alone leaves `shipped` unrecognised and the
+       park is rejected for the wrong reason. */
+    Object.assign(h.store as unknown as Record<string, unknown>, {
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
+    });
+    const recoverCompletedTask = vi.fn(async () => true);
+    const healer = new SelfHealingManager(h.store, {
+      rootDir: "/tmp/test",
+      recoverCompletedTask: recoverCompletedTask as any,
+      getExecutingTaskIds: () => new Set(),
+      isTaskActive: () => false,
+    });
+
+    await (healer as any).reconcileCompletedBlockedTasks();
+
+    /* Selected by the board's own hold lane, so the finished work is released. */
+    expect(recoverCompletedTask).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-RENAMED-PARK" }));
+  });
+
   it("auto-advances a zero-step taskDone completed-blocked park once the blocker clears (invariant: park and advance must agree on workComplete)", async () => {
     // Regression for the FN-7926 park/advance asymmetry: parkCompletedBlockedTask()
     // accepts workComplete=taskDone for a task with zero planned steps (see the
