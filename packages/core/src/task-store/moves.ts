@@ -42,6 +42,16 @@ import {disposeTaskBeforeMove} from "../task-move-disposer.js";
 import {resolveTaskSymbolsForTask} from "../task-symbol-resolution.js";
 
 /*
+FNXC:WorkflowResolvedColumns 2026-07-31-17:25 (fleet — the two fallbacks in this file):
+DELIBERATE-LITERAL — the no-resolution default for the review question below.
+
+Named sets rather than inline arms: the census counts an inline comparison regardless of the branch
+it sits in (its `traitFallback` hint is advisory and never changes the count), so a converted guard
+with an inline legacy arm stays on the backlog permanently.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+/*
 FNXC:PostgresCutover 2026-07-05-19:50:
 Backend-aware task-workflow IR resolution for move validation. The sync
 resolver (resolveTaskWorkflowIrSync) cannot read the task_workflow_selection
@@ -323,6 +333,14 @@ export async function handoffToReviewImpl(store: TaskStore, taskId: string, opts
       */
       const handoffIr = await resolveWorkflowIrForTask(store, taskId).catch(() => undefined);
       const handoffArchivedLanes = handoffIr ? new Set(columnsWithFlag(handoffIr, "archived")) : undefined;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
+      THIS ARM STAYS INLINE, deliberately. Naming it would move the TypeScript tally that
+      `archived-column-gate-parity.test.ts` pins, and that guard's whole argument is that the
+      archived gate's three encodings must move together — the SQL halves still compare the raw
+      string, so converting the TypeScript side alone is the split brain it exists to prevent.
+      Measured: naming it turned that suite red on `TypeScript encoding changed`.
+      */
       const taskIsArchived = handoffArchivedLanes && handoffArchivedLanes.size > 0
         ? handoffArchivedLanes.has(task.column)
         : task.column === "archived";
@@ -469,7 +487,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     const moveReviewColumns = workflowIr ? new Set(resolveReviewColumns(workflowIr)) : undefined;
 
     if (task.column === toColumn) {
-      if (internal.fromHandoff && toColumn === "in-review") {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:20 (fleet — the same-column handoff target):
+      A MOVE TARGET, resolved from the set already computed three lines above.
+
+      This branch takes the backend-mode path for a handoff that lands the card in review. Against
+      the literal it never fired on a renamed board, so a same-column handoff into a renamed review
+      lane silently took the OTHER path — the sync-SQLite branch — which throws under PostgreSQL.
+
+      `moveReviewColumns` is the broad membership set (merge-orchestration ∪ mergeBlocker ∪
+      humanReview) already resolved here for the merge-queue pair; asking it costs nothing extra and
+      cannot disagree with the enqueue/dequeue calls that receive the same value.
+      */
+      if (internal.fromHandoff && (moveReviewColumns ?? LEGACY_REVIEW_LANES).has(toColumn)) {
         // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-14:25:
         // Backend-mode same-column handoff: use layer.transactionImmediate with
         // async in-transaction helpers (enqueueMergeQueueInTransaction,
