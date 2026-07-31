@@ -35,7 +35,6 @@ export interface DependencyGraphProps {
   onOpenMission?: (missionId: string) => void;
   onMoveTask?: (id: string, column: Task["column"], optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   lastFetchTimeMs?: number;
-  workflowStepNameLookup?: ReadonlyMap<string, string>;
 }
 
 const POINTER_MOVE_THRESHOLD = 4;
@@ -58,7 +57,6 @@ export function DependencyGraph({
   onOpenMission,
   onMoveTask,
   lastFetchTimeMs,
-  workflowStepNameLookup,
 }: DependencyGraphProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
@@ -506,7 +504,6 @@ export function DependencyGraph({
                     onOpenMission={onOpenMission}
                     onMoveTask={onMoveTask}
                     lastFetchTimeMs={lastFetchTimeMs}
-                    workflowStepNameLookup={workflowStepNameLookup}
                     onMouseEnter={() => setHoveredTaskId(node.task.id)}
                     onMouseLeave={() => setHoveredTaskId(null)}
                     onClick={(event) => {

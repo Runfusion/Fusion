@@ -27,7 +27,6 @@ type TaskCardBridgeProps = Pick<
   | "onOpenMission"
   | "onMoveTask"
   | "lastFetchTimeMs"
-  | "workflowStepNameLookup"
 >;
 
 export interface GraphTaskNodeProps extends TaskCardBridgeProps, Pick<HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave" | "onClick"> {

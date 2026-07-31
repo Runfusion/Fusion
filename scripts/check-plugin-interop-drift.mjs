@@ -55,6 +55,10 @@ wrapped component, not to the export. Arity is not comparable there, so those ar
 but not compared. Reporting them would have been a false positive on the very first run, and a check
 whose debut finding is wrong does not get a second reading.
 */
+export function declaredInterfacesForTest(sourceText, fileName) {
+  return declaredInterfaces(sourceText, fileName, ts.ScriptKind.TSX);
+}
+
 export function exportedFunctions(sourceText, fileName) {
   const sf = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = new Map();
@@ -102,9 +106,72 @@ function mirroredFunctions(file) {
   return out;
 }
 
+/*
+FNXC:PluginInteropDrift 2026-07-31-08:10:
+INTERFACES ARE CHECKED ONE DIRECTION ONLY: a mirror may declare FEWER properties, never unknown ones.
+
+A subset is the normal and correct state — a plugin mirrors the handful of context fields it uses,
+and all six do exactly that (6, 8, 7, 7, 3, 6 properties against the real nine). Demanding equality
+would fail every plugin for the crime of not using everything.
+
+A property the real type does NOT have is the drift that matters: a rename nobody propagated, or a
+typo. The plugin keeps compiling and reads a field the host never sends, which is the same silent
+failure the function-arity case produced — code that looks wired and receives nothing.
+
+Measured when added: zero across all six mirrors. The rule is here because these files provably
+drift, not because they currently do.
+*/
+function declaredInterfaces(sourceText, fileName, kind) {
+  const sf = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true, kind);
+  const out = new Map();
+  const visit = (node) => {
+    if (ts.isInterfaceDeclaration(node)) {
+      const props = new Map();
+      for (const member of node.members) {
+        if (member.name && ts.isIdentifier(member.name)) {
+          props.set(member.name.text, sf.getLineAndCharacterOfPosition(member.getStart()).line + 1);
+        }
+      }
+      out.set(node.name.text, props);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** Interfaces a `declare module` block mirrors, keyed by module then interface name. */
+function mirroredInterfaces(file) {
+  const text = readFileSync(file, "utf8");
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const out = [];
+  const visit = (node) => {
+    if (ts.isModuleDeclaration(node) && ts.isStringLiteral(node.name) && node.name.text.startsWith(MODULE_PREFIX)) {
+      const moduleName = node.name.text;
+      const walk = (n) => {
+        if (ts.isInterfaceDeclaration(n)) {
+          const props = new Map();
+          for (const member of n.members) {
+            if (member.name && ts.isIdentifier(member.name)) {
+              props.set(member.name.text, sf.getLineAndCharacterOfPosition(member.getStart()).line + 1);
+            }
+          }
+          out.push({ moduleName, name: n.name.text, props });
+        }
+        ts.forEachChild(n, walk);
+      };
+      walk(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 const mirrors = globSync("plugins/*/src/dashboard-interop.d.ts", { cwd: REPO }).sort();
 const problems = [];
 let compared = 0;
+let comparedInterfaces = 0;
 
 for (const rel of mirrors) {
   const file = join(REPO, rel);
@@ -129,14 +196,27 @@ for (const rel of mirrors) {
       );
     }
   }
+
+  for (const decl of mirroredInterfaces(file)) {
+    const realFile = resolveRealFile(decl.moduleName);
+    if (!realFile) continue;  /* already reported by the function pass */
+    const real = declaredInterfaces(readFileSync(realFile, "utf8"), realFile, ts.ScriptKind.TSX).get(decl.name);
+    if (!real) continue;      /* the mirror may name a local shape the module does not export */
+    comparedInterfaces += 1;
+    for (const [prop, line] of decl.props) {
+      if (!real.has(prop)) {
+        problems.push(`${rel}:${line}  ${decl.name}.${prop} is not a property of the real ${decl.name}`);
+      }
+    }
+  }
 }
 
 /*
 ANTI-VACUITY: a resolver change or a rename could leave this walking nothing and reporting success
 forever, which is the failure mode a ratchet must not have.
 */
-if (mirrors.length === 0 || compared === 0) {
-  console.error(`[check-plugin-interop-drift] scanned ${mirrors.length} mirror(s) and compared ${compared} function(s) — refusing to report success on an empty comparison.`);
+if (mirrors.length === 0 || compared === 0 || comparedInterfaces === 0) {
+  console.error(`[check-plugin-interop-drift] scanned ${mirrors.length} mirror(s), compared ${compared} function(s) and ${comparedInterfaces} interface(s) — refusing to report success on an empty comparison.`);
   process.exit(1);
 }
 
@@ -149,4 +229,4 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`[check-plugin-interop-drift] ${compared} mirrored function(s) across ${mirrors.length} plugin(s) match the real dashboard API.`);
+console.log(`[check-plugin-interop-drift] ${compared} mirrored function(s) and ${comparedInterfaces} interface(s) across ${mirrors.length} plugin(s) match the real dashboard API.`);
