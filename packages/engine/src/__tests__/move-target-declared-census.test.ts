@@ -74,15 +74,30 @@ function literalText(node: ts.Node | undefined): string | undefined {
   return undefined;
 }
 
-function collectMoveCalls(): MoveCall[] {
-  const files: string[] = [];
-  collectFiles(ENGINE_SRC, files);
-  // Guards the guard: a broken path would make every assertion below vacuously true.
-  if (files.length < 20) throw new Error(`census scanned only ${files.length} engine files; path resolution is broken`);
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (the population this file measured reached ZERO):
+`collectMoveCalls` now takes an optional (name, source) list so the collector can be exercised against
+a SYNTHETIC fixture. Reason in the describe block below: the engine's literal move-target population
+is 0, so every assertion that proved this census works by pointing at real debt has nothing left to
+point at. A vacuity guard that depends on real debt existing expires the moment the work succeeds —
+and it expires by FAILING, which reads as a regression in the thing it was guarding.
+*/
+type SourceFileInput = { name: string; source: string };
+
+function collectMoveCalls(inputs?: readonly SourceFileInput[]): MoveCall[] {
+  let entries: SourceFileInput[];
+  if (inputs) {
+    entries = [...inputs];
+  } else {
+    const files: string[] = [];
+    collectFiles(ENGINE_SRC, files);
+    // Guards the guard: a broken path would make every assertion below vacuously true.
+    if (files.length < 20) throw new Error(`census scanned only ${files.length} engine files; path resolution is broken`);
+    entries = files.map((f) => ({ name: f, source: readFileSync(f, "utf-8") }));
+  }
 
   const calls: MoveCall[] = [];
-  for (const file of files) {
-    const source = readFileSync(file, "utf-8");
+  for (const { name: file, source } of entries) {
     const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     /*
     `createSourceFile` is error-tolerant, so a syntax error yields a PARTIAL tree whose calls are
@@ -105,7 +120,7 @@ function collectMoveCalls(): MoveCall[] {
                   .filter((name): name is string => name !== undefined)
               : [];
           calls.push({
-            file: file.slice(ENGINE_SRC.length + 1),
+            file: file.startsWith(ENGINE_SRC) ? file.slice(ENGINE_SRC.length + 1) : file,
             line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
             target,
             optionKeys,
@@ -132,9 +147,58 @@ function defaultColumnIds(): Set<string> {
 }
 
 describe("engine move targets vs the columns a workflow declares (U12 flip precondition)", () => {
-  it("finds engine moveTask calls with literal targets, so the census is not vacuous", () => {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (the precondition this file measured is now MET):
+  Every assertion here used to rest on the engine HAVING literal move targets — ">10 exist", "the
+  rescue and plain groups are both non-empty". The conversion program drove that population to 0, so
+  those three assertions began failing on main. Nothing regressed: the census is reporting the
+  success condition for the U12 flip, and the test was written to describe the world before it.
+
+  A guard whose premise is "the debt still exists" expires the moment the work succeeds, and expires
+  by FAILING — which reads as a regression in the very thing it was guarding. Re-pointed rather than
+  deleted, in two halves:
+
+    - VACUITY is now proven against a SYNTHETIC fixture, so the collector is exercised forever
+      regardless of how much real debt remains. This is the assertion that keeps the two below
+      honest: at a real population of 0 they are trivially true, and only the fixture proves they
+      would still fire.
+    - The two real-tree assertions now assert ZERO, so a reintroduced literal move target fails them.
+      That is the same guarantee as before, pointed at the state the tree is actually in.
+
+  `check-move-target-literals` ratchets the same population at 0 from the script side. This file is
+  not redundant with it: it judges targets against the columns the DEFAULT workflow declares, which
+  is the U12 flip question, and the ratchet does not.
+  */
+  const FIXTURE: readonly { name: string; source: string }[] = [{
+    name: "synthetic-fixture.ts",
+    source: [
+      `declare const store: { moveTask: (id: string, to: string, opts?: object) => void };`,
+      `export function a(id: string): void { store.moveTask(id, "in-review"); }`,
+      `export function b(id: string): void { store.moveTask(id, "done", { recoveryRehome: true }); }`,
+      `export function c(id: string): void { store.moveTask(id, "not-a-declared-column"); }`,
+    ].join("\n"),
+  }];
+
+  it("VACUITY — the collector finds literal targets, options and all, in a synthetic fixture", () => {
+    /* Proves the census can still see what it claims to measure, without needing real debt to exist.
+       If the collector breaks, the two zero-assertions below would pass for the wrong reason and this
+       is the only case that notices. */
+    const calls = collectMoveCalls(FIXTURE);
+
+    expect(calls.map((c) => c.target).sort()).toEqual(["done", "in-review", "not-a-declared-column"]);
+    expect(calls.find((c) => c.target === "done")?.optionKeys).toEqual(["recoveryRehome"]);
+    expect(calls.find((c) => c.target === "in-review")?.optionKeys).toEqual([]);
+
+    /* ...and that the declared-column comparison still discriminates, which is the actual U12
+       question. `not-a-declared-column` is not in any lineage; the other two are default ids. */
+    const declared = defaultColumnIds();
+    expect(calls.filter((c) => !declared.has(c.target)).map((c) => c.target)).toEqual(["not-a-declared-column"]);
+  });
+
+  it("the engine has NO literal move targets left — the U12 flip precondition is met", () => {
+    /* Was ">10 exist". The population is 0; asserting the number keeps a reintroduction failing. */
     const calls = collectMoveCalls();
-    expect(calls.length).toBeGreaterThan(10);
+    expect(calls.map((call) => `${call.file}:${call.line} -> "${call.target}"`)).toEqual([]);
   });
 
   it("every literal engine move target IS declared by the DEFAULT workflow", () => {
@@ -174,9 +238,24 @@ describe("engine move targets vs the columns a workflow declares (U12 flip preco
     const rescueMoves = calls.filter((call) => call.optionKeys.includes("recoveryRehome"));
     const plainMoves = calls.filter((call) => !call.optionKeys.includes("recoveryRehome"));
 
-    // Both groups exist; if either were empty the distinction below would be meaningless.
-    expect(rescueMoves.length).toBeGreaterThan(0);
-    expect(plainMoves.length).toBeGreaterThan(0);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-23:20 (the exposure is now NIL):
+    Was `rescueMoves > 0 && plainMoves > 0` — "both groups exist, so the distinction is meaningful".
+    Both are now empty because no literal move targets remain, which means NO engine move's safety
+    rests on the #1411 `recoveryRehome` carve-out. That is the answer the flip PR wanted, and it is
+    worth asserting exactly: if a literal move target returns, `plainMoves` becomes non-empty and the
+    inventory below stops being empty, so this fails and a human reads the list again.
+
+    The synthetic-fixture case above is what proves this grouping still works at a real population of
+    0 — without it, a collector that returned nothing would satisfy these two lines forever.
+    */
+    expect(rescueMoves).toEqual([]);
+    expect(plainMoves).toEqual([]);
+
+    const fixtureGrouping = collectMoveCalls(FIXTURE);
+    expect(fixtureGrouping.filter((c) => c.optionKeys.includes("recoveryRehome")).length).toBe(1);
+    expect(fixtureGrouping.filter((c) => !c.optionKeys.includes("recoveryRehome")).length).toBe(2);
+
     const all = new Map<string, number>();
     for (const call of calls) all.set(call.target, (all.get(call.target) ?? 0) + 1);
     console.info(`ALL literal engine move targets: ${[...all.entries()].sort((a,b)=>b[1]-a[1]).map(([t,n])=>`${t}=${n}`).join(", ")} (total ${calls.length})`);
