@@ -9,6 +9,7 @@ regression suite that pins each form this census must catch lives in
 Report-only by default:
   node scripts/lifecycle-column-census.mjs            # human table
   node scripts/lifecycle-column-census.mjs --json     # machine-readable
+  node scripts/lifecycle-column-census.mjs --triage   # split the backlog into flagged vs unexamined
   node scripts/lifecycle-column-census.mjs --compare  # cross-check AST vs text classifier
   node scripts/lifecycle-column-census.mjs --strict   # fail if any file DIVERGES from baseline
   node scripts/lifecycle-column-census.mjs --strict --update-baseline   # re-record after lowering it
@@ -39,6 +40,9 @@ The text classifier stays beside it as an independent second implementation — 
 and fails if they disagree, which is the only evidence available that either is right.
 */
 import { censusFiles, summarize } from "./lib/lifecycle-column-census-ast.mjs";
+
+/** Repo root, for reading a finding's source back when `--triage` classifies it. */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 import {
   censusFiles as censusFilesText,
   summarize as summarizeText,
@@ -91,6 +95,50 @@ const compare = process.argv.includes("--compare");
 const updateBaseline = process.argv.includes("--update-baseline");
 /* `--exact` keeps hard failure on a DROP, for the end state where the count is pinned. */
 const exact = process.argv.includes("--exact");
+const triage = process.argv.includes("--triage");
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-23:30 (the headline number stopped tracking work):
+`--triage` splits the backlog into sites that carry a DOCUMENTED reason for staying a literal and
+sites nobody has examined. Opt-in, printed BESIDE the totals, and it changes no count and no exit
+code — same discipline as `traitFallbackCount` above.
+
+Why it exists. A guard deferred on purpose, with the reason written next to it, is not the same work
+item as an unexamined literal, and the headline conflates them. Measured by hand across the fleet
+phase, repeatedly: of 88 guards at one point, 53 were already inside an open PR, 13 carried an
+explicit flag note, 11 were fallback arms, and 11 were genuinely unexamined. A worker told to "claim
+the largest cluster" reads 88 and finds 11, then reaches for whatever moves the number — which is how
+three PRs converted guards to a synchronous resolver that is inert under PostgreSQL (#3051, refuted
+live in #3058; #3062/#3068/#3079 now fail the build on it).
+
+HEURISTIC, AND SAID SO. Classification is comment proximity: an FNXC note within 40 lines above the
+guard whose text marks a deliberate deferral. It cannot tell a good reason from a bad one, and a note
+far above its guard reads as unflagged. It is a triage aid for choosing work, never a gate — which is
+why it is opt-in and why nothing downstream consumes it.
+*/
+const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on/;
+
+/** Split the column guards into documented-deferral vs unexamined, by comment proximity. */
+function triageFindings() {
+  const sourceCache = new Map();
+  const flagged = [];
+  const open = [];
+  for (const f of findings.filter((x) => x.kind === "column")) {
+    let lines = sourceCache.get(f.file);
+    if (!lines) {
+      /* `f.file` is already repo-relative and this script runs from the repo root, so read it
+         directly. NOT wrapped in a silent catch: the first draft did, and a ReferenceError on an
+         undefined path constant was swallowed into an empty file list, which reported "0 documented
+         deferrals" for a tree that visibly has them. A triage aid that fails to zero is worse than
+         one that throws — it reads as a clean answer. */
+      lines = readFileSync(join(REPO_ROOT, f.file), "utf8").split("\n");
+      sourceCache.set(f.file, lines);
+    }
+    const window = lines.slice(Math.max(0, f.line - 41), f.line).join(" ");
+    (FLAG_MARKERS.test(window) ? flagged : open).push(f);
+  }
+  return { flagged, open };
+}
 
 if (json) {
   console.log(JSON.stringify({ scannedFiles: files.length, ...summary, byFile: summary.byFile }, null, 2));
@@ -109,6 +157,19 @@ if (json) {
   while both engine defects (#2670, #2672) were literals in a separate statement instead.
   */
   console.log(`  of the column guards, ${summary.traitFallbackCount ?? 0} are trait-fallback branches (already converted)`);
+  if (triage) {
+    const { flagged, open } = triageFindings();
+    console.log(`\n  TRIAGE (heuristic, opt-in; changes no count and no exit code)`);
+    console.log(`    documented deferral (flag note within 40 lines): ${flagged.length}`);
+    console.log(`    unexamined:                                      ${open.length}`);
+    const byFile = {};
+    for (const f of open) byFile[f.file] = (byFile[f.file] ?? 0) + 1;
+    const rows = Object.entries(byFile).sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (rows.length > 0) {
+      console.log(`\n    unexamined, by file — this is the list to pick work from:`);
+      for (const [file, n] of rows) console.log(`      ${String(n).padStart(3)}  ${file}`);
+    }
+  }
   /*
   FNXC:LifecycleColumnCensus 2026-07-29-19:40:
   Reported BESIDE the backlog, never inside it. A `column: "todo"` source query decides which rows
