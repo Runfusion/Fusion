@@ -58,6 +58,13 @@ keep honest than two.
 const STAMP_TIME = /FNXC:[A-Za-z0-9_-]+\s+\d{4}-\d{2}-\d{2}-(\d{2}):(\d{2})/g;
 
 /** Hours 00-23, minutes 00-59. Returns the count of stamps whose clock time cannot exist. */
+/** The stamp an author should paste, in the project's `yyyy-MM-dd-HH:mm` form, in UTC. */
+function nowStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}-${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
 function impossibleClockTimes(source) {
   let bad = 0;
   STAMP_TIME.lastIndex = 0;
@@ -239,7 +246,20 @@ if (problems.length > 0) {
     + "the FNXC record — the project's why-does-this-exist trail — read out of order. An hour above 23\n"
     + "or a minute above 59 is not a real time at all.\n"
     + "Use the current date and a real clock time. If a count went DOWN, re-record the baseline in the\n"
-    + "same commit.\n",
+    + "same commit.\n"
+    /*
+    FNXC:FnxcDateGate 2026-07-31-23:39:
+    PRINT THE STAMP TO USE, do not just say "use the current date".
+
+    Three separate commits landed a future-dated stamp in one evening, each turning this blocking gate
+    red on main. The offsets were 1-2 hours, not wrong dates — the shape of a clock or timezone
+    difference rather than carelessness, and telling that author to "use the current date" is telling
+    them to use the value they thought they already had.
+
+    Printing the exact UTC stamp makes the correction copy-paste instead of a second judgement call.
+    Cheap: one `date -u`-equivalent read on a path that has already failed.
+    */
+    + `Current UTC stamp to use: ${nowStamp()}\n`,
   );
   process.exit(1);
 }
