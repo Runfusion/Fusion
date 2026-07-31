@@ -119,7 +119,7 @@ test("treats soft-deleted blockers as missing and never plans for deleted depend
 });
 
 /*
-FNXC:OperatorScriptLaneAssumptions 2026-07-30-25:30:
+FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:30:
 THE INVARIANT: a board this script cannot reason about is REPORTED, never silently skipped.
 
 Every lane test in the planner is a legacy id, and the candidate gate is `row.column !== "todo"`, so a

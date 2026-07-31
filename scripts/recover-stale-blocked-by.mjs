@@ -66,7 +66,7 @@ function isTerminalColumn(column) {
 }
 
 /*
-FNXC:OperatorScriptLaneAssumptions 2026-07-30-25:30:
+FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:30:
 Refuse to look healthy on a board this script cannot reason about.
 
 Every lane test here is a legacy id: `isTerminalColumn` is done/archived, "active" is
