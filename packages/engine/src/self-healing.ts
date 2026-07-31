@@ -1566,8 +1566,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     production behaviour. Same defect as #3051's ten scheduler guards; see #3058 and the call-site
     allow-list in `sync-workflow-ir-callsite-allowlist.test.ts`.
 
-    THE REAL BLOCKER is the absence of a sync-capable workflow-selection reader. One change un-inerts
-    every sync-path conversion at once. Until then the literals stay, counted.
+    SCOPE, after the async conversion below: this note now covers ONLY the board-stall counter, which
+    mutates in-memory state in the handler's own tick and so genuinely needs a synchronous answer. The
+    other two guards gate work the listener already `void`s, so they ask the ASYNC resolver instead —
+    see the note on them. Splitting the four this way is the whole finding: "the listener is sync" was
+    never the real constraint, "this particular guard's ANSWER is consumed synchronously" is.
+
+    THE REAL BLOCKER for the counter is a sync path that can answer for a CUSTOM workflow, and there
+    are two things in the way, not one (`sync-workflow-ir-second-blocker.test.ts`). Until then the
+    literals here stay, counted.
     */
     this.taskMovedFanoutListener = ({ task, from, to }) => {
       if (
@@ -1578,19 +1585,57 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // In-memory only counter; resets on engine restart.
         this.boardStallWindow.transitionsOutOfInProgressInWindow++;
       }
-      if (to === "in-review") {
-        void this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:35 (the ASYNC path, which the sync one could not be):
+      THESE TWO GUARDS GATE WORK THAT WAS ALREADY FIRE-AND-FORGET, so they can ask the async resolver
+      without changing anything an observer can see.
+
+      The sync-IR conversion of this listener is inert and was withdrawn (see the note above). But
+      that is a constraint on the SYNC path, and only the board-stall counter above genuinely needs a
+      synchronous answer — it mutates in-memory state in the handler's own tick. The two calls below
+      are already `void`-ed: the listener does not await them, and their bodies already begin at a
+      microtask boundary.
+
+      Moving the guard into that same boundary therefore preserves the ordering property the withdrawn
+      conversion would have broken. An async IIFE runs synchronously only up to its first `await`,
+      which here is the first statement, so the rest of this listener continues in the same tick
+      exactly as before — identical to how `void this.reconcileCompletedTask(...)` already behaved.
+
+      The resolution goes through the ASYNC `resolveProjectColumnsForRoles`, whose only store read is
+      `listWorkflowDefinitions()` — answerable under PostgreSQL, and unaffected by either of the two
+      blockers that make the sync path inert (`sync-workflow-ir-second-blocker.test.ts`).
+
+      What this fixes, on every renamed board: a card entering the board's own review lane never had
+      its branch rebound, and a card reaching the board's own complete or archive lane never ran the
+      completion fan-out — so its worktree was never reclaimed and its dependents kept a `blockedBy`
+      pointing at a blocker that had already finished.
+      */
+      void (async () => {
+        /* One await, not three: the fan-out is fire-and-forget, so its deferral is unobservable, but
+           there is no reason to add microtasks the resolution does not need. */
+        const [review, complete, archived] = await Promise.all([
+          resolveProjectColumnsForRoles(this.store, REVIEW_ROLES),
+          resolveProjectColumnsForRoles(this.store, ["complete"]),
+          resolveProjectColumnsForRoles(this.store, ["archived"]),
+        ]);
+        const lanes = { review, complete, archived };
+        if (lanes.review.has(to)) {
+          await this.reconcileInReviewBranchRebind({ includeTaskIds: new Set([task.id]) }).catch((err: unknown) => {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
+          });
+        }
+        const shouldReconcile =
+          (lanes.review.has(from) && lanes.complete.has(to)) ||
+          (lanes.complete.has(from) && lanes.archived.has(to));
+        if (!shouldReconcile) return;
+        await this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          log.warn(`[self-healing] task:moved in-review rebind failed for ${task.id}: ${errorMessage}`);
+          log.warn(`[self-healing] task:moved completion fan-out failed for ${task.id}: ${errorMessage}`);
         });
-      }
-      const shouldReconcile =
-        (from === "in-review" && to === "done") ||
-        (from === "done" && to === "archived");
-      if (!shouldReconcile) return;
-      void this.reconcileCompletedTask(task.id, { worktreeHint: task.worktree ?? undefined }).catch((err: unknown) => {
+      })().catch((err: unknown) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        log.warn(`[self-healing] task:moved completion fan-out failed for ${task.id}: ${errorMessage}`);
+        log.warn(`[self-healing] task:moved fan-out lane resolution failed for ${task.id}: ${errorMessage}`);
       });
     };
     this.store.on("task:moved", this.taskMovedFanoutListener);

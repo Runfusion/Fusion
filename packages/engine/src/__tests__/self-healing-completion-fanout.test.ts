@@ -178,13 +178,22 @@ describe("self-healing completion fan-out", () => {
     store.emit("task:moved", { task: t, from: "in-review", to: "done", source: "user" });
     store.emit("task:moved", { task: t, from: "done", to: "archived", source: "engine" });
     store.emit("task:moved", { task: t, from: "in-review", to: "todo", source: "user" });
-    await Promise.resolve();
-    expect(spy).toHaveBeenCalledTimes(2);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
+    `await Promise.resolve()` was draining exactly one microtask, which coupled this case to the
+    number of awaits inside a FIRE-AND-FORGET path. The listener does not await the fan-out and never
+    did, so how many microtasks it takes is not the contract — "it ran, twice, for the right
+    transitions" is. Resolving the lanes adds an await, so the drain is now written against the
+    invariant instead of against the old await count.
+    */
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalledTimes(2); });
     expect(spy).toHaveBeenNthCalledWith(1, "FN-L", { worktreeHint: undefined });
 
     mgr.stop();
     store.emit("task:moved", { task: t, from: "in-review", to: "done", source: "user" });
-    await Promise.resolve();
+    /* The negative keeps a real drain: an unwired listener must stay silent after several ticks,
+       not merely after one. */
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
@@ -199,5 +208,87 @@ describe("self-healing completion fan-out", () => {
     expect(out.worktreeRemoved).toBe(true);
     expect((await store.getTask("FN-D"))?.worktree).toBeNull();
     expect((await store.getTask("FN-D"))?.branch).toBeNull();
+  });
+});
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:45:
+THE `task:moved` FAN-OUT ON A RENAMED BOARD.
+
+Two of this listener's guards were keyed on `in-review`/`done`/`archived`, so on a board using none
+of those ids a card entering its own review lane never had its branch rebound, and a card reaching
+its own complete or archive lane never ran the completion fan-out — the worktree was never reclaimed
+and dependents kept a `blockedBy` pointing at a blocker that had already finished.
+
+The SYNC-IR conversion of this listener is inert and was withdrawn. These two guards gate work the
+listener already `void`s, so they can ask the ASYNC resolver instead without changing anything an
+observer can see; the resolution reads `listWorkflowDefinitions()`, which is answerable under
+PostgreSQL.
+
+The board-stall counter above them is deliberately NOT converted here: it mutates in-memory state in
+the handler's own tick, so it is the one guard that genuinely needs a synchronous answer.
+*/
+describe("the task:moved fan-out resolves the board's own lanes", () => {
+  /** Review `checking`, complete `shipped`, archive `filed` — no legacy id anywhere. */
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
+    ],
+  };
+
+  function renamedStore(task: Task) {
+    const base = createStore([task]) as unknown as TaskStore & EventEmitter;
+    (base as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions =
+      vi.fn(async () => [{ ir: RENAMED_IR }]);
+    return base;
+  }
+
+  it("runs the completion fan-out for the board's own review -> complete transition", async () => {
+    const t = makeTask("FN-R1", { column: "shipped" });
+    const store = renamedStore(t);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    const spy = vi.spyOn(mgr, "reconcileCompletedTask").mockResolvedValue({ blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false });
+
+    mgr.start();
+    store.emit("task:moved", { task: t, from: "checking", to: "shipped", source: "engine" });
+
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalledWith("FN-R1", { worktreeHint: undefined }); });
+    mgr.stop();
+  });
+
+  it("rebinds the branch on a move into the board's own review lane", async () => {
+    const t = makeTask("FN-R2", { column: "checking" });
+    const store = renamedStore(t);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    const rebind = vi.spyOn(mgr, "reconcileInReviewBranchRebind").mockResolvedValue(0 as never);
+
+    mgr.start();
+    store.emit("task:moved", { task: t, from: "building", to: "checking", source: "engine" });
+
+    await vi.waitFor(() => { expect(rebind).toHaveBeenCalledWith({ includeTaskIds: new Set(["FN-R2"]) }); });
+    mgr.stop();
+  });
+
+  /*
+  The paired negative. The conversion widens membership, so it must not fan out on every move: a
+  `checking -> building` bounce is not a completion, and reconciling it would remove the worktree of
+  a card that is about to run again.
+  */
+  it("does NOT run the completion fan-out for a bounce back into the wip lane", async () => {
+    const t = makeTask("FN-R3", { column: "building" });
+    const store = renamedStore(t);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+    const spy = vi.spyOn(mgr, "reconcileCompletedTask").mockResolvedValue({ blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false });
+
+    mgr.start();
+    store.emit("task:moved", { task: t, from: "checking", to: "building", source: "engine" });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(spy).not.toHaveBeenCalled();
+    mgr.stop();
   });
 });

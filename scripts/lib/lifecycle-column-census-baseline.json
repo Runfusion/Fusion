@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 11,
+    "packages/engine/src/self-healing.ts": 6,
     "packages/engine/src/executor.ts": 4,
     "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/engine/src/auto-merge-finalization.ts": 2,
