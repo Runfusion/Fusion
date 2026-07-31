@@ -1,6 +1,7 @@
 {
-  "total": 7,
+  "total": 9,
   "byFile": {
+    "packages/engine/src/executor.ts": 2,
     "packages/engine/src/triage.ts": 7
   }
 }
