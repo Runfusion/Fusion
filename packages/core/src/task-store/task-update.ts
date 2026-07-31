@@ -83,7 +83,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         */
         const freshForGuard = await store.readTaskJson(dir).catch(() => null);
         /*
-        FNXC:StateMachine 2026-08-01-10:20 (PR #2793's finding — the INNER half, merged with #2821):
+        FNXC:StateMachine 2026-07-31-10:20 (PR #2793's finding — the INNER half, merged with #2821):
         THIS GUARD RUNS SECOND AND USED TO OVERRIDE THE FIRST. `updateTaskImpl` resolves the terminal
         question and passes it in; this call passed no `isTerminalNodeId`, so it fell to
         `defaultIsTerminalNodeId` — the bare literal `nodeId === "end"`. An unconverted literal behind

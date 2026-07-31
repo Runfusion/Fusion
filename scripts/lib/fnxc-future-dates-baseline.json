@@ -32,7 +32,6 @@
   "packages/core/src/task-store/merge-queue-ops-2.ts": 4,
   "packages/core/src/task-store/task-artifacts-ops.ts": 6,
   "packages/core/src/task-store/task-store-helpers.ts": 2,
-  "packages/core/src/task-store/task-update.ts": 1,
   "packages/core/src/task-store/update-task-deps.ts": 5,
   "packages/core/src/task-timing.ts": 1,
   "packages/core/src/workflow-ir-resolver.ts": 2,
