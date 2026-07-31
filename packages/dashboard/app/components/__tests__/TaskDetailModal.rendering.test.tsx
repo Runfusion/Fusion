@@ -1057,7 +1057,19 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(document.querySelector(".modal-overlay.open")).toBeTruthy();
+    /*
+    FNXC:TaskDetailModal 2026-07-30-22:50 (#2895 review — greptile, "obsolete modal overlay selector"):
+    THE SHELL IS `FloatingWindow`, NOT A `.modal-overlay`.
+
+    `TaskDetailModal` renders `<FloatingWindow modal>`, whose overlay class is
+    `floating-window-overlay--modal`. The only `.modal-overlay` left in this component is the refine
+    SUB-overlay at ~line 6801, which this case does not open — so the assertion was querying a class
+    that is never in the tree for the default render and failed outright.
+
+    Asserting the modal-ness (`--modal`), not just the overlay: a non-modal FloatingWindow renders the
+    same base class, so the bare selector would keep passing if the `modal` prop were dropped.
+    */
+    expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
     expect(document.querySelector(".modal.modal-lg.task-detail-modal")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back to task list" })).toBeNull();
