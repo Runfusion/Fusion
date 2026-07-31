@@ -80,6 +80,18 @@ file + parameter rather than line so an unrelated edit above them does not manuf
 Wiring them is not this change's job — they span core, engine and dashboard, i.e. three other
 batches — and pretending they did not exist for another week is worse than listing them.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-17:05:
+`scheduler.ts isWipColumn` LEFT this list, which is the direction it is supposed to move.
+
+It is supplied at both production call sites now — `self-healing.ts:4754` and `:5825` pass
+`isWipColumn: completedWipColumns.has(blocker.column)` and the blocked-lane equivalent, wired by
+#2975/#2987. The list was not shortened in the same change, so this assertion has been RED on `main`
+since: 16 found against 17 allowed.
+
+Removed rather than re-recorded wholesale, per this file's own instruction two paragraphs down —
+"update the list only to shorten it". Nothing arrived; the delta is exactly this one departure.
+*/
 const KNOWN_UNWIRED = [
   "packages/core/src/blocker-fanout.ts escalationColumns",
   "packages/core/src/blocker-fanout.ts holdColumn",
@@ -96,7 +108,6 @@ const KNOWN_UNWIRED = [
   "packages/dashboard/app/utils/taskActivity.ts columnFlags",
   "packages/dashboard/app/utils/taskTiming.ts columnFlags",
   "packages/engine/src/runtimes/in-process-runtime.ts terminalColumns",
-  "packages/engine/src/scheduler.ts isWipColumn",
   "packages/engine/src/scheduler.ts satisfactionColumnsByTaskId",
 ].sort();
 
