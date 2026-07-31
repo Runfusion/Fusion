@@ -748,7 +748,21 @@ export class TriageProcessor {
       session is aborted mid-run.
       */
       const disposeLanes = resolvePlannerLanes(this.store, task.id);
-      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-21:30 (fleet — the third lane on this line):
+      `disposeLanes.wip`, not the literal — the same resolver already answers the other two.
+
+      This line asked two role questions and one id question. `resolvePlannerLanes` is already called
+      immediately above and its result carries `wip`, so no new resolution and no new await are
+      introduced: the literal simply stops being the odd one out. On a board whose execution lane is
+      renamed, the previous form treated a card advancing into execution as an EVACUATION and killed
+      a healthy planning session — the one case the note above says must not abort.
+
+      `wip` is optional by design (PR #2628: a missing role stays undefined so callers refuse rather
+      than invent a column). Undefined here means the board declares no execution lane, so there is
+      no advance-into-execution to exclude and the comparison is correctly false.
+      */
+      if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === disposeLanes.wip) return;
       if (this.activeSubagentSessions.has(task.id)) {
         this.disposeSubagentsForTask(task.id, `task moved to ${task.column}`);
       }
