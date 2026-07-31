@@ -4488,6 +4488,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reclaimStaleActiveBranches(): Promise<number> {
     try {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:15: resolved once per sweep; the per-branch guard
+         below is the only lane question this method asks. */
+      const reclaimArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
 
@@ -4531,7 +4534,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!derivedTaskId) continue;
 
         const task = taskById.get(derivedTaskId.toUpperCase());
-        if (!task || task.column === "archived" || task.checkedOutBy || task.userPaused) continue;
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-05:15: resolved ARCHIVED membership — a branch whose
+           card rests in a renamed archive lane must still read as reclaimable, not live. */
+        if (!task || reclaimArchivedColumns.has(task.column) || task.checkedOutBy || task.userPaused) continue;
         if (task.pausedReason === "worktrunk_operation_failed") {
           log.debug(`[self-healing] skipping worktrunk-paused task ${task.id}`);
           continue;
@@ -5065,7 +5070,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return result;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-      const tasks = allTasks.filter((task) => task.column === "in-review");
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-05:15:
+      RESOLVED review MEMBERSHIP — this filter is the sweep's entire candidate set. Keyed on the
+      literal it returns EMPTY on a renamed board, so the rebind never ran and stale `fusion/` refs
+      were never reconciled: a silent no-op rather than a wrong answer.
+      */
+      const rebindReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const tasks = allTasks.filter((task) => rebindReviewColumns.has(task.column));
       const fusionRefOutput = await execAsync("git for-each-ref --format='%(refname:short)' refs/heads/fusion/", {
         cwd: this.options.rootDir,
         timeout: 30_000,
@@ -6138,6 +6150,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileDependencyBlockingLeases(): Promise<number> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return 0;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:25: resolved once per sweep — the holder's WIP lane
+         and the dependency's waiting lane are separate questions, so both sets are resolved here. */
+      const leaseWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const leaseWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
 
     let tasks: Task[] = [];
     try {
@@ -6172,7 +6188,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let recovered = 0;
     for (const holder of tasks) {
-      if (holder.column !== "in-progress") continue;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:25: resolved WIP membership for the lease holder. */
+      if (!leaseWipColumns.has(holder.column)) continue;
       if (holder.paused === true || holder.userPaused === true) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(holder, tasks, dependencyOptions);
@@ -6191,7 +6208,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           deadlockEvidence = "stale-overlap-blocker";
           break;
         }
-        if (dependency.column !== "todo") continue;
+        /* Resolved pre-implementation membership: hold ∪ intake, the pair `moves.ts` documents as the
+           board's waiting lane. A dependency parked in a renamed hold lane still blocks. */
+        if (!leaseWaitingColumns.has(dependency.column)) continue;
         const dependencyScope = await getFilteredFileScope(dependency.id);
         if (dependencyScope.length === 0 || isCoordinationOnlyTask(dependency, dependencyScope)) continue;
         if (pathsOverlap(holderScope, dependencyScope)) {
@@ -6388,6 +6407,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileInReviewUnmetDependencies(): Promise<number> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return 0;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:25: resolved once per sweep — see the guard below. */
+      const unmetDepReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
 
     let tasks: Task[] = [];
     try {
@@ -6411,7 +6432,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     let recovered = 0;
     for (const task of tasks) {
-      if (task.column !== "in-review" || task.deletedAt) continue;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-05:25: resolved review MEMBERSHIP — the sweep's
+         candidate test. On the literal it matched nothing and the rebound never fired. */
+      if (!unmetDepReviewColumns.has(task.column) || task.deletedAt) continue;
 
       const unmetDeps = getUnmetSchedulingDependencies(task, tasks, dependencyOptions);
       if (unmetDeps.length === 0) continue;
@@ -7212,7 +7235,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings().catch(() => undefined);
       if (settings?.globalPause === true || settings?.enginePaused === true) return 0;
-
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
