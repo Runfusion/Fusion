@@ -1,8 +1,6 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/executor.ts": 4,
-    "packages/engine/src/auto-merge-finalization.ts": 3,
     "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/engine/src/scheduler.ts": 2,
     "packages/core/src/eval-signal-collector.ts": 1,
@@ -15,13 +13,14 @@
     "packages/core/src/task-store/task-id-integrity.ts": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
+    "packages/engine/src/auto-merge-finalization.ts": 1,
     "packages/engine/src/notification/notification-service.ts": 1,
-    "packages/engine/src/self-healing.ts": 1
+    "packages/engine/src/self-healing.ts": 1,
+    "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
     "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 5,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
-    "packages/engine/src/auto-merge-finalization.ts\u0000done": 3,
     "packages/engine/src/self-healing.ts\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
@@ -111,6 +110,7 @@
     "packages/dashboard/src/test/mockCoreEngine.ts\u0000in-review": 1,
     "packages/engine/src/agent-heartbeat.ts\u0000archived": 1,
     "packages/engine/src/agent-heartbeat.ts\u0000done": 1,
+    "packages/engine/src/auto-merge-finalization.ts\u0000done": 1,
     "packages/engine/src/cli-agent/task-session.ts\u0000done": 1,
     "packages/engine/src/executor.ts\u0000in-progress": 1,
     "packages/engine/src/hold-release.ts\u0000archived": 1,
