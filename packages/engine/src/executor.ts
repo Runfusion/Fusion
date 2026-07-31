@@ -14937,7 +14937,17 @@ export class TaskExecutor {
         const logMessage = `Task already moved from '${fromColumn}' — skipping transition to '${toColumn}'`;
         executorLog.log(`${task.id} ${logMessage}`);
         await this.store.logEntry(task.id, logMessage, errorMessage, this.getRunContextFor(task.id));
-        if (fromColumn === "in-review" && toColumn === "in-review") {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-09:25 (fleet: executor lifecycle roles):
+        `fromColumn`/`toColumn` are parsed out of the store's rejection message, so they carry
+        whatever ids that workflow declares. Comparing them to the literal `in-review` meant a
+        renamed review lane never matched and the duplicate-handoff finalize never ran, leaving
+        the card mid-transition with nothing to complete it. Resolve the task's own review role;
+        an unresolvable workflow keeps the legacy literal, so behaviour is unchanged wherever the
+        vocabulary cannot be read.
+        */
+        const reviewLane = (await resolveTaskLifecycleColumns(this.store, task.id).catch(() => undefined))?.review ?? "in-review";
+        if (fromColumn === reviewLane && toColumn === reviewLane) {
           try {
             const finalizeResult = await this.finalizeAlreadyReviewedTask(task.id);
             executorLog.debug(`${task.id} duplicate in-review finalization result: ${finalizeResult}`);
@@ -17255,7 +17265,15 @@ export class TaskExecutor {
           latestColumn = wipTarget;
         }
 
-        if (latestColumn === "in-progress" && !hardPauseActive) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-09:20 (fleet: executor lifecycle roles):
+        The completed-task watchdog arms when the card is in its IMPLEMENTATION lane. Naming
+        `in-progress` literally meant a renamed wip column never armed it — a watchdog that
+        silently never fires, on exactly the boards this program converted. The branch directly
+        above already resolves that lane through `resolveWipTargetForTask`; this asks the same
+        question of the same resolver rather than of an id.
+        */
+        if (latestColumn === await resolveWipTargetForTask(store, taskId) && !hardPauseActive) {
           this.scheduleCompletedTaskWatchdog(taskId, "fn_task_done");
         }
 
