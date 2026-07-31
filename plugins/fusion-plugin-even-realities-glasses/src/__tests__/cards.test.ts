@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { boardSummaryCard, boardToDeck, notificationCard, taskToCard } from "../cards.js";
+import type { Task } from "@fusion/core";
+import { boardSummaryCard, boardToDeck, notificationCard, statusBadge, taskToCard } from "../cards.js";
 
 const task = {
   id: "FN-1",
@@ -105,5 +106,27 @@ describe("cards", () => {
     const deck = boardToDeck([row("FN-DONE", "done"), row("FN-ARCH", "archived"), row("FN-LIVE", "todo")], { maxCards: 5 });
 
     expect(deck.cards.map((c) => c.id)).toEqual(["summary", "FN-LIVE"]);
+  });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-11:05:
+  THE INVARIANT: a card's badge names its OWN lane, and never asserts a lane it is not in.
+
+  `statusBadge` fell back to the literal `"todo"` whenever `COLUMN_BADGES` missed, so on a renamed
+  board EVERY card badged `todo` — a card in review told the wearer it was un-started. On a display
+  with room for one word, a confident wrong answer is worse than an unrecognised one.
+
+  Missed by #2968, which fixed the summary counts in this same file without looking one function
+  further at the badge those counts sit above.
+
+  Reverted, both cases below come back as "todo".
+  */
+  it("badges an unrecognised lane with its own name, not the legacy default", () => {
+    expect(statusBadge("checking" as Task["column"])).toBe("checking");
+    expect(taskToCard({ ...task, column: "building" } as Task).badge).toBe("building");
+  });
+
+  it("still badges the legacy ids exactly as before", () => {
+    expect(statusBadge("in-review")).toBe("in-review");
+    expect(statusBadge("done")).toBe("done");
   });
 });

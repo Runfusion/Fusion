@@ -28,15 +28,6 @@ export type CardDeck = {
   summary: BoardSummary;
 };
 
-const COLUMN_BADGES: Record<string, string> = {
-  triage: "triage",
-  todo: "todo",
-  "in-progress": "in-progress",
-  "in-review": "in-review",
-  done: "done",
-  archived: "archived",
-};
-
 const COLUMN_ORDER: Array<Task["column"]> = ["triage", "todo", "in-progress", "in-review", "done", "archived"];
 
 export const DEFAULT_MAX_CHARS_PER_LINE = 24;
@@ -79,8 +70,30 @@ export function wrapLines(
   return lines;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-11:05:
+An unrecognised lane shows its OWN name, not "todo" — the fallback was actively wrong, not merely blank.
+
+This read `COLUMN_BADGES[column] ?? "todo"`, where `COLUMN_BADGES` mapped the six legacy ids to
+themselves. On a board whose lanes are named anything else every lookup missed and the badge came back
+`"todo"` — a card sitting in review told the wearer it was un-started, and every card on the board
+carried the same badge. On a display with room for one word that is a confident wrong answer, which is
+worse than an unrecognised one.
+
+The badge IS the column id, so the function now says so. That also retires the map: once the fallback
+is the id, a table mapping each legacy id to itself decides nothing, and six lane literals were sitting
+in this file doing no work. Behaviour for legacy boards is byte-identical either way — the map was an
+identity — and it is deleted here rather than left as a decoy for the next reader of this file.
+
+Mirrors `columnLabel` in the CLI (`COLUMN_LABELS[column] ?? column`) for the same reason: a board that
+calls its lane `checking` should read `checking`, which is true and already what its operator
+recognises. No resolution needed — the id is in hand at the call site.
+
+Missed by #2968, which fixed the summary card's counts in this same file and did not look one function
+further at the per-card badge those counts sit above.
+*/
 export function statusBadge(column: Task["column"]): string {
-  return COLUMN_BADGES[column] ?? "todo";
+  return column;
 }
 
 export function formatRelativeAge(updatedAt: string, opts: { now?: () => Date } = {}): string {
