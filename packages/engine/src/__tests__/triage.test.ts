@@ -7229,6 +7229,39 @@ describe("TriageProcessor.sweepStalePlanningStatuses", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-8596", { status: null });
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  THE SWEEP NEVER FIRED ON A RENAMED BOARD, which is the case it matters most for.
+
+  Its lane test resolved through `resolvePlannerLanes`, whose reader answers with the DEFAULT board
+  under PostgreSQL — so a card resting in a renamed planning lane matched neither `intake` nor `hold`
+  and its stale `planning` status was never cleared. That status is what makes the card look claimed,
+  so it stayed invisible to rediscovery until an engine restart: the exact FN-8596 strand this sweep
+  exists to clear, silently not happening.
+
+  `drafting` collides with no legacy id, so a surviving sync resolution cannot pass by luck. The
+  default-vocabulary case above is the control and still passes, which is what shows the conversion
+  did not simply widen the gate.
+  */
+  it("clears a stale planning status on a RENAMED planning lane", async () => {
+    const RENAMED_IR = {
+      version: "v2", id: "custom:renamed", nodes: [], edges: [],
+      columns: [
+        { id: "drafting", name: "Drafting", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+    } as unknown as WorkflowIr;
+    const store = createMockStore({
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+    } as never);
+
+    await sweep(store, [createTriageTask({ id: "FN-RENAMED", column: "drafting" as never, status: "planning", updatedAt: STALE })]);
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-RENAMED", { status: null });
+  });
+
   it("does not touch a card whose planner is live in this process", async () => {
     const store = createMockStore();
     await sweep(store, [createTriageTask({ id: "FN-LIVE", status: "planning", updatedAt: STALE })], ["FN-LIVE"]);

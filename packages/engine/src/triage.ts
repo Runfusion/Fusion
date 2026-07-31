@@ -360,6 +360,23 @@ async function resolveNearDuplicateCanonicalFlags(
   return column ? resolveColumnFlags(column) : undefined;
 }
 
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 DELIBERATE-LITERAL: the migration arm, and only it.
+
+A pre-U11 row can rest in `triage` on a board whose workflow no longer declares that column. The
+condition is literally "this row sits in a column its workflow does not have", so there is no trait
+to resolve and no IR that can answer it — the resolved half is `!declaresTriage`, which is what makes
+this the ORPHAN case rather than a blanket acceptance of the name.
+
+Same shape and same justification as `recoverApprovedTask`'s marked arm; retires with the U11
+migration window, when no row can rest in `triage`. Hoisted into a declaration because the census
+reads markers from leading comments — an inline one attaches to the wrong node and is ignored.
+*/
+function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boolean {
+  return column === "triage" && !declaresTriage;
+}
+
 export class TriageProcessor {
   private running = false;
   private polling = false;
@@ -878,16 +895,43 @@ export class TriageProcessor {
   */
   private async sweepStalePlanningStatuses(allTasks: Task[], now: number): Promise<void> {
     try {
-      const stale = allTasks.filter((t) => {
-        if (t.status !== "planning") return false;
-        const lanes = resolvePlannerLanes(this.store, t.id);
-        if (t.column !== lanes.intake && t.column !== lanes.hold) return false;
-        if (this.processing.has(t.id)) return false;
-        if (t.userPaused === true || t.paused === true) return false;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (SYNC -> ASYNC, same unblock as recoverApprovedTask):
+      The lane test resolved through `resolvePlannerLanes`, which answers with the DEFAULT board under
+      PostgreSQL — so on a renamed board no card matched and this sweep never cleared a stale
+      `planning` status, which is the FN-8596 strand it exists to clear.
+
+      `Array.filter` cannot await, so the predicate is an explicit loop; the sweep is already `async`
+      and its next statement awaits per-row updates, so nothing relied on synchronous completion.
+
+      CHEAP TESTS FIRST, deliberately: only rows already known to be `planning`, unprocessed, unpaused
+      and past the staleness floor reach a resolution, so the awaits scale with the stale set rather
+      than the board. A shared IR cache collapses repeats across the rows that do qualify.
+
+      The legacy `triage` case is handled the same way as `recoverApprovedTask`: a stored pre-U11 row
+      sits in a column its workflow does not declare, and `resolveTaskLifecycleColumns` answering
+      honestly is safe now that the orphan case is explicit rather than resting on a resolver failing.
+      */
+      const staleIrCache = new Map<string, WorkflowIr>();
+      const stale: Task[] = [];
+      for (const t of allTasks) {
+        if (t.status !== "planning") continue;
+        if (this.processing.has(t.id)) continue;
+        if (t.userPaused === true || t.paused === true) continue;
         const touchedAt = Date.parse(t.updatedAt ?? t.columnMovedAt ?? "");
-        if (!Number.isFinite(touchedAt)) return false;
-        return now - touchedAt >= STALE_PLANNING_STATUS_GRACE_MS;
-      });
+        if (!Number.isFinite(touchedAt)) continue;
+        if (now - touchedAt < STALE_PLANNING_STATUS_GRACE_MS) continue;
+        const lanes = await resolvePlannerLanesForTaskAsync(this.store, t.id, staleIrCache);
+        const declaresTriage = workflowHasColumn(
+          (await resolveWorkflowIrForTask(this.store, t.id, staleIrCache)),
+          "triage",
+        );
+        const inPlannerLane = t.column === lanes.intake
+          || t.column === lanes.hold
+          || isOrphanedLegacyTriageRow(t.column, declaresTriage);
+        if (!inPlannerLane) continue;
+        stale.push(t);
+      }
       for (const t of stale) {
         planLog.warn(
           `Stale 'planning' status on ${t.id} (column=${t.column}, no live planner) — clearing so triage can re-pick it`,
