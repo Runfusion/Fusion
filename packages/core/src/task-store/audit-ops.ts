@@ -204,6 +204,29 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
       archived-lane set threaded into a low-level, project-scoped read — and doing it in one of the
       two places would leave the pair disagreeing about what "archived" means. Recorded so the census
       keeps pointing at it with the reason attached.
+
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:25 (THE STATED BLOCKER IS STALE, AND THE REAL ONE IS
+      BIGGER — I converted this, measured, and backed it out):
+      The note above is out of date on its own terms: `getLiveTaskColumn` now TAKES a resolved
+      `archivedColumns` set and both callers already pass `await resolveArchivedLanes(store)` — the
+      sentinel path twenty lines up in this same function is one of them. So the pair it worries about
+      is already half-converted, and this arm is the half that is out of step.
+
+      The REAL blocker is one neither note named. `archived-column-gate-parity.test.ts` failed my
+      conversion and is right: this gate has THREE encodings — TypeScript comparisons, Drizzle
+      `eq`/`ne` predicates, and raw SQL templates — and converting only the TypeScript arm makes them
+      DIVERGE. This gate would call the row archived while the SQL side still returns it as live: a
+      log write rejected by its gate while its parent is listed as live. Every builtin workflow names
+      the column `archived`, so all three agree by accident on every board we ship and nothing else
+      can see the split.
+
+      Unblocking means converting all three encodings together — the SQL sides need the resolved id as
+      a query-build value, including inside `for update` transactions that receive no store today — or
+      declaring `archived` a non-renameable system column. That parity test lays out both options and
+      owns the inventory that has to move in the same commit.
+
+      Behaviour here is otherwise now covered by `log-entry-archived-lane-gate.test.ts`, which had no
+      test at all before and which records the renamed case as a deliberate, explained omission.
       */
       if (pgRow.column === "archived" || pgRow.deletedAt != null) {
         throw new Error(`Task ${id} is archived — logging is read-only`);
