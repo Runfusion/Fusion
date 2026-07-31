@@ -26,6 +26,7 @@ import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from "../task-store/async-persistence.js";
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async-lifecycle.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
 import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchivedWorkspaceWorktrees, releasePreparedWorkspaceArchiveDisposal} from "./archive-lifecycle.js";
@@ -156,7 +157,10 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
     }
 
     // Lineage-integrity gate (VAL-DATA-010).
-    const lineageChildIds = await findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: resolved archive lanes, so an archived child no
+       longer blocks its parent on a renamed board. Fail-soft to undefined -> the legacy id. */
+    const lineageArchivedLanes = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
+    const lineageChildIds = await findLiveLineageChildrenAsync(layer.db, id, layer.projectId, lineageArchivedLanes);
     if (lineageChildIds.length > 0 && !options?.removeLineageReferences) {
       throw new TaskHasLineageChildrenError(id, lineageChildIds);
     }
@@ -250,7 +254,10 @@ export async function deleteTaskIfBackendImpl(
     // FNXC:TaskDeletion 2026-07-29-19:15:
     // FN-8361 conditional deletion preserves delete's lineage gate even when
     // the caller predicate declines the mutation; guards precede the predicate.
-    const lineageChildIds = await findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: resolved archive lanes, so an archived child no
+       longer blocks its parent on a renamed board. Fail-soft to undefined -> the legacy id. */
+    const lineageArchivedLanes = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
+    const lineageChildIds = await findLiveLineageChildrenAsync(layer.db, id, layer.projectId, lineageArchivedLanes);
     if (lineageChildIds.length > 0 && !options?.removeLineageReferences) {
       throw new TaskHasLineageChildrenError(id, lineageChildIds);
     }

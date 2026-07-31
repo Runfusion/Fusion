@@ -28,6 +28,7 @@ import { getLiveTaskColumn } from "./async-comments-attachments.js";
 import { insertTaskRowInTransaction, isTaskIdConflictError, readTaskRow, readTaskRowInTransaction } from "./async-persistence.js";
 import { TASK_PERSIST_SQL_COLUMNS, TASK_UPSERT_SQL_ASSIGNMENTS, type TaskRow } from "./persistence.js";
 import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import { ConfigRow } from "./row-types.js";
 import { ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT } from "./serialization.js";
 import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
@@ -494,7 +495,10 @@ export function findLiveDependentsImpl(store: TaskStore, id: string): string[] {
 
 export async function findLiveLineageChildrenImpl(store: TaskStore, id: string): Promise<string[]> {
         const layer = store.asyncLayer!;
-    return findLiveLineageChildrenAsync(layer.db, id, layer.projectId);
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: the board's archive lanes, so an archived child
+       stops counting as live. Fail-soft to undefined -> the legacy id. */
+    const archivedColumns = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
+    return findLiveLineageChildrenAsync(layer.db, id, layer.projectId, archivedColumns);
 }
 
 export function recordActivityFromListenerImpl(store: TaskStore,

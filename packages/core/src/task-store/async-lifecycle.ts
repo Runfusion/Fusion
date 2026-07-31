@@ -60,12 +60,37 @@ export function projectPartition(projectId?: string): string {
   return projectId?.trim() || "__legacy_unscoped__";
 }
 
-export function liveLineageChildFilter(parentId: string, projectId?: string) {
+export function liveLineageChildFilter(
+  parentId: string,
+  projectId?: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  The board's own archive lanes, resolved by the caller. Omitted → the `archived` literal, which is
+  what every unwired caller keeps, so an unconverted board produces byte-identical SQL.
+
+  A LANE site, per the triage in `archived-column-gate-parity.test.ts`: "which children still count as
+  LIVE" is a question about the board. The two STATE sites in that inventory
+  (`cleanupArchivedTasksImpl`, `listSoftDeletedColumnDriftCandidates`) are marked at their own sites
+  and must NOT be resolved.
+
+  DIRECTION OF THE FIX, stated because this gate BLOCKS deletion: against the literal, an archived
+  child on a renamed board still counted as live and kept blocking its parent's delete/archive with
+  `TaskHasLineageChildrenError`. Resolving makes those children correctly stop blocking. The change is
+  permissive, and permissive is the CORRECT direction here — the gate exists to protect live children,
+  and an archived child is not one.
+  */
+  archivedColumns?: ReadonlySet<string>,
+) {
+  /* One `ne` per archive lane; the resolved set is legacy-seeded, so the unconverted shape is the
+     single `ne(column, "archived")` this replaces. */
+  const archivedExclusions = archivedColumns && archivedColumns.size > 0
+    ? [...archivedColumns].map((lane) => ne(schema.project.tasks.column, lane))
+    : [ne(schema.project.tasks.column, "archived")];
   return and(
     eq(schema.project.tasks.projectId, projectPartition(projectId)),
     eq(schema.project.tasks.sourceParentTaskId, parentId),
     ne(schema.project.tasks.id, parentId),
-    ne(schema.project.tasks.column, "archived"),
+    ...archivedExclusions,
     ACTIVE_TASK_FILTER,
   );
 }
@@ -93,11 +118,13 @@ export async function findLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
   projectId?: string,
+  /** Resolved archive lanes; omitted → the legacy id. See `liveLineageChildFilter`. */
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<string[]> {
   const rows = await db
     .select({ id: schema.project.tasks.id })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId, projectId));
+    .where(liveLineageChildFilter(parentId, projectId, archivedColumns));
   return rows.map((row) => row.id);
 }
 
@@ -176,11 +203,14 @@ export async function hasLiveLineageChildren(
   db: AsyncDataLayer["db"] | DbTransaction,
   parentId: string,
   projectId?: string,
+  /** Resolved archive lanes; omitted → the legacy id. Threaded so this and
+   *  `findLiveLineageChildren` cannot disagree about which children are live. */
+  archivedColumns?: ReadonlySet<string>,
 ): Promise<boolean> {
   const rows = await db
     .select({ one: sql<number>`1` })
     .from(schema.project.tasks)
-    .where(liveLineageChildFilter(parentId, projectId))
+    .where(liveLineageChildFilter(parentId, projectId, archivedColumns))
     .limit(1);
   return rows.length > 0;
 }
