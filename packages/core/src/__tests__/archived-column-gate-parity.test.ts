@@ -39,6 +39,32 @@ deliberate, are both real decisions with real blast radius. Neither is a fleet c
 templates are worse again: one of them is a hand-written `SELECT` string, so its comparison is not even
 a Drizzle expression that could take a bound value without rewriting the query.
 
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE TS REMAINDER IS EMPTY — enumerated, not sampled):
+The note below sampled the TS inventory and said the conversion is "the six LANE Drizzle sites plus
+whatever small TS remainder is neither a fallback arm nor a sentinel". That remainder is ZERO. I left
+three sites unchecked when I wrote it; all three are fallback arms:
+
+  live-agent-count.ts:164          `task.columnTerminalKind ?? (task.column === "done" ? ... )`
+                                   — the resolved value wins via `??`; the literal chain is the
+                                   fallback.
+  store.ts:1972                    `if (!lanes) return dep.column !== "done" && ...`
+                                   — an explicit no-metadata branch.
+  branch-and-pr-entities.ts:525    `lanes === undefined ? task.column === "archived" : task.column === lanes.archived`
+
+Added to the previously classified ones, every entry in AUDITED_TS_SITES is now accounted for as a
+fallback arm, a STATE/sentinel comparison, or a converted guard's retained literal. None is an
+unconverted LANE guard.
+
+WHAT THAT MEANS: the "52 sites across three encodings" is fully triaged and the convertible work is
+DONE — six Drizzle LANE sites plus the log-entry gate, all additive so the inventories never moved.
+What the gate now protects is a population of fallback arms and STATE markers, which is exactly what
+it should be protecting: those are the entries that must NOT drift, because each one is the documented
+answer for a caller that supplies no resolved set.
+
+The inventories therefore stay where they are. A future drop in any of the three counts means someone
+removed a fallback or converted a STATE site — both regressions — which is the check this file was
+built to make and is now the only check it needs to make.
+
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE TS HALF — mostly already converted; the inventory
 counts FALLBACK ARMS, which is why 20 reads as 20 outstanding guards and is not):
 Sampled the TS inventory the same way. It does not decompose into LANE/STATE the way the SQL half
