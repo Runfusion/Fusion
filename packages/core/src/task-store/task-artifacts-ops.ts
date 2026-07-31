@@ -10,9 +10,10 @@
  */
 
 import { TaskStore } from "../store.js";
+import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
-import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import { countAgentLogEntries, readAgentLogEntries } from "../agent-log-file-store.js";
 import { toJsonNullable } from "../db.js";
 import { DbTransaction, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
@@ -563,7 +564,14 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     // Update cache if watcher is active
     if (store.isWatching) store.taskCache.set(task.id, { ...task });
 
-    store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine" });
+    /* FNXC:WorkflowEvents 2026-08-01-01:30 (fleet — every emitter carries the lanes):
+         #3109 attached lanes at `moves.ts` only, so six of seven emitters still sent `lanes:
+         undefined` and every listener fell back to `resolveTaskParkedColumnsSync` — the DEFAULT board
+         under PostgreSQL. Two of those six emit a RESOLVED lane id (`completeColumn` here,
+         `task.column` in update-task-deps), so the emitter had already resolved the board and threw
+         the answer away, leaving the listener comparing a renamed id against a legacy literal. */
+    const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+    store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine", lanes });
 }
 
 export function clearDoneTransientFieldsImpl(store: TaskStore, task: Task): boolean {

@@ -7,7 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait, toTaskMoveLanes } from "../workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
 import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
@@ -370,7 +370,14 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     task.updatedAt = archivedAt;
     task.deletedAt = archivedAt;
 
-    store.emit("task:moved", { task, from: fromColumn, to: "archived" as Column, source: "engine" });
+    /* FNXC:WorkflowEvents 2026-08-01-01:30 (fleet — every emitter carries the lanes):
+         #3109 attached lanes at `moves.ts` only, so six of seven emitters still sent `lanes:
+         undefined` and every listener fell back to `resolveTaskParkedColumnsSync` — the DEFAULT board
+         under PostgreSQL. Two of those six emit a RESOLVED lane id (`completeColumn` here,
+         `task.column` in update-task-deps), so the emitter had already resolved the board and threw
+         the answer away, leaving the listener comparing a renamed id against a legacy literal. */
+    const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+    store.emit("task:moved", { task, from: fromColumn, to: "archived" as Column, source: "engine", lanes });
 
     // Best-effort near-duplicate cleanup.
     await store.clearNearDuplicateReferencesToFailSoft(id, {

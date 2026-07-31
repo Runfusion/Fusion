@@ -663,6 +663,14 @@ export async function checkForChangesImpl(store: TaskStore): Promise<void> {
               Recorded rather than converted, for the same reason as `mission-store.ts` and
               `project-store-ops.ts`: an unconverted literal in dead code is not debt a fleet pass
               should spend a signature change on, but it must not read as missed either.
+
+              FNXC:WorkflowEvents 2026-08-01-01:45 (fleet — the two emitters here stay lane-less):
+              The `task:moved` emitters in this function are the only two of seven that do NOT carry
+              `lanes` after the emitter sweep. Deliberate, and for the reason above: both sit on this
+              SQLite-only polling-replica path, which cannot execute under PostgreSQL, so resolving a
+              workflow here would add an await to dead code. If this path is ever revived, they must
+              be attached — a listener that reads `lanes` treats absence as "unknown" and falls back
+              to the DEFAULT board, which is wrong rather than merely stale.
               */
               if (cached.column !== "archived") {
                 store.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });

@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog, type TaskDependencyMutation} from "../store.js";
+import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {buildRefinementSeedPrompt} from "../mesh-task-replication.js";
 import {SelfDefeatingDependencyError, detectSelfDefeatingDependency} from "./errors.js";
 import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
@@ -499,11 +501,13 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       column the card is already in is what re-runs reset-on-entry effects downstream.
       */
       if (movedToTriage && respecifyFromColumn !== task.column) {
+        /* FNXC:WorkflowEvents 2026-08-01-01:30 (fleet — every emitter carries the lanes): see the note in archive-lifecycle-2.ts. */
         store.emit("task:moved", {
           task,
           from: respecifyFromColumn as Column,
           to: task.column as Column,
           source: "engine",
+          lanes: toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined)),
         });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);
