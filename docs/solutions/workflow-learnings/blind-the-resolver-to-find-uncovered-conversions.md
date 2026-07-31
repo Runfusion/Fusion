@@ -137,12 +137,26 @@ site and not in a baseline number.
 Measured 2026-07-31: **116 non-test `resolveProjectColumnsForRoles` call sites** across 30 files —
 `core` 17 files, `engine` 10, `dashboard` 2, `cli` 1.
 
-Audited so far, all in `engine`: `self-healing.ts` (64 resolvers mapped, 21 pinned, 1 recorded as
-inert by construction), `executor.ts` (2, both covered), `scheduler.ts` (1, was uncovered, now
-pinned), `triage.ts` (1, was uncovered, now pinned), `restart-recovery-coordinator.ts` (covered),
-`notification/notification-service.ts` (covered). Known uncovered and left: `evaluator.ts`'s archived
-read — no test file imports that module at all; it is a thin pass-through into
-`collectDeterministicSignals`, which is testable directly.
+`packages/engine` is now fully blinded:
+
+| file | resolvers | result |
+|---|---|---|
+| `self-healing.ts` | 64 | 21 pinned, 1 recorded inert by construction, remainder mapped |
+| `executor.ts` | 2 | already covered |
+| `scheduler.ts` | 1 | uncovered → pinned |
+| `triage.ts` | 1 | uncovered → pinned |
+| `restart-recovery-coordinator.ts` | 1 | already covered |
+| `notification/notification-service.ts` | 1 | already covered |
+| `evaluator.ts` | 1 | uncovered → pinned |
+
+`project-engine.ts` takes `roles` as a **parameter**, so there is no fixed role set to blind; the
+question belongs at its callers.
+
+`evaluator.ts` is worth separating from the rest. `HybridEvaluatorService` had **no test anywhere in
+the repo** — four files import the module, none construct it. That is a different failure from the
+ones above, where a harness runs the code but cannot see the difference: **no amount of fixture care
+helps when the entry point is never called.** Check that something exercises the code at all before
+concluding a green blind means anything.
 
 **`packages/core`'s 17 files are entirely unaudited** — including `store.ts`'s wip read behind the
 engine-downtime timing shift and the archived reads in `task-store/reads.ts`. Nothing is known about
