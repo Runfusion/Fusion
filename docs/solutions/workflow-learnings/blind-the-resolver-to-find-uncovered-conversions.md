@@ -8,6 +8,9 @@ applies_when: deciding whether a lane conversion is actually protected by a test
 
 # Blind the resolver: the only way to know a conversion is covered
 
+See also [silence-is-not-success](./silence-is-not-success.md) — every wrong reading this method
+produced came from a run that never happened rather than from the blind itself.
+
 Sibling to [a-falling-count-is-not-evidence](./a-falling-count-is-not-evidence.md), which records that
 a metric moving is not proof the system moved. This one records the **positive** procedure: how to
 find out whether a landed conversion is held by anything, and how to write a test that holds it.
