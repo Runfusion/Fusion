@@ -214,6 +214,45 @@ function unwrapObjectLiteral(node) {
   return ts.isObjectLiteralExpression(current) ? current : null;
 }
 
+/*
+FNXC:LaneWiring 2026-07-30-23:40:
+`undefined` IS NOT AN ANSWER, in either position this census checks.
+
+Both arms asked whether the lane argument was PRESENT, not whether it carried anything:
+
+    isThing(task, { reviewColumns: undefined });   // property present -> counted as wired
+    isThing(task, undefined);                      // arity satisfied  -> counted as wired
+
+The callee receives exactly what it received before — nothing — so the seam is still inert and the
+board still reads the legacy vocabulary. The census just stops saying so, which is the one failure a
+ratchet must not have.
+
+Same defect as the positional one fixed in #2981 for check-inert-flag-seams, one level in. The two
+gates are complementary by design (this one owns the options-object and default-valued shapes), so
+the hole had to be closed in both — neither covered it, confirmed by probing each with a control.
+
+SHORTHAND STILL COUNTS. `{ reviewColumns }` forwards a variable whose value is not knowable here, and
+treating it as unwired would flag every correct forwarding wrapper in the tree. Only a literal
+`undefined` / `void 0` is provably empty.
+
+TRAILING ONLY for the positional arm: a middle `undefined` still positions the arguments after it.
+*/
+const isUndefinedExpression = (node) =>
+  !!node && ((ts.isIdentifier(node) && node.text === "undefined") || ts.isVoidExpression(node));
+
+/** A property assignment carries a value unless it is spelled `undefined`. Shorthand always does. */
+export function suppliesAValue(property) {
+  if (!ts.isPropertyAssignment(property)) return true;
+  return !isUndefinedExpression(property.initializer);
+}
+
+/** Arguments carrying a value, ignoring trailing `undefined` / `void 0` placeholders. */
+export function effectiveArgCount(args) {
+  let count = args.length;
+  while (count > 0 && isUndefinedExpression(args[count - 1])) count -= 1;
+  return count;
+}
+
 /** Call sites of those functions that pass none of the accepted lane arguments. */
 export function findUnwiredCallSites(files, accepting) {
   const unwired = [];
@@ -228,9 +267,13 @@ export function findUnwiredCallSites(files, accepting) {
             if (wanted === undefined) return false;
             const bag = unwrapObjectLiteral(arg);
             return bag !== null
-              && bag.properties.some((p) => p.name && ts.isIdentifier(p.name) && wanted.has(p.name.text));
+              && bag.properties.some(
+                (p) => p.name && ts.isIdentifier(p.name) && wanted.has(p.name.text) && suppliesAValue(p),
+              );
           });
-          const passesPositional = [...accepted.positions].some((index) => node.arguments.length > index);
+          const passesPositional = [...accepted.positions].some(
+            (index) => effectiveArgCount(node.arguments) > index,
+          );
           const passes = passesOption || passesPositional;
           if (!passes) {
             const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
