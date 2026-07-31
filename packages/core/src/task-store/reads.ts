@@ -223,7 +223,7 @@ export async function getTaskImpl(store: TaskStore, id: string, options?: { acti
       const hasFreshAgentLogActivity = hasFreshAgentLogActivitySinceTaskUpdate(store, task, now);
       const executingTaskIds = hasFreshAgentLogActivity ? new Set<string>([task.id]) : undefined;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-01-04:10:
+      FNXC:WorkflowLifecycleColumns 2026-07-31-03:50:
       RESOLVED BEFORE THE FIRST SIGNAL, because two adjacent signals must not disagree.
 
       This resolve sat BELOW the `getInReviewStallReason` call, so that one call could not pass

@@ -1,6 +1,6 @@
 // @vitest-environment node
 /*
-FNXC:WorkflowLifecycleColumns 2026-08-01-04:40:
+FNXC:WorkflowLifecycleColumns 2026-07-31-03:55:
 EVERY in-review signal call site in reads.ts must be given the board's resolved review lanes.
 
 THE DEFECT. `reads.ts` computes two adjacent signals for the same card: `inReviewStall` (via
