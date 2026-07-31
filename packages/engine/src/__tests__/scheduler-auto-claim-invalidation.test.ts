@@ -174,6 +174,33 @@ describe("Scheduler auto-claim snapshot invalidation", () => {
     expect(internals.wasNodeBlocked.has("FN-1")).toBe(false);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-21:00 (fleet):
+  The lane guard in this listener used to resolve through `resolveTaskWorkflowIrSync`, which returns the
+  DEFAULT workflow in production — so on a renamed board it matched nothing and the auto-claim snapshot
+  was never invalidated, silently serving stale claim data.
+
+  It could not simply become async: the assertion below pins `invalidate` to the listener's SYNCHRONOUS
+  prologue, and an await ahead of it fails that test. The emitter now resolves the lanes and carries them
+  on the payload, so the guard is correct AND the prologue stays synchronous — which is exactly what this
+  case checks, by using a hold lane that matches no legacy id.
+  */
+  it("invalidates on a RENAMED hold lane using the lanes the emitter resolved", () => {
+    const invalidate = vi.fn();
+    const { store, emit } = createStore();
+    new Scheduler(store, { snapshotManager: { invalidate } as any });
+
+    emit("task:moved", {
+      task: createTask({ id: "FN-9", column: "building" }),
+      from: "backlog",
+      to: "building",
+      lanes: { hold: "backlog", wip: "building" },
+    });
+
+    // Synchronous on purpose: no waitFor. The prologue must still run before emit returns.
+    expect(invalidate).toHaveBeenCalledWith("task:moved:backlog->building");
+  });
+
   it("invalidates task:moved only when todo is source or destination", () => {
     const invalidate = vi.fn();
     const { store, emit } = createStore();

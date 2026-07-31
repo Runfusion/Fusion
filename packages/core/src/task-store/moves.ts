@@ -26,7 +26,7 @@ import {
   evaluateTransitionInvariants,
 } from "../workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../default-workflow-hooks.js";
-import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns} from "../workflow-lifecycle-traits.js";
+import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns, toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
@@ -1435,7 +1435,19 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     }
 
     if (fromColumn !== toColumn) {
-      store.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource });
+      /*
+      FNXC:WorkflowEvents 2026-07-31-21:00 (fleet):
+      Resolve the moving task's lanes HERE, once, and hand them to every listener. This is the emit
+      path real moves take, and it is already async and already post-commit, so the resolution costs
+      one IR read on a transition that has just done database work.
+
+      Listeners could not do this for themselves: they run synchronously, the only sync resolver
+      answers with the DEFAULT workflow in production, and awaiting inside the listener breaks the
+      scheduler's synchronous snapshot invalidation. Fail-soft to undefined — "unknown", never
+      "legacy" — so a listener keeps its own fallback rather than being handed a wrong answer.
+      */
+      const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+      store.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource, lanes });
       /*
       FNXC:WorkflowEvents 2026-07-27-11:45 (U3 / R5, R6):
       THE post-commit emit point for lifecycle transitions. Its position is the

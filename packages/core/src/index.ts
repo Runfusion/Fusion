@@ -467,8 +467,8 @@ export { createWorkflowEventBus, getWorkflowEventBus, emitWorkflowLifecycleEvent
 export type { WorkflowEventBus, WorkflowEventSubscriber, WorkflowEventSubscription } from "./workflow-events.js";
 export { findWorkflowEventShapeViolations, isIdsOnlyWorkflowEvent, MAX_ID_VALUE_LENGTH, IMPLEMENTATION_EXITS } from "./types/workflow-events.js";
 export type { WorkflowLifecycleEvent, WorkflowLifecycleEventType, WorkflowLifecycleEventBase, TaskTransitionedEvent, NodeEnteredEvent, NodeCompletedEvent, RunSuspendedEvent, RunResumedEvent, WorkflowEventShapeViolation, ImplementationExit } from "./types/workflow-events.js";
-export { columnHasFlag, columnsWithFlag, declaresAnyLifecycleTrait, resolveArchiveTargetForTask, resolveCompleteColumn, resolveLifecycleColumns, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveReboundTargetForTask, resolveReviewColumns, resolveTaskLifecycleColumns, resolveTerminalColumns, resolveWipTargetForTask } from "./workflow-lifecycle-traits.js";
-export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
+export { columnHasFlag, columnsWithFlag, declaresAnyLifecycleTrait, resolveArchiveTargetForTask, resolveCompleteColumn, resolveLifecycleColumns, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveReboundTargetForTask, resolveReviewColumns, resolveTaskLifecycleColumns, resolveTerminalColumns, resolveWipTargetForTask, toTaskMoveLanes } from "./workflow-lifecycle-traits.js";
+export type { LifecycleColumns, TaskMoveLanes } from "./workflow-lifecycle-traits.js";
 export { resolveProjectColumnsForRoles, resolveArchivedLanes, REVIEW_ROLES, TERMINAL_ROLES, LEGACY_COLUMN_IDS_BY_ROLE, type ProjectLaneVocabularyStore, type ProjectLaneResolutionOptions } from "./project-lane-vocabulary.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";
 export {

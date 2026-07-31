@@ -40,6 +40,7 @@ import { StaleTaskReporter } from "./stale-task-reporter.js";
 import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
+import type { TaskMoveLanes } from "@fusion/core";
 import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
@@ -425,6 +426,29 @@ and cannot wrongly withhold work. (Seeding a REFUSAL is the bug — see `node-ov
 Same sync IR path and same fail-soft legacy default as the single-column answers, so event ordering
 and unresolvable-workflow behaviour are unchanged.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-21:00 (fleet):
+Overlay emitter-resolved lanes onto the fail-soft defaults. Only fields the emitter actually resolved
+are taken, so a partial payload cannot blank a lane back to a wrong answer.
+*/
+function mergeParkedColumns(
+  base: { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> },
+  lanes: TaskMoveLanes | undefined,
+): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
+  if (!lanes) return base;
+  const complete = lanes.complete ?? base.complete;
+  const archived = lanes.archived ?? base.archived;
+  return {
+    hold: lanes.hold ?? base.hold,
+    intake: lanes.intake ?? base.intake,
+    wip: lanes.wip ?? base.wip,
+    review: lanes.review ?? base.review,
+    complete,
+    archived,
+    terminal: new Set([complete, archived]),
+  };
+}
+
 function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
   const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
   const legacyTerminal: ReadonlySet<string> = new Set([legacy.complete, legacy.archived]);
@@ -960,9 +984,23 @@ export class Scheduler {
     rather than one instance — having the emitter carry the resolved lanes on the event payload so
     no listener resolves at all.
     */
-    this.store.on("task:moved", async ({ task, from, to, source }) => {
+    this.store.on("task:moved", async ({ task, from, to, source, lanes }) => {
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
-      const parked = resolveTaskParkedColumnsSync(this.store, task.id);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-21:00 (fleet):
+      PREFER the lanes the emitter resolved. The sync resolver below is inert in production — it
+      answers with the DEFAULT workflow under PostgreSQL — so before this it made every lane guard in
+      this listener behave exactly as the literal it replaced.
+
+      Resolving here instead was not an option: this listener's synchronous prologue is load-bearing
+      (`snapshotManager.invalidate` is asserted to run before the emit returns), and an await ahead of
+      it fails `scheduler-auto-claim-invalidation.test.ts`. Reading the answer off the payload keeps
+      the prologue synchronous AND makes the guard correct.
+
+      The sync path stays as the fallback for emit sites that cannot resolve. It is no better than it
+      was, but it is no worse, and it is now the exception rather than the rule.
+      */
+      const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(this.store, task.id), lanes);
       if (from === parked.hold || to === parked.hold) {
         this.options.snapshotManager?.invalidate(`task:moved:${from}->${to}`);
       }

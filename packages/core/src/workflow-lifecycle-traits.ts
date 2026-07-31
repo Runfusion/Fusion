@@ -237,6 +237,28 @@ export function resolveTerminalColumns(ir: WorkflowIr): readonly [string, string
  * its first column. Returns undefined only for a column-less (v1) IR, where the
  * caller keeps the legacy literal fallback. For builtin:coding this is `todo`.
  */
+/*
+FNXC:WorkflowEvents 2026-07-31-21:00 (fleet):
+The resolved lane answer carried on a `task:moved` payload. A plain data shape, not a resolver: the
+whole point is that a listener does not resolve anything.
+*/
+export interface TaskMoveLanes {
+  readonly hold?: string;
+  readonly intake?: string;
+  readonly wip?: string;
+  readonly review?: string;
+  readonly complete?: string;
+  readonly archived?: string;
+}
+
+/** Resolve the `task:moved` lane payload for a task's own workflow. Returns undefined if unresolvable. */
+export function toTaskMoveLanes(ir: WorkflowIr | undefined): TaskMoveLanes | undefined {
+  if (!ir) return undefined;
+  const l = resolveLifecycleColumns(ir);
+  if (!l) return undefined;
+  return { hold: l.hold, intake: l.intake, wip: l.wip, review: l.review, complete: l.complete, archived: l.archived };
+}
+
 export function resolveReboundTarget(ir: WorkflowIr): string | undefined {
   const columns = columnsOf(ir);
   if (columns.length === 0) return undefined;

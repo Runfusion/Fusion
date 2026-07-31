@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { TaskMoveLanes } from "./workflow-lifecycle-traits.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -141,7 +142,25 @@ import type { BranchGroupRow, PrEntityRow, TaskDocumentRow, ArtifactRow, TaskDoc
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
-  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler" }];
+  /*
+  FNXC:WorkflowEvents 2026-07-31-21:00 (fleet — the emitter carries the lanes):
+  `lanes` is the moving task's RESOLVED lifecycle columns, attached by the emitter.
+
+  Listeners on this event run synchronously, so any that needed a lane answer had to resolve one
+  synchronously too — and the only sync resolver (`resolveTaskWorkflowIrSync`) returns the DEFAULT
+  workflow in production, making every such guard inert. Resolving asynchronously in the listener is
+  not available either: the scheduler's snapshot invalidation is asserted to run in the listener's
+  synchronous prologue.
+
+  Carrying the answer on the payload removes the dilemma rather than trading one horn for the other:
+  the emitter is already async and already resolves this task's IR, and the listener gets a correct
+  lane set with no await at all.
+
+  OPTIONAL because not every emit path can resolve (some fire from sync contexts or from a cached row
+  mid-teardown). A listener must therefore keep its existing fallback; absent `lanes` is "unknown",
+  never "legacy".
+  */
+  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler"; lanes?: TaskMoveLanes }];
   "task:updated": [task: Task];
   "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
