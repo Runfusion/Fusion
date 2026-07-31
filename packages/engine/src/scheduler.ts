@@ -445,7 +445,19 @@ function mergeParkedColumns(
     review: lanes.review ?? base.review,
     complete,
     archived,
-    terminal: new Set([complete, archived]),
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (u12 — the overlay NARROWED a membership set):
+    This rebuilt `terminal` as `new Set([complete, archived])`, which is first-match-per-role and so
+    contradicted the note above ("`terminal` is a MEMBERSHIP set, and it is not the same question as
+    `complete`/`archived`"). Two losses in one line: it DISCARDED `base.terminal`, which the sync IR
+    path had already resolved correctly, and it had no way to express a second complete-trait column
+    even when the emitter knew about one.
+
+    Now a UNION of everything either side proved terminal. That is the direction this file already
+    argues for at line ~422: a superset makes the reconciliation run on a move it would otherwise
+    ignore — one extra query — while a subset silently withholds work from a card that is finished.
+    */
+    terminal: new Set([...base.terminal, ...(lanes.terminal ?? []), complete, archived]),
   };
 }
 

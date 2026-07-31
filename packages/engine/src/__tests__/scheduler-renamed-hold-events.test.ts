@@ -30,6 +30,7 @@ Written against the literal implementation and observed FAILING first.
 */
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore, WorkflowIr } from "@fusion/core";
+import { toTaskMoveLanes } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { evaluateParkedAgentTaskLink } from "../task-agent-sync.js";
 import { flushAsyncHandlers } from "./_flush-async-handlers.js";
@@ -222,6 +223,34 @@ describe("scheduler event handlers under a renamed hold column", () => {
       const { emit, listTasks } = createScheduler([dependent, blocker], {}, twoCompleteLanes);
 
       await emit("task:moved", { task: blocker, from: "building", to: "released", source: "engine" });
+
+      const queried = listTasks.mock.calls.map((c) => (c[0] as { column?: string } | undefined)?.column);
+      expect(queried).toContain("drafting");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-11:25 (u12 — the PRODUCTION emit shape):
+    The case above emits WITHOUT lanes, which no production emitter does — all 12 call
+    `toTaskMoveLanes` — so it exercises the sync-resolver fallback rather than the shipped path.
+    Measured on the shipped path, supplying lanes fixed every other renamed-board case in this file
+    (10 passed / 1 failed) and left exactly this one broken, because `TaskMoveLanes` carried one id
+    per role and the scheduler rebuilt `terminal` from it. This asserts the fix at the seam that
+    actually runs: a card landing in a SECOND complete-trait column unblocks its dependents.
+    */
+    it("treats a second complete-trait column as terminal when the emitter supplies lanes", async () => {
+      const twoCompleteLanes = renamedIr();
+      (twoCompleteLanes as unknown as { columns: Record<string, unknown>[] }).columns.push({
+        id: "released", name: "released", traits: [{ trait: "complete" }],
+      });
+
+      const dependent = task({ id: "FN-DEP", column: "drafting", dependencies: ["FN-BLOCK"], blockedBy: "FN-BLOCK" });
+      const blocker = task({ id: "FN-BLOCK", column: "released" });
+      const { emit, listTasks } = createScheduler([dependent, blocker], {}, twoCompleteLanes);
+
+      await emit("task:moved", {
+        task: blocker, from: "building", to: "released", source: "engine",
+        lanes: toTaskMoveLanes(twoCompleteLanes),
+      });
 
       const queried = listTasks.mock.calls.map((c) => (c[0] as { column?: string } | undefined)?.column);
       expect(queried).toContain("drafting");

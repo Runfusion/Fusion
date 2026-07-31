@@ -249,6 +249,21 @@ export interface TaskMoveLanes {
   readonly review?: string;
   readonly complete?: string;
   readonly archived?: string;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-11:05 (u12 — a role SET cannot be carried by a role ID):
+  Every other field answers "which column IS this role", which is first-match-per-role. `terminal`
+  answers a different question — "is this column ONE OF the finished lanes" — and a workflow may
+  declare more than one complete-trait column (a merged lane and a shipped lane).
+
+  Without this the payload could not express that board at all: `scheduler.ts` rebuilt its terminal
+  set as `new Set([complete, archived])`, so a card landing in a SECOND complete column was not seen
+  as finished and its dependents were never unblocked. That is a card that waits forever, and it is
+  the one behaviour that supplying lanes did NOT fix when measured (10 passed / 1 failed).
+
+  Optional, so every existing emitter and listener keeps compiling; a listener that ignores it is
+  exactly as correct as it was before.
+  */
+  readonly terminal?: readonly string[];
 }
 
 /** Resolve the `task:moved` lane payload for a task's own workflow. Returns undefined if unresolvable. */
@@ -256,7 +271,13 @@ export function toTaskMoveLanes(ir: WorkflowIr | undefined): TaskMoveLanes | und
   if (!ir) return undefined;
   const l = resolveLifecycleColumns(ir);
   if (!l) return undefined;
-  return { hold: l.hold, intake: l.intake, wip: l.wip, review: l.review, complete: l.complete, archived: l.archived };
+  /* Read from the trait flags, NOT from `l`: `resolveLifecycleColumns` is first-match-per-role and
+     would collapse a second complete-trait column, which is the whole defect this field exists for. */
+  const terminal = [...new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")])];
+  return {
+    hold: l.hold, intake: l.intake, wip: l.wip, review: l.review, complete: l.complete, archived: l.archived,
+    ...(terminal.length > 0 ? { terminal } : {}),
+  };
 }
 
 export function resolveReboundTarget(ir: WorkflowIr): string | undefined {
