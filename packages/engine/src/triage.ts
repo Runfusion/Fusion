@@ -720,6 +720,33 @@ export class TriageProcessor {
       an unrelated update.
       */
       if (typeof task.column !== "string") return;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:55 (FLAGGED AND LEFT COUNTED — and the shape here is
+      misleading, which is why it needs saying):
+
+      This guard LOOKS two-thirds converted — two resolved arms and one literal — so the obvious next
+      move is to convert the third with the same helper. That would be wrong twice over.
+
+      1. `resolvePlannerLanes` goes through `resolveTaskWorkflowIrSync`, which cannot answer for a
+         CUSTOM workflow: the sync selection reader returns `undefined` unconditionally, AND the
+         custom-workflow IR read goes through `store.db`, whose implementation is an unconditional
+         throw (`sync-workflow-ir-second-blocker.test.ts`). So `disposeLanes.hold`/`.intake` are
+         `todo`/`triage` on every board. All THREE arms are literal in effect; converting the third
+         via the same helper adds a third inert comparison and removes a census entry that is telling
+         the truth.
+
+      2. The guard's answer is consumed SYNCHRONOUSLY — that is the criterion, not "the listener is
+         sync". Below it, `pauseAborted.add`, `session.dispose()` and `activeSessions.delete` all
+         mutate in-memory state in this tick, and other paths read those maps. (Contrast
+         `self-healing.ts`'s fan-out, where three of four guards only gated work the listener already
+         `void`s and were therefore convertible via the async resolver.)
+
+      WHAT IT COSTS TODAY: a card evacuated from planning into a lane the board renamed still matches
+      none of these, so the guard falls through and the session IS disposed — correct. The failure is
+      the other direction: a board whose HOLD or INTAKE lane is renamed no longer matches arms 1 and
+      2, so a card sitting still in its own planning lane is treated as evacuated and its live triage
+      session is aborted mid-run.
+      */
       const disposeLanes = resolvePlannerLanes(this.store, task.id);
       if (task.column === disposeLanes.hold || task.column === disposeLanes.intake || task.column === "in-progress") return;
       if (this.activeSubagentSessions.has(task.id)) {
