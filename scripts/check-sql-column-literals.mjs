@@ -109,6 +109,29 @@ function* walk(dir) {
     if (SKIP_DIRS.has(entry)) continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) yield* walk(full);
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-00:00: `.sql` IS DELIBERATELY NOT SCANNED, AND THE REASON
+    IS THE PARSER, NOT AN OVERSIGHT.
+
+    The sibling FNXC-date gate had the opposite defect — a plain-text scanner whose extension list
+    named the file types stamps were EXPECTED in rather than the ones they OCCUR in, so it was blind
+    to `.sql` and `.css` (#2954). That fix does not generalize here, and the two look alike enough
+    that it is worth saying so once.
+
+    This gate is AST-based: `ts.createSourceFile(..., ScriptKind.TSX)`, then a walk over string and
+    template nodes. A `.sql` file is not TypeScript, so adding the extension would not widen coverage
+    — it would feed DDL to the TS parser and traverse whatever lenient-mode nodes fell out, which is
+    worse than not looking, because the gate would then REPORT coverage it does not have.
+
+    Measured before deciding (2026-07-30): 38 tracked `.sql` files hold exactly one lifecycle-looking
+    literal, `CHECK (status IN ('open','converged','archived'))` in 0022_ideation.sql. That is the
+    ideation-session status enum — a different domain that happens to reuse the word, and not a
+    `tasks.column` comparison this gate would flag even if it could see it. Zero real offenders.
+
+    So the honest scope is: raw SQL is UNWATCHED, and the thing that would make it worth watching is a
+    data backfill (`UPDATE tasks SET column = ...`) landing in a migration. If one ever does, this
+    needs a separate raw-text matcher against `COMPARISON`, not an entry in the filter below.
+    */
     else if (/\.tsx?$/.test(full) && !/\.d\.ts$/.test(full)) yield full;
   }
 }
