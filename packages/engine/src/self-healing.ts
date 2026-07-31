@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
 } from "@fusion/core";
@@ -12649,7 +12649,20 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-14:45 (the query-filter class, twenty-seventh sweep):
+      THE NOTE BELOW SAID THIS WAS UNFIXABLE. It called the literal query "unfixable without a
+      project-level lane resolution before the read" — which is precisely what
+      `resolveProjectColumnsForRoles` provides; it did not exist when that note was written. The wiring
+      below was therefore doing real work only for boards whose review lane still happens to be called
+      `in-review`. Fully renamed boards never reached it.
+      */
+      const missingWtColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const missingWtById = new Map<string, Task>();
+      for (const column of missingWtColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) missingWtById.set(entry.id, entry);
+      }
+      const tasks = [...missingWtById.values()];
       /*
       FNXC:WorkflowLifecycleColumns 2026-08-02-20:20 (PR #2745 review — greptile P1: "recovery lanes are not
       wired", and it is right):
@@ -12664,9 +12677,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       workflow (the common partial-rename case) and for the merge-active variant.
       */
       const recoveryIrCache = new Map<string, WorkflowIr>();
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-14:50 (the ARITY trap, same seam):
+      These classifiers take a MEMBERSHIP set, and `resolveTaskLifecycleColumns().review` is the FIRST
+      column per role — so a board declaring more than one review column contributed only one of them and
+      a card sitting in the others read as not-in-review. `columnsWithFlag` over the three review roles is
+      the membership answer; the legacy id stays unioned for a board mid-rename.
+      */
       const reviewColumnsFor = async (taskId: string): Promise<ReadonlySet<string>> => {
-        const lifecycle = await resolveTaskLifecycleColumns(this.store, taskId, recoveryIrCache);
-        return new Set([lifecycle?.review ?? "in-review", "in-review"]);
+        const columns = new Set<string>(["in-review"]);
+        try {
+          const ir = await resolveWorkflowIrForTask(this.store, taskId, recoveryIrCache);
+          if (ir) {
+            for (const role of REVIEW_ROLES) for (const id of columnsWithFlag(ir, role)) columns.add(id);
+          }
+        } catch { /* degraded: the legacy id above still answers */ }
+        return columns;
       };
       const candidateChecks = await Promise.all(tasks.map(async (task) => {
         const reviewColumns = await reviewColumnsFor(task.id);

@@ -770,4 +770,80 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:55 (the query-filter class, twenty-seventh sweep):
+  `recoverMissingWorktreeReviewFailures` requeues a review card failed because its worktree was gone when
+  the session tried to start. Its per-candidate lane wiring was already in place — and a note at the site
+  called the literal QUERY above it "unfixable without a project-level lane resolution before the read".
+  `resolveProjectColumnsForRoles` is that resolution; it did not exist when the note was written. So the
+  wiring only ever helped boards whose review lane still happened to be named `in-review`.
+
+  The error string uses a REAL prefix from MISSING_WORKTREE_SESSION_PREFIXES; invented prose is rejected
+  by `isMissingWorktreeSessionStartFailure` and the case would pass with the fix reverted.
+
+  REVERT CHECK, measured: with the literal read restored, this fails — the card is never listed.
+  */
+  it("requeues a missing-worktree review failure on a RENAMED review lane", async () => {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOWT",
+      column: RENAMED_VOCAB.review,
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/gone",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMissingWorktreeReviewFailures();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOWT" }), expect.anything());
+  });
+
+  it("resolves the review lanes as a MEMBERSHIP set, not just the first one", async () => {
+    /*
+    The arity half. The per-candidate set was built from `resolveTaskLifecycleColumns().review`, which is
+    the FIRST column per role — so on a board declaring a separate merge lane beside its human-review
+    lane, a card in the second one read as not-in-review and was skipped. This drives exactly that board.
+
+    REVERT CHECK, measured: with the set back to `new Set([lifecycle?.review ?? "in-review", "in-review"])`
+    this fails — the card in the second review column is never classified as recoverable.
+    */
+    const splitReviewIr = {
+      ...RENAMED_IR,
+      columns: [
+        ...RENAMED_IR.columns,
+        { id: "merging", name: "Merging", traits: [{ trait: "merge" }] },
+      ],
+    } as typeof RENAMED_IR;
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOWT2",
+      column: "merging",
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/gone",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    Object.assign(store, {
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: splitReviewIr }]),
+      getWorkflowDefinition: vi.fn(async (id: string) => (id === "self-healing-lifecycle" ? { ir: splitReviewIr } : undefined)),
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const proof = vi.fn(async () => ({ ok: false, reason: "test" }));
+    Object.assign(manager, {
+      evaluateBackwardMoveTripleProof: proof,
+      emitBackwardMoveNoAction: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMissingWorktreeReviewFailures();
+
+    expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOWT2" }), expect.anything());
+  });
 });
