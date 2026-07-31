@@ -35,6 +35,16 @@ export interface InReviewStallContext {
   maxAutoMergeRetries?: number;
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (the lane seam, MEMBERSHIP not one column):
+  `reviewColumn` is `resolveLifecycleColumns().review` — the FIRST column carrying a review role. A
+  board declaring a separate merge lane beside its human-review lane has TWO, and a card in the second
+  read as not-in-review. This takes the SET.
+
+  Optional, with today's behaviour preserved as the fallback, so a caller that does not pass it is
+  byte-identical.
+  */
+  reviewColumns?: ReadonlySet<string>;
 }
 
 /** Keep aligned with engine DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS. */
@@ -176,7 +186,15 @@ export function getInReviewStallReason(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt"> & { id?: string },
   context: InReviewStallContext = {},
 ): InReviewStallSignal | undefined {
-  if (task.column !== "in-review" || task.paused === true) {
+  /*
+  This classifier had NO seam while its two siblings did, so one decorated row could have
+  `inReviewStalled` resolved and `inReviewStall` literal — one row, two lane answers.
+  */
+  const inReviewLane = context.reviewColumns
+    ? context.reviewColumns.has(task.column)
+    /* DELIBERATE-LITERAL — the no-metadata fallback. */
+    : task.column === "in-review";
+  if (!inReviewLane || task.paused === true) {
     return undefined;
   }
 
