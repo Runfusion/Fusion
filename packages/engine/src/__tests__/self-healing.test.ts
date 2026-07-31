@@ -11629,6 +11629,46 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-rebound-scope-decay-no-action" }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:40:
+  `scopeDecayWipColumns` was UNCOVERED on the #3115 map. The case above uses `in-progress`, where the
+  literal is correct, so blinding the resolver leaves it green.
+
+  The audit event is the observable: reaching a no-action record proves the holder was SELECTED by
+  the sweep's lane filter. Blinded, a paused holder in a renamed wip lane is not selected at all —
+  the loop never runs, no event is recorded, and its file scope decays with nothing to rebound it.
+  */
+  it("selects a paused holder resting in a RENAMED wip lane", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, pausedScopeDecayMs: 1_000 } as any),
+      listTasks: vi.fn().mockResolvedValue([
+        { id: "FN-HOLDER", column: "building", paused: true, pausedReason: "waiting", blockedBy: null, worktree: "/tmp/wt-holder", updatedAt: new Date(Date.now() - 60_000).toISOString(), log: [] },
+        { id: "FN-FOLLOW", column: "drafting", paused: false, blockedBy: "FN-HOLDER" },
+      ]),
+    });
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        ],
+      },
+    }]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    mockedClassifyTaskWorktree.mockResolvedValue({ ok: true } as any);
+
+    await manager.autoReboundPausedScopeDecay();
+
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "FN-HOLDER",
+    }));
+    manager.stop();
+  });
+
   it("emits reclaim-pr-conflict no-action when triple proof fails", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({ autoMerge: true, globalPause: false, enginePaused: false, taskStuckTimeoutMs: 1_000 } as any),
