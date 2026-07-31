@@ -31,6 +31,20 @@ overrides:
   # FNXC:DesktopPackaging 2026-07-26-22:55: Advance the matched closure 0.82.0 → 0.82.1 so
   # electron-builder's production-dependency walk accepts pi-agent-core's pi-ai@^0.82.1 requirement
   # (Desktop packaging PR-lane failure when deploy resolved a newer agent-core patch beside 0.82.0 ai).
+  # FNXC:UpstreamDependencyPin 2026-07-30-21:40:
+  # AWS UNPUBLISHED `@aws-sdk/core@3.977.4` after releasing it. The lockfile still carries a valid
+  # integrity hash for it, which is how it got in, but `npm view @aws-sdk/core@3.977.4` is now a 404
+  # and the latest release is 3.977.3. Every Build in the repo fails in the desktop `pnpm deploy`
+  # step with ERR_PNPM_NO_MATCHING_VERSION, reached transitively through
+  # pi-ai -> @aws-sdk/client-bedrock-runtime -> @aws-sdk/middleware-websocket.
+  #
+  # Pinned on CORE, not on the websocket package. Pinning middleware-websocket one patch back was the
+  # first attempt and it does NOT work: its range is `^3.977.3`, so pnpm still resolves UP to the
+  # unpublished 3.977.4. Only constraining core itself removes the unresolvable target.
+  #
+  # REMOVE THIS once AWS republishes 3.977.4 or ships a later patch; it is an upstream publishing
+  # accident, not a decision about our dependency surface.
+  '@aws-sdk/core': 3.977.3
   '@earendil-works/pi-agent-core': 0.82.1
   '@earendil-works/pi-ai': 0.82.1
   '@earendil-works/pi-coding-agent': 0.82.1
