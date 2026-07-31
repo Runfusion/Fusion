@@ -1,5 +1,5 @@
 import type { Task } from "@fusion/core";
-import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "@fusion/core";
+import { isTerminalColumnRole, type ColumnRoleFlags as ColumnRoleTraitFlags } from "./columnRoles";
 
 /**
  * FNXC:TaskRevert 2026-07-04-00:00:

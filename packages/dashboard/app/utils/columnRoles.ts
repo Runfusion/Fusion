@@ -197,6 +197,22 @@ export function isArchivedColumnRole(flags: ColumnRoleFlags | undefined, columnI
 }
 
 /**
+ * Is a card here FINISHED either way — completed or archived?
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-31-13:55:
+ * Mirrors `isTerminalColumnRole` in core's `column-roles.ts`, composed from the two helpers above so
+ * the halves cannot drift apart. It lives HERE rather than being imported from `@fusion/core` because
+ * the browser bundle aliases that specifier to the leaf `types.ts` (see dashboard/vite.config.ts) —
+ * importing it from the package root builds fine under tsc and fails only in the desktop/vite bundle,
+ * which is how it reached main red: "isTerminalColumnRole is not exported by ../core/src/types.ts".
+ *
+ * Every other role predicate in the app already comes from this module; this restores that rule.
+ */
+export function isTerminalColumnRole(flags: ColumnRoleFlags | undefined, columnId: string): boolean {
+  return isCompleteColumnRole(flags, columnId) || isArchivedColumnRole(flags, columnId);
+}
+
+/**
  * Does this column occupy an implementation/WIP slot?
  *
  * Keyed on `countsTowardWip` rather than a `wip` trait name because that is the flag the trait
