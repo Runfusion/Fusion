@@ -465,6 +465,21 @@ export async function listTaskDocuments(
   projectId?: string,
 ): Promise<TaskDocument[]> {
   const column = await getLiveTaskColumn(db, taskId, projectId);
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-00:55 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+This compares `getLiveTaskColumn`'s RETURN VALUE, which is normalized — the helper manufactures the
+string "archived" for an archived row AND for a soft-deleted one, and returns `null` for a missing
+task. So the comparison is against that function's protocol vocabulary, not a column id.
+
+Converting it to an archived-role read would keep passing on the built-in board and start FAILING on
+a renamed one: a soft-deleted task's documents would become writable, and the archived-document
+read paths would start returning rows they must not. `audit-ops.ts` records the same distinction for
+its own copy of this check.
+
+The convertible site in this file is the CLASSIFIER at ~line 142 (`row.column === "archived"`),
+which reads a real DB column. It stays counted; see #2820 for why it is deferred rather than done.
+*/
   if (column === null || column === "archived") return [];
 
   const rows = await db
@@ -525,6 +540,21 @@ export async function deleteTaskDocument(
 ): Promise<void> {
   return layer.transactionImmediate(async (tx) => {
     const state = await getLiveTaskColumn(tx, taskId, layer.projectId);
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-31-00:55 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+  This compares `getLiveTaskColumn`'s RETURN VALUE, which is normalized — the helper manufactures the
+  string "archived" for an archived row AND for a soft-deleted one, and returns `null` for a missing
+  task. So the comparison is against that function's protocol vocabulary, not a column id.
+
+  Converting it to an archived-role read would keep passing on the built-in board and start FAILING on
+  a renamed one: a soft-deleted task's documents would become writable, and the archived-document
+  read paths would start returning rows they must not. `audit-ops.ts` records the same distinction for
+  its own copy of this check.
+
+  The convertible site in this file is the CLASSIFIER at ~line 142 (`row.column === "archived"`),
+  which reads a real DB column. It stays counted; see #2820 for why it is deferred rather than done.
+  */
     if (state === "archived") throw new Error(`Task ${taskId} is archived — documents are read-only`);
     if (state === null) throw new Error(`Task ${taskId} not found`);
     const existing = await tx
@@ -585,6 +615,21 @@ export async function insertArtifactRow(
     // Gate: if taskId is set, the parent must be live.
     if (input.taskId) {
       const column = await getLiveTaskColumn(tx, input.taskId, layer.projectId);
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-00:55 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+    This compares `getLiveTaskColumn`'s RETURN VALUE, which is normalized — the helper manufactures the
+    string "archived" for an archived row AND for a soft-deleted one, and returns `null` for a missing
+    task. So the comparison is against that function's protocol vocabulary, not a column id.
+
+    Converting it to an archived-role read would keep passing on the built-in board and start FAILING on
+    a renamed one: a soft-deleted task's documents would become writable, and the archived-document
+    read paths would start returning rows they must not. `audit-ops.ts` records the same distinction for
+    its own copy of this check.
+
+    The convertible site in this file is the CLASSIFIER at ~line 142 (`row.column === "archived"`),
+    which reads a real DB column. It stays counted; see #2820 for why it is deferred rather than done.
+    */
       if (column === "archived") {
         throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
       }
@@ -642,6 +687,21 @@ export async function updateArtifactRow(
     }
     if (existing.taskId) {
       const column = await getLiveTaskColumn(tx, existing.taskId, layer.projectId);
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-00:55 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+    This compares `getLiveTaskColumn`'s RETURN VALUE, which is normalized — the helper manufactures the
+    string "archived" for an archived row AND for a soft-deleted one, and returns `null` for a missing
+    task. So the comparison is against that function's protocol vocabulary, not a column id.
+
+    Converting it to an archived-role read would keep passing on the built-in board and start FAILING on
+    a renamed one: a soft-deleted task's documents would become writable, and the archived-document
+    read paths would start returning rows they must not. `audit-ops.ts` records the same distinction for
+    its own copy of this check.
+
+    The convertible site in this file is the CLASSIFIER at ~line 142 (`row.column === "archived"`),
+    which reads a real DB column. It stays counted; see #2820 for why it is deferred rather than done.
+    */
       if (column === "archived") {
         throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
       }
@@ -700,6 +760,21 @@ export async function getArtifacts(
   projectId?: string,
 ): Promise<Artifact[]> {
   const column = await getLiveTaskColumn(db, taskId, projectId);
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-00:55 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+
+This compares `getLiveTaskColumn`'s RETURN VALUE, which is normalized — the helper manufactures the
+string "archived" for an archived row AND for a soft-deleted one, and returns `null` for a missing
+task. So the comparison is against that function's protocol vocabulary, not a column id.
+
+Converting it to an archived-role read would keep passing on the built-in board and start FAILING on
+a renamed one: a soft-deleted task's documents would become writable, and the archived-document
+read paths would start returning rows they must not. `audit-ops.ts` records the same distinction for
+its own copy of this check.
+
+The convertible site in this file is the CLASSIFIER at ~line 142 (`row.column === "archived"`),
+which reads a real DB column. It stays counted; see #2820 for why it is deferred rather than done.
+*/
   if (column === null || column === "archived") return [];
 
   const rows = await db

@@ -4,7 +4,6 @@
     "packages/engine/src/self-healing.ts": 87,
     "packages/engine/src/scheduler.ts": 12,
     "packages/engine/src/executor.ts": 8,
-    "packages/core/src/task-store/async-comments-attachments.ts": 6,
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/replan-target.ts": 4,
     "packages/engine/src/restart-recovery-coordinator.ts": 4,
@@ -26,6 +25,7 @@
     "packages/core/src/mission-store.ts": 1,
     "packages/core/src/plugin-store.ts": 1,
     "packages/core/src/stalled-review-detector.ts": 1,
+    "packages/core/src/task-store/async-comments-attachments.ts": 1,
     "packages/core/src/task-store/comments-ops.ts": 1,
     "packages/core/src/task-store/lifecycle-ops.ts": 1,
     "packages/core/src/task-store/merge-queue-ops-2.ts": 1,
@@ -39,6 +39,7 @@
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
+    "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 5,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
@@ -136,7 +137,6 @@
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
     "packages/engine/src/agent-tools.ts": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1,
-    "packages/engine/src/workflow-node-handlers.ts": 1
+    "packages/engine/src/auto-merge-finalization.ts": 1
   }
 }
