@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 
 import ts from "typescript";
 
-import { collectImportBindings, isRelevantCallSite } from "../check-inert-flag-seams.mjs";
+import { collectImportBindings, isRelevantCallSite, effectiveArgCount } from "../check-inert-flag-seams.mjs";
 
 const DECLARING = "packages/core/src/near-duplicate-canonical.ts";
 
@@ -159,4 +159,51 @@ test("a plain import records no alias", () => {
 
   assert.equal(localAlias.size, 0);
   assert.equal(importedFrom.get("enqueueMergeQueue"), "@fusion/core");
+});
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:55:
+`undefined` IS NOT AN ANSWER, and counting raw arguments treated it as one.
+
+`f("KB-1", undefined)` passes the arity check while the callee receives exactly what it received
+before. The seam stays inert and the board keeps reading the legacy vocabulary — the gate just stops
+saying so. This is what a partial wiring-up produces when the flags are threaded through an
+intermediate that has none, and what a mechanical positional edit produces.
+
+The negatives are the half that keeps this honest: a MIDDLE undefined still positions the real
+argument after it, so trimming must stop at the first non-undefined from the right.
+*/
+function argsOf(source) {
+  const sf = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let found = null;
+  const visit = (node) => {
+    if (!found && ts.isCallExpression(node)) found = node.arguments;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+test("a trailing `undefined` argument supplies nothing", () => {
+  assert.equal(effectiveArgCount(argsOf('f("KB-1", undefined);')), 1);
+});
+
+test("`void 0` is the same omission spelled differently", () => {
+  assert.equal(effectiveArgCount(argsOf('f("KB-1", void 0);')), 1);
+});
+
+test("several trailing undefineds all collapse", () => {
+  assert.equal(effectiveArgCount(argsOf('f("KB-1", undefined, undefined);')), 1);
+});
+
+test("a real trailing argument still counts", () => {
+  assert.equal(effectiveArgCount(argsOf('f("KB-1", flags);')), 2);
+});
+
+test("a MIDDLE undefined positions the argument after it, which is real", () => {
+  assert.equal(effectiveArgCount(argsOf('f("KB-1", undefined, flags);')), 3);
+});
+
+test("a call with no arguments is unchanged", () => {
+  assert.equal(effectiveArgCount(argsOf("f();")), 0);
 });

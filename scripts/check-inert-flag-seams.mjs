@@ -39,6 +39,39 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGES = join(REPO, "packages");
 const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2e", ".gate-bundle", "coverage"]);
 const TRAILING_FLAG_PARAM = /([Cc]olumnFlags|[Ll]ifecycleColumns|[Rr]eviewColumns|[Tt]erminalColumns|[Pp]lannerLanes)$/;
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-30-23:40:
+PASSING `undefined` FOR THE LANE ANSWER IS NOT SUPPLYING IT.
+
+The seam is a trailing optional parameter, so this gate asked how many ARGUMENTS each call site
+passes. A call that spells the omission out —
+
+    resolveSomething("KB-1", undefined)
+
+— satisfies that count while the callee receives exactly what it received before: nothing. The
+parameter is still inert and the board still reads the legacy vocabulary.
+
+That spelling is not exotic. It is what a partial wiring-up produces when the flags are threaded
+through an intermediate that has none to pass, and what a mechanical edit produces when it fills
+argument slots positionally. Either way the gate reported the seam as answered.
+
+Missed by BOTH gates: check-lane-wiring (#2966) covers the default-valued and options-object shapes
+this one is structurally blind to, but it counts arguments the same way here. Found by probing my own
+gate with shapes I had not designed it for — the discipline argued for in #2979.
+
+TRAILING ONLY. A middle `undefined` still positions the arguments after it, so those are real answers.
+*/
+const isUndefinedArgument = (arg) =>
+  (ts.isIdentifier(arg) && arg.text === "undefined") || ts.isVoidExpression(arg);
+
+/** Arguments that actually carry a value, ignoring trailing `undefined` / `void 0` placeholders. */
+export function effectiveArgCount(args) {
+  let count = args.length;
+  while (count > 0 && isUndefinedArgument(args[count - 1])) count -= 1;
+  return count;
+}
+
 /** Unanchored twin used only to skip files fast; see the note at the call site. */
 const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lannerLanes)/;
 
@@ -220,7 +253,7 @@ for (const file of walkAll(PACKAGES)) {
         if (!callSites.has(target)) callSites.set(target, []);
         callSites.get(target).push({
           file: relative(REPO, file),
-          args: node.arguments.length,
+          args: effectiveArgCount(node.arguments),
           shadowed: locallyDeclared.has(callee),
           from: importedFrom.get(callee),
           viaProperty: ts.isPropertyAccessExpression(node.expression),
