@@ -3355,7 +3355,24 @@ export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefi
         const depId = params.task_id?.trim();
         if (!depId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };
         const task = await store.getTask(taskId);
-        if (task.column === "in-progress" && params.confirm !== true) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-00:30:
+        The board's WIP lanes, not the literal. This guard is the only thing standing between an
+        operator and losing in-flight work: adding a dependency to a running task stops execution and
+        discards it, so the confirmation must fire on whatever lane that board calls "in progress".
+        Keyed on the literal it was silently skipped on every renamed board — the work is destroyed
+        with no prompt, which is the failure you cannot undo.
+
+        Same shape as the terminal-column resolution earlier in this file: seed the legacy id as the
+        floor, union the resolved trait columns, and degrade to the legacy id alone if the workflow
+        cannot be read.
+        */
+        const wipColumns = new Set<string>(["in-progress"]);
+        try {
+          const wipIr = await fusionCore.resolveWorkflowIrForTask(store, taskId);
+          if (wipIr) for (const id of fusionCore.columnsWithFlag(wipIr, "countsTowardWip")) wipColumns.add(id);
+        } catch { /* degraded: legacy id only */ }
+        if (wipColumns.has(task.column) && params.confirm !== true) {
           return {
             content: [{ type: "text" as const, text: "WARNING: adding a dependency to an in-progress task will stop execution and discard current work. Pass confirm:true to proceed." }],
             details: { requiresConfirm: true, taskId },
