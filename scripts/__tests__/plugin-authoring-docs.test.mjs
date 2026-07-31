@@ -30,12 +30,25 @@ const expectedSections = [
   "Plugin Binary Setup Hooks",
 ];
 
+/*
+FNXC:PluginAuthoringDocs 2026-07-31-04:30:
+ONE HYPHEN PER SPACE, not one per RUN — GitHub does not collapse whitespace when it builds an anchor.
+
+`\s+ -> "-"` agrees with GitHub for every title whose words are single-spaced, which is why it went
+unnoticed: the two differ only once punctuation is stripped from BETWEEN words, leaving a gap.
+`### Theming & Overlay Layering for Dashboard Views` is the live case — GitHub emits
+`theming--overlay-...` (the `&` is removed, both spaces survive) and the document's own link uses it,
+while this helper produced the single-hyphen form.
+
+Latent until the nested-anchor check below started resolving sub-entries against real headings: the
+numbered top-level titles contain no punctuation, so the two spellings agreed on all eighteen.
+*/
 function slugifyHeading(text) {
   return text
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-");
+    .replace(/\s/g, "-");
 }
 
 test("PLUGIN_AUTHORING headings are sequentially numbered 1..18 with expected titles", () => {
@@ -69,9 +82,32 @@ test("PLUGIN_AUTHORING TOC includes top-level dashboard views and anchors align 
   this test exists to be.
   */
   const rawTocLines = tocMatch[1].split("\n").filter((line) => line.trim());
+
+  /*
+  FNXC:PluginAuthoringDocs 2026-07-31-04:20:
+  A NESTED ENTRY'S ANCHOR IS CHECKED TOO, not merely its shape.
+
+  Accepting sub-entries fixed the false rejection above, but left them validated only for link SHAPE:
+  MEASURED on that fix, pointing this sub-entry at `#kb-nonexistent-anchor` kept the suite green,
+  while the identical corruption in a top-level entry failed. A TOC guard whose whole purpose is that
+  links resolve cannot check that for one class of entry and not the other — a dead sub-link is found
+  by a reader clicking it, which is the outcome this file exists to prevent.
+
+  Resolved against the document's own headings via the same `slugifyHeading` the top-level check uses,
+  so both classes answer to one definition of "this anchor exists".
+  */
+  const headingAnchors = new Set(
+    [...doc.matchAll(/^#{2,6}\s+(.+)$/gm)].map((m) => slugifyHeading(m[1])),
+  );
   const subEntries = rawTocLines.filter((line) => /^\s+/.test(line));
   for (const line of subEntries) {
-    assert.ok(/^\s+-\s+\[.+\]\(#.+\)$/.test(line.replace(/\s+$/, "")), `Invalid nested TOC line: ${line}`);
+    const trimmed = line.replace(/\s+$/, "");
+    const shape = trimmed.match(/^\s+-\s+\[(.+)\]\(#(.+)\)$/);
+    assert.ok(shape, `Invalid nested TOC line: ${line}`);
+    assert.ok(
+      headingAnchors.has(shape[2]),
+      `Nested TOC anchor #${shape[2]} matches no heading in PLUGIN_AUTHORING.md (entry: ${shape[1]})`,
+    );
   }
 
   const tocLines = rawTocLines.filter((line) => !/^\s/.test(line)).map((line) => line.trim());
