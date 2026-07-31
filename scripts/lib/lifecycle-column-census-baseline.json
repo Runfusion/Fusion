@@ -11,7 +11,6 @@
     "packages/core/src/async-mission-store-queries.ts": 3,
     "packages/core/src/task-store/task-artifacts-ops.ts": 3,
     "packages/core/src/agent-store.ts": 2,
-    "packages/core/src/task-store/audit-ops.ts": 2,
     "packages/core/src/task-store/moves.ts": 2,
     "packages/core/src/task-store/project-store-ops.ts": 2,
     "packages/core/src/task-store/reads.ts": 2,
@@ -26,6 +25,7 @@
     "packages/core/src/mission-store.ts": 1,
     "packages/core/src/plugin-store.ts": 1,
     "packages/core/src/stalled-review-detector.ts": 1,
+    "packages/core/src/task-store/audit-ops.ts": 1,
     "packages/core/src/task-store/comments-ops.ts": 1,
     "packages/core/src/task-store/lifecycle-ops.ts": 1,
     "packages/core/src/task-store/merge-queue-ops-2.ts": 1,
@@ -75,6 +75,7 @@
     "packages/core/src/task-move-disposer.ts\u0000in-progress": 1,
     "packages/core/src/task-move-disposer.ts\u0000todo": 1,
     "packages/core/src/task-store/archive-lifecycle-2.ts\u0000archived": 1,
+    "packages/core/src/task-store/audit-ops.ts\u0000archived": 1,
     "packages/core/src/task-store/branch-and-pr-entities.ts\u0000archived": 1,
     "packages/core/src/task-store/task-store-helpers.ts\u0000in-progress": 1,
     "packages/core/src/task-store/task-store-helpers.ts\u0000todo": 1,
@@ -137,7 +138,6 @@
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
     "packages/engine/src/agent-tools.ts": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1,
-    "packages/engine/src/workflow-node-handlers.ts": 1
+    "packages/engine/src/auto-merge-finalization.ts": 1
   }
 }

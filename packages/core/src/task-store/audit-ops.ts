@@ -125,7 +125,12 @@ export async function logEntryImpl(store: TaskStore, id: string, action: string,
           const layer = store.asyncLayer!;
           const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
           /*
-          FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 (audited — SENTINEL, do NOT convert):
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:20 DELIBERATE-LITERAL (audited — SENTINEL, do NOT convert):
+
+          MARKED 2026-07-31: the reasoning below was written and the MARKER was not, so the census kept
+          counting this line as owed work. A comment that explains why a site is correct does not reach
+          the instrument — only the marker string does — so the audit was invisible to the one reader
+          that acts on it, and the next person down the backlog would have re-derived it.
           `getLiveTaskColumn` MANUFACTURES the string "archived" for an archived-or-soft-deleted
           parent; it does not return the board's archived lane. So this compares against that
           function's return vocabulary, not against a column id, and converting it to
