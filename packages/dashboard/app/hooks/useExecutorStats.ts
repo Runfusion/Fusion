@@ -69,7 +69,18 @@ export function deriveExecutorState(
  * FNXC:ExecutorStatusBar 2026-07-21-19:00:
  * Do not require task.sessionFile for Running — it is not on board/listTasks rows.
  */
-export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">;
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
+`humanReview` ADDED because the type was dropping a trait its supplier already provides.
+
+App.tsx builds this map from `workflow.columns.find(...).flags` — the whole flag object — so
+`humanReview` is present at RUNTIME and only the Pick discarded it. That was harmless while these
+flags answered complete/archived/wip questions, and stops being harmless for the review role:
+`isReviewColumnRole` reads `mergeBlocker || humanReview`, so a lane that hosts a human review without
+blocking merges would have classified as NOT review — a wrong answer rather than a degradation, which
+is the "supplying the wrong flags" shape this program keeps re-finding.
+*/
+export type ExecutorColumnFlags = Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker" | "humanReview">;
 
 export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFetchTimeMs?: number, columnFlagsById?: ReadonlyMap<string, ExecutorColumnFlags>, columnFlagsByTaskId?: ReadonlyMap<string, ExecutorColumnFlags>): Pick<
   ExecutorStats,

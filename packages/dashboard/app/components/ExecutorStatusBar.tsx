@@ -10,6 +10,7 @@ import {
 } from "@fusion/core";
 import { AlertTriangle, Clock, Folder, MessageSquare, Pause, Play, Square, Zap } from "lucide-react";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
+import { isHoldColumnRole, isCompleteColumnRole, isArchivedColumnRole, isWipColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import { useExecutorStats, type ExecutorColumnFlags } from "../hooks/useExecutorStats";
 import { isLikelyTabSuspensionError } from "../hooks/visibilitySuspension";
 import { LoadingSpinner } from "./LoadingSpinner";
@@ -219,9 +220,30 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   const relativeTime = useMemo(() => formatRelativeTime(stats.lastActivityAt, t), [stats.lastActivityAt, t]);
 
   const highestOverlapBlocker = useMemo(() => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:58:
+    PER-TASK lane roles for the fan-out, from the map this component is already given.
+
+    Without these, core falls back to `holdColumn: "todo"` and BLOCKER_ESCALATION_COLUMNS, so on a
+    renamed board `overlapBlockedTodoCount` is zero and `isHighFanout` never trips — the overlap
+    warning below simply never renders while cards sit blocked. `columnFlagsByTaskId` is already
+    supplied for `useExecutorStats`, so the answer was in scope the whole time.
+
+    Absent flags degrade byte-identically to those defaults (`todo` for hold, `in-progress`/
+    `in-review` for escalation), which is what keeps an unconverted board unchanged.
+    */
+    const flagsFor = (task: Task) => columnFlagsByTaskId?.get(task.id);
     const fanoutMap = computeBlockerFanoutMap(tasks, {
       staleHighFanoutAgeThresholdMs:
         staleHighFanoutBlockerAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+      classify: (task) => ({
+        isHold: isHoldColumnRole(flagsFor(task), task.column),
+        isTerminal: isCompleteColumnRole(flagsFor(task), task.column)
+          || isArchivedColumnRole(flagsFor(task), task.column),
+      }),
+      escalationClassify: (task) => (
+        isWipColumnRole(flagsFor(task), task.column) || isReviewColumnRole(flagsFor(task), task.column)
+      ),
     });
     const candidates = Array.from(fanoutMap.entries())
       .map(([blockerId, entry]) => ({ blockerId, entry }))
@@ -235,7 +257,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
       });
 
     return candidates[0] ?? null;
-  }, [tasks, staleHighFanoutBlockerAgeThresholdMs]);
+  }, [tasks, staleHighFanoutBlockerAgeThresholdMs, columnFlagsByTaskId]);
 
   const StateIcon = stateDisplay.icon;
 
