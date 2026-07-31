@@ -5441,8 +5441,27 @@ export default function kbExtension(pi: ExtensionAPI) {
         return {
           content: [{
             type: "text" as const,
-            text: `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. ` +
-              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-22:10 (#2894 review, second round — greptile):
+            THE CAVEAT BELONGS IN THE SENTENCE, NOT ONLY IN `details`.
+
+            `landingVerified: false` was the right fact in the wrong place: the caller is usually
+            another agent, and agents read the first sentence. A structured field beside a confident
+            "will be picked up" is the same "success with a caveat" shape the error branch was
+            rewritten to remove — the caveat is present and nobody sees it.
+
+            The pickup claim is therefore CONDITIONAL on having verified the landing. Where it could
+            not be verified the text says what is true — the card exists, is assigned, and sits on a
+            lane we could not confirm — without either promising dispatch or failing a configuration
+            that is probably fine.
+            */
+            text: substituted
+              ? `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow} in `
+                + `"${landedColumn}". Its workflow could not be resolved, so I could NOT confirm that `
+                + `column is the lane ${agent!.name} picks work up from — check the board if it does `
+                + "not start."
+              : `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. `
+                + `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
           }],
           /*
           FNXC:WorkflowLifecycleColumns 2026-07-30-20:45 (#2894 review — greptile, "fallback equality
