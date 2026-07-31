@@ -9967,12 +9967,33 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const parked = await this.store.listTasks({ slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (fleet):
+      "Active or queued to become active" asked by id skipped every renamed board, so this sweep would
+      have judged a working card parked and TAKEN ITS WORKTREE — the destructive direction.
+
+      Resolved as the PROJECT union rather than per task. This filter runs over every card on the board,
+      so per-task resolution is one IR read per row on a recurring sweep; the union needs no per-task
+      workflow selection. Over-inclusion is the SAFE direction here and that is why the union is
+      acceptable: a column wrongly counted as active only means a worktree is left alone, whereas a
+      missed column means one is seized from live work
+      (docs/solutions/workflow-learnings/project-union-versus-per-task-lanes.md).
+
+      `archived` is deliberately absent, matching the literals this replaces: an archived card's
+      pre-execution worktree is reclaimable.
+      */
+      const activeOrQueuedColumns = await resolveProjectColumnsForRoles(this.store, [
+        "hold",
+        "countsTowardWip",
+        ...REVIEW_ROLES,
+        "complete",
+      ]);
       const candidates = parked.filter((task) => {
         if (!task.worktree || task.deletedAt) return false;
         // Execution evidence — the worktree may hold real work; only the merge/archive lifecycle owns it.
         if (task.firstExecutionAt || task.executionStartedAt) return false;
         // Columns where a card is active or queued to become active.
-        if (task.column === "todo" || task.column === "in-progress" || task.column === "in-review" || task.column === "done") return false;
+        if (activeOrQueuedColumns.has(task.column)) return false;
         /*
         WAITING is not PARKED. A card paused for an operator decision, carrying any status (planning,
         needs-replan, awaiting-*), blocked on another task, or scheduled for a recovery attempt is
@@ -13116,6 +13137,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     const now = Date.now();
     const recoveredAgentIds = new Set<string>();
+    const linkedTaskColumnCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
     const runningAgents = await agentStore.listAgents({ state: "running", includeEphemeral: true });
 
     for (const agent of runningAgents) {
@@ -13124,7 +13146,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       const linkedTask = await this.store.getTask(agent.taskId);
-      if (linkedTask && (linkedTask.column === "in-progress" || linkedTask.column === "in-review" || linkedTask.column === "done" || linkedTask.column === "archived")) {
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (fleet):
+      "The linked card is still live or already finished, so leave this agent alone." Asked by id, a
+      renamed board matched none of the four and every healthy agent looked stranded — this sweep then
+      recovers agents that are working normally.
+
+      Per task here, not the project union: the loop has already awaited `getTask`, so the card's own
+      workflow is the natural and correct scope, and the cache keeps it to one IR read per workflow
+      across the agent list. Over-inclusion stays the safe direction — an extra column means an agent is
+      left running rather than recovered out from under live work.
+      */
+      const linkedColumns = linkedTask
+        ? await this.resolveMoveFanoutColumnsFor(linkedTask.id, linkedTaskColumnCache)
+        : undefined;
+      if (
+        linkedTask
+        && linkedColumns
+        && (linkedColumns.wip.has(linkedTask.column)
+          || linkedColumns.review.has(linkedTask.column)
+          || linkedColumns.complete.has(linkedTask.column)
+          || linkedColumns.archived.has(linkedTask.column))
+      ) {
         continue;
       }
 
