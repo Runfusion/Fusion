@@ -14,7 +14,32 @@ import { findLaneAcceptingFunctions, findUnwiredCallSites } from "./lib/lane-wir
 
 const ROOT = process.cwd();
 const BASELINE = join(ROOT, "scripts/lib/lane-wiring-baseline.json");
-const ROOTS = ["packages/core/src", "packages/engine/src", "packages/dashboard/src", "packages/cli/src"];
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-24:00:
+`packages/dashboard/app` and `plugins` are scanned, and `.tsx` counts — their absence was the
+blind spot the OLDER guard already learned about and this one re-opened.
+
+`unwired-lane-parameter-guard.test.ts` scans exactly six roots including these two, and its note
+records why: an unwired `completeColumnsByTaskId` sat on `main` unreported because the glasses plugin
+was not in the list. Plugins hold real lane logic — they resolve workflow IRs, filter by column, and
+decide what "finished" means — and `dashboard/app` is where the board is actually rendered.
+
+The extension is TWO changes, and either alone still misses most of it: those trees are overwhelmingly
+`.tsx`, which the file filter below excluded, so adding the roots without the extension would have
+scanned a handful of files and reported a reassuring near-zero.
+
+Measured on the widened scan: 9 further call sites, none of which any gate could see before. They are
+recorded in the baseline rather than fixed here — they span three other batches — and audited in the
+PR that widened this, because baselining a site nobody looked at is how a ratchet becomes decoration.
+*/
+const ROOTS = [
+  "packages/core/src",
+  "packages/engine/src",
+  "packages/dashboard/src",
+  "packages/dashboard/app",
+  "packages/cli/src",
+  "plugins",
+];
 
 function sources(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -22,7 +47,12 @@ function sources(dir, out = []) {
     if (statSync(p).isDirectory()) {
       if (entry === "__tests__" || entry === "node_modules" || entry === "dist") continue;
       sources(p, out);
-    } else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts") && !entry.includes(".test.")) {
+    } else if (
+      (entry.endsWith(".ts") || entry.endsWith(".tsx"))
+      && !entry.endsWith(".d.ts")
+      && !entry.includes(".test.")
+      && !entry.includes(".spec.")
+    ) {
       out.push(p);
     }
   }
