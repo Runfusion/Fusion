@@ -72,6 +72,36 @@ function extractAriaLabelValues(text: string): string[] {
   return values;
 }
 
+/*
+FNXC:Accessibility 2026-07-30-21:10:
+THE ROLE WORD CAN ALSO SIT INSIDE THE TRANSLATED DEFAULT, and the end-of-value scan cannot see it.
+
+`ariaLabel={t("scripts.title", "Scripts dialog")}` renders the accessible name "Scripts dialog" —
+the identical defect — but the value does not END in the role word: a `")` closes the call after it.
+The suffix form above was the shape the original thirteen had; this is the shape the NEXT one takes,
+because the rendered label is the translator's default string and "dialog" reads as part of the title
+to whoever writes it.
+
+Found by mutation against the shipped guard: re-adding the role word in this position left the suite
+green. So each quoted literal that is actually RENDERED is checked with the same matcher, not just
+the whole value.
+
+I18N KEYS ARE EXCLUDED, or this would fire on every `t("agents.onboarding.dialogLabel", ...)` — the
+key is an identifier, never announced. Key-shaped means dotted and whitespace-free, which no real
+accessible name is.
+*/
+const KEY_SHAPED = /^[A-Za-z0-9_$-]+(\.[A-Za-z0-9_$-]+)+$/;
+
+function renderedLiterals(value: string): string[] {
+  const literals = value.match(/"[^"]*"|'[^']*'/g) ?? [];
+  return literals.filter((literal) => !KEY_SHAPED.test(literal.slice(1, -1)));
+}
+
+/** Every string a screen reader could end up announcing for one `ariaLabel` call site. */
+function announceableParts(value: string): string[] {
+  return [value, ...renderedLiterals(value)];
+}
+
 function componentSources(): { file: string; text: string }[] {
   return readdirSync(COMPONENTS_DIR)
     .filter((name) => name.endsWith(".tsx"))
@@ -105,13 +135,24 @@ describe("a FloatingWindow's accessible name never restates its role", () => {
     ["ariaLabel={`Settings dialog`}", true, "quote-free template literal"],
     ['ariaLabel="Git Manager dialog"', true, "plain string"],
     ["ariaLabel={`Node details modal`}", true, "'modal' is equally redundant"],
+    /* THE SECOND POSITION: inside the translated default, where the value does not end in the role
+       word. These are the cases the suffix-only matcher was blind to. */
+    ['ariaLabel={t("scripts.title", "Scripts dialog")}', true, "role word inside the t() default"],
+    ['ariaLabel={`${t("scripts.title", "Scripts modal")}`}', true, "inside the default, interpolated"],
+    ['ariaLabel={t("git.title", "Git Manager dialog", { repo })}', true, "default followed by an options arg"],
     ['ariaLabel={t("settings.title", "Settings")}', false, "the fixed form — a bare t() call"],
+    /* The KEY of a t() call routinely contains the word and is never announced — flagging it would
+       make the guard unusable, and one such key is live in the tree today. */
+    ['ariaLabel={t("agents.onboarding.dialogLabel", "AI Interview")}', false, "role word in the KEY only"],
+    ['ariaLabel={t("nodes.detail.modal", "Node details")}', false, "key ends in a role word"],
     ['ariaLabel={`${t("nodes.addNode", "Add Node")}`}', false, "interpolation with no suffix"],
     ['ariaLabel="Settings"', false, "a clean literal"],
     ['ariaLabel="Dialog settings"', false, "role word present but not trailing"],
     ['ariaLabel="Windows update"', false, "'Windows' merely contains a role word"],
   ])("matcher: %s -> %s (%s)", (source, shouldFlag) => {
-    const flagged = extractAriaLabelValues(source).some((v) => ROLE_WORD_AT_END.test(v));
+    const flagged = extractAriaLabelValues(source)
+      .flatMap(announceableParts)
+      .some((part) => ROLE_WORD_AT_END.test(part));
     expect(flagged).toBe(shouldFlag);
   });
 
@@ -119,7 +160,9 @@ describe("a FloatingWindow's accessible name never restates its role", () => {
     const offenders: string[] = [];
     for (const { file, text } of componentSources()) {
       for (const value of extractAriaLabelValues(text)) {
-        if (ROLE_WORD_AT_END.test(value)) offenders.push(`${file}: ${value.slice(0, 100)}`);
+        if (announceableParts(value).some((part) => ROLE_WORD_AT_END.test(part))) {
+          offenders.push(`${file}: ${value.slice(0, 100)}`);
+        }
       }
     }
     expect(
