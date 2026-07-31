@@ -867,10 +867,18 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
   This asserts that outcome rather than a log line — the observable is stronger and does not depend on
   wording.
 
-  REVERT CHECK, measured: with the fallback narrowed back to the legacy ids, this fails — the classifier
-  is never called for a card whose own workflow cannot be read.
+  SUPERSEDED 2026-07-30 (#2891 review, second round): this asserted that the card IS classified, which
+  was true of the project-union fallback I shipped first and is no longer the behaviour. Review pushed
+  back that widening on an ACTION site — these verdicts clear a contamination pause — lets a column
+  carrying a recovery role only in ANOTHER workflow admit this card. The union was replaced by
+  skip-and-report: without the card's own board we do not decide, and the card is logged so it is
+  visible rather than silently mis-decided in either direction.
+
+  So the assertion is inverted rather than deleted. What it now pins is the same property from the
+  other side — a renamed-lane card with no resolvable workflow must NOT be acted on — and it still
+  fails if someone restores either earlier answer, because both of those classify it.
   */
-  it("still classifies a renamed-lane card whose own workflow cannot be resolved", async () => {
+  it("does NOT classify a renamed-lane card whose own workflow cannot be resolved", async () => {
     const parked = {
       ...shippedCard(),
       id: "FN-NOWORKFLOW",
@@ -889,6 +897,6 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverForeignOnlyContaminatedInReviewTasks();
 
-    expect(classifyForeignOnlyContamination).toHaveBeenCalledWith(expect.objectContaining({ taskId: "FN-NOWORKFLOW" }));
+    expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
 });

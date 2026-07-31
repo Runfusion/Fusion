@@ -1,7 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/engine/src/self-healing.ts": 87,
+    "packages/engine/src/self-healing.ts": 84,
     "packages/engine/src/scheduler.ts": 12,
     "packages/engine/src/executor.ts": 8,
     "packages/core/src/task-store/async-comments-attachments.ts": 6,
@@ -128,7 +128,7 @@
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 35,
+    "packages/engine/src/self-healing.ts": 32,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
     "packages/core/src/async-mission-store.ts": 1,
@@ -136,7 +136,6 @@
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
     "packages/engine/src/agent-tools.ts": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1,
-    "packages/engine/src/workflow-node-handlers.ts": 1
+    "packages/engine/src/auto-merge-finalization.ts": 1
   }
 }
