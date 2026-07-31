@@ -536,7 +536,24 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         addToast(getErrorMessage(err), "error");
       }
     }
-  }, [addToast, allTasks, column, confirm, onMoveTask, tasks, t]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-00:40:
+  `columnFlags` BELONGS IN THIS LIST — the drop handler asks it whether this lane is pre-implementation.
+
+  `shouldPrompt` gates the "Preserve Progress?" confirmation on
+  `isPreImplementationColumnRole(columnFlags, column)`. The flags arrive after first paint, and
+  `useCallback` without them in its deps hands the DOM the closure built during the pre-load render.
+  In that closure the helper falls back to `LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS`, which does not
+  contain a renamed intake/hold lane — so `shouldPrompt` is false and a card with completed steps is
+  moved WITHOUT asking, silently resetting progress the user was meant to be offered a choice about.
+
+  SEVERITY, STATED HONESTLY: `allTasks` and `tasks` are in this list and change identity on any
+  task-list refresh, so the stale closure is rebuilt within seconds on an active board — a window,
+  not a permanent wrong answer, like the near-duplicate chip and unlike the TaskCard ticker whose
+  refreshing dependency fired only at local midnight. The window is exactly the quiet gap after the
+  traits land, and a drop inside it loses work without a prompt.
+  */
+  }, [addToast, allTasks, column, columnFlags, confirm, onMoveTask, tasks, t]);
 
   /*
   FNXC:BoardPromote 2026-07-25-04:55:
