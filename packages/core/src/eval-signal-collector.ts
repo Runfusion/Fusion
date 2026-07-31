@@ -110,6 +110,25 @@ export function collectDeterministicSignals(task: TaskDetail, _run: EvalRunConte
 
   return {
     taskId: task.id,
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:10 (fleet — FLAGGED, deliberately NOT converted):
+    REAL but narrow, and converting it here would create a worse defect than it fixes.
+
+    The GUARD is a genuine lane question: on a board whose archive lane is renamed, a card resting in
+    it takes the `: "done"` arm, so archived work is reported to evals as COMPLETED. The written value
+    is not the defect — `"archived"`/`"done"` is this signal's own two-state vocabulary, not a board
+    column id, so it must stay a literal in any conversion.
+
+    Not converted because `collectDeterministicSignals` has NO production caller. Measured, not
+    assumed: the only references outside this file are the `index.ts` / `index.gate.ts` re-exports and
+    `__tests__/eval-signal-collector.test.ts`. Threading an optional `archivedColumns` in would
+    therefore be an optional lane parameter that nobody supplies — exactly the shape
+    `scripts/check-inert-flag-seams.mjs` exists to block, and which its own header calls "strictly
+    worse than the literal, because the literal is at least honest and the census keeps pointing here".
+
+    Convert it in the change that gives this function its first real caller, resolving the archive lane
+    from that caller's store, and drop this note then.
+    */
     column: task.column === "archived" ? "archived" : "done",
     executionStartedAt: task.executionStartedAt,
     executionCompletedAt: task.executionCompletedAt,
