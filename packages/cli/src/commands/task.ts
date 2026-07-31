@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, installBaselineArchiveWorktreeDisposer } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -23,6 +23,34 @@ const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"
  *  workflow-defined custom columns that have no legacy label. */
 function columnLabel(column: ColumnId): string {
   return (COLUMN_LABELS as Record<string, string>)[column] ?? column;
+}
+
+/*
+FNXC:CliBoardVocabulary 2026-07-30-24:40:
+The lanes `fn task list` prints, derived from the CARDS rather than from the legacy enum.
+
+`runTaskList` iterated the six-id `COLUMNS` constant and filtered `t.column === col`, so a task in a
+workflow-defined column matched no iteration and was NOT PRINTED. Not a wrong label — the card is
+absent, and the output reads as a shorter, healthy board rather than as a bug. A fully renamed board
+prints nothing but the header.
+
+Derived from the tasks, not from a resolved IR, deliberately: a board can span several workflows and
+therefore has no single column list, and a card must never depend on a resolution succeeding in order
+to be VISIBLE. Legacy ids keep their familiar order; anything else follows alphabetically, so output
+is deterministic.
+
+Exported for test: `runTaskList` itself resolves a real project context and ends in `process.exit`,
+so covering it end-to-end would need a mock-the-world shell — the shape `docs/testing.md` tells us to
+avoid when a narrower seam exists. This IS the seam: it is the whole decision about which lanes appear.
+*/
+export function boardColumnsForDisplay(tasks: ReadonlyArray<{ column: ColumnId }>): ColumnId[] {
+  const legacyOrder = (id: string) => {
+    const index = (COLUMNS as readonly string[]).indexOf(id);
+    return index === -1 ? COLUMNS.length : index;
+  };
+  return [...new Set(tasks.map((t) => t.column))].sort((a, b) =>
+    legacyOrder(a) === legacyOrder(b) ? String(a).localeCompare(String(b)) : legacyOrder(a) - legacyOrder(b),
+  );
 }
 
 // Register GitHub tracking hook so CLI task creation paths (add, duplicate,
@@ -604,11 +632,41 @@ export async function runTaskList(projectName?: string) {
     console.log();
   }
 
-  for (const col of COLUMNS) {
+  /*
+  FNXC:CliBoardVocabulary 2026-07-30-24:40:
+  Iterate the columns the BOARD has, not the legacy six — a renamed card was not printed AT ALL.
+
+  This loop ran `for (const col of COLUMNS)` and filtered `t.column === col`, so any task in a
+  workflow-defined column matched no iteration and `fn task list` silently omitted it. Not a wrong
+  label or a wrong glyph: the card is absent, and the output looks like a shorter, healthy board.
+  On a fully renamed board the command prints nothing but the header.
+
+  The glyph note directly above predicted exactly this ("If this ever iterates workflow-resolved
+  columns, that difference becomes live and the right answer is a trait lookup, not this") and left
+  the deeper bug named as R8/U10 surface work. It is fixed here because the two cannot be separated:
+  once the loop can yield a custom id, the terminal test below MUST stop being an id comparison.
+
+  Columns come from the TASKS rather than from a resolved IR, so every card is rendered whatever its
+  workflow — a board spanning several workflows has no single column list, and a card must never
+  depend on resolution succeeding to be visible. Legacy ids keep their familiar order and labels;
+  anything else follows, alphabetically, so the output is deterministic.
+
+  Terminal lanes ARE resolved, because that is a display question with a real answer and this
+  function is async with a store in hand. Best-effort: a failed resolve falls back to the legacy
+  pair rather than failing the command, and an unresolved custom lane renders as active — the same
+  fail-open direction used elsewhere, since showing a finished card with the wrong glyph is a far
+  smaller error than the blank board this replaces.
+  */
+  const terminalColumns = await resolveProjectColumnsForRoles(
+    context.store as Parameters<typeof resolveProjectColumnsForRoles>[0],
+    TERMINAL_ROLES,
+  ).catch(() => undefined);
+
+  for (const col of boardColumnsForDisplay(tasks)) {
     const colTasks = tasks.filter((t) => t.column === col);
     if (colTasks.length === 0) continue;
 
-    const label = COLUMN_LABELS[col];
+    const label = columnLabel(col);
     /*
     FNXC:CliBoardGlyph 2026-07-29-22:40 (lifecycle-column vocabulary):
     All four non-terminal columns rendered the SAME glyph, so the four id comparisons
@@ -630,11 +688,10 @@ export async function runTaskList(projectName?: string) {
     ALL. That is the R8/U10 surface change (no surface derives its column set from the
     legacy enum) and a far bigger fix than this glyph.
     */
-    /* DELIBERATE-LITERAL: `col` comes from the legacy `COLUMNS` enum this loop iterates, so the literal
-       matches its own receiver by construction. The real defect is named in the comment above — a card in a
-       workflow-renamed column is not rendered at all — and converting this glyph would hide that behind a
-       trait lookup while the loop still cannot see the card. Retires with the loop. */
-    const dot = col === "done" || col === "archived" ? "○" : "●";
+    /* The "retires with the loop" condition above is now met: `col` can be a custom id, so the terminal
+       test is a resolved-lane membership check. DELIBERATE-LITERAL only as the degraded fallback when the
+       resolve failed, which is the documented unconverted-caller default. */
+    const dot = (terminalColumns ? terminalColumns.has(col) : col === "done" || col === "archived") ? "○" : "●";
 
     console.log(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
