@@ -40,26 +40,6 @@ import {
 import type { ArchivedTaskEntry } from "../types.js";
 
 /**
- * FNXC:TaskStoreArchiveLineage 2026-06-24-07:05:
- * The "live parent" predicate for the document/artifact visibility gate
- * (VAL-CROSS-015). Documents and artifacts scoped to a task are surfaced in
- * live views only when their parent task is live: `deleted_at IS NULL` (not
- * soft-deleted) AND `column != 'archived'` (not archived). When the parent is
- * archived or soft-deleted, the rows are retained but filtered out of live
- * views — they remain for an unarchive/restore.
- *
- * This predicate is the join condition for `task_documents` / `artifacts` →
- * `tasks`. It is the async equivalent of the sync
- * `taskExists && taskExists.column !== 'archived'` check in
- * `upsertTaskDocument` and the `hasActiveTask` gate in `getTaskDocument`.
- */
-export function liveParentFilter(taskIdColumn: ReturnType<typeof eq>) {
-  // The caller passes an equality fragment like eq(schema.project.tasks.id, taskId).
-  // We compose the live-parent conditions on top.
-  return and(taskIdColumn, ACTIVE_TASK_FILTER, sql`${schema.project.tasks.column} != 'archived'`);
-}
-
-/**
  * FNXC:TaskStoreArchiveLineage 2026-06-24-07:10:
  * Upsert an archived-task snapshot into the cold-storage archive schema
  * (`archive.archived_tasks`). This is the async equivalent of
