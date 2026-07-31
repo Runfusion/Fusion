@@ -69,7 +69,28 @@ function collectCommitSummary(task: TaskDetail): DeterministicSignals["commitSum
   };
 }
 
-export function collectDeterministicSignals(task: TaskDetail, _run: EvalRunContext): DeterministicSignals {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
+`archivedColumns` is an optional RESOLVED answer supplied by the caller; omitted, the `archived`
+literal answers exactly as before.
+
+This collector is SYNC and pure — no store, no workflow — so the lane answer has to arrive as a
+parameter. `HybridEvaluatorService.evaluateTask` is async and already holds an optional store, which
+is where the resolution is paid.
+
+WHAT THE LITERAL COST. `column` is a two-value eval-record field, so a renamed ARCHIVE lane was
+recorded as `"done"`. Not a crash and not a lifecycle decision — a mislabelled row in the eval
+corpus, which is a dataset every later comparison reads. Wrong labels in evaluation data are quiet
+in exactly the way that makes them expensive: nothing fails, the numbers just drift.
+
+A renamed COMPLETE lane is unaffected either way — it was, and remains, `"done"`, which is correct.
+Only the archived arm was ever wrong, so only it is resolved.
+*/
+export function collectDeterministicSignals(
+  task: TaskDetail,
+  _run: EvalRunContext,
+  options?: { archivedColumns?: ReadonlySet<string> },
+): DeterministicSignals {
   const workflowSummary = countWorkflow(task.workflowStepResults);
   const logSummaryWithEvidence = summarizeLogs(task.log ?? []);
   const commitSummary = collectCommitSummary(task);
@@ -110,7 +131,9 @@ export function collectDeterministicSignals(task: TaskDetail, _run: EvalRunConte
 
   return {
     taskId: task.id,
-    column: task.column === "archived" ? "archived" : "done",
+    column: (options?.archivedColumns ? options.archivedColumns.has(task.column) : task.column === "archived")
+      ? "archived"
+      : "done",
     executionStartedAt: task.executionStartedAt,
     executionCompletedAt: task.executionCompletedAt,
     timedExecutionMs: task.timedExecutionMs,

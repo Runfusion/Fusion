@@ -1128,6 +1128,24 @@ export class Scheduler {
         this.lastAutoClaimFingerprint.set(task.id, nextFingerprint);
         this.options.snapshotManager?.invalidate("task:updated");
       }
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-23:58 (FLAGGED AND LEFT COUNTED — do NOT convert with
+      `resolveTaskParkedColumnsSync`):
+      This literal and the `in-review` one further down are the two the sync-lane pass did not take,
+      and nothing in this file said why. Converting them the way the other ten were converted would
+      make them INERT, not fixed: `getTaskWorkflowSelectionImpl` returns `undefined` unconditionally
+      under PostgreSQL, so `resolveTaskWorkflowIrSync` always answers with the DEFAULT builtin IR and
+      every lane it yields is the legacy id (proved in `postgres/sync-workflow-ir-is-always-default.pg.test.ts`;
+      `check-inert-sync-lane-conversions` baselines the twenty guards already in that state here).
+
+      They stay literal and COUNTED, which is the honest state: an unconverted literal is at least
+      visible to the census, while an inert conversion leaves the backlog and takes the evidence with
+      it. Both live in a synchronous `task:updated` listener, so the async resolver is unavailable
+      without reordering this handler against every other subscriber.
+
+      Unblocking needs a sync-capable workflow-selection reader — one change that un-inerts every
+      sync-path conversion in this file at once.
+      */
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
         if (task.column === "in-progress") this.failedTaskIds.add(task.id);
@@ -1204,6 +1222,8 @@ export class Scheduler {
       }
 
       if (!this.options.prMonitor) return;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-23:58: the second of the two honest literals — see
+         the note on the mission-failure guard above for why converting it here would be inert. */
       if (task.column !== "in-review") return;
       if (!task.prInfo) return;
 
