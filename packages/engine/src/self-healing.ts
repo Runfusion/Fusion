@@ -5419,6 +5419,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private async autoReboundPausedScopeDecayDetailed(options?: { ignoreAgeGate?: boolean }): Promise<{ count: number; reboundedIds: string[] }> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return { count: 0, reboundedIds: [] };
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
+      const scopeDecayWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
 
     const thresholdMs = Number(settings.pausedScopeDecayMs ?? 0);
     if (!options?.ignoreAgeGate && (!Number.isFinite(thresholdMs) || thresholdMs <= 0)) {
@@ -5435,7 +5437,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const now = Date.now();
     const reboundedIds: string[] = [];
     for (const task of tasks) {
-      if (task.column !== "in-progress" || task.paused !== true) continue;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved WIP membership — a paused card in a
+         renamed build lane still decays. */
+      if (!scopeDecayWipColumns.has(task.column) || task.paused !== true) continue;
       if (SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS.has(task.pausedReason ?? "")) continue;
       const followerCount = followersByHolder.get(task.id) ?? 0;
       if (followerCount <= 0) continue;
@@ -6326,6 +6330,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileCompletedBlockedTasks(): Promise<number> {
     const settings = await this.store.getSettings();
     if (settings.globalPause || settings.enginePaused) return 0;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
+      const completedBlockedWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
     if (!this.options.recoverCompletedTask) return 0;
 
     let tasks: Task[] = [];
@@ -6341,7 +6347,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     let recovered = 0;
     for (const snapshot of tasks) {
       if (snapshot.deletedAt) continue;
-      if (snapshot.column !== "todo") continue;
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved waiting membership (hold u intake) —
+         the pre-implementation pair `moves.ts` documents. */
+      if (!completedBlockedWaitingColumns.has(snapshot.column)) continue;
       if (snapshot.paused !== true || snapshot.pausedReason !== COMPLETED_BLOCKED_PAUSE_REASON) continue;
       if (snapshot.userPaused === true) continue;
       if (!allowsAutoMergeProcessing(snapshot, settings)) continue;
@@ -7329,6 +7337,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
   async reconcileOrphanedPendingStepResults(): Promise<number> {
     try {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
+      const orphanedStepWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
       const pageSize = 500;
       let offset = 0;
       let recovered = 0;
@@ -7349,14 +7359,16 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           // An operator park is authoritative; this sweep must not reach through it.
           if (task.userPaused === true) continue;
           // Executor-owned rows: resume is deferred at startup, liveness unprovable here.
-          if (task.column === "in-progress") continue;
+        /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved WIP membership — an executor-owned
+           card in a renamed build lane must be skipped here too. */
+        if (orphanedStepWipColumns.has(task.column)) continue;
           if (!task.workflowStepResults?.some((result) => result.status === "pending")) continue;
           if (isSessionLive(task.id)) continue;
 
           // Re-read the live row before mutating: the page snapshot can be stale against
           // a merger/planner that wrote a fresh pending lease after the page was fetched.
           const fresh = await this.store.getTask(task.id);
-          if (!fresh || fresh.userPaused === true || fresh.column === "in-progress") continue;
+        if (!fresh || fresh.userPaused === true || orphanedStepWipColumns.has(fresh.column)) continue;
           /*
           FNXC:WorkflowReviewGates 2026-07-26-15:50:
           Honor a LIVE review-gate lease, not just in-process session liveness.
@@ -11277,7 +11289,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
-    if (task.column !== "in-review") return false;
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved review membership, per task — this is a
+       per-card predicate rather than a sweep, so it resolves for the task it is judging. */
+    const strandedAiMergeReviewColumns = await this.resolveReviewColumnsFor(task.id, new Map());
+    if (!strandedAiMergeReviewColumns.has(task.column)) return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
     if (!this.hasApprovedAiMergeReview(task)) return false;
     if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -12034,6 +12049,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * paused, currently executing, or whose error is not the pause-abort park.
    */
   async recoverPausedAbortFailures(): Promise<number> {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
+      const pausedAbortReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
     try {
       // FNXC:WorkflowLifecycle 2026-06-20-00:00: self-guard against global/engine
       // pause at the method entry, not just the batch-2 runner. This method is
@@ -12152,7 +12169,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
           await this.store.logEntry(
             task.id,
-            fresh.column === "in-review"
+      pausedAbortReviewColumns.has(fresh.column)
               ? "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression"
               : "Auto-recovered: pause-abort park cleared — requeued for normal scheduling",
           );
@@ -14153,6 +14170,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
   async recoverStarvedRefinementTriageTasks(): Promise<number> {
     try {
+      /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
+      const starvedWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
       this.options.evictStaleTriageProcessing?.();
 
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
@@ -14179,7 +14198,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const peerProgressCount = tasks.filter((peer) =>
           peer.id !== task.id &&
-          peer.column === "todo" &&
+      starvedWaitingColumns.has(peer.column) &&
           peer.sourceType !== "task_refine" &&
           new Date(peer.updatedAt).getTime() > createdAtMs,
         ).length;
@@ -14200,7 +14219,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const createdAtMs = new Date(task.createdAt).getTime();
           const peerProgressCount = tasks.filter((peer) =>
             peer.id !== task.id &&
-            peer.column === "todo" &&
+      starvedWaitingColumns.has(peer.column) &&
             peer.sourceType !== "task_refine" &&
             new Date(peer.updatedAt).getTime() > createdAtMs,
           ).length;

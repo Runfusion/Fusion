@@ -3,12 +3,16 @@
   "byFile": {
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     "packages/engine/src/self-healing.ts": 138,
 =======
     "packages/engine/src/self-healing.ts": 40,
 =======
     "packages/engine/src/self-healing.ts": 31,
 >>>>>>> 04c4299026 (fleet(engine): convert the agent-link and merge-worktree lane guards (40 -> 31))
+=======
+    "packages/engine/src/self-healing.ts": 23,
+>>>>>>> 4b3a28475a (fleet(engine): convert eight more sweep guards (31 -> 23))
     "packages/engine/src/scheduler.ts": 12,
     "packages/engine/src/executor.ts": 7,
 >>>>>>> bf30037f85 (fleet(engine): convert reconcileTaskWorktreeMetadata's lane guards (46 -> 40))
