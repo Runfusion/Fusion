@@ -3223,9 +3223,39 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-09:40 (the query-filter class, twenty-first sweep):
+      Clears a `merging`/`merging-pr` stamp left on a review card with no live merger behind it. The
+      literal read meant that on a renamed board the stamp was never cleared, so the card read as
+      mid-merge forever — and the merge-active stamp is what the merger and the dashboard Retry gate both
+      consult, so the card could neither progress nor be retried by hand.
+
+      The `task.column !== "in-review"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const staleMergeReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const staleMergeById = new Map<string, Task>();
+      for (const column of staleMergeReviewColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) staleMergeById.set(entry.id, entry);
+      }
+      const tasks = [...staleMergeById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const staleMergeLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          staleMergeLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(staleMergeReviewColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          staleMergeLanes.set(entry.id, new Set(staleMergeReviewColumns));
+        }
+      }
       const stale = tasks.filter((task) => {
-        if (task.column !== "in-review" || task.paused) return false;
+        if (!(staleMergeLanes.get(task.id) ?? staleMergeReviewColumns).has(task.column) || task.paused) return false;
         /*
         FNXC:MergeReliability 2026-07-15-21:45 (FN-8004 follow-up):
         Staleness now comes from the shared `isStaleMergeActiveStatus` leaf, which the dashboard's

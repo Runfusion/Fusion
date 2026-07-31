@@ -86,8 +86,9 @@ function productionFaithfulStore(tasks: Task[]) {
     being a ratchet silently.
     */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+    logEntry: vi.fn(async () => undefined),
   }) as unknown as TaskStore & EventEmitter;
-  return { store, listTasks };
+  return { store, listTasks, updateTask: store.updateTask as unknown as ReturnType<typeof vi.fn> };
 }
 
 function shippedCard(): Task {
@@ -719,5 +720,54 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     await manager.recoverMergedReviewTasks();
 
     expect(resolveTarget).not.toHaveBeenCalled();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-09:45 (the query-filter class, twenty-first sweep):
+  `recoverStaleMergingStatus` clears a `merging`/`merging-pr` stamp left on a review card with no live
+  merger behind it. The literal read meant that on a renamed board the stamp was never cleared, so the
+  card read as mid-merge forever — and that stamp is what the merger AND the dashboard's manual Retry
+  gate both consult, so the card could neither progress on its own nor be retried by hand.
+
+  `updatedAt` is deliberately ancient: `isStaleMergeActiveStatus` requires the stamp to have sat
+  untouched for `minAgeMs`, so a fresh fixture would be filtered out for a reason unrelated to lanes.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  it("clears a stale merge stamp on a RENAMED review lane", async () => {
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-STALESTAMP",
+      column: RENAMED_VOCAB.review,
+      status: "merging",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([stuck]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-STALESTAMP", expect.objectContaining({ status: null }));
+  });
+
+  it("does not clear a merge stamp on a card outside the RENAMED review lanes", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A
+    merge stamp on a wip card is not this sweep's business — recoverInProgressLimbo and the executor own
+    that lane.
+    */
+    const stuck = {
+      ...shippedCard(),
+      id: "FN-STALESTAMP",
+      column: RENAMED_VOCAB.wip,
+      status: "merging",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store, updateTask } = productionFaithfulStore([stuck]);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
+
+    expect(updateTask).not.toHaveBeenCalled();
   });
 });
