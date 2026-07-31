@@ -13245,7 +13245,7 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       } else if (await this.isPreWipColumn(linkedTask)) {
         const activeRun = await agentStore.getActiveHeartbeatRun(agent.id);
         /*
-        FNXC:WorkflowResolvedColumns 2026-08-01-00:20 (the missed half of a pair):
+        FNXC:WorkflowResolvedColumns 2026-07-31-17:40 (the missed half of a pair):
         `parkedColumns` was NOT passed here while the sibling sweep passes it, so this call fell back
         to LEGACY_PARKED_COLUMNS. The branch is entered on a RESOLVED question (`isPreWipColumn`) and
         then decided on a literal one, so the two disagreed on a renamed board: the card is pre-wip,

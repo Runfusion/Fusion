@@ -261,7 +261,7 @@ describe("FN-4296: self-healing agent link drift", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-08-01-00:25:
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
   THE PRESERVATION BRANCH WAS DECIDED ON LEGACY IDS while its GATE was already resolved.
 
   `recoverDriftedAgentTaskLinks` enters this branch via `isPreWipColumn` (resolved) and then called
