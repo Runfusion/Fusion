@@ -348,6 +348,25 @@ const todoIsReviewIr = {
   ],
 };
 
+/*
+FNXC:GlassesAgentActions 2026-07-30-22:35:
+THE ARITY CONTRACT: a `moveTask` assertion must spell the move SOURCE, and which source is not uniform.
+
+`startWork`, `requestReview` and `approvePlan` pass `{ moveSource: "user" }` — the wearer's tap is a
+human gesture, matching the dashboard move route. `returnToAgent` and `retryTask` deliberately DO NOT:
+per the Move-Task contract a user-source move parks the row `userPaused`, which would defeat the
+return/retry intent. So the correct assertion differs per action and cannot be applied uniformly.
+
+Why this is written down: when the option was added to the three user-source actions, the assertions
+here kept the two-argument form and 15 tests went red on `main` — this suite sits outside the merge
+gate, so nothing blocked it. Worse, the two-argument form is not merely stale in the NEGATIVE case,
+it is DEAD: `expect(fn).not.toHaveBeenCalledWith(id, column)` cannot match a three-argument call, so
+it passes whether or not the forbidden move happened. Verified rather than assumed — a scratch case
+calling `fn("FN-1","in-review",{moveSource:"user"})` still satisfied the two-argument `.not`.
+
+`requestReview`'s "never lands on the legacy `in-review`" guard was one of those, asserting nothing
+since the option landed. Add the option to any new assertion here, or the guard is decoration.
+*/
 describe("resolved lanes drive destinations, not just gates", () => {
   it("startWork moves a renamed card to the workflow's OWN wip column", async () => {
     // Pre-fix: admitted, then moved to the literal `in-progress` — a column this
@@ -356,7 +375,7 @@ describe("resolved lanes drive destinations, not just gates", () => {
 
     const result = await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
     expect(result.task.column).toBe("building");
   });
 
@@ -368,7 +387,7 @@ describe("resolved lanes drive destinations, not just gates", () => {
 
     await approvePlan({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "backlog", { moveSource: "user" });
   });
 
   /*
@@ -389,8 +408,8 @@ describe("resolved lanes drive destinations, not just gates", () => {
 
     await requestReview({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "checking");
-    expect(deps.moveTask).not.toHaveBeenCalledWith("FN-1", "in-review");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "checking", { moveSource: "user" });
+    expect(deps.moveTask).not.toHaveBeenCalledWith("FN-1", "in-review", { moveSource: "user" });
   });
 
   it("requestReview still refuses a renamed card that is not in the wip lane", async () => {
@@ -444,7 +463,7 @@ describe("resolved lanes drive destinations, not just gates", () => {
     const deps = createResolvingDeps(makeTask({ column: "todo", status: null }), renamedIr);
 
     await expect(startWork({ taskId: "FN-1" }, deps as never)).resolves.toBeTruthy();
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
   });
 });
 
@@ -503,7 +522,7 @@ describe("a declared column is declared even when it carries no role", () => {
 
     await startWork({ taskId: "FN-2" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-2", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-2", "building", { moveSource: "user" });
   });
 });
 
@@ -547,7 +566,7 @@ describe("a missing destination role conflicts instead of inventing a column", (
 
     await approvePlan({ taskId: "FN-5" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-5", "todo");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-5", "todo", { moveSource: "user" });
   });
 });
 
@@ -602,7 +621,7 @@ describe("a legacy destination may only fill a role the workflow leaves empty", 
 
     await approvePlan({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo", { moveSource: "user" });
   });
 });
 
@@ -650,7 +669,7 @@ describe("a legacy id is not a destination once the workflow speaks columns", ()
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
   });
 
   it("keeps the legacy destination when the workflow cannot be resolved at all", async () => {
@@ -661,7 +680,7 @@ describe("a legacy id is not a destination once the workflow speaks columns", ()
 
     await approvePlan({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "todo", { moveSource: "user" });
   });
 });
 
@@ -716,7 +735,7 @@ describe("a card whose custom workflow cannot be read is refused, not treated as
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
   });
 
   it("does NOT refuse a store that cannot answer at all (the migration case)", async () => {
@@ -726,7 +745,7 @@ describe("a card whose custom workflow cannot be read is refused, not treated as
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress", { moveSource: "user" });
   });
 });
 
@@ -769,7 +788,7 @@ describe("an action reads the workflow once, not three times", () => {
     // One read backs the degraded verdict, the lanes AND the declared columns. Three reads was the
     // bug: they could disagree with each other.
     expect((deps as unknown as { reads: { definition: number } }).reads.definition).toBe(1);
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
   });
 
   it("refuses when the definition read throws mid-action", async () => {
@@ -840,7 +859,7 @@ describe("degraded means the definition read failed, not that the IR looks diffe
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "building", { moveSource: "user" });
   });
 
   it("refuses when the custom definition row is missing", async () => {
@@ -866,7 +885,7 @@ describe("degraded means the definition read failed, not that the IR looks diffe
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress", { moveSource: "user" });
   });
 });
 
@@ -953,6 +972,6 @@ describe("a stored string IR still resolves lanes", () => {
 
     await startWork({ taskId: "FN-1" }, deps as never);
 
-    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress");
+    expect(deps.moveTask).toHaveBeenCalledWith("FN-1", "in-progress", { moveSource: "user" });
   });
 });
