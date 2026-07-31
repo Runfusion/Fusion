@@ -38,20 +38,20 @@ import type { Settings, Task, TaskStore } from "@fusion/core";
 import { getTaskHardMergeBlocker, resolveLifecycleColumns } from "@fusion/core";
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-04:40:
+FNXC:WorkflowResolvedColumns 2026-07-30-21:40:
 `classifyForeignOnlyContamination` is a STATIC named import in the sweep, so `vi.spyOn` on the module
 object cannot intercept it under ESM — the binding is already resolved. Only the other named exports are
 passed through, so the sweeps in this file that use `inspectBranchConflict` are unaffected.
 */
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-05:45:
+FNXC:WorkflowResolvedColumns 2026-07-30-21:40:
 The sweep logs through `createLogger("self-healing")`, which writes to console.error. Spying on
 console.error does NOT work here — vitest installs its own console interceptor above the spy, so the
 line appears in the run output while the spy records nothing (it did, and read as "no warn emitted").
 Mocking the logger module captures the call itself, one level below the console.
 */
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-18:40 (batch fold):
+FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch fold):
 `isBranchAheadOfBase` is a STATIC named import that shells out to git, so it is mocked rather than spied —
 the ESM binding is resolved before a spy could replace it.
 */
@@ -693,7 +693,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(pastBlocker).toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:15 (the query-filter class, fifteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, fifteenth sweep):
   `recoverMergedReviewTasks` finalizes a task whose merge is CONFIRMED but which never reached the
   complete lane. Two literal reads meant that on a renamed board the card sat in review or hold forever
   while its commit was already on the base branch — merged work that the board still shows as unfinished.
@@ -754,7 +754,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(resolveTarget).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-09:45 (the query-filter class, twenty-first sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-first sweep):
   `recoverStaleMergingStatus` clears a `merging`/`merging-pr` stamp left on a review card with no live
   merger behind it. The literal read meant that on a renamed board the stamp was never cleared, so the
   card read as mid-merge forever — and that stamp is what the merger AND the dashboard's manual Retry
@@ -801,7 +801,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:35 (the query-filter class, fourteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, fourteenth sweep):
   `recoverForeignOnlyContaminatedInReviewTasks` classifies a branch that carries ONLY foreign commits and
   clears the contamination park nothing else clears. Two literal reads meant that on a renamed board it
   classified nothing and the task stayed parked indefinitely.
@@ -853,7 +853,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(classifyForeignOnlyContamination).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-05:50 (#2891 review P1 — the card the sweep disowned):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2891 review P1 — the card the sweep disowned):
   `resolveWorkflowIrForTask` does not fail; it SUBSTITUTES the built-in IR. So a card whose workflow
   selection is missing or unreadable came back measured against `in-review`/`in-progress`, and the
   per-card verdicts then REJECTED the very card the project-scoped query had just admitted from a renamed
@@ -952,7 +952,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-00:50 (the query-filter class, eleventh sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, eleventh sweep):
   `clearStaleBlockedBy` is the sweep that unsticks a card still pointing at a blocker that has since
   finished. Its BODY was already lane-resolved — per-referenced-task lanes, a shared IR cache, legacy ids
   unioned, all of it — and none of that ran, because the three reads above it asked for the literal
@@ -1001,7 +1001,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:35 (the query-filter class, twelfth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twelfth sweep):
   `reclaimSelfOwnedBranchConflicts` frees a task whose OWN worktree is holding its OWN branch hostage —
   a conflict no other sweep resolves. Three literal reads plus three lane guards in the body, so both
   halves convert together: widening the read alone would admit renamed-board cards and then mis-decide
@@ -1076,7 +1076,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(isPhantomExecutorBinding).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:50 (review P1 on #2879 — the hazard the conversion CREATED):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (review P1 on #2879 — the hazard the conversion CREATED):
   The three literal reads were disjoint BY CONSTRUCTION: one column each, so a card could not appear
   twice. Resolved reads are not. A custom workflow may put more than one queried role flag on the SAME
   column — here `hold` beside `wip`, a lane that both parks work and counts as work — and that column is
@@ -1125,7 +1125,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(isPhantomExecutorBinding).toHaveBeenCalledTimes(1);
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (the query-filter class, thirteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirteenth sweep):
   `reconcileCompletedTask` releases everything blocked on a task that just completed. Three literal reads
   meant that on a renamed board it released NOTHING — every dependent stayed blocked on work that had
   already finished. This is the most visible form of the class: the board simply stops moving, with no
@@ -1172,7 +1172,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: null }));
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-04:10 (the P1 raised on #2879, same hazard in this sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the P1 raised on #2879, same hazard in this sweep):
   Resolved reads can return ONE column for TWO roles, so a dependent lands in two buckets and the release
   below runs twice — `updateTask` and `logEntry` both fire twice for one card, and `blockedByCleared`
   over-counts. The literal reads could not do this: one column each, disjoint by construction.
@@ -1209,7 +1209,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(clearingWrites).toHaveLength(1);
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-05:05 (#2883 review — "overbroad dependency satisfaction"):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2883 review — "overbroad dependency satisfaction"):
   A dependency is satisfied when it reaches a TERMINAL lane or a REVIEW lane, and review here means
   `mergeBlocker ∪ humanReview` — NOT merge orchestration. My first version unioned all three review
   roles, which counts a merge-orchestration-only column as satisfied and clears `blockedBy` while the
@@ -1262,7 +1262,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).toHaveBeenCalledWith("FN-WAITING", expect.objectContaining({ blockedBy: "FN-MIDMERGE" }));
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-06:45 (the query-filter class, sixteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, sixteenth sweep):
   A card that reached a terminal lane while still carrying `merging`/`merging-pr` holds the MERGER QUEUE.
   Two literal reads meant that on a renamed board the stale status was never cleared, so one finished
   card blocked every task queued behind it — the widest blast radius in this series, since the damage is
@@ -1297,7 +1297,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:15 (the query-filter class, seventeenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, seventeenth sweep):
   `recoverCompletedTasks` rescues a task whose steps are ALL done but whose session died before the
   executor could hand it to review. The literal read meant that on a renamed board it was never found:
   finished implementation work sat in the wip lane with no session and nothing to move it on.
@@ -1342,7 +1342,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(recoverCompletedTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-07:45 (the query-filter class, eighteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, eighteenth sweep):
   `recoverInProgressLimbo` frees a card holding a wip slot with NO worktree, NO branch and no step
   started — nothing is running and nothing will. The literal read meant that on a renamed board it was
   never found, so the card kept its slot forever and denied that capacity to work that could run.
@@ -1404,7 +1404,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(signal).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:15 (the query-filter class, nineteenth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, nineteenth sweep):
   `recoverOrphanedExecutions` takes NO lifecycle action — it emits `task:orphan-detected-no-action` so an
   operator can see a wip card with no live session behind it. The literal read meant that on a renamed
   board the event was never emitted, so the one signal pointing at an orphaned execution was silently
@@ -1459,7 +1459,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     );
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-08:45 (the query-filter class, twentieth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twentieth sweep):
   `reattachOrphanedAssignedExecutions` reattaches a DURABLE AGENT to a task it is still assigned to but
   has stopped executing. The literal read meant that on a renamed board the reattach never fired, so the
   card sat assigned-but-idle — visibly owned by an agent that had gone quiet, which is worse than
@@ -1513,7 +1513,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(resumeAssignedTaskForAgent).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-10:25 (the query-filter class, twenty-second sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-second sweep):
   A GHOST review card is one parked in review past the stuck timeout with nobody owning its merge lane.
   The literal read meant that on a renamed board it was never found: no merger, no session, and no
   timeout ever firing against it.
@@ -1567,7 +1567,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(isMergeLaneOwned).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-11:00 (the query-filter class, twenty-third sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-third sweep):
   `recoverTransientMergeFailures` refunds the retry budget for a merge that failed for a TRANSIENT reason
   and burned all its retries. The literal read meant that on a renamed board the refund never happened,
   so a card that failed on a network blip or a provider fault stayed failed permanently — visibly failed
@@ -1616,7 +1616,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(requeueForAutoMerge).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-12:45 (the query-filter class, twenty-fourth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-fourth sweep):
   `recoverStaleIncompleteReviewTasks` requeues a review card whose STEPS are not finished — it reached
   review on a graph failure, not on completed work. The literal read meant that on a renamed board it was
   never requeued: the card sat in review claiming to be done while its own steps said otherwise.
@@ -1670,7 +1670,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(proof).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-13:25 (the query-filter class, twenty-fifth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-fifth sweep):
   `recoverMisclassifiedFailures` clears a failure the executor parked for "without calling fn_task_done"
   on a task whose steps are ALL actually done — the failure is a misclassification, not real work left
   undone. The literal read meant that on a renamed board it was never cleared, so finished work stayed
@@ -1713,7 +1713,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(updateTask).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-14:15 (the query-filter class, twenty-sixth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-sixth sweep):
   `recoverBranchMisboundInReviewTasks` detects a review card whose BRANCH TIP is bound to a different
   task's work. The literal read meant that on a renamed board the misbinding was never detected, so the
   card would merge — or refuse to — against a branch that is not its own.
@@ -1765,7 +1765,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(resolveTarget).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-14:55 (the query-filter class, twenty-seventh sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-seventh sweep):
   `recoverMissingWorktreeReviewFailures` requeues a review card failed because its worktree was gone when
   the session tried to start. Its per-candidate lane wiring was already in place — and a note at the site
   called the literal QUERY above it "unfixable without a project-level lane resolution before the read".
@@ -1839,7 +1839,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(proof).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOWT2" }), expect.anything());
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-15:40 (the query-filter class, twenty-eighth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-eighth sweep):
   `auditNoCommitsExpectedCandidates` flags a card that finished every step and pushed NO commits — either
   a legitimately commit-free task nobody declared as such, or work that silently produced nothing.
 
@@ -1890,7 +1890,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(flagged).toBe(0);
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-16:10 (the query-filter class, twenty-ninth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-ninth sweep):
   `recoverNoProgressNoTaskDoneFailures` requeues a wip card the executor failed for "no fn_task_done"
   that made NO step progress and left no git work — nothing to salvage, so requeueing is safe. The
   literal read meant that on a renamed board it was never requeued: a card that produced nothing sat
@@ -1937,7 +1937,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(hasRecoverableGitWork).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-16:40 (the query-filter class, thirtieth sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirtieth sweep):
   `recoverPartialProgressNoTaskDoneFailures` retries a review card failed for "no fn_task_done" that DID
   make step progress. Real work exists, so the sweep spends a retry rather than discarding it. The
   literal read meant that on a renamed board the retry never fired: partially-completed work was parked
@@ -1988,7 +1988,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(proof).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-17:10 (the query-filter class, thirty-first sweep):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-first sweep):
   `recoverDoneTaskMergeMetadata` repairs the merge metadata of a card that already reached the COMPLETE
   lane — the commit sha an operator sees, and that later reconcilers trust. The literal read meant that
   on a renamed board a done card's metadata was never repaired, so a completed task could keep pointing
@@ -2034,7 +2034,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     expect(findLandedTaskCommit).not.toHaveBeenCalled();
   });
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-18:15 (the query-filter class, sweeps thirty-three and -four):
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, sweeps thirty-three and -four):
   The two WORKSPACE sweeps. A workspace task lands PER-REPO, so its failure modes are its own: a
   partial land leaves some repos merged and some not, and a finished one leaves per-repo worktrees on
   disk. Both were bounded by literal reads, so on a renamed board neither ran — the partial land never
@@ -2100,7 +2100,7 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-02:10 (#2867 review — greptile, "hard-blocker wiring remains
+FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2867 review — greptile, "hard-blocker wiring remains
 untested"):
 
 THE WIRING, TESTED AT THE SEAM RATHER THAN THROUGH THE SWEEP.

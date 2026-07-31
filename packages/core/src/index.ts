@@ -469,7 +469,7 @@ export { findWorkflowEventShapeViolations, isIdsOnlyWorkflowEvent, MAX_ID_VALUE_
 export type { WorkflowLifecycleEvent, WorkflowLifecycleEventType, WorkflowLifecycleEventBase, TaskTransitionedEvent, NodeEnteredEvent, NodeCompletedEvent, RunSuspendedEvent, RunResumedEvent, WorkflowEventShapeViolation, ImplementationExit } from "./types/workflow-events.js";
 export { columnHasFlag, columnsWithFlag, declaresAnyLifecycleTrait, resolveArchiveTargetForTask, resolveCompleteColumn, resolveLifecycleColumns, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveReboundTargetForTask, resolveReviewColumns, resolveTaskLifecycleColumns, resolveTerminalColumns, resolveWipTargetForTask } from "./workflow-lifecycle-traits.js";
 export type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
-export { resolveProjectColumnsForRoles, resolveArchivedLanes, REVIEW_ROLES, TERMINAL_ROLES, LEGACY_COLUMN_IDS_BY_ROLE, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
+export { resolveProjectColumnsForRoles, resolveArchivedLanes, REVIEW_ROLES, TERMINAL_ROLES, LEGACY_COLUMN_IDS_BY_ROLE, type ProjectLaneVocabularyStore, type ProjectLaneResolutionOptions } from "./project-lane-vocabulary.js";
 export { resolveReviewLevelSteps, applyReviewLevelPreset } from "./review-level-preset.js";
 export {
   LEGACY_STATUS_ADOPTION,

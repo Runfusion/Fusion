@@ -10864,7 +10864,7 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
   });
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (#2879 review — greptile, "multi-role tasks run
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2879 review — greptile, "multi-role tasks run
   recovery twice"): THE FIX IS IN `self-healing.ts`; NO TEST HERE, AND THE ABSENCE IS DELIBERATE.
 
   `readBucket` dedupes by id inside ONE role's read, so a custom column carrying two queried traits —

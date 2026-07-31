@@ -151,3 +151,71 @@ describe("resolveProjectColumnsForRoles", () => {
     }
   });
 });
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:45:
+
+THE UNTRAITED-PROJECT OPT-IN — the three-state rule at PROJECT scope.
+
+A board that renames its lanes but declares NO lifecycle trait contributes nothing to the union, so its
+cards are invisible to every role-keyed query — not misclassified downstream, absent from the result
+entirely, which is why a correct per-card fallback cannot rescue them (#2869, #2876).
+
+THE THREE CASES ARE THE WHOLE POINT, and the middle one is what keeps this from being a blunt widening:
+  - project expresses NO trait anywhere -> it has no vocabulary, so its declared ids are the honest
+    candidate set;
+  - project expresses traits but this ROLE is absent -> it has ANSWERED, and inventing lanes would
+    contradict it;
+  - opt-in absent -> byte-identical to before, which is what makes this safe to land with no caller
+    changes at all.
+*/
+describe("resolveProjectColumnsForRoles: untratedProject opt-in", () => {
+  const storeWith = (...irs: unknown[]) => ({
+    listWorkflowDefinitions: async () => irs.map((ir) => ({ ir })),
+  } as never);
+
+  const untraited = {
+    version: "v2", name: "untraited",
+    columns: [{ id: "drafting", name: "D", traits: [] }, { id: "checking", name: "C", traits: [] }],
+    nodes: [], edges: [],
+  };
+  const traited = {
+    version: "v2", name: "traited",
+    columns: [{ id: "building", name: "B", traits: [{ trait: "wip" }] }],
+    nodes: [], edges: [],
+  };
+
+  it("widens to every declared column when the project expresses no lifecycle trait at all", async () => {
+    const lanes = await resolveProjectColumnsForRoles(storeWith(untraited), ["mergeOrchestration"], {
+      untraitedProject: "declared-columns",
+    });
+
+    /* `checking` is the renamed review lane; without the opt-in it is absent and its cards are unseen. */
+    expect(lanes.has("checking")).toBe(true);
+    expect(lanes.has("drafting")).toBe(true);
+    /* The legacy floor stays, so a board mid-rename is not dropped. */
+    expect(lanes.has("in-review")).toBe(true);
+  });
+
+  it("does NOT widen when some workflow expresses a trait, even if none declares this role", async () => {
+    /*
+    The case that keeps this honest. The project HAS a vocabulary — one board declares `wip` — so a
+    board with no review lane has answered "no review lane", and admitting its columns would contradict
+    a statement the project actually made.
+    */
+    const lanes = await resolveProjectColumnsForRoles(storeWith(untraited, traited), ["mergeOrchestration"], {
+      untraitedProject: "declared-columns",
+    });
+
+    expect(lanes.has("checking")).toBe(false);
+    expect(lanes.has("drafting")).toBe(false);
+    expect(lanes.has("in-review")).toBe(true);
+  });
+
+  it("is byte-identical to today's answer without the option", async () => {
+    /* No caller changes behaviour until it asks — the property that makes this landable on its own. */
+    const withOpt = await resolveProjectColumnsForRoles(storeWith(untraited), ["mergeOrchestration"]);
+
+    expect([...withOpt].sort()).toEqual(["in-review"]);
+  });
+});

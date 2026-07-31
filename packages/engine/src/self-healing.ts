@@ -2833,7 +2833,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-07:10 (the query-filter class, seventeenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, seventeenth sweep):
       A task whose steps are ALL done but whose session died before the executor could hand it to review.
       The literal read meant that on a renamed board it was never found, so finished implementation work
       sat in the wip lane with no session and nothing to move it on — the shape this sweep exists to
@@ -3275,7 +3275,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-09:40 (the query-filter class, twenty-first sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-first sweep):
       Clears a `merging`/`merging-pr` stamp left on a review card with no live merger behind it. The
       literal read meant that on a renamed board the stamp was never cleared, so the card read as
       mid-merge forever — and the merge-active stamp is what the merger and the dashboard Retry gate both
@@ -3570,7 +3570,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-17:40 (the query-filter class, thirty-second sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-second sweep):
       This read answers "is another LIVE task holding this worktree?" — the same question
       `findActiveWorktreeOwner` answers for the executor, and the same failure if it comes back empty: the
       checkout reads as unowned and this sweep reclaims a worktree another task is working in.
@@ -3750,7 +3750,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (the query-filter class, twelfth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twelfth sweep):
       Three lane reads AND three lane guards in the body, so both halves convert together — widening the
       read alone would admit renamed-board cards and then mis-decide every one of them (the phantom-binding
       check, the blocked-hold skip, and the review triple-proof are all keyed on lane).
@@ -3820,7 +3820,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // per-task override preserves that for override-less tasks while letting
       // explicit autoMerge:true tasks recover.
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-01:15 (#2879 review — greptile, "multi-role tasks run
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2879 review — greptile, "multi-role tasks run
       recovery twice"): DEDUPED ACROSS THE BUCKETS, NOT JUST WITHIN EACH.
 
       `readBucket` dedupes by id, but only inside one role's read. A custom workflow may put more than
@@ -4077,7 +4077,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               );
 
               /*
-              FNXC:WorkflowResolvedColumns 2026-07-31-11:40 (SELF-AUDIT after #2916 found the same class):
+              FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (SELF-AUDIT after #2916 found the same class):
               These loop-body lane guards were MISSED when I converted this sweep's read. That is not a
               cosmetic gap: this one decides whether the backward move needs `reviewProof`. Left literal,
               a renamed review card admitted by the widened read reads as NOT-in-review, so the
@@ -4748,7 +4748,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return pathsOverlap(dependentScope, blockerScope);
       };
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-03:05 (the query-filter class, thirteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirteenth sweep):
       When a task completes, this releases everything blocked on it. Three literal reads meant that on a
       renamed board it released NOTHING — every dependent stayed blocked on a task that had already
       finished, which is the most visible form of this class: the board simply stops moving.
@@ -4771,7 +4771,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const inReviewTasks = (await readDependentBucket(completedReviewColumns)).filter((t) => !t.paused);
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-02:40 (#2883 review — greptile P1, "duplicate dependent
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2883 review — greptile P1, "duplicate dependent
       reconciliation"; same class as #2879 one sweep over):
       DEDUPED ACROSS THE BUCKETS, NOT JUST WITHIN EACH.
 
@@ -4780,7 +4780,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       reconciled twice from the same stale snapshot — the second pass deciding against `blockedBy` state
       the first pass had already cleared, and `updateTask`/`logEntry` firing twice for one card.
 
-      FNXC:WorkflowResolvedColumns 2026-07-31-04:05 (precedence correction):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (precedence correction):
       Written first as `new Map(entries)` with a comment claiming first-bucket precedence. That
       constructor keeps first insertion ORDER but the LAST value for a repeated key, so it did the
       opposite of what it said. The explicit `has` guard below makes the code match the claim; order is
@@ -4806,7 +4806,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           a degraded board reads a finished dependency as unmet — the exact stall being cleared here.
           */
           /*
-          FNXC:WorkflowResolvedColumns 2026-07-31-05:00 (#2883 review — greptile P1, "overbroad
+          FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2883 review — greptile P1, "overbroad
           dependency satisfaction"): REUSE THE SCHEDULER'S RESOLVER, DO NOT RE-DERIVE IT.
 
           The first version unioned all three review roles, which counts a `mergeOrchestration`-only
@@ -5690,7 +5690,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (the query-filter class, eleventh sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, eleventh sweep):
       THREE lane reads whose downstream treatment DIFFERS — hold cards seed the queued-dependency pass,
       review cards are exempted when paused — so this cannot collapse into one union. Read the project's
       columns for all three role groups, dedupe into one map, then classify each card against ITS OWN
@@ -5698,7 +5698,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       and the cards stayed blocked behind dependencies that had long since finished.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-00:30 (#2876 review — greptile, "traitless workflow
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2876 review — greptile, "traitless workflow
       columns stay invisible"): CONFIRMED, DEFERRED, AND THE REASON IS THAT IT IS NOT LOCAL.
 
       `resolveProjectColumnsForRoles` returns its legacy floor plus what workflows DECLARE for the
@@ -5823,7 +5823,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (
           !candidates.has(taskId)
           /*
-          FNXC:WorkflowResolvedColumns 2026-07-31-01:40 (FLAGGED AND LEFT COUNTED):
+          FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (FLAGGED AND LEFT COUNTED):
           This sits in a log-dedup closure defined BEFORE the per-referenced-task lane prefetch below, so
           the resolved sets are not in scope here and tsc says so. Hoisting the prefetch above the closure
           is not available either — it is keyed on `candidates`, which this closure helps build.
@@ -5843,7 +5843,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-01:30 (batch-engine — every lane question here is about ANOTHER task):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (batch-engine — every lane question here is about ANOTHER task):
       This method classifies why a BLOCKER or a DEPENDENCY is no longer blocking, and those rows routinely
       belong to a different workflow than the blocked card. So lanes are resolved PER REFERENCED TASK, not
       from the blocked task — the same answer main settled on for dependency satisfaction in
@@ -6699,7 +6699,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async reconcileStaleMergerStatus(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (the query-filter class, sixteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, sixteenth sweep):
       A card that reached a terminal lane while still carrying `merging`/`merging-pr` holds the merger
       queue. Two literal reads meant that on a renamed board the stale status was never cleared, so one
       finished card blocked the queue for every task behind it.
@@ -8308,7 +8308,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const now = Date.now();
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-12:40 (the query-filter class, twenty-fourth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-fourth sweep):
       A review card whose STEPS are not finished — it reached review on a graph failure, not on completed
       work. The literal read meant that on a renamed board it was never requeued, so the card sat in
       review claiming to be done while its own steps said otherwise.
@@ -8742,7 +8742,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const now = Date.now();
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-10:20 (the query-filter class, twenty-second sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-second sweep):
       A GHOST review card — parked in review past the stuck timeout with nobody owning its merge lane.
       The literal read meant that on a renamed board it was never found, so the card sat in review
       indefinitely with no merger, no session and no timeout ever firing against it.
@@ -8883,7 +8883,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-10:55 (the query-filter class, twenty-third sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-third sweep):
       A merge that failed for a TRANSIENT reason and burned its whole retry budget. The literal read
       meant that on a renamed board the retry budget was never refunded, so a card that failed on a
       network blip stayed failed permanently — an operator-visible failure with no operator-visible cause.
@@ -8933,7 +8933,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         if (!task) continue;
         /*
         Re-check selector on the full row — the slim snapshot is best-effort and may be stale once we
-        await. FNXC:WorkflowResolvedColumns 2026-07-31-11:10: this SECOND lane guard converts with the
+        await. FNXC:WorkflowResolvedColumns 2026-07-30-21:40: this SECOND lane guard converts with the
         first. Converting only the read left it rejecting every renamed-board card the widened query
         found, and the new test failed on exactly that — the "convert the pair or neither" rule, caught
         by the test rather than by reading.
@@ -9279,7 +9279,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // Workspace tasks live in in-review (post-capture/review, pre/partial land). A task already
       // done is finished; todo/in-progress are owned by execution-stage reconcilers.
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-18:05 (the query-filter class, thirty-third sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-third sweep):
       A WORKSPACE task lands per-repo, and this re-enqueues one whose lands are partial or zero. The
       literal read meant that on a renamed board a workspace task stranded mid-land was never
       re-enqueued — some repos landed, some not, and nothing to finish the job.
@@ -9715,7 +9715,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       // Done workspace tasks are the canonical "safe to clean" set (their lands are finalized).
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-18:10 (the query-filter class, thirty-fourth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-fourth sweep):
       Removes the per-repo worktrees a finished workspace task left behind. The literal read meant that
       on a renamed board they were never removed — disk held by tasks that finished, growing quietly.
 
@@ -9805,7 +9805,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-17:05 (the query-filter class, thirty-first sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirty-first sweep):
       Repairs the merge metadata of a card that already reached the COMPLETE lane — the commit sha an
       operator sees, and that later reconcilers trust. The literal read meant that on a renamed board a
       done card's metadata was never repaired, so a completed task could keep pointing at a commit that
@@ -10046,7 +10046,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-06:10 (the query-filter class, fifteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, fifteenth sweep):
       A task whose merge is CONFIRMED but which never reached the complete lane. Two literal reads meant
       that on a renamed board it was never found, so a card whose work is merged sat in review or hold
       forever while its commit was already on the base branch.
@@ -10989,7 +10989,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       a renamed board was never listed at all, so it stayed failed with every step done.
       */
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-00:45 (#2869 review — greptile, "traitless review lanes
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2869 review — greptile, "traitless review lanes
       remain invisible"): CONFIRMED, DEFERRED, SAME CLASS AS #2876.
 
       A board that renames its review lane but declares NO lifecycle traits contributes nothing to this
@@ -11443,7 +11443,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-14:10 (the query-filter class, twenty-sixth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-sixth sweep):
       A review card whose BRANCH TIP is bound to a different task's work. The literal read meant that on
       a renamed board the misbinding was never detected, so the card would merge — or refuse to — against
       a branch that is not its own.
@@ -11612,7 +11612,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-04:30 (the query-filter class, fourteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, fourteenth sweep):
       Two literal reads, and two per-card `task.column === …` checks inside the filters below. Those
       checks were redundant while the query pinned the column; under a resolved read they become the
       per-card verdict, so they convert in the same change rather than being deleted.
@@ -11817,7 +11817,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverMisclassifiedFailures(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-13:20 (the query-filter class, twenty-fifth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-fifth sweep):
       A task the executor parked `failed` for "no fn_task_done" whose steps are ALL actually done — the
       failure is a misclassification, not real. The literal read meant that on a renamed board the error
       was never cleared, so finished work stayed visibly failed and never entered normal review.
@@ -12068,7 +12068,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async auditNoCommitsExpectedCandidates(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-15:30 (the query-filter class, twenty-eighth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-eighth sweep):
       Audits cards that finished every step but pushed NO commits — either a legitimately commit-free task
       that never declared itself so, or work that silently produced nothing. The literal read meant that on
       a renamed board only the `no_commits` ERROR path fed the audit, so a card sitting quietly in a
@@ -12238,7 +12238,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-07:40 (the query-filter class, eighteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, eighteenth sweep):
       A card holding a wip slot with NO worktree, NO branch and no step started — nothing is running and
       nothing will. The literal read meant that on a renamed board it was never found, so the card kept
       its slot indefinitely and the capacity it holds is denied to work that could actually run.
@@ -12432,7 +12432,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverOrphanedExecutions(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (the query-filter class, nineteenth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, nineteenth sweep):
       WHAT THIS SWEEP RESTORES IS VISIBILITY, NOT A REPAIR. It takes no lifecycle action — it only emits
       `task:orphan-detected-no-action` so an operator can see a wip card with no live session behind it.
       The literal read meant that on a renamed board the event was never emitted, so the one signal
@@ -12538,7 +12538,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
 
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-08:40 (the query-filter class, twentieth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twentieth sweep):
       Reattaches a DURABLE AGENT to a task it is still assigned to but has stopped executing. The literal
       read meant that on a renamed board the reattach never fired, so the agent's own assignment was
       never resumed and the card sat assigned-but-idle — visibly owned by an agent that had gone quiet.
@@ -13388,7 +13388,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverNoProgressNoTaskDoneFailures(): Promise<number> {
     try {
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-16:05 (the query-filter class, twenty-ninth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-ninth sweep):
       A wip card the executor failed for "no fn_task_done" that made NO step progress and left no git
       work — nothing to salvage, so it is safe to requeue. The literal read meant that on a renamed board
       it was never requeued, so a card that produced nothing sat failed while still holding its wip slot.
@@ -13496,7 +13496,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-14:45 (the query-filter class, twenty-seventh sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, twenty-seventh sweep):
       THE NOTE BELOW SAID THIS WAS UNFIXABLE. It called the literal query "unfixable without a
       project-level lane resolution before the read" — which is precisely what
       `resolveProjectColumnsForRoles` provides; it did not exist when that note was written. The wiring
@@ -13510,7 +13510,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       const tasks = [...missingWtById.values()];
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-20:20 (PR #2745 review — greptile P1: "recovery lanes are not
+      FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2745 review — greptile P1: "recovery lanes are not
       wired", and it is right):
       THE PRODUCTION PATH SUPPLIES THE SET. Adding the optional parameter to the three classifiers gave them the
       capability and changed nothing in production, which is a half-conversion of a different shape: not a gate
@@ -13524,7 +13524,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       */
       const recoveryIrCache = new Map<string, WorkflowIr>();
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-14:50 (the ARITY trap, same seam):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the ARITY trap, same seam):
       These classifiers take a MEMBERSHIP set, and `resolveTaskLifecycleColumns().review` is the FIRST
       column per role — so a board declaring more than one review column contributed only one of them and
       a card sitting in the others read as not-in-review. `columnsWithFlag` over the three review roles is
@@ -13672,7 +13672,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-16:35 (the query-filter class, thirtieth sweep):
+      FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (the query-filter class, thirtieth sweep):
       A review card failed for "no fn_task_done" that DID make step progress — real work exists, so it is
       retried rather than discarded. The literal read meant that on a renamed board the retry never fired,
       so partially-completed work was parked failed with its retry budget untouched: the budget exists
@@ -14117,7 +14117,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    * them up for a fresh planning attempt.
    */
   /**
-   * FNXC:TaskTiming 2026-08-01-10:00:
+   * FNXC:TaskTiming 2026-07-30-21:40:
    * A planning anchor is safe because triage ownership and graph Plan Review are
    * exclusive. Recovery finalizes only when neither in-process owner is live;
    * the atomic null-check makes restart and repeated maintenance idempotent.
@@ -14146,7 +14146,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       if (applied) {
         finalized++;
-        // FNXC:TaskTiming 2026-08-01-12:00: this recovery is operator-auditable
+        // FNXC:TaskTiming 2026-07-30-21:40: this recovery is operator-auditable
         // without persisting duration prose; the atomically finalized task id
         // and fixed no-live-owner reason are sufficient forensic evidence.
         await this.store.recordRunAuditEvent?.({

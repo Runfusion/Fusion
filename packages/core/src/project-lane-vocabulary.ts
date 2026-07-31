@@ -35,7 +35,7 @@ workflow calls its column review, which is the flat-set mistake this program has
 times.
 */
 
-import { columnsWithFlag } from "./workflow-lifecycle-traits.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import type { TraitFlags } from "./trait-types.js";
 
@@ -79,11 +79,44 @@ export const LEGACY_COLUMN_IDS_BY_ROLE: Record<string, readonly string[]> = {
  * @returns a set safe to iterate as `listTasks({ column })` reads. Never empty: the legacy ids are
  *          always present, so a caller cannot accidentally query nothing.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-20:30:
+THE UNTRAITED-PROJECT OPT-IN — the three-state rule at PROJECT scope, and why it cannot be a default.
+
+This helper seeds the legacy ids and adds whatever workflows DECLARE for the role. A board that renames
+its lanes but declares NO lifecycle trait on any column therefore contributes nothing, so its cards are
+invisible to every query keyed on a role — the card is not in the result at all, and a correct per-card
+fallback downstream never runs for it. Recorded at three self-healing call sites (#2869, #2876).
+
+`untraitedProject: "declared-columns"` widens the answer for exactly that case: when NO workflow in the
+project expresses ANY lifecycle trait, every declared column id joins the set. Not "no workflow declares
+THIS role" — a board that expresses traits and simply has no review lane has ANSWERED, and widening
+there would invent lanes it deliberately does not have.
+
+WHY IT IS OPT-IN AND NOT THE DEFAULT. The safe direction differs by caller, which is the whole finding
+of `docs/solutions/workflow-learnings/project-union-versus-per-task-lanes.md`:
+  - a SWEEP over-includes harmlessly — the per-card check downstream discards the extra rows, and the
+    cost is a few wasted `listTasks` calls;
+  - an AGGREGATOR does not — the same widening inflates a number an operator reads (#2864, #2866);
+  - an ACTION site does not — over-inclusion means a card routed or notified under a vocabulary that is
+    not its own (#2852, #2891).
+Making this the default would silently change all three at once, in the one direction two of them must
+not move. So it changes nothing until a caller asks for it, and each caller asks for its own reasons.
+*/
+export interface ProjectLaneResolutionOptions {
+  /** Widen to every declared column when the project expresses no lifecycle trait at all. */
+  untraitedProject?: "declared-columns";
+}
+
 export async function resolveProjectColumnsForRoles(
   store: ProjectLaneVocabularyStore,
   roles: ReadonlyArray<keyof TraitFlags & string>,
+  options: ProjectLaneResolutionOptions = {},
 ): Promise<ReadonlySet<string>> {
   const columns = new Set<string>();
+  /* Collected while walking the definitions so the widening needs no second read. */
+  const declaredColumnIds = new Set<string>();
+  let anyTraitExpressed = false;
   for (const role of roles) {
     for (const legacy of LEGACY_COLUMN_IDS_BY_ROLE[role] ?? []) columns.add(legacy);
   }
@@ -117,9 +150,24 @@ export async function resolveProjectColumnsForRoles(
       for (const role of roles) {
         for (const id of columnsWithFlag(ir as never, role)) columns.add(id);
       }
+      if (options.untraitedProject === "declared-columns") {
+        for (const column of (ir as { columns?: { id?: string }[] }).columns ?? []) {
+          if (typeof column?.id === "string") declaredColumnIds.add(column.id);
+        }
+        if (declaresAnyLifecycleTrait(ir as never)) anyTraitExpressed = true;
+      }
     } catch {
       continue;
     }
+  }
+
+  /*
+  Only when the project as a WHOLE expressed nothing. A single traited workflow means the project has a
+  vocabulary, and a board inside it that declares no lifecycle trait is that board's own omission — not
+  something to paper over by admitting every column in the project.
+  */
+  if (options.untraitedProject === "declared-columns" && !anyTraitExpressed) {
+    for (const id of declaredColumnIds) columns.add(id);
   }
 
   return columns;

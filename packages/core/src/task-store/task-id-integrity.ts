@@ -455,7 +455,7 @@ export async function isTaskArchivedAsyncImpl(store: TaskStore, id: string): Pro
     const live = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
     // getLiveTaskColumn returns "archived" for archived OR soft-deleted rows.
     /*
-    FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+    FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
     
     This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
     "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —

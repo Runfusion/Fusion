@@ -657,7 +657,7 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       /*
-      FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
       This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
       "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
@@ -704,7 +704,7 @@ export async function deleteTaskCommentImpl(store: TaskStore, id: string, commen
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId, await resolveArchivedLanes(store));
       /*
-      FNXC:LifecycleColumnCensus 2026-07-31-03:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      FNXC:LifecycleColumnCensus 2026-07-30-21:10 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
       
       This compares `getLiveTaskColumn`'s RETURN VALUE. That helper normalizes: it manufactures the string
       "archived" for an archived row AND for a soft-deleted one, and returns null for a missing task —
