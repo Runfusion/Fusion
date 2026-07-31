@@ -2254,6 +2254,16 @@ export class Scheduler {
           && !isTerminalColumnTask(task)
           && typeof task.worktree === "string" && task.worktree.length > 0)
         .map((task) => task.id);
+      /*
+      FNXC:WorkflowScheduling 2026-08-01-01:05 (self-deadlock in the widened ledger, observed live):
+      A planned Ready card RETAINS its planning worktree for execution reuse, so counting it as a
+      holder must not block ITS OWN release — on release the slot TRANSFERS (the card executes in
+      the same worktree), it does not add. Without this exclusion the first unpause released only
+      2 of 4 slots' worth of work: the two remaining Ready cards were gated out by the very
+      worktrees they would reuse (2 wip + 3 idle-held = 5/4). Candidates in this set subtract
+      their own slot from the gate and skip the dispatch increment.
+      */
+      const nonWipWorktreeHolderIdSet = new Set(nonWipWorktreeHolderIds);
       let reservedWorktreeSlots = wipTaskIds.length + nonWipWorktreeHolderIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const inProgressTaskIds = wipTaskIds;
@@ -2865,10 +2875,11 @@ export class Scheduler {
             store: this.store,
             tasks,
           });
+          const candidateHoldsWorktree = nonWipWorktreeHolderIdSet.has(task.id);
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
             maxConcurrent,
-            activeWorktrees: reservedWorktreeSlots,
+            activeWorktrees: reservedWorktreeSlots - (candidateHoldsWorktree ? 1 : 0),
             maxWorktrees,
             worktreeHolderTaskIds: [...inProgressTaskIds, ...nonWipWorktreeHolderIds],
             semaphore: this.options.semaphore,
@@ -2953,7 +2964,8 @@ export class Scheduler {
             task: freshTask,
           });
 
-          reservedWorktreeSlots += 1;
+          // Transfer, not addition, for a candidate that already holds its worktree.
+          if (!candidateHoldsWorktree) reservedWorktreeSlots += 1;
           reservedConcurrentSlots += 1;
           let released = false;
           return {

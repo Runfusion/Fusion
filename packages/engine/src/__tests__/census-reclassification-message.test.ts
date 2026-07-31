@@ -38,7 +38,21 @@ afterEach(() => {
   scratch = undefined;
 });
 
-function runWithBaseline(mutate: (baseline: Record<string, unknown>) => void): { status: number; stderr: string } {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-23:35 (`extraEnv` — the real tree reached ZERO guards):
+The ROSE case used to manufacture a rise by finding a baseline entry with more than one guard and
+zeroing it. The conversion program drove `byFile` to zero entries, so there was nothing to find, the
+mutation became a no-op, the census correctly passed, and the case failed on main asserting exit 1.
+
+Nothing regressed — the fixture's premise (real debt exists to borrow) expired when the work
+succeeded. `extraEnv` lets a case supply the FUSION_CENSUS_FILE_ROOT/FILE_LIST pair from #3230 and
+build its OWN one-file tree, so a rise is constructed rather than borrowed from whatever debt happens
+to be left. The other cases keep using the real tree, which is what makes them a real integration.
+*/
+function runWithBaseline(
+  mutate: (baseline: Record<string, unknown>) => void,
+  extraEnv: Record<string, string> = {},
+): { status: number; stderr: string } {
   scratch = mkdtempSync(join(tmpdir(), "fusion-census-msg-"));
   const baselinePath = join(scratch, "baseline.json");
   const baseline = JSON.parse(readFileSync(REAL_BASELINE, "utf8")) as Record<string, unknown>;
@@ -47,7 +61,7 @@ function runWithBaseline(mutate: (baseline: Record<string, unknown>) => void): {
   try {
     execFileSync("node", [SCRIPT, "--strict"], {
       cwd: REPO_ROOT,
-      env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath },
+      env: { ...process.env, FUSION_CENSUS_BASELINE_PATH: baselinePath, ...extraEnv },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -89,15 +103,37 @@ describe("the ratchet distinguishes a reclassification from a regression", () =>
   });
 
   it("still says ROSE when guards genuinely grew", () => {
-    // The ratchet's real job must keep its real message — a friendlier failure is not the goal.
-    const { status, stderr } = runWithBaseline((baseline) => {
-      const byFile = baseline.byFile as Record<string, number>;
-      const key = Object.keys(byFile).find((k) => (byFile[k] ?? 0) > 1);
-      if (key) byFile[key] = 0;
-    });
+    /*
+    The ratchet's real job must keep its real message — a friendlier failure is not the goal.
 
-    expect(status).toBe(1);
-    expect(stderr).toContain("column-guard count ROSE");
+    Built on a synthetic one-file tree rather than borrowed from the real baseline: the real
+    `byFile` is now empty, so the old approach found no entry to zero, mutated nothing, and asserted
+    exit 1 against a correct pass. See `extraEnv` above.
+
+    The file carries a REAL unmarked guard, and the baseline records zero for it, so the census sees
+    a genuine rise — the same condition a regression produces, constructed instead of borrowed.
+    */
+    const treeRoot = mkdtempSync(join(tmpdir(), "fusion-census-tree-"));
+    try {
+      const rel = "guard.ts";
+      writeFileSync(
+        join(treeRoot, rel),
+        `export function isReview(task: { column: string }): boolean {\n  return task.column === "in-review";\n}\n`,
+      );
+
+      const { status, stderr } = runWithBaseline(
+        (baseline) => { baseline.byFile = {}; baseline.deliberateByFile = {}; },
+        { FUSION_CENSUS_FILE_ROOT: treeRoot, FUSION_CENSUS_FILE_LIST: rel },
+      );
+
+      expect(status).toBe(1);
+      expect(stderr).toContain("column-guard count ROSE");
+      /* ...and specifically NOT the reclassification wording, which is the distinction this whole
+         file exists to keep: a real rise must not be explained away as a marker move. */
+      expect(stderr).not.toContain("RECLASSIFIED");
+    } finally {
+      rmSync(treeRoot, { recursive: true, force: true });
+    }
   });
 
   it("passes against the unmodified baseline", () => {
