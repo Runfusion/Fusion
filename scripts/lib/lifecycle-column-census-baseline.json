@@ -2,7 +2,6 @@
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
     "packages/engine/src/scheduler.ts": 2,
-    "packages/core/src/mission-store.ts": 1,
     "packages/core/src/task-store/audit-ops.ts": 1,
     "packages/core/src/task-store/lifecycle-ops.ts": 1,
     "packages/core/src/task-store/merge-queue-ops-2.ts": 1,
@@ -54,6 +53,7 @@
     "packages/core/src/eval-signal-collector.ts\u0000archived": 1,
     "packages/core/src/live-agent-count.ts\u0000archived": 1,
     "packages/core/src/live-agent-count.ts\u0000done": 1,
+    "packages/core/src/mission-store.ts\u0000archived": 1,
     "packages/core/src/plugin-store.ts\u0000done": 1,
     "packages/core/src/store.ts\u0000archived": 1,
     "packages/core/src/store.ts\u0000done": 1,

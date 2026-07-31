@@ -2331,6 +2331,12 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       ).get(feature.taskId) as { id: string; column: string } | undefined;
       /*
       FNXC:WorkflowResolvedColumns 2026-07-31-20:15 (audited — DEAD SYNC PATH, do not convert):
+      DELIBERATE-LITERAL — marked, not merely described. The verdict below is right; it was recorded in
+      prose the census cannot read, so the site stayed in `byFile` as apparent debt and each fleet pass
+      re-derived it. Verified before marking rather than deferred to: `async-mission-store.ts:168`
+      independently states `getMissionStoreImpl` returns the async implementation in PG backend mode,
+      so the sync class here really is unreachable in the shipped backend. Same treatment as
+      `dequeueMergeQueueOnColumnExitImpl` (#3060).
       On a renamed board this literal would call an archived card LIVE and refuse the unforced delete,
       except that this class does not run in production. `getMissionStoreImpl` returns the
       AsyncDataLayer-backed `AsyncMissionStore` in PostgreSQL backend mode; the sync `MissionStore`
