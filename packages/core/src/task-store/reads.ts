@@ -31,6 +31,7 @@ import {computeRetrySummary} from "../retry-summary.js";
 // FNXC:TaskLookup404 2026-07-26-11:20: typed miss signal so API boundaries can
 // answer 404 instead of 500 (see TaskNotFoundError in task-store/errors.ts).
 import {TaskNotFoundError} from "../task-store/errors.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 
 /** Merge storage tiers while preserving primary-source authority and order. */
 function mergePrimaryById<T extends { id: string }>(primary: T[], secondary: T[]): T[] {
@@ -548,14 +549,35 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     };
     let disableAgeStalenessHydration = false;
 
-        const { and, asc, eq, gt, sql } = await import("drizzle-orm");
+        const { and, asc, eq, gt, notInArray, sql } = await import("drizzle-orm");
     const schema = await import("../postgres/schema/index.js");
     const conditions = [
       sql`(${schema.project.tasks.deletedAt} IS NULL)`,
       gt(schema.project.tasks.updatedAt, since),
     ];
     if (!includeArchived) {
-      conditions.push(sql`${schema.project.tasks.column} != 'archived'`);
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-09:10:
+      ARCHIVED ROWS LEAKED INTO THE LIVE STREAM ON A RENAMED BOARD.
+
+      This filter backs the SSE watcher and modified-since polling — the incremental feed the
+      dashboard applies to its live task list. It excluded the literal `archived`, so on a board
+      whose archive lane is named anything else the predicate matched EVERY row and excluded
+      nothing: archived cards arrived in the live feed and reappeared on the board.
+
+      Nothing errors, and a full refetch filters archived rows by another path, so the symptom is
+      archived work that comes back until the next reload.
+
+      `resolveProjectColumnsForRoles` seeds the legacy ids before adding resolved ones, so the set is
+      never empty and an unconverted board excludes exactly `archived` as before. The fallback covers
+      a resolution failure, where excluding nothing would be worse than excluding the legacy id.
+      */
+      const archivedColumns = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
+      if (archivedColumns && archivedColumns.size > 0) {
+        conditions.push(notInArray(schema.project.tasks.column, [...archivedColumns]));
+      } else {
+        conditions.push(sql`${schema.project.tasks.column} != 'archived'`);
+      }
     }
     const layer = store.asyncLayer!;
     // FNXC:MultiProjectIsolation 2026-07-10: scope the incremental-sync scan
