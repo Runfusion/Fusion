@@ -798,6 +798,50 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
     const { store, updateTask } = productionFaithfulStore([stuck]);
 
     await new SelfHealingManager(store, { rootDir: "/repo" }).recoverStaleMergingStatus();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-13:25 (the query-filter class, twenty-fifth sweep):
+  `recoverMisclassifiedFailures` clears a failure the executor parked for "without calling fn_task_done"
+  on a task whose steps are ALL actually done — the failure is a misclassification, not real work left
+  undone. The literal read meant that on a renamed board it was never cleared, so finished work stayed
+  visibly failed and never entered normal review.
+
+  The error string must contain the REAL phrase `isNoTaskDoneFailure` matches. Invented prose is filtered
+  out one line later and the case would pass with the fix reverted — the same trap as #2916's fixture.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `t.column === "in-review"` -> fails, the renamed review lane is filtered out
+  */
+  function misclassifiedFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-MISCLASS",
+      column,
+      status: "failed",
+      error: "Agent finished without calling fn_task_done",
+      steps: [{ id: "s1", status: "done" }],
+    } as unknown as Task;
+    return productionFaithfulStore([card]);
+  }
+
+  it("clears a misclassified failure on a RENAMED review lane", async () => {
+    const { store, updateTask } = misclassifiedFixture(RENAMED_VOCAB.review);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverMisclassifiedFailures();
+
+    expect(updateTask).toHaveBeenCalledWith("FN-MISCLASS", expect.objectContaining({ status: null, error: null }));
+  });
+
+  it("does not clear the same failure for a card in the RENAMED wip lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. A card
+    still in wip has not handed off, so clearing its failure would hide a live problem.
+    */
+    const { store, updateTask } = misclassifiedFixture(RENAMED_VOCAB.wip);
+
+    await new SelfHealingManager(store, { rootDir: "/repo" }).recoverMisclassifiedFailures();
 
     expect(updateTask).not.toHaveBeenCalled();
   });
