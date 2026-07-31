@@ -4089,6 +4089,56 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-21:30:
+    THE FN-5256 GUARD HAD NO RENAMED-BOARD CASE, which is why blinding this sweep's wip resolver back
+    to `["in-progress"]` leaves all 825 self-healing tests green: the guard test directly above uses
+    that literal, so it cannot tell the conversion from the id it replaced.
+
+    What that costs on a renamed board: the guard matches nothing, `scopeOverrideMergeActiveSafe`
+    becomes true for a card an executor is actively running, and this sweep nulls its
+    `worktree`/`branch`/`sessionFile` — yanking the checkout out from under a live shell. FN-5256 is
+    the incident that guard exists to prevent.
+    */
+    it("does NOT clear worktree metadata for a scopeOverride task live in a RENAMED wip lane (FN-5256)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-RENAMED-LIVE",
+          column: "building",
+          paused: false,
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-renamed-live",
+          branch: "fusion/FN-RENAMED-LIVE",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-renamed-live.json",
+          steps: [{ status: "in-progress" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      expect(result).toBe(0);
+      /* The live checkout survives: nothing nulled the worktree out from under the executor. */
+      expect(store.updateTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
     it("does NOT clear worktree metadata for a scopeOverride in-review task mid-step (status: null)", async () => {
       const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
       mockedExistsSync.mockReturnValue(false);
