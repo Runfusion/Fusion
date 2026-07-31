@@ -252,7 +252,21 @@ export function getInReviewStallReason(
     };
   }
 
-  const mergeBlocker = getTaskMergeBlocker(task);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:05 (this reported EVERY healthy review card as stalled):
+  Forward the resolved lanes. This function had already satisfied its OWN lane check above using
+  `context.reviewColumns`, then called getTaskMergeBlocker without them — so the helper re-ran its
+  identity check against the literal `in-review` and, on a renamed board, returned
+  `task is in 'signoff', must be in 'in-review'` for a perfectly healthy card.
+
+  That string was then surfaced as `{ code: "merge-blocker" }`, i.e. a stall reason naming a column
+  the board does not have — for every card in review. Worse than silence: the operator gets a wall of
+  false stalls, each citing a lane that does not exist.
+
+  The outer question was resolved and the inner one was not — the same half-conversion recorded at the
+  helper itself for moves.ts, and fixed in #2963/#2964 for the merge paths.
+  */
+  const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns: context.reviewColumns });
   if (mergeBlocker) {
     if (mergeBlocker.startsWith(FAILED_TASK_MERGE_BLOCKER_PREFIX)) {
       const error = mergeBlocker.slice(FAILED_TASK_MERGE_BLOCKER_PREFIX.length).trim();
