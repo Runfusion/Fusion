@@ -4011,7 +4011,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                 `[recovery] tip-already-merged ${task.id} branch=${branchName} tip=${inspection.tipSha.slice(0, 12)} integrationRef=${inspection.integrationRef} reason=stale-cached-metadata-ghost-conflict`,
               );
 
-              if (task.column === "in-review") {
+              /*
+              FNXC:WorkflowResolvedColumns 2026-07-31-11:40 (SELF-AUDIT after #2916 found the same class):
+              These loop-body lane guards were MISSED when I converted this sweep's read. That is not a
+              cosmetic gap: this one decides whether the backward move needs `reviewProof`. Left literal,
+              a renamed review card admitted by the widened read reads as NOT-in-review, so the
+              triple-proof gate is skipped entirely and the card is moved back without it — a safety
+              check silently bypassed BY the conversion.
+              */
+              if (lanesOfReclaim(task.id).review.has(task.column)) {
                 if (!reviewProof?.ok) {
                   await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
                 } else {
@@ -4116,7 +4124,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   `[recovery] reclaim-live-zero-commits ${task.id} branch=${task.branch} worktree=${inspection.livePath} tip=${inspection.tipSha.slice(0, 12)} reason=zero-unique-commits-vs-main`,
                 );
 
-                if (task.column === "in-review") {
+                if (lanesOfReclaim(task.id).review.has(task.column)) {
                   if (!reviewProof?.ok) {
                     await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
                   } else {
@@ -4206,12 +4214,12 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const unchangedSincePriorResume = hasPriorSnapshot
             && task.resumeLimboTipSha === inspection.tipSha
             && task.resumeLimboStepSignature === stepSignature;
-          const isNoProgressResume = task.column === "in-progress"
+          const isNoProgressResume = lanesOfReclaim(task.id).wip.has(task.column)
             && unchangedSincePriorResume
             && !hasActiveSessionSignal;
           const resumeAttemptCount = isNoProgressResume ? (task.resumeLimboCount ?? 0) + 1 : 0;
 
-          if (task.column === "in-progress" && isNoProgressResume && resumeAttemptCount >= MAX_NO_PROGRESS_RESUME_ATTEMPTS) {
+          if (lanesOfReclaim(task.id).wip.has(task.column) && isNoProgressResume && resumeAttemptCount >= MAX_NO_PROGRESS_RESUME_ATTEMPTS) {
             const idleAnchor = task.executionStartedAt ?? task.columnMovedAt ?? task.updatedAt;
             const idleAnchorMs = Date.parse(idleAnchor ?? "");
             const idleMs = Number.isFinite(idleAnchorMs) ? Math.max(0, Date.now() - idleAnchorMs) : null;
@@ -4280,7 +4288,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             `[recovery] ${wasPausedBranchConflict ? "reclaim-paused-review" : "reclaim-self-owned"} ${task.id} at ${reclaimedWorktreePath} (${preservedCommitCount} commits preserved, tip ${inspection.tipSha.slice(0, 12)})`,
           );
 
-          if (task.column === "in-review") {
+          if (lanesOfReclaim(task.id).review.has(task.column)) {
             if (!reviewProof?.ok) {
               await this.emitBackwardMoveNoAction(task, "reclaim-self-owned-branch-conflict", "task:reclaim-self-owned-branch-conflict-no-action", reviewProof!);
             } else {
