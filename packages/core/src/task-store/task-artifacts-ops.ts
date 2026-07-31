@@ -655,6 +655,19 @@ export async function updateTaskCommentImpl(store: TaskStore, id: string, commen
     {
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-31-01:20 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      `getLiveTaskColumn` normalizes — it manufactures "archived" for an archived row AND a soft-deleted
+      one, and returns null for a missing task, which is why the next line tests null separately. This
+      compares that protocol vocabulary, not a column id, so an archived-role read here would keep passing
+      on the built-in board and start FAILING on a renamed one: a soft-deleted task's comments would become
+      writable.
+      
+      Same class as the checks marked in `audit-ops.ts` and `async-comments-attachments.ts`. The convertible
+      site in this file is the `preArchiveColumn` comparison at ~435, which reads a real column and stays
+      counted.
+      */
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
@@ -689,6 +702,19 @@ export async function deleteTaskCommentImpl(store: TaskStore, id: string, commen
     {
       const layer = store.asyncLayer!;
       const state = await getLiveTaskColumn(layer.db, id, layer.projectId);
+      /*
+      FNXC:LifecycleColumnCensus 2026-07-31-01:20 DELIBERATE-LITERAL: a SENTINEL, not a board lane.
+      
+      `getLiveTaskColumn` normalizes — it manufactures "archived" for an archived row AND a soft-deleted
+      one, and returns null for a missing task, which is why the next line tests null separately. This
+      compares that protocol vocabulary, not a column id, so an archived-role read here would keep passing
+      on the built-in board and start FAILING on a renamed one: a soft-deleted task's comments would become
+      writable.
+      
+      Same class as the checks marked in `audit-ops.ts` and `async-comments-attachments.ts`. The convertible
+      site in this file is the `preArchiveColumn` comparison at ~435, which reads a real column and stays
+      counted.
+      */
       if (state === "archived") throw new Error(`Task ${id} is archived — comments are read-only`);
       if (state === null) throw new Error(`Task ${id} not found`);
     }
