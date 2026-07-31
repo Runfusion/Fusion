@@ -3206,7 +3206,7 @@ export function createTaskRetryTool(store: TaskStore): ToolDefinition {
           return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
         }
         await store.updateTask(params.id, { status: null, error: null });
-        await store.moveTask(params.id, "todo");
+        await store.moveTask(params.id, await fusionCore.resolveReboundTargetForTask(store, params.id));
         await store.logEntry(params.id, "Retry requested via chat tool", "Task reset to todo for retry");
         return { content: [{ type: "text" as const, text: `Retried ${params.id} → todo` }], details: { taskId: params.id, newColumn: "todo" } };
       } catch (err: unknown) {

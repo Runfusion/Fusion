@@ -20,7 +20,7 @@ import type {
   AgentLogEntry,
   RunAuditEvent,
 } from "@fusion/core";
-import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveProjectColumnsForRoles, REVIEW_ROLES, setRunningAgentCountSource } from "@fusion/core";
+import { AgentStore, ChatStore, queryRunAuditEvents, resolveGlobalDir, resolveProjectColumnsForRoles, resolveReboundTargetForTask, REVIEW_ROLES, setRunningAgentCountSource } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -761,10 +761,19 @@ type CliRelaunchSessionStore = ServerOptions["cliSessionTransport"] extends infe
     : never
   : never;
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+`column` WIDENED from the literal `"todo"` to `string`, because the target is now resolved.
+
+The narrow literal type was not a constraint anyone chose — it was inferred from the single call
+below, which passed `"todo"`. It then made the type system ENFORCE the bug: a resolved rebound target
+is a `string`, so the correct value could not be passed without this edit. A type that only admits the
+legacy id is a lint against fixing it.
+*/
 interface CliRelaunchTaskStoreLike {
   getTask(taskId: string): Promise<Task | null>;
   updateTask(taskId: string, patch: Record<string, unknown>): Promise<unknown>;
-  moveTask(taskId: string, column: "todo", options?: Record<string, unknown>): Promise<unknown>;
+  moveTask(taskId: string, column: string, options?: Record<string, unknown>): Promise<unknown>;
   logEntry(taskId: string, message: string, details?: string): Promise<unknown>;
 }
 
@@ -804,7 +813,7 @@ export function wireCliRelaunchListener(options: {
         `CLI session relaunch requested from ${info.sessionId} — clearing resume linkage and re-enqueueing for a fresh executor run`,
       );
       await taskStore.updateTask(info.taskId, { paused: false, status: null, error: null });
-      await taskStore.moveTask(info.taskId, "todo", {
+      await taskStore.moveTask(info.taskId, await resolveReboundTargetForTask(taskStore as never, info.taskId), {
         preserveProgress: true,
         moveSource: "engine",
         recoveryRehome: true,
