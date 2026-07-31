@@ -129,6 +129,16 @@ const STATUS_ONLY_VALUES = new Set([
 
 export const DELIBERATE_MARKER = "DELIBERATE-LITERAL";
 
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-21:20:
+The membership/switch walks demand a POSITIVE column signal, unlike the `===` walk which counts
+unless the receiver looks like a role or status. Measured reason: switch statements over event and
+state enums routinely carry `case "done"` / `case "archived"`, so a count-unless-excluded rule
+reported 7 guards of which 6 were `switch (eventName)`, `switch (state)` and `switch (event)`.
+Landing that would have injected six phantom guards into a backlog the ratchet treats as zero.
+*/
+const COLUMN_RECEIVER_RE = /^(column|columnId|col)$/i;
+
 const COMPARISON_KINDS = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
@@ -562,6 +572,73 @@ export function findComparisons(filePath, source) {
         });
       }
     }
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-31-21:05 (the comparison walk has two more blind spots):
+    MEMBERSHIP and SWITCH guards. `["done","archived"].includes(task.column)` and
+    `switch (task.column) { case "todo": }` are lifecycle-column guards by any reading, and neither is
+    a BinaryExpression — so the walk above could not see either. Measured with a staged probe file:
+    of five guard forms injected, only the two `===`/`!==` ones moved the count.
+
+    That mattered because the census PRINTS "a new guard cannot land silently" next to a zero. The
+    claim was true only for the form it happened to parse; a worker converting a `===` chain into an
+    array membership would have scored the conversion and kept the guard.
+
+    ONE finding per site, not per legacy id: a single `.includes` over two column ids is one guard,
+    and emitting two would inflate the backlog the moment this landed.
+
+    Classification reuses the existing receiver/sibling logic, which is what keeps the one real
+    membership site in the tree (`["queued","planning",...].includes(task.status ?? "")` in
+    notification-service) classified as STATUS rather than a new column guard.
+    */
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && (node.expression.name.text === "includes" || node.expression.name.text === "indexOf")
+      && ts.isArrayLiteralExpression(node.expression.expression)
+      && node.arguments.length === 1) {
+      const values = node.expression.expression.elements
+        .filter((element) => ts.isStringLiteral(element))
+        .map((element) => element.text);
+      const legacy = values.find((value) => LEGACY_COLUMN_IDS.includes(value));
+      if (legacy) {
+        const receiver = receiverNameOf(node.arguments[0]);
+        if (!COLUMN_RECEIVER_RE.test(receiver)) return ts.forEachChild(node, visit);
+        const isRole = ROLE_RECEIVER_TOKENS.includes(receiver)
+          || values.some((value) => ROLE_ONLY_VALUES.has(value));
+        const isStatus = /status/i.test(receiver) || values.some((value) => STATUS_ONLY_VALUES.has(value));
+        const deliberate = hasDeliberateMarker(sourceFile, node);
+        findings.push({
+          file: filePath,
+          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+          columnId: legacy,
+          receiver,
+          kind: deliberate ? "deliberate" : isRole ? "role" : isStatus ? "status" : "column",
+          traitFallback: false,
+        });
+      }
+    }
+
+    if (ts.isSwitchStatement(node)) {
+      const caseValues = node.caseBlock.clauses
+        .filter((clause) => ts.isCaseClause(clause) && ts.isStringLiteral(clause.expression))
+        .map((clause) => clause.expression.text);
+      const legacy = caseValues.find((value) => LEGACY_COLUMN_IDS.includes(value));
+      if (legacy) {
+        const receiver = receiverNameOf(node.expression);
+        if (!COLUMN_RECEIVER_RE.test(receiver)) return ts.forEachChild(node, visit);
+        const isRole = ROLE_RECEIVER_TOKENS.includes(receiver)
+          || caseValues.some((value) => ROLE_ONLY_VALUES.has(value));
+        const isStatus = /status/i.test(receiver) || caseValues.some((value) => STATUS_ONLY_VALUES.has(value));
+        const deliberate = hasDeliberateMarker(sourceFile, node);
+        findings.push({
+          file: filePath,
+          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+          columnId: legacy,
+          receiver,
+          kind: deliberate ? "deliberate" : isRole ? "role" : isStatus ? "status" : "column",
+          traitFallback: false,
+        });
+      }
+    }
+
     const columnProperty = columnPropertyLiteral(node);
     if (columnProperty) {
       findings.push({
