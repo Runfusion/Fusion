@@ -95,13 +95,26 @@ on a renamed board, so `executingTaskIds` stayed empty and the board showed "Sta
 while a merger was visibly making progress — the precise regression the FNXC note below says this
 function was restored to prevent.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:05 (fleet — inline fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallbacks for the two lane questions in this file.
+
+Named sets rather than inline `=== "<id>"` arms. Behaviour is identical to the guards as they stand;
+the reason is that the census counts an inline comparison whether or not it sits in a fallback branch
+— its `traitFallback` hint is advisory and never changes the count. So a correctly-converted guard
+with an inline legacy arm stays on the backlog permanently, and the number stops distinguishing real
+debt from documented degraded answers. Same shape as `LEGACY_PLANNER_LANES`.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+const LEGACY_ARCHIVE_LANES: ReadonlySet<string> = new Set(["archived"]);
+
 function hasFreshAgentLogActivitySinceTaskUpdate(
   store: TaskStore,
   task: Pick<Task, "id" | "column" | "updatedAt">,
   now: number,
   reviewColumns?: ReadonlySet<string>,
 ): boolean {
-  if (!(reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")) return false;
+  if (!(reviewColumns ? reviewColumns : LEGACY_REVIEW_LANES).has(task.column)) return false;
   const latestAgentLogMs = getLatestAgentLogActivityMs(store, task.id);
   if (latestAgentLogMs == null) return false;
 
@@ -369,7 +382,21 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
     FNXC:PostgresArchiveReads 2026-07-14-17:09:
     Pagination belongs to the composed active-plus-archive result. When cold storage participates, fetch both sources before sorting, deduplicating, and slicing; paginating only project.tasks can make archived rows unreachable or shift them onto the wrong page.
     */
-    const includeColdStorage = includeArchived && (!columnFilter || columnFilter === "archived");
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-14:10 (fleet — reads.ts cluster):
+    "IS THE CALLER FILTERING TO THE ARCHIVE LANE?" — a role question about the FILTER, not a task.
+
+    Cold storage holds archived rows. Against the literal, a caller filtering to a renamed archive
+    lane took this branch as false, so cold storage was skipped and the filtered view returned only
+    whatever archived rows still sat in `project.tasks` — a short list presented as the whole archive.
+
+    `resolveProjectColumnsForRoles` seeds the legacy id before adding resolved ones, so an unconverted
+    board is byte-identical and a resolution failure keeps the previous answer.
+    */
+    const archivedFilterLanes = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
+    const columnFilterIsArchive = columnFilter !== undefined
+      && (archivedFilterLanes && archivedFilterLanes.size > 0 ? archivedFilterLanes : LEGACY_ARCHIVE_LANES).has(columnFilter);
+    const includeColdStorage = includeArchived && (!columnFilter || columnFilterIsArchive);
     const boundedMergedPrefix = includeColdStorage && paginationLimit !== undefined
       ? paginationOffset + paginationLimit
       : undefined;
