@@ -30,7 +30,7 @@ the new number in the diff, where a reviewer sees it, instead of in a hand-writt
 */
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /*
@@ -42,7 +42,22 @@ and fails if they disagree, which is the only evidence available that either is 
 import { censusFiles, summarize } from "./lib/lifecycle-column-census-ast.mjs";
 
 /** Repo root, for reading a finding's source back when `--triage` classifies it. */
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-14:35 (u12 — the scan root and the READ root could disagree):
+`REPO_ROOT` was derived from the SCRIPT's location, while the file list comes from `git ls-files` in
+the CWD. Those are the same directory in production and only there. Override the list — which is what
+a synthetic-tree fixture must do to stop the suite being a function of the real backlog — and every
+path is LISTED relative to the fixture but READ relative to the repo, so each read misses with ENOENT.
+Diagnosed by the author of #3228 while trying to build that fixture; the bug is mine, introduced when
+I extracted `triageFindings` in #3207 without considering an injected list.
+
+`FUSION_CENSUS_FILE_ROOT` pairs with the existing `FUSION_CENSUS_BASELINE_PATH` seam, and
+`FUSION_CENSUS_FILE_LIST` injects the list itself. Both are needed for the fixture: a root with no
+list still scans the real tree, and a list with no root still reads from the real one. Production sets
+neither, so the default is unchanged.
+*/
+const REPO_ROOT = process.env.FUSION_CENSUS_FILE_ROOT
+  ?? join(dirname(fileURLToPath(import.meta.url)), "..");
 import {
   censusFiles as censusFilesText,
   summarize as summarizeText,
@@ -69,8 +84,10 @@ const BASELINE_PATH = process.env.FUSION_CENSUS_BASELINE_PATH
   ?? join(HERE, "lib", "lifecycle-column-census-baseline.json");
 
 let files;
+/* Injected list short-circuits the git scan; paths are resolved against REPO_ROOT above. */
+const injectedList = process.env.FUSION_CENSUS_FILE_LIST;
 try {
-  files = execSync(
+  files = injectedList !== undefined ? injectedList.split(/[,\n]/) : execSync(
     "git ls-files 'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx' 'plugins/*/src/**/*.ts' 'plugins/*/src/**/*.tsx'",
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   )
@@ -89,7 +106,11 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const findings = censusFiles(files);
+/* Single read root for every consumer: the AST scan, the text cross-check, `triageFindings`, and the
+   sync-resolver probe all resolve through `readCensusFile`, so an injected list cannot end up listed
+   against the fixture and read against the repo. That split is the ENOENT #3228 hit. */
+const readCensusFile = (f) => readFileSync(isAbsolute(f) ? f : join(REPO_ROOT, f), "utf8");
+const findings = censusFiles(files, readCensusFile);
 const summary = summarize(findings);
 const json = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
@@ -196,7 +217,7 @@ function triageFindings() {
          undefined path constant was swallowed into an empty file list, which reported "0 documented
          deferrals" for a tree that visibly has them. A triage aid that fails to zero is worse than
          one that throws — it reads as a clean answer. */
-      lines = readFileSync(join(REPO_ROOT, f.file), "utf8").split("\n");
+      lines = readCensusFile(f.file).split("\n");
       sourceCache.set(f.file, lines);
     }
     (hasDeferralNote(lines, f.line) ? flagged : open).push(f);
@@ -423,7 +444,7 @@ if (claims && !json) {
     const syncCallRe = /resolveTaskWorkflowIrSync\s*\??\.?\s*\(/;
     const isSyncResolved = (file) => {
       try {
-        return syncCallRe.test(readFileSync(join(REPO_ROOT, file), "utf8"));
+        return syncCallRe.test(readCensusFile(file));
       } catch {
         return false;
       }
@@ -530,7 +551,7 @@ if (compare) {
   The check now fails only on a site the regex found and the parser did not, which is what the note
   above it always said the contract was.
   */
-  const textFindings = censusFilesText(files);
+  const textFindings = censusFilesText(files, readCensusFile);
   const text = summarizeText(textFindings);
   console.log(`\n  text classifier:  ${JSON.stringify(text.totals)}`);
   console.log(`  AST classifier:   ${JSON.stringify(summary.totals)}`);
