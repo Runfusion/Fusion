@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, resolveProjectColumnsForRoles, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, resolveProjectColumnsForRoles, TERMINAL_ROLES, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
@@ -69,9 +69,20 @@ export class BacklogPressureReporter {
       read needs (there is no task in hand yet to resolve from) and always unions the legacy id, so a
       board mid-rename still counts rows stored under the old one.
       */
-      const [holdColumns, wipColumns] = await Promise.all([
+      const [holdColumns, wipColumns, dependencySatisfiedColumns] = await Promise.all([
         resolveProjectColumnsForRoles(this.store, ["hold"]),
         resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-15:10 (fleet phase, long tail):
+        The runnable-candidate check asked whether every dependency was `done` — the one lane question
+        in this file that was NOT resolved, two lines from where the other two already were.
+
+        A dependency is satisfied when it reaches a TERMINAL lane, complete or archived: an archived
+        blocker satisfies its dependents, and the id-keyed form said otherwise on any renamed board AND
+        for archived blockers on the built-in one. The reporter then found zero runnable candidates and
+        reported no backlog pressure — the failure mode where a diagnostic goes quiet instead of wrong.
+        */
+        resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES),
       ]);
       const listByColumns = async (columns: ReadonlySet<string>, slim: boolean): Promise<Task[]> => {
         const byId = new Map<string, Task>();
@@ -98,7 +109,7 @@ export class BacklogPressureReporter {
       ]);
       const byId = new Map(allTasks.map((task) => [task.id, task]));
       const candidates = todoFull
-        .filter((task) => this.isRunnableCandidate(task, byId))
+        .filter((task) => this.isRunnableCandidate(task, byId, dependencySatisfiedColumns))
         .sort((a, b) => {
           const pa = PRIORITY_WEIGHT[a.priority ?? "normal"];
           const pb = PRIORITY_WEIGHT[b.priority ?? "normal"];
@@ -185,7 +196,8 @@ export class BacklogPressureReporter {
     }
   }
 
-  private isRunnableCandidate(task: Task, byId: Map<string, Task>): boolean {
+  /** `dependencySatisfiedColumns` is the caller's resolved TERMINAL set; omitted keeps the legacy id. */
+  private isRunnableCandidate(task: Task, byId: Map<string, Task>, dependencySatisfiedColumns?: ReadonlySet<string>): boolean {
     if (task.paused) return false;
     if ((task.blockedBy ?? "").trim().length > 0) return false;
     if ((task.overlapBlockedBy ?? "").trim().length > 0) return false;
@@ -194,7 +206,11 @@ export class BacklogPressureReporter {
     for (const depId of task.dependencies ?? []) {
       const dependency = byId.get(depId);
       if (!dependency) continue;
-      if (dependency.column !== "done") {
+      const satisfied = dependencySatisfiedColumns
+        ? dependencySatisfiedColumns.has(dependency.column)
+        /* DELIBERATE-LITERAL — the no-metadata fallback for a caller that resolved nothing. */
+        : dependency.column === "done";
+      if (!satisfied) {
         return false;
       }
     }

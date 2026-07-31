@@ -284,4 +284,43 @@ describe("backlog pressure resolves the board's own lanes", () => {
 
     expect((await reporter.report()).alerted).toBe(false);
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:25:
+  The DEPENDENCY half. #2820 converted this reporter's two queries and left the runnable-candidate
+  check asking whether each dependency was the id `done` — so a candidate blocked by an ARCHIVED
+  dependency counted as not-runnable, the candidate list came back empty, and the reporter reported no
+  pressure on a board that was genuinely under it. A diagnostic going quiet, not wrong.
+
+  Archived is the load-bearing case: it is wrong on the BUILT-IN board too, not only a renamed one.
+  */
+  function storeWithArchivedBlocker(): TaskStore {
+    const blocker = { id: "B-1", column: "archived", title: "B-1", priority: "normal" } as unknown as Task;
+    const hold = Array.from({ length: 10 }, (_, i) => (
+      { id: `H-${i}`, column: "backlog", title: `H-${i}`, priority: "normal", dependencies: ["B-1"] } as unknown as Task
+    ));
+    const wip = [{ id: "W-0", column: "building", title: "W-0", priority: "normal" } as unknown as Task];
+    return {
+      getSettings: vi.fn().mockResolvedValue({ backlogPressureRatioThreshold: 2, backlogPressureMinTodoCount: 3 }),
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+      listTasks: vi.fn(async (options?: { column?: string }) => {
+        if (options?.column === "backlog") return hold;
+        if (options?.column === "building") return wip;
+        if (options?.column === undefined) return [...hold, ...wip, blocker];
+        return [];
+      }),
+      getInsightStore: vi.fn(() => ({ upsertInsight: vi.fn(), listInsights: vi.fn(async () => []) })),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+  }
+
+  it("treats an ARCHIVED dependency as satisfied, so the candidate is still runnable", async () => {
+    const reporter = new BacklogPressureReporter({
+      store: storeWithArchivedBlocker(),
+      projectId: "p1",
+      logger: laneLogger,
+    });
+
+    expect((await reporter.report()).alerted).toBe(true);
+  });
 });
