@@ -204,13 +204,14 @@ export function findLaneAcceptingFunctions(files) {
         */
         const existing = accepting.get(node.name.text);
         if (existing) {
+          existing.files.add(file);
           for (const [index, names] of namesByIndex) {
             if (!existing.namesByIndex.has(index)) existing.namesByIndex.set(index, new Set());
             for (const name of names) existing.namesByIndex.get(index).add(name);
           }
           for (const position of positions) existing.positions.add(position);
         } else {
-          accepting.set(node.name.text, { namesByIndex, positions });
+          accepting.set(node.name.text, { namesByIndex, positions, files: new Set([file]) });
         }
       }
     });
@@ -334,9 +335,48 @@ export function findUnwiredCallSites(files, accepting) {
   const unwired = [];
   for (const file of files) {
     const sf = parse(file);
+    /*
+    FNXC:LaneWiring 2026-07-31-09:25:
+    A call means the declaration it can actually SEE.
+
+    The census keys by name because it has no type resolution, and merging same-named declarations
+    (added when core's and the dashboard's `computeBlockerFanoutMap` collided) fixed a false NEGATIVE
+    at the cost of a false POSITIVE: `ModelSelectorTab` declares its own two-parameter
+    `resolveEffectiveExecutor(task, settings)` — a pass-through with nothing lane-related — while an
+    UNRELATED exported function of the same name in effective-model-resolution.ts takes `columnFlags`.
+    Every call to the local one was reported unwired against a signature it has never had.
+
+    Only EXPORTED declarations enter the accepting map, so the rule is exact: if the calling file
+    declares the name itself and the map entry came from a different file, the call resolves to the
+    local declaration and is not a lane call here.
+
+    Deliberately NOT done by re-running the detector over the single file: that pass cannot resolve an
+    imported options interface, so a locally-declared function with an imported context type would
+    quietly stop being lane-accepting — a false negative, which is the one failure a ratchet must not
+    have. The global pass still does all type resolution; only the CHOICE of declaration is local.
+    */
+    const declaredLocally = new Set();
+    {
+      const collect = (node) => {
+        if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+          declaredLocally.add(node.name.text);
+        }
+        if (ts.isVariableStatement(node)) {
+          for (const d of node.declarationList.declarations) {
+            if (ts.isIdentifier(d.name)) declaredLocally.add(d.name.text);
+          }
+        }
+        ts.forEachChild(node, collect);
+      };
+      ts.forEachChild(sf, collect);
+    }
     const visit = (node) => {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-        const accepted = accepting.get(node.expression.text);
+        const entry = accepting.get(node.expression.text);
+        const shadowed = entry !== undefined
+          && declaredLocally.has(node.expression.text)
+          && !entry.files.has(file);
+        const accepted = shadowed ? undefined : entry;
         if (accepted) {
           const passesOption = node.arguments.some((arg, index) => {
             const wanted = accepted.namesByIndex.get(index);

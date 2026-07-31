@@ -185,3 +185,54 @@ test("...and the merge does not excuse a call passing neither shape", () => {
   ].join("\n");
   assert.equal(findUnwiredCallSitesIn(source).length, 1);
 });
+
+/*
+FNXC:LaneWiring 2026-07-31-09:35:
+SHADOWING — a call means the declaration it can actually see.
+
+Merging same-named declarations fixed a false negative and introduced a false positive: two unrelated
+functions named `resolveEffectiveExecutor` exist, one of which takes a lane answer, so every call to
+the OTHER was reported unwired against a signature it never had.
+
+The negatives matter more than the positive here. Shadowing must not become a way to disappear a
+genuine unwired call: a file that declares its own EXPORTED lane-accepting function is not shadowed
+by itself, and a file that declares nothing is judged normally.
+*/
+function unwiredAcross(sources) {
+  const dir = mkdtempSync(join(tmpdir(), "lane-wiring-multi-"));
+  const files = sources.map((source, index) => {
+    const file = join(dir, `f${index}.ts`);
+    writeFileSync(file, source);
+    return file;
+  });
+  return findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
+}
+
+test("a local declaration shadows an unrelated exported function of the same name", () => {
+  const unwired = unwiredAcross([
+    "export function resolveThing(t: unknown, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, o]; }",
+    [
+      "function resolveThing(t: unknown, s?: { quiet?: boolean }) { return [t, s]; }",
+      "export function use() { return resolveThing(1, { quiet: true }); }",
+    ].join("\n"),
+  ]);
+  assert.equal(unwired.length, 0);
+});
+
+test("...but a file declaring its OWN exported lane function is not shadowed by itself", () => {
+  const unwired = unwiredAcross([
+    [
+      "export function resolveThing(t: unknown, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, o]; }",
+      "export function use() { return resolveThing(1, { quiet: true }); }",
+    ].join("\n"),
+  ]);
+  assert.equal(unwired.length, 1);
+});
+
+test("...and a file declaring nothing is judged against the exported signature", () => {
+  const unwired = unwiredAcross([
+    "export function resolveThing(t: unknown, o?: { reviewColumns?: ReadonlySet<string> }) { return [t, o]; }",
+    "export function use() { return resolveThing(1, { quiet: true }); }",
+  ]);
+  assert.equal(unwired.length, 1);
+});
