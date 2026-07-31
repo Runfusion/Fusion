@@ -128,7 +128,7 @@ export function ChangesDiffModal({ columnFlags,
     <FloatingWindow
       windowKey="changes-diff"
       title={t("changes.title", "Changes")}
-      ariaLabel={`${t("changes.title", "Changes")} dialog`}
+      ariaLabel={t("changes.title", "Changes")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".changes-diff-modal-header"

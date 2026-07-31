@@ -181,7 +181,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
     <FloatingWindow
       windowKey="scripts"
       title={t("scripts.title", "Scripts")}
-      ariaLabel={`${t("scripts.title", "Scripts")} dialog`}
+      ariaLabel={t("scripts.title", "Scripts")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".modal-header"

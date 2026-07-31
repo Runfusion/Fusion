@@ -3555,7 +3555,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     <FloatingWindow
       windowKey="planning-mode"
       title={t("planning.title", "Planning Mode")}
-      ariaLabel={`${t("planning.title", "Planning Mode")} dialog`}
+      ariaLabel={t("planning.title", "Planning Mode")}
       onClose={handleClose}
       hideHeader
       dragHandleSelector=".planning-modal > .modal-header"

@@ -4405,7 +4405,7 @@ export function SettingsModal({
     <FloatingWindow
       windowKey="settings"
       title={t("settings.title", "Settings")}
-      ariaLabel={`${t("settings.title", "Settings")} dialog`}
+      ariaLabel={t("settings.title", "Settings")}
       onClose={() => void requestClose()}
       hideHeader
       dragHandleSelector=".settings-modal > .modal-header"

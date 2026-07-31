@@ -486,7 +486,7 @@ export function ActivityLogModal({
     <FloatingWindow
       windowKey="activity-log"
       title={t("activityLog.title", "Activity Log")}
-      ariaLabel={`${t("activityLog.title", "Activity Log")} dialog`}
+      ariaLabel={t("activityLog.title", "Activity Log")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".activity-log-header"

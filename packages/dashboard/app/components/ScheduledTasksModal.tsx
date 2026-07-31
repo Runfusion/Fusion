@@ -560,7 +560,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     <FloatingWindow
       windowKey="automation"
       title={t("schedule.title", "Automations")}
-      ariaLabel={`${t("schedule.title", "Automations")} dialog`}
+      ariaLabel={t("schedule.title", "Automations")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".automation-modal__drag-handle"

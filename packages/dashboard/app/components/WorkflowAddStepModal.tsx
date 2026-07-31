@@ -144,7 +144,7 @@ export function WorkflowAddStepModal({
     <FloatingWindow
       windowKey="workflow-add-step"
       title={t("workflowNodes.addStepTitle", "Add a step")}
-      ariaLabel={`${t("workflowNodes.addStepTitle", "Add a step")} dialog`}
+      ariaLabel={t("workflowNodes.addStepTitle", "Add a step")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".wf-add-step-header"
