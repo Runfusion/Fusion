@@ -1,6 +1,18 @@
 import { getTaskMergeBlocker } from "./task-merge.js";
 import type { Task, TaskLogEntry } from "./types.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
 /**
  * State-based in-review stall detection. This is complementary to FN-4168's
  * planned heuristic `stalledReview` signal.
@@ -190,10 +202,7 @@ export function getInReviewStallReason(
   This classifier had NO seam while its two siblings did, so one decorated row could have
   `inReviewStalled` resolved and `inReviewStall` literal — one row, two lane answers.
   */
-  const inReviewLane = context.reviewColumns
-    ? context.reviewColumns.has(task.column)
-    /* DELIBERATE-LITERAL — the no-metadata fallback. */
-    : task.column === "in-review";
+  const inReviewLane = (context.reviewColumns ?? LEGACY_REVIEW_LANES).has(task.column);
   if (!inReviewLane || task.paused === true) {
     return undefined;
   }

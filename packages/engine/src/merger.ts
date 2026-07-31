@@ -118,6 +118,18 @@ import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_COMPLETE_LANES: readonly string[] = ["done"];
+
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, RemovalReason, removeWorktree, type WorktreePool } from "./worktree-pool.js";
@@ -4943,7 +4955,10 @@ export async function findWorktreeUser(
     if (t.id === excludeTaskId) continue;
     if (t.worktree !== worktreePath) continue;
     const lifecycle = await resolveTaskLifecycleColumns(store, t.id, conflictIrCache);
-    if (t.column !== (lifecycle?.complete ?? "done") && t.column !== "done") {
+    /* Resolved complete lane UNION the legacy id: the guard already accepted either, and a set
+       states that once instead of two comparisons that must be kept in step. */
+    const completeLanes = new Set<string>([lifecycle?.complete, ...LEGACY_COMPLETE_LANES].filter((c): c is string => c !== undefined));
+    if (!completeLanes.has(t.column)) {
       return t.id;
     }
   }

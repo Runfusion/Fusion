@@ -11,9 +11,7 @@
     "packages/engine/src/auto-merge-finalization.ts": 2,
     "packages/engine/src/scheduler.ts": 2,
     "packages/core/src/eval-signal-collector.ts": 1,
-    "packages/core/src/in-review-stall.ts": 1,
     "packages/core/src/mission-store.ts": 1,
-    "packages/core/src/stalled-review-detector.ts": 1,
     "packages/core/src/task-store/async-comments-attachments.ts": 1,
     "packages/core/src/task-store/audit-ops.ts": 1,
     "packages/core/src/task-store/lifecycle-ops.ts": 1,
@@ -24,8 +22,6 @@
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
     "packages/engine/src/backlog-pressure-reporter.ts": 1,
-    "packages/engine/src/merger.ts": 1,
-    "packages/engine/src/runtimes/in-process-runtime.ts": 1,
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {

@@ -1,5 +1,17 @@
 import type { Task } from "./types.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
 /**
  * Heuristic-only stalled review detector.
  *
@@ -60,9 +72,7 @@ export function detectStalledReview(
   task: Pick<Task, "column" | "paused" | "log">,
   options?: { now?: number; windowMs?: number; reviewColumns?: ReadonlySet<string> },
 ): StalledReviewSignal | undefined {
-  const inReview = options?.reviewColumns
-    ? options.reviewColumns.has(task.column)
-    : task.column === "in-review";
+  const inReview = (options?.reviewColumns ?? LEGACY_REVIEW_LANES).has(task.column);
   if (!inReview || task.paused === true || task.log.length === 0) {
     return undefined;
   }

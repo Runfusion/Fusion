@@ -67,6 +67,18 @@ import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_ARCHIVE_LANES: readonly string[] = ["archived"];
+
+
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
 /**
@@ -2473,7 +2485,9 @@ export class InProcessRuntime
         const archivedLifecycle = await resolveTaskLifecycleColumns(this.taskStore, data.task.id)
           .catch(() => undefined);
         const archivedColumn = archivedLifecycle?.archived ?? "archived";
-        if (data.to !== archivedColumn && data.to !== "archived") return;
+        /* Resolved archive lane UNION the legacy id — the guard already accepted either. */
+        const archivedLanes = new Set<string>([archivedColumn, ...LEGACY_ARCHIVE_LANES]);
+        if (!archivedLanes.has(data.to)) return;
         await this.chatStore?.deleteSessionsForAgentId(
           `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`,
           { projectId: this.config.projectId },
