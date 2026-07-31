@@ -5473,9 +5473,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       }
       let repaired = 0;
 
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:45 (fleet — FN-5256 liveness cluster):
+      The four lane comparisons in this loop, resolved once per sweep as the PROJECT union. Board-wide
+      loop, so per-task resolution is one IR read per row on a recurring sweep, and the union needs no
+      per-task workflow selection — the same trade `reconcilePreExecutionWorktrees` makes.
+
+      Over-inclusion is the safe direction for EVERY use here, which is what makes the union sound:
+        - terminal (below): a wider terminal set skips more rows, i.e. repairs less. Benign.
+        - wip / review in the scopeOverride bypass: a wider set means FEWER rows take the bypass that
+          CLEARS worktree metadata.
+        - wip / review in the FN-5256 guard: a wider set PROTECTS more rows from having their worktree
+          nulled out.
+      A missed column, by contrast, yanks a worktree from a still-running shell — which is the exact
+      incident FN-5256 exists to prevent, and on a renamed board the literals missed every column.
+      */
+      const laneUnions = {
+        terminal: await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES),
+        wip: await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+        review: await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES),
+      };
+
       for (const task of allTasks) {
         if (!task.worktree) continue;
-        if (!options?.includeTaskIds?.has(task.id) && (task.column === "done" || task.column === "archived")) {
+        if (!options?.includeTaskIds?.has(task.id) && laneUnions.terminal.has(task.column)) {
           continue;
         }
 
@@ -5512,8 +5533,8 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
         const scopeOverrideMergeActiveSafe =
           task.scopeOverride === true
-          && task.column !== "in-progress"
-          && (task.column !== "in-review" || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
+          && !laneUnions.wip.has(task.column)
+          && (!laneUnions.review.has(task.column) || (typeof task.status === "string" && RECONCILE_SCOPE_OVERRIDE_MERGE_ACTIVE_STATUS_SET.has(task.status)));
         if (scopeOverrideMergeActiveSafe) {
           /*
           FNXC:MissingWorktreeRecovery 2026-07-10-18:23:
@@ -5541,7 +5562,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         // live task's worktree looks stale here (and we couldn't rebind to a live
         // fusion/<id>), the executor's own recovery paths will detect and recreate
         // it. Clearing here yanks the worktree from a still-running shell.
-        if (task.column === "in-progress" || task.column === "in-review") {
+        if (laneUnions.wip.has(task.column) || laneUnions.review.has(task.column)) {
           await this.emitWorktreeMetadataAuditEvent({
             taskId: task.id,
             mutationType: "task:auto-recover-worktree-metadata-skipped-active",

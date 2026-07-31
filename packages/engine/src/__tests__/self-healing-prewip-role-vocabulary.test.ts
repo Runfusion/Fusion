@@ -421,3 +421,43 @@ describe("self-healing active/terminal membership vocabulary", () => {
     expect(release).not.toHaveBeenCalled();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-17:45 (fleet — FN-5256 liveness protection):
+FN-5256 exists because nulling a live task's worktree metadata yanks the worktree from a still-running
+shell. The guard that enforces it compared `task.column` against "in-progress"/"in-review", so on a
+renamed board it protected NOTHING and the very incident it was written to prevent came back.
+
+Asserted on `updateTask` NOT being called: the protection is the absence of a write, so a test that only
+counted the return value would pass while the metadata was being cleared.
+*/
+describe("self-healing FN-5256 liveness protection vocabulary", () => {
+  it("does not clear worktree metadata for a card in a RENAMED working lane", async () => {
+    const live = {
+      id: "FN-9400",
+      column: "building",
+      worktree: "/tmp/wt/FN-9400-missing",
+      branch: "fusion/FN-9400",
+    } as unknown as Task;
+    const updateTask = vi.fn(async () => undefined);
+    const store = {
+      ...storeFor(RENAMED_WITH_REVIEW),
+      getSettings: vi.fn(async () => ({ globalPause: false, enginePaused: false })),
+      listTasks: vi.fn(async () => [live]),
+      getTask: vi.fn(async () => live),
+      updateTask,
+      logEntry: vi.fn(async () => undefined),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+      getRootDir: vi.fn(() => "/tmp/test-project"),
+      getProjectWorkflowIds: vi.fn(async () => ["custom:renamed"]),
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_WITH_REVIEW }]),
+    } as unknown as TaskStore;
+
+    const manager = Object.create(SelfHealingManager.prototype) as SelfHealingManager;
+    (manager as unknown as Record<string, unknown>).store = store;
+    (manager as unknown as Record<string, unknown>).options = { rootDir: "/tmp/test-project", getExecutingTaskIds: () => new Set() };
+
+    await (manager as unknown as { reconcileTaskWorktreeMetadata(o?: unknown): Promise<number> }).reconcileTaskWorktreeMetadata();
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+});
