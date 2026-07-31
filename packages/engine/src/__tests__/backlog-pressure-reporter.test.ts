@@ -359,4 +359,89 @@ describe("backlog pressure resolves the board's own lanes", () => {
     /* The paired negative: a dependency still waiting must still block. */
     expect(ids).not.toContain("FN-BLOCKED");
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:02 (found by BLINDING, not by the census):
+  THE WIP RESOLVER IN THIS REPORTER WAS UNCOVERED — the census counts it as converted, and nothing
+  in the tree could tell it from the literal it replaced.
+
+  Measured with the #3214 procedure, one resolver at a time against this file's 11 cases:
+
+      hold      -> ["todo"]                 2 failed   covered
+      wip       -> ["in-progress"]          0 failed   UNCOVERED
+      terminal  -> ["done","archived"]      1 failed   covered
+
+  Every pre-existing renamed-board case here supplies `inProgressSlim` under the resolved wip lane
+  AND asserts an outcome the wip count does not change, so blinding that one resolver was invisible.
+
+  WHAT IT COSTS ON A RENAMED BOARD, which is why this is a real alert bug and not bookkeeping:
+  `wipColumns` feeds `inProgressCount`, the DENOMINATOR of
+  `ratio = todoCount / max(inProgressCount, 1)`. Against the literal, a board whose wip lane is
+  `brewing` matches no rows, so busy in-progress work counts as ZERO, the ratio inflates to
+  `todoCount`, and the backlog-pressure alert fires on a queue that is draining normally. The
+  operator is paged that the board is jammed while agents are working through it.
+
+  THE FIXTURE REACHES THE BRANCH (rule 2): 12 hold cards over 2 wip cards is a ratio of 6, UNDER the
+  default threshold of 10, so the correct answer is "no alert". Blinded, the denominator collapses to
+  1 and the ratio becomes 12 — over the threshold, past the candidate gate, and alerting. A fixture
+  whose ratio cleared the threshold either way could not see this.
+
+  ASSERTED ON THE SIDE EFFECT (rule 3): `upsertInsight` is what the alerting path DOES. Asserting
+  only `alerted === false` would also pass if the run bailed early for an unrelated reason — a
+  missing insight store, a cooldown hit, too few candidates — none of which involve the wip lane.
+  */
+  it("does NOT alert when a renamed WIP lane holds the in-progress work", async () => {
+    /* 12 waiting cards in the renamed hold lane. */
+    const todoSlim = Array.from({ length: 12 }, (_, i) =>
+      createTask({ id: `FN-W${i}`, column: "drafting" }));
+    /* 2 cards genuinely in progress, in the renamed wip lane the literal cannot see. */
+    const inProgressSlim = [
+      createTask({ id: "FN-BREW-1", column: "brewing" }),
+      createTask({ id: "FN-BREW-2", column: "brewing" }),
+    ];
+    /* Dependency-free, so the blinded run reaches the alert rather than stopping at candidates. */
+    const todoFull = todoSlim;
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
+    const reporter = new BacklogPressureReporter({
+      store: createStore({
+        todoSlim, inProgressSlim, todoFull, allTasks: todoSlim, insightStore,
+        workflowIr: RENAMED_DEPENDENCY_IR, holdColumn: "drafting", wipColumn: "brewing",
+      }),
+      projectId: "/tmp/project",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      now: () => Date.parse("2026-05-18T12:00:00.000Z"),
+    });
+
+    const result = await reporter.report();
+
+    /* 12 / 2 = 6, under the threshold of 10. Against the literal this is 12 / 1 and alerts. */
+    expect(result).toEqual({ alerted: false, reason: "under-threshold" });
+    expect(insightStore.upsertInsight).not.toHaveBeenCalled();
+  });
+
+  /*
+  THE PAIRED POSITIVE. The case above is a "does not fire" assertion, which a reporter that never
+  fired at all would satisfy — including one broken so badly it always returns under-threshold. This
+  pins that the SAME renamed board still alerts when the ratio genuinely warrants it, so the case
+  above is measuring the wip lane rather than a dead reporter.
+  */
+  it("still alerts on the same renamed board when in-progress work really is thin", async () => {
+    const todoSlim = Array.from({ length: 12 }, (_, i) =>
+      createTask({ id: `FN-T${i}`, column: "drafting" }));
+    const insightStore = { upsertInsight: vi.fn(), listInsights: vi.fn().mockResolvedValue([]) };
+    const reporter = new BacklogPressureReporter({
+      store: createStore({
+        todoSlim, inProgressSlim: [], todoFull: todoSlim, allTasks: todoSlim, insightStore,
+        workflowIr: RENAMED_DEPENDENCY_IR, holdColumn: "drafting", wipColumn: "brewing",
+      }),
+      projectId: "/tmp/project",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      now: () => Date.parse("2026-05-18T12:00:00.000Z"),
+    });
+
+    const result = await reporter.report();
+
+    expect(result.alerted).toBe(true);
+    expect(insightStore.upsertInsight).toHaveBeenCalledTimes(1);
+  });
 });

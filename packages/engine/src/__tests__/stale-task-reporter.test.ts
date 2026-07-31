@@ -162,6 +162,36 @@ describe("stale-task reporting resolves the board's own lanes", () => {
     expect(result.surfaced).toBeGreaterThan(0);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:14 (found by BLINDING — the review half was uncovered):
+  This describe already declared `signoff` in its IR and no case ever put a card there, so the
+  REVIEW resolver was doing nothing any test could see. Measured with the #3214 procedure against
+  this file's 7 cases:
+
+      wipColumns    -> ["in-progress"]    1 failed   covered
+      reviewColumns -> ["in-review"]      0 failed   UNCOVERED
+
+  Rule 1 in that doc is exactly this: coverage is PER-RESOLVER, not per-sweep. Both resolvers sit in
+  one `Promise.all` and read as a single converted sweep; only one of them was held by anything.
+
+  WHAT IT COSTS: `reviewColumns` decides which rows the staleness read even FETCHES. Against the
+  literal, a card parked in a renamed review lane is never queried, so a review that has silently
+  stalled for days is never surfaced — the precise condition this reporter exists to report.
+
+  The card must be stale by the IN-REVIEW thresholds, which the harness above already supplies; a
+  fixture leaning on the in-progress ones would surface through the wip path and prove nothing.
+  */
+  it("surfaces a stale card sitting in a RENAMED review lane", async () => {
+    const store = renamedStore({ signoff: [staleCard("FN-R", "signoff")] });
+    const reporter = new StaleTaskReporter({ store, now: () => NOW });
+
+    const result = await reporter.report();
+
+    expect(result.surfaced).toBeGreaterThan(0);
+    /* Path-specific: the surfacing side effect names the lane the card is actually in. */
+    expect(store.logEntry).toHaveBeenCalledWith("FN-R", expect.stringContaining("column=signoff"));
+  });
+
   it("keeps surfacing legacy-board cards when no workflow resolves", async () => {
     /*
     My first version of this case asserted that a card in `in-progress` is surfaced on the RENAMED
