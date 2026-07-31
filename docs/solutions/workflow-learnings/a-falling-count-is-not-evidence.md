@@ -51,7 +51,7 @@ remaining entries were all in files nobody had touched — which is what a detec
 The inert-lane ratchet was rewritten four times. Each version was correct about the shape in front of
 it and blind to a trivially different spelling of the same defect:
 
-```
+```text
 #3062  matched a local only        →  resolveX(store, id).review           walked past
 #3068  matched comparisons only    →  parked.terminal.has(to)              walked past, and made the count FALL
 #3079  matched same-file only      →  a helper imported from another file  walked past
@@ -87,11 +87,18 @@ figure from an earlier round.
 
 **Branch outputs are not comparable. Scripts on one tree are.** The procedure that works:
 
-```
+```shell
+# Extract both versions; neither needs its branch checked out.
 git show <branchA>:scripts/<check>.mjs > /tmp/a.mjs
 git show <branchB>:scripts/<check>.mjs > /tmp/b.mjs
-git checkout <one tree>
+
+# Run both against ONE tree. The primary checkout on `main` is the natural choice
+# and needs no switching -- `git show` already did the fetching.
 node /tmp/a.mjs ; node /tmp/b.mjs
+
+# If a different tree is genuinely required, take a worktree rather than moving
+# the primary checkout off `main` (AGENTS.md, Standing Rule: Prefer `main`):
+#   wt switch --create <branch>        # or: git worktree add ../wt/<branch> <branch>
 ```
 
 That is how two competing fixes were shown to be **additive rather than overlapping** (#3169 + #3181
