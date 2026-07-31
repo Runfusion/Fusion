@@ -72,7 +72,9 @@ function createStore(archivedColumn: string): TaskStore {
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => ({ ir: ir(archivedColumn) })),
-    /* Without this the resolver hands back legacy ids only, and the conversion is untestable. */
+    /* FNXC:WorkflowResolvedColumns 2026-07-31-23:30: without this the resolver hands back legacy ids
+       only, so the conversion under test cannot be observed and the suite passes on the unconverted
+       code — the blinding failure this file guards. */
     listWorkflowDefinitions: vi.fn(async () => [{ ir: ir(archivedColumn) }]),
   } as unknown as TaskStore;
 }
@@ -108,8 +110,28 @@ describe("evaluator resolves the board's own archived lanes", () => {
   it("both vocabularies resolve their OWN lane — no column-id literal survives on this path", async () => {
     const renamed = await archivedLanesHandedToCollector("vaulted");
     const legacy = await archivedLanesHandedToCollector("archived");
-    expect(renamed).not.toEqual(legacy);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:30 (#3224 review — "reject legacy archived identifiers"):
+    MEASURED, AND THE LEGACY ID IS SUPPOSED TO BE THERE.
+
+    The review asked for an exact single-column set. Asserting that fails: the renamed board resolves
+    to `["archived", "vaulted"]`. That is `resolveProjectColumnsForRoles`' documented legacy FLOOR —
+    it unions `LEGACY_COLUMN_IDS_BY_ROLE` in so a row whose workflow cannot be resolved still
+    classifies, and the helper's contract says the result is "never empty: the legacy ids are"
+    included. Pinning an exact set here would encode the opposite of the design and fail the moment
+    anyone read the helper's own docstring.
+
+    The review's underlying worry is real but belongs to a different layer: a project that renames its
+    archive lane AND has an unrelated column literally named `archived` would over-match. That is the
+    known cost of the union, recorded in project-union-versus-per-task-lanes.md, and the answer there
+    is per-task resolution at sites where over-inclusion is unsafe — not a narrower set here.
+
+    So: assert the renamed lane IS resolved (the conversion works) and that the two boards differ,
+    and pin the floor explicitly so its presence is documented rather than incidental.
+    */
     expect(renamed).toContain("vaulted");
     expect(legacy).not.toContain("vaulted");
+    /* The legacy floor, asserted rather than tolerated. */
+    expect(renamed).toContain("archived");
   });
 });
