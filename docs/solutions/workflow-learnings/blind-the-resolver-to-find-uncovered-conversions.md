@@ -44,7 +44,7 @@ The two instruments answer different questions and neither substitutes for the o
 | census / lane-wiring ratchet | is this site written in the resolved vocabulary? |
 | blinding | does anything break if it stops being? |
 
-## Four rules for a test that actually holds a conversion
+## Six rules for a test that actually holds a conversion
 
 Each was paid for by a test that passed while proving nothing.
 
@@ -79,6 +79,26 @@ literal set *equal by construction*, so the conversion is unobservable no matter
 assertion is. This is not a test bug; it is correct production behaviour that erases the difference
 the test is trying to measure. Both the `scheduler.ts` and `triage.ts` conversions were unpinned for
 this reason alone.
+
+**6. Blinding measures the INSTRUMENT you picked, not the site.**
+Before believing a green result, confirm the suite you ran actually executes the file you blinded. A
+suite that never reaches the site reports "0 failed" for the same reason a covered one reports it,
+and the two are indistinguishable from the output.
+
+This produced a wrong answer twice in one sweep, both times reading as a finding:
+
+| blinded | suite run | said | actually |
+|---|---|---|---|
+| `reads.ts` ×3 | `search-excludes-renamed-archive-lane.test.ts` | 3 uncovered | that file unit-tests `liveSearchPredicate` and never runs `reads.ts`; against `cold-storage-renamed-archive-lane.test.ts`, which drives `listTasksImpl`, one of the three is covered |
+| `server.ts` ×3 | `reliability-metrics.test.ts` | 3 uncovered | that file imports `../reliability-metrics`; nothing executes the route at all |
+
+The `reads.ts` case is the one to remember, because the misleading suite was **written for that exact
+conversion**: it proves the collaborator honours a resolved set, which says nothing about whether the
+caller passes one. A unit test of the collaborator can never fail when you blind the call site. That
+gap shipped as a real hole and was closed in #3220.
+
+Cheap check before trusting a green: make the blinded edit obviously fatal (`throw new Error("x")`)
+and re-run. Still green means the suite does not reach the site and the measurement is void.
 
 Fixtures also encode contracts invisible from the resolver: action sites that deliberately skip a
 card whose board cannot be read, buckets with their own pause-reason predicates, gates that resolve
@@ -118,6 +138,25 @@ Related: expand roles to legacy ids **per role**, from `LEGACY_COLUMN_IDS_BY_ROL
 hand-written whole-list table. `intake` maps to `["todo","triage"]`, not `["triage"]`; a blind that
 drops `todo` is *stricter* than the real legacy set, and a stricter blind manufactures failures that
 read as coverage the site does not have.
+
+## When the measurement cannot be taken, record that
+
+Three groups resisted blinding for reasons worth writing down, so the next person does not re-derive
+them. Recording *why* a site cannot be measured is a result — the same stance #3212 took for a site
+that cannot be covered.
+
+- **No TCP PostgreSQL.** `workflow-analytics.ts` and `team-analytics.ts` (4 resolvers) keep their
+  renamed-lane coverage in `.pg` suites. `pgDescribe` probes **TCP**; `pg_isready` succeeding on a
+  **Unix socket** is not the same thing, and mistaking one for the other turns 4 skipped suites into
+  4 false "uncovered" readings.
+- **No injectable seam.** `reads.ts`'s incremental-sync scan composes Drizzle conditions against
+  `layer.db` directly. A test there would assert the query that was built rather than the rows that
+  were excluded — green, and blind to the bug.
+- **Logic inside a route closure.** `server.ts`'s three resolvers sit in the
+  `/api/health/reliability` handler, which has no route-level test. The only harness in that package
+  is a mock-the-world shell, which the slow-test rule forbids; the alternative is a refactor to
+  expose a seam, and that is its own commit — moving code and changing behaviour do not ride
+  together.
 
 ## Two shapes a ratchet cannot distinguish
 
