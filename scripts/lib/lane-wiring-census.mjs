@@ -73,9 +73,23 @@ Five core files declare lane-carrying context interfaces (`in-review-stall`, `in
 one awkward signature.
 
 Resolved by NAME across the whole corpus rather than through a type-checker `Program`: these are
-plain source scans and a checker would cost a full type-resolution pass for one lookup. The tradeoff
-is that two same-named types in different files merge — acceptable here, since a false MEMBER only
-widens what counts as wired, and the baseline is a ratchet rather than a hard guard.
+plain source scans and a checker would cost a full type-resolution pass for one lookup.
+
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:55 (#2974 review — coderabbitai, "resolve named type
+references by declaration identity"): THE MERGE IS NOT SAFE IN THE DIRECTION THE OLD NOTE CLAIMED.
+
+That note argued a same-name merge was acceptable because a false member "only widens what counts as
+wired". Widening is precisely the unsafe direction HERE: every extra member makes MORE call sites count
+as wired, so unwired sites disappear from the census and the ratchet goes green while the seam it
+watches is unsupplied. A gate whose errors land on "nothing to report" is the one failure mode a
+ratchet must not have — the same reasoning that keeps the sibling SQL gate from pretending it can read
+`.sql`.
+
+A type checker is still the wrong price (a full `Program` over ~1950 files for one lookup, against a
+~2s scan). Instead the unsound case is made IMPOSSIBLE TO HIT SILENTLY: two files declaring
+lane-carrying types under one name is a hard error naming both paths, not a quiet union. Measured at
+the time of writing: 2 lane-carrying types, 0 collisions — so this throws for nobody today and
+converts a silent wrong answer into a loud one the moment it would matter.
 */
 function findLaneCarryingTypes(files) {
   const byName = new Map();
@@ -94,8 +108,15 @@ function findLaneCarryingTypes(files) {
       }
       if (names.size > 0) {
         const existing = byName.get(node.name.text);
-        if (existing) for (const n of names) existing.add(n);
-        else byName.set(node.name.text, names);
+        if (existing && existing.file !== file) {
+          throw new Error(
+            `[lane-wiring] two files declare a lane-carrying type named "${node.name.text}": `
+              + `${existing.file} and ${file}. Resolving by name would merge their lane members and `
+              + `silently mark unwired call sites as wired. Rename one, or resolve by declaration.`,
+          );
+        }
+        if (existing) for (const n of names) existing.names.add(n);
+        else byName.set(node.name.text, { file, names });
       }
     });
   }
@@ -121,23 +142,42 @@ export function findLaneAcceptingFunctions(files) {
       Both spellings are tracked: option names by name, positional ones by INDEX, so a call is wired if
       it passes an accepted option key OR supplies an argument in the positional slot.
       */
-      const names = new Set();
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-23:05 (#2974 review — coderabbitai, "retain the
+      options-bag parameter index"): A LANE KEY ONLY COUNTS IN THE ARGUMENT THAT DECLARES IT.
+
+      `names` was a flat set with the parameter index thrown away, and the call-site check then
+      accepted a matching property in ANY argument. So a call could put `reviewColumns` on an earlier
+      `task` object and pass `{}` as the actual options bag, and the census would score it wired while
+      the function received nothing — a FALSE GREEN, the same direction as the type-merge above.
+
+      Keyed by index instead: `namesByIndex[i]` are the keys that count when they appear in argument
+      `i`. Measured before changing it: 0 call sites in the tree match on a mismatched index, so this
+      is behaviour-preserving today and exists to keep it that way.
+      */
+      const namesByIndex = new Map();
       const positions = new Set();
+      const addName = (index, name) => {
+        if (!namesByIndex.has(index)) namesByIndex.set(index, new Set());
+        namesByIndex.get(index).add(name);
+      };
       node.parameters.forEach((param, index) => {
         if (ts.isIdentifier(param.name) && LANE_ARGUMENT_NAMES.has(param.name.text)) positions.add(index);
         if (param.type && ts.isTypeLiteralNode(param.type)) {
           for (const member of param.type.members) {
             if (member.name && ts.isIdentifier(member.name) && LANE_ARGUMENT_NAMES.has(member.name.text)) {
-              names.add(member.name.text);
+              addName(index, member.name.text);
             }
           }
         }
         /* `context: InReviewStallContext` — see findLaneCarryingTypes for why this arm exists. */
         if (param.type && ts.isTypeReferenceNode(param.type) && ts.isIdentifier(param.type.typeName)) {
-          for (const member of laneTypes.get(param.type.typeName.text) ?? []) names.add(member);
+          for (const member of laneTypes.get(param.type.typeName.text)?.names ?? []) addName(index, member);
         }
       });
-      if (names.size > 0 || positions.size > 0) accepting.set(node.name.text, { names, positions });
+      if (namesByIndex.size > 0 || positions.size > 0) {
+        accepting.set(node.name.text, { namesByIndex, positions });
+      }
     });
   }
   return accepting;
@@ -180,10 +220,12 @@ export function findUnwiredCallSites(files, accepting) {
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const accepted = accepting.get(node.expression.text);
         if (accepted) {
-          const passesOption = node.arguments.some((arg) => {
+          const passesOption = node.arguments.some((arg, index) => {
+            const wanted = accepted.namesByIndex.get(index);
+            if (wanted === undefined) return false;
             const bag = unwrapObjectLiteral(arg);
             return bag !== null
-              && bag.properties.some((p) => p.name && ts.isIdentifier(p.name) && accepted.names.has(p.name.text));
+              && bag.properties.some((p) => p.name && ts.isIdentifier(p.name) && wanted.has(p.name.text));
           });
           const passesPositional = [...accepted.positions].some((index) => node.arguments.length > index);
           const passes = passesOption || passesPositional;

@@ -49,7 +49,7 @@ describe("the lane-wiring census recognises how lane arguments are actually decl
     `);
     const accepting = findLaneAcceptingFunctions(files);
     expect(accepting.has("getSignal")).toBe(true);
-    expect([...accepting.get("getSignal")!.names]).toContain("reviewColumns");
+    expect([...accepting.get("getSignal")!.namesByIndex.get(1)!]).toContain("reviewColumns");
   });
 
   it("counts a call site that omits the lane argument on that named-type function", () => {
@@ -89,8 +89,56 @@ describe("the lane-wiring census recognises how lane arguments are actually decl
       export function positional(task: string, activeColumns: ReadonlySet<string>): string { return task; }
     `);
     const accepting = findLaneAcceptingFunctions(files);
-    expect([...accepting.get("inlineBag")!.names]).toContain("terminalColumns");
+    expect([...accepting.get("inlineBag")!.namesByIndex.get(1)!]).toContain("terminalColumns");
     expect([...accepting.get("positional")!.positions]).toEqual([1]);
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-23:20 (#2974 review — coderabbitai): THE TWO FALSE-GREEN
+  HOLES, PINNED. Both errors pointed the same way — MORE sites counted as wired — which for a ratchet
+  means unwired seams vanish and the gate passes with nothing to report.
+  */
+  it("does NOT count a lane key that appears in the wrong argument as wired", () => {
+    /*
+    The options bag is parameter 1. Passing `reviewColumns` on the parameter-0 `task` object and an
+    EMPTY bag means the function receives no lane answer at all. Before the index was retained, the
+    call-site check scanned every argument and scored this wired.
+    */
+    const files = fixture(`
+      export function needsLanes(task: { id: string }, opts: { reviewColumns?: ReadonlySet<string> }): string { return ""; }
+      export function caller(): string { return needsLanes({ id: "x", reviewColumns: new Set() } as never, {}); }
+    `);
+    const unwired = findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
+
+    expect(unwired.map((u) => u.fn)).toContain("needsLanes");
+  });
+
+  it("still counts the SAME key as wired when it is in the declaring argument", () => {
+    /* Paired positive: the fix must not make every options-bag call look unwired. */
+    const files = fixture(`
+      export function needsLanes(task: { id: string }, opts: { reviewColumns?: ReadonlySet<string> }): string { return ""; }
+      export function caller(): string { return needsLanes({ id: "x" }, { reviewColumns: new Set() }); }
+    `);
+    const unwired = findUnwiredCallSites(files, findLaneAcceptingFunctions(files));
+
+    expect(unwired.map((u) => u.fn)).not.toContain("needsLanes");
+  });
+
+  it("refuses to merge two same-named lane-carrying types instead of unioning them silently", () => {
+    /*
+    Resolution is by NAME with no type checker, so two `Ctx` declarations would union their lane
+    members and let a call that supplies only the OTHER file's key count as wired. Throwing names both
+    paths; the previous behaviour returned a quietly wrong answer.
+    */
+    const files = fixture(`
+      export interface Ctx { reviewColumns?: ReadonlySet<string>; }
+    `).concat(
+      fixture(`
+        export interface Ctx { completeColumns?: ReadonlySet<string>; }
+      `),
+    );
+
+    expect(() => findLaneAcceptingFunctions(files)).toThrow(/two files declare a lane-carrying type named "Ctx"/);
   });
 
   it("type aliases carry lane members too", () => {
@@ -99,7 +147,7 @@ describe("the lane-wiring census recognises how lane arguments are actually decl
       export function canMerge(task: string, context: MergeContext): string { return task; }
     `);
     expect([...findLaneAcceptingFunctions(fixture("")).keys()]).toEqual([]);
-    expect([...findLaneAcceptingFunctions(files).get("canMerge")!.names]).toContain("completeColumns");
+    expect([...findLaneAcceptingFunctions(files).get("canMerge")!.namesByIndex.get(1)!]).toContain("completeColumns");
   });
 
   /*
