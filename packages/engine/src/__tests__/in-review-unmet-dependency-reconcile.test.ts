@@ -88,6 +88,40 @@ describe("in-review unmet dependency reconciliation", () => {
     executingTaskLock._clearForTest();
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:20:
+  `unmetDepReviewColumns` was UNCOVERED on the #3115 map. The case below uses `in-review`, where the
+  literal is correct, so blinding the resolver leaves it green.
+
+  What that costs on a renamed board: the sweep selects NO card, so a review card whose dependency is
+  still unmet is never rebounded — it sits in review, eligible for merge, ahead of work it depends on.
+  That is the ordering violation this sweep exists to prevent.
+  */
+  it("rebounds a card resting in a RENAMED review lane whose dependency is unmet", async () => {
+    const { store, tasks } = createStore([
+      task({ id: "FN-R", column: "checking", dependencies: ["FN-D"] }),
+      task({ id: "FN-D", column: "building" }),
+    ]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+        ],
+      },
+    }]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await expect(manager.reconcileInReviewUnmetDependencies()).resolves.toBe(1);
+    expect(tasks.get("FN-R")).toMatchObject({ status: "queued", blockedBy: "FN-D" });
+    manager.stop();
+  });
+
   it("reproduces FN-6778/FN-6779 review advancement and rebounds to queued todo", async () => {
     const { store, tasks } = createStore([
       task({ id: "FN-6778", column: "in-review", dependencies: ["FN-6777"] }),
