@@ -9278,9 +9278,38 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
       // Workspace tasks live in in-review (post-capture/review, pre/partial land). A task already
       // done is finished; todo/in-progress are owned by execution-stage reconcilers.
-      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-18:05 (the query-filter class, thirty-third sweep):
+      A WORKSPACE task lands per-repo, and this re-enqueues one whose lands are partial or zero. The
+      literal read meant that on a renamed board a workspace task stranded mid-land was never
+      re-enqueued — some repos landed, some not, and nothing to finish the job.
+
+      The comment above records WHY the review lane is the right one; it stays true, only the way the
+      lane is named changes.
+      */
+      const wsPartialColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      const wsPartialById = new Map<string, Task>();
+      for (const column of wsPartialColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) wsPartialById.set(entry.id, entry);
+      }
+      const tasks = [...wsPartialById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const wsPartialLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          wsPartialLanes.set(
+            entry.id,
+            source === "default"
+              ? new Set(wsPartialColumns)
+              : new Set(REVIEW_ROLES.flatMap((role) => [...columnsWithFlag(ir, role)])),
+          );
+        } catch {
+          wsPartialLanes.set(entry.id, new Set(wsPartialColumns));
+        }
+      }
       const candidates = tasks.filter((task) =>
-        task.column === "in-review" &&
+        (wsPartialLanes.get(task.id) ?? wsPartialColumns).has(task.column) &&
         isWorkspaceTask(task) &&
         task.mergeDetails?.mergeConfirmed !== true &&
         // Active transient merge statuses are owned by the live merger; recover-interrupted /
@@ -9685,8 +9714,21 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       if (settings.globalPause || settings.enginePaused) return 0;
 
       // Done workspace tasks are the canonical "safe to clean" set (their lands are finalized).
-      const doneTasks = await this.store.listTasks({ column: "done", slim: true });
-      const candidates = doneTasks.filter((task) => isWorkspaceTask(task));
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-18:10 (the query-filter class, thirty-fourth sweep):
+      Removes the per-repo worktrees a finished workspace task left behind. The literal read meant that
+      on a renamed board they were never removed — disk held by tasks that finished, growing quietly.
+
+      `complete` only, NOT the terminal union: the comment above calls DONE tasks "the canonical safe to
+      clean set" precisely because their lands are finalized, and an archived row is a different claim.
+      No per-card verdict: the filter is `isWorkspaceTask`, not a lane test.
+      */
+      const wsDoneColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
+      const wsDoneById = new Map<string, Task>();
+      for (const column of wsDoneColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) wsDoneById.set(entry.id, entry);
+      }
+      const candidates = [...wsDoneById.values()].filter((task) => isWorkspaceTask(task));
       if (candidates.length === 0) return 0;
 
       let cleaned = 0;
