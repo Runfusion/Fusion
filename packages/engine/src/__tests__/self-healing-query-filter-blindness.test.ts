@@ -770,4 +770,61 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:45 (the query-filter class, twentieth sweep):
+  `reattachOrphanedAssignedExecutions` reattaches a DURABLE AGENT to a task it is still assigned to but
+  has stopped executing. The literal read meant that on a renamed board the reattach never fired, so the
+  card sat assigned-but-idle — visibly owned by an agent that had gone quiet, which is worse than
+  unassigned because the board says someone is on it.
+
+  Observable is the injected `resumeAssignedTaskForAgent`, called once per agent with orphaned work.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column !== "in-progress"` -> fails, the renamed wip lane is skipped
+  */
+  function reattachFixture(column: string) {
+    const assigned = {
+      ...shippedCard(),
+      id: "FN-REATTACH",
+      column,
+      assignedAgentId: "agent-1",
+      worktree: null,
+      steps: [{ id: "s1", status: "pending" }],
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([assigned]);
+    const resumeAssignedTaskForAgent = vi.fn(async () => undefined);
+    const agentStore = {
+      getAgent: vi.fn(async () => ({ id: "agent-1" })),
+      getActiveHeartbeatRun: vi.fn(async () => null),
+    };
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/repo",
+      agentStore: agentStore as never,
+      resumeAssignedTaskForAgent,
+    });
+    return { manager, resumeAssignedTaskForAgent };
+  }
+
+  it("reattaches an idle assigned agent on a RENAMED wip lane", async () => {
+    const { manager, resumeAssignedTaskForAgent } = reattachFixture(RENAMED_VOCAB.wip);
+
+    await manager.reattachOrphanedAssignedExecutions();
+
+    expect(resumeAssignedTaskForAgent).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("does not reattach an agent whose card already reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: without it, a read returning every column would satisfy the case above. An
+    assigned card in review has finished its execution — resuming it would restart completed work.
+    */
+    const { manager, resumeAssignedTaskForAgent } = reattachFixture(RENAMED_VOCAB.review);
+
+    await manager.reattachOrphanedAssignedExecutions();
+
+    expect(resumeAssignedTaskForAgent).not.toHaveBeenCalled();
+  });
 });

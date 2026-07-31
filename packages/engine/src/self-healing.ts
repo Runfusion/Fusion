@@ -11739,13 +11739,37 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         return 0;
       }
 
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-08:40 (the query-filter class, twentieth sweep):
+      Reattaches a DURABLE AGENT to a task it is still assigned to but has stopped executing. The literal
+      read meant that on a renamed board the reattach never fired, so the agent's own assignment was
+      never resumed and the card sat assigned-but-idle — visibly owned by an agent that had gone quiet.
+
+      The `task.column !== "in-progress"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const reattachWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const reattachById = new Map<string, Task>();
+      for (const column of reattachWipColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) reattachById.set(entry.id, entry);
+      }
+      const tasks = [...reattachById.values()];
+      /* NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891). */
+      const reattachLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          reattachLanes.set(entry.id, source === "default" ? new Set(reattachWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
+        } catch {
+          reattachLanes.set(entry.id, new Set(reattachWipColumns));
+        }
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const now = Date.now();
       const candidates: Task[] = [];
 
       for (const task of tasks) {
-        if (task.column !== "in-progress") continue;
+        if (!(reattachLanes.get(task.id) ?? reattachWipColumns).has(task.column)) continue;
         if (task.paused || task.deletedAt) continue;
         if (!task.assignedAgentId) continue;
         if (executingIds.has(task.id)) continue;
