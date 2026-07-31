@@ -3519,7 +3519,22 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         throw inspection.error;
       }
 
-      const inProgressCandidates = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-17:40 (the query-filter class, thirty-second sweep):
+      This read answers "is another LIVE task holding this worktree?" — the same question
+      `findActiveWorktreeOwner` answers for the executor, and the same failure if it comes back empty: the
+      checkout reads as unowned and this sweep reclaims a worktree another task is working in.
+
+      No per-card lane verdict downstream: the map below is keyed by WORKTREE PATH, and nothing after it
+      compares a column. So this is a read-only conversion — there is no pair to convert, which the
+      derived ratchet from #2879 also confirms.
+      */
+      const prConflictWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const prConflictById = new Map<string, Task>();
+      for (const column of prConflictWipColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) prConflictById.set(entry.id, entry);
+      }
+      const inProgressCandidates = [...prConflictById.values()];
       const inProgressByWorktree = new Map<string, string>();
       for (const inProgressTask of inProgressCandidates) {
         if (inProgressTask.worktree) inProgressByWorktree.set(inProgressTask.worktree, inProgressTask.id);
