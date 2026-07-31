@@ -136,6 +136,44 @@ describe("archiving a task releases its active-session registry entries (FN-7717
   });
 
   /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (the LISTENER must forward the payload lanes):
+  THIS IS THE PRODUCER HALF, and it was missing.
+
+  `isBackwardMoveOutOfPlanning` now receives its lanes instead of resolving them, and its own suite
+  (`executor-planner-lanes-resolved`) covers the predicate thoroughly. But that suite calls the
+  predicate DIRECTLY, so it says nothing about whether the `task:moved` listener actually hands the
+  payload down. Measured: replacing the listener's `lanes` argument with `undefined` left
+  `planning-evacuation` at 20/20 green — the exact producer/consumer split this program's learnings
+  record as its fifth failure shape, where a converted consumer with an unconverted producer passes
+  every instrument.
+
+  So this drives the real listener. The board is renamed with NO legacy id anywhere near the planner
+  lanes (`queued` holds, `drafting` intakes), and the move withdraws a card from the hold lane to a
+  non-lifecycle column — the reported symptom, `todo -> Ideas`, in this board's vocabulary. The
+  evacuation must fire, which it can only do if the payload lanes reached the predicate: with
+  `undefined` the legacy pair answers, `from` is not `todo`/`triage`, and the branch declines.
+  */
+  it("evacuates a card withdrawn from a RENAMED planner lane — the listener forwards payload lanes", async () => {
+    const { executor, store } = makeExecutor();
+    const abort = vi
+      .spyOn(executor as any, "awaitAbortInFlightTaskWork")
+      .mockResolvedValue(undefined);
+    vi.spyOn(executor as any, "releasePreExecutionWorktree").mockResolvedValue(undefined);
+
+    store.emit("task:moved", {
+      task: makeTask("TASK-E2"),
+      from: "queued",
+      to: "ideas",
+      source: "user",
+      lanes: { intake: "drafting", hold: "queued", wip: "building", review: "checking", complete: "shipped", archived: "filed" },
+    });
+
+    await (executor as any).pendingTaskDisposals.get("TASK-E2");
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(String(abort.mock.calls[0]?.[1] ?? "")).toContain("out of planning");
+  });
+
+  /*
   `userCanceled` is the one place `holdLane` changes an OUTCOME rather than just a branch: a user
   dragging a card from the wip lane back to the board's hold lane is a cancel, and anything else is
   not. Keyed on the literal `"todo"`, a renamed hold lane made every such drag read as NOT
