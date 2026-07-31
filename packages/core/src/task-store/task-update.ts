@@ -7,6 +7,8 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, storeLog} from "../store.js";
+import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
 import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
@@ -959,7 +961,14 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
 
       if (movedToTriage) {
-        store.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine" });
+        /* FNXC:WorkflowEvents 2026-08-01-05:10 (fleet — the last two emitters):
+           #3109 attached lanes at moves.ts and #3120 at the archive/completion emits. This one and
+           `update-task-deps.ts` were still sending `lanes: undefined`, and a listener reads absence as
+           "unknown" and falls back to `resolveTaskParkedColumnsSync` — the DEFAULT board under
+           PostgreSQL. So these two paths kept the pre-#3109 behaviour while the listeners read as
+           resolved. */
+        const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, id).catch(() => undefined));
+        store.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine", lanes });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);
       return task;
