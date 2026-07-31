@@ -105,8 +105,52 @@ function boardSummary(tasks: Task[]): BoardSummary {
   return { counts, updatedAt };
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
+The summary card names the lanes the BOARD actually has, not five hardcoded ids.
+
+This line read `Triage ${counts.triage} Todo ${counts.todo} Doing ${counts["in-progress"]} Review
+${counts["in-review"]} Done ${counts.done}`. `boardSummary` seeds those five keys to 0 and then
+counts by real `task.column`, so on a board whose lanes are named anything else EVERY interpolated
+value is the seeded 0: the summary card — the FIRST card in every deck, and the whole payload of
+`GET /board/summary` — reads "Triage 0 Todo 0 Doing 0 Review 0 Done 0" while the real work sits in
+lanes it never mentions. The wearer is told the board is empty.
+
+It is also wrong on the DEFAULT board today: U11 (#2515) deleted the `triage` lane, so `Triage 0` is
+always dead text — 9 of the 24 characters this display gets per line, spent on a lane no board has.
+
+Derived from `counts` rather than taken as a resolved-lanes parameter. That is deliberate: this
+program's recurring defect is the "optional lane answer + documented literal fallback" shape shipped
+without wiring the caller (see `unwired-lane-parameter-guard.test.ts` — five were live on `main` at
+once), and `counts` is already keyed by real `task.column` values, so the lane vocabulary is in hand
+with no resolution, no new plumbing, and nothing that can be left unwired.
+
+Zero-count lanes are dropped so the scarce line budget goes to lanes with work; legacy ids keep their
+familiar order and labels, unknown ids sort after them alphabetically so output stays deterministic.
+`counts` itself is unchanged — the route returns it as the API body and consumers still see every key.
+*/
+const LANE_LABELS: Record<string, string> = {
+  triage: "Triage",
+  todo: "Todo",
+  "in-progress": "Doing",
+  "in-review": "Review",
+  done: "Done",
+  archived: "Archived",
+};
+
+function orderedLanes(counts: Record<string, number>): string[] {
+  const rank = (id: string) => {
+    const index = COLUMN_ORDER.indexOf(id as Task["column"]);
+    return index === -1 ? COLUMN_ORDER.length : index;
+  };
+  return Object.keys(counts).sort((a, b) => (rank(a) === rank(b) ? a.localeCompare(b) : rank(a) - rank(b)));
+}
+
 function boardSummaryCardFromCounts(summary: BoardSummary, now: string, maxCharsPerLine: number, maxLines: number): GlassesCard {
-  const summaryText = `Triage ${summary.counts.triage} Todo ${summary.counts.todo} Doing ${summary.counts["in-progress"]} Review ${summary.counts["in-review"]} Done ${summary.counts.done}`;
+  const occupied = orderedLanes(summary.counts).filter((id) => (summary.counts[id] ?? 0) > 0);
+  const summaryText = occupied.length
+    ? occupied.map((id) => `${LANE_LABELS[id] ?? id} ${summary.counts[id]}`).join(" ")
+    : "No active work";
   return {
     id: "summary",
     kind: "summary",

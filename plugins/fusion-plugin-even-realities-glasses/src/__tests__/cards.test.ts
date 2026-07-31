@@ -26,6 +26,44 @@ describe("cards", () => {
     expect(card.lines).toContain("todo: 2");
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:20:
+  THE INVARIANT: the summary card reports the lanes the board HAS, whatever they are called.
+
+  Untested before this — the only summary coverage above exercises `boardSummaryCard`, an export no
+  production file calls, while the card the deck actually ships (`boardSummaryCardFromCounts`, via
+  `boardToDeck`) had none. That gap is why five hardcoded lane ids survived here.
+
+  Reverted, the first case reports `Triage 0 Todo 0 Doing 0 Review 0 Done 0` for a board holding four
+  live cards and fails on every assertion below; the second still carries the dead `Triage 0`.
+  */
+  it("summarises a renamed board by its real lanes, not the legacy five", () => {
+    const renamed = ["backlog", "backlog", "building", "shipped"].map((column, i) => ({
+      ...task,
+      id: `FN-${i + 10}`,
+      column,
+    }));
+
+    const text = boardToDeck(renamed, { terminalColumns: new Set(["shipped"]) }).cards[0]!.lines.join(" ");
+
+    expect(text).toContain("backlog 2");
+    expect(text).toContain("building 1");
+    expect(text).toContain("shipped 1");
+    expect(text).not.toContain("Todo 0");
+    expect(text).not.toMatch(/Triage/);
+  });
+
+  it("drops the triage lane U11 deleted instead of spending display width on it", () => {
+    const text = boardToDeck([{ ...task, column: "todo" }], {}).cards[0]!.lines.join(" ");
+
+    expect(text).toContain("Todo 1");
+    expect(text).not.toMatch(/Triage/);
+  });
+
+  it("says so plainly when no lane holds work, rather than rendering an empty line", () => {
+    expect(boardToDeck([], {}).cards[0]!.lines.join(" ")).toBe("No active work");
+  });
+
   it("creates notification cards", () => {
     const card = notificationCard(task, "entered-column");
     expect(card.id).toBe("notif:FN-1:entered-column");
