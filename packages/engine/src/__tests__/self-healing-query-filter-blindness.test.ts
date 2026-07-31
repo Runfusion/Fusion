@@ -768,6 +768,41 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
       "recover-merged-review",
     );
   });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:20:
+  The HOLD half of the same sweep, and it was uncovered on the #3115 map. The case above pins
+  `mergedReviewColumns`; blinding `mergedHoldColumns` back to `["todo"]` left the whole file green,
+  because no case put a merge-confirmed card in a renamed hold lane.
+
+  That lane is not hypothetical: a merge-confirmed card gets REBOUNDED to hold by other recovery paths
+  (a failed post-merge step, a requeue), so "merged but sitting in hold" is exactly the state this
+  sweep's second bucket exists to finalize. Keyed on the id, that bucket read nothing on a renamed
+  board and the card stayed unfinished with its commit already on the base branch.
+  */
+  it("finalizes a merge-confirmed card stranded on a RENAMED hold lane", async () => {
+    const merged = {
+      ...shippedCard(),
+      id: "FN-MERGED-HOLD",
+      column: RENAMED_VOCAB.hold,
+      mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([merged]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const resolveTarget = vi.fn(async () => ({ branch: "main", source: "settings" }));
+    Object.assign(manager, {
+      resolveSelfHealingMergeTarget: resolveTarget,
+      isCommitReachableFromBranch: vi.fn(async () => false),
+      recordSharedGroupDefaultTargetGuard: vi.fn(async () => undefined),
+    });
+
+    await manager.recoverMergedReviewTasks();
+
+    expect(resolveTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-MERGED-HOLD" }),
+      expect.anything(),
+      "recover-merged-review",
+    );
+  });
   it("ignores a merge-confirmed card sitting in the RENAMED wip lane", async () => {
     /*
     Non-vacuous companion: without it, a read returning every column would satisfy the case above. This
