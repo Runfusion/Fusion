@@ -150,12 +150,6 @@ const ALLOWED_OMISSIONS = new Map([
       + "change, not local wiring, which is the same 'needs a data change' category as the entry below. "
       + "Filed for the plugin-API owner rather than bodged here." },
   ],
-  [
-    "packages/dashboard/app/components/TaskDetailModal.tsx::isNearDuplicateCanonicalInactive",
-    { count: 1, reason: "The flags in scope describe the MODAL'S task; the canonical is a different task on a column this "
-      + "component never resolves. Passing them would type-check, read as a conversion, and answer "
-      + "about the wrong task. Correct supply needs a fetch — a data change. See the note at the site." },
-  ],
 ]);
 
 /*

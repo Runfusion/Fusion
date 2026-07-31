@@ -944,15 +944,31 @@ export function TaskDetailContent({
   vs union confusion that `column-role-degraded-flags.test.ts` exists to catch, and it would type-check
   and read as a conversion.
 
-  Supplying it correctly needs the canonical's own resolved flags, which means fetching them: a data
-  change, out of scope here. So the omission is deliberate and is exempted BY CALL SITE rather than by
-  function name, so core's sibling site stays guarded.
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:10 (the "needs a fetch" blocker was never tested):
+  The paragraph above rejected passing `detailColumnFlags` — correctly, that would answer about the
+  wrong task — and then concluded the seam needs a data change. It does not. `columnFlagsByTaskId` is
+  already a prop of this component (declared :367, destructured :727, used for the fan-out map), and
+  it is keyed by task id. The canonical is `tasks.find(c => c.id === nearDuplicateOf)`, so it is
+  drawn from the same loaded set the map covers — a `.get(canonical.id)` is the canonical's OWN
+  flags, with no fetch.
+
+  `Column.tsx:307` already does exactly this, with a comment making the same point about not reusing
+  the row's flags. The blocker was asserted from the shape of the problem (two different tasks) rather
+  than tested against what was in scope.
+
+  A canonical the map does not cover yields `undefined`, which is the documented legacy fallback —
+  strictly better than always-legacy, never a fabricated answer.
   */
   const showNearDuplicateWarning = Boolean(nearDuplicateOf)
     && workingTask.sourceMetadata?.nearDuplicateDismissed !== true
     && task.column !== "archived"
     && task.column !== "done"
-    && !isNearDuplicateCanonicalInactive(nearDuplicateCanonical);
+    && !isNearDuplicateCanonicalInactive(
+      nearDuplicateCanonical,
+      /* The CANONICAL's own flags, keyed by its id — never `detailColumnFlags`, which describes this
+         modal's task. Same shape as Column.tsx:307, the sibling site that already does this. */
+      nearDuplicateCanonical ? columnFlagsByTaskId?.get(nearDuplicateCanonical.id) : undefined,
+    );
   const [sourceAgent, setSourceAgent] = useState<Agent | null>(null);
   const [selectedSourceAgentId, setSelectedSourceAgentId] = useState<string | null>(null);
   const provenanceDisplay = getProvenanceLabel(workingTask, {
