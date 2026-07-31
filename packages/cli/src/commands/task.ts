@@ -677,7 +677,7 @@ export interface BoardLineTask {
 }
 
 /**
- * FNXC:CliBoardGlyph 2026-08-01-00:05:
+ * FNXC:CliBoardGlyph 2026-07-31-20:23:
  * The board renderer, INCLUDING its terminal-lane resolve, behind one seam.
  *
  * WHY THIS EXISTS. The resolve below was unreachable by any test: it sat inline in `runTaskList`,

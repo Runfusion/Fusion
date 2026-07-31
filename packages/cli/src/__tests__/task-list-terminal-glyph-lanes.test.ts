@@ -1,5 +1,5 @@
 /*
-FNXC:CliBoardGlyph 2026-08-01-00:10:
+FNXC:CliBoardGlyph 2026-07-31-20:23:
 THE BOARD GLYPH'S TERMINAL-LANE RESOLVE, on a RENAMED board.
 
 `fn task list` marks each lane with `○` (finished) or `●` (active). That is a lane question, resolved
