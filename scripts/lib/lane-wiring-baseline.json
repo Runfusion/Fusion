@@ -8,7 +8,6 @@
     "packages/engine/src/project-engine.ts": 1,
     "packages/engine/src/runtimes/in-process-runtime.ts": 1,
     "packages/engine/src/scheduler.ts": 1,
-    "packages/engine/src/self-healing.ts": 4,
     "packages/dashboard/src/routes/register-task-workflow-routes.ts": 1,
     "packages/dashboard/app/components/ExecutorStatusBar.tsx": 1,
     "packages/dashboard/app/components/Lane.tsx": 1,

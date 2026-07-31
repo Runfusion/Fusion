@@ -135,3 +135,120 @@ describe("SelfHealingManager fake TaskStore overlap seam", () => {
     manager.stop();
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-22:25 (the shared lease predicate was HALF-converted):
+`shouldHoldActiveFileScopeLease` is the scheduler's predicate, shared with self-healing on purpose so
+the two cannot disagree about who holds a file-scope lease. Its role answers are optional parameters
+defaulting to the legacy ids; the scheduler passes resolved answers and this sweep did not, so on a
+renamed board the scheduler kept a lease that this sweep saw as absent — and released a dependent to
+edit files another agent still holds.
+
+The board below is renamed but otherwise identical to the legacy case above, which is the point: the
+existing test passes either way because `in-progress` satisfies the literal default.
+*/
+const RENAMED_BOARD_IR = {
+  version: "v2",
+  id: "custom:renamed",
+  nodes: [],
+  edges: [],
+  columns: [
+    { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+    { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+  ],
+};
+
+describe("SelfHealingManager stale-blocker cleanup on a RENAMED board", () => {
+  function createRenamedBoardStore(seed: Task[]) {
+    const tasks = new Map(seed.map((task) => [task.id, task]));
+    const settings = {
+      globalPause: false,
+      enginePaused: false,
+      mergeRequestContractShadowEnabled: true,
+    } as Settings;
+    const store = {
+      getSettings: vi.fn().mockResolvedValue(settings),
+      listTasks: vi.fn().mockImplementation(async (opts?: { column?: Task["column"] }) => {
+        const all = [...tasks.values()];
+        return opts?.column ? all.filter((task) => task.column === opts.column) : all;
+      }),
+      getTask: vi.fn().mockImplementation(async (id: string) => tasks.get(id) ?? null),
+      updateTask: vi.fn().mockImplementation(async (id: string, patch: Partial<Task>) => {
+        const current = tasks.get(id);
+        if (!current) throw new Error(`Task ${id} missing`);
+        const next = { ...current, ...patch } as Task;
+        tasks.set(id, next);
+        return next;
+      }),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      parseFileScopeFromPrompt: vi.fn().mockResolvedValue(["packages/engine/src/self-healing.ts"]),
+      getCompletionHandoffAcceptedMarker: vi.fn().mockReturnValue(null),
+      listWorkflowDefinitions: vi.fn().mockResolvedValue([{ ir: RENAMED_BOARD_IR }]),
+      /* A real renamed board has a SELECTION; without it every card resolves to the built-in
+         workflow and `shipped` is not recognised as complete, so the sweep finds nothing to do. */
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: RENAMED_BOARD_IR.id, stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: RENAMED_BOARD_IR.id, stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_BOARD_IR })),
+      recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+    } as unknown as TaskStore;
+    return { store, tasks };
+  }
+
+
+  it("preserves an overlap blocker resting in a RENAMED wip column", async () => {
+    const staleBlocker = makeTask("FN-DONE-BLOCKER", { column: "shipped" });
+    const overlapBlocker = makeTask("FN-ACTIVE-OVERLAP", { column: "building" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "drafting",
+      status: "queued",
+      blockedBy: staleBlocker.id,
+      overlapBlockedBy: overlapBlocker.id,
+      dependencies: [staleBlocker.id],
+    });
+    const { store, tasks } = createRenamedBoardStore([staleBlocker, overlapBlocker, dependent]);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+    });
+
+    await expect(manager.clearStaleBlockedBy()).resolves.toBe(1);
+
+    /* The lease is still held, so the overlap blocker survives the stale-dependency clear. */
+    expect(tasks.get(dependent.id)?.overlapBlockedBy).toBe(overlapBlocker.id);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      dependent.id,
+      expect.stringContaining(`still blocked by file scope overlap with ${overlapBlocker.id}`),
+    );
+
+    manager.stop();
+  });
+
+  it("preserves an overlap blocker resting in a RENAMED review column", async () => {
+    /* The review half of the predicate, which takes a different branch (worktree + status). */
+    const staleBlocker = makeTask("FN-DONE-BLOCKER", { column: "shipped" });
+    const overlapBlocker = makeTask("FN-ACTIVE-OVERLAP", {
+      column: "checking",
+      worktree: "/tmp/wt-active",
+    });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "drafting",
+      status: "queued",
+      blockedBy: staleBlocker.id,
+      overlapBlockedBy: overlapBlocker.id,
+      dependencies: [staleBlocker.id],
+    });
+    const { store, tasks } = createRenamedBoardStore([staleBlocker, overlapBlocker, dependent]);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+    });
+
+    await expect(manager.clearStaleBlockedBy()).resolves.toBe(1);
+
+    expect(tasks.get(dependent.id)?.overlapBlockedBy).toBe(overlapBlocker.id);
+
+    manager.stop();
+  });
+});
