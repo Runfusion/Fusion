@@ -3579,10 +3579,24 @@ export class TaskExecutor {
     They stay literal and COUNTED, which is the honest state — an unconverted literal is visible to
     the census, while an inert conversion leaves the backlog and takes the evidence with it.
 
-    UNBLOCKING needs the async resolver reachable from here, which means either an async listener
-    contract (a behaviour change to handler ordering, not a column conversion) or a sync reader that
-    answers for custom workflows AND survives a writer on another node — the three constraints are
-    written up in `sync-workflow-ir-second-blocker.test.ts`.
+    THE CRITERION IS NARROWER THAN "THE LISTENER IS SYNC", and I got this wrong first time elsewhere:
+    what blocks a guard is whether ITS ANSWER IS CONSUMED SYNCHRONOUSLY, not whether it happens to sit
+    inside a synchronous function. In `self-healing.ts`'s fan-out, three of four guards only gated work
+    the listener already `void`s, so they were reachable by the async resolver all along and are now
+    converted. These four are NOT that case, for two independent reasons:
+
+      A. `trackTaskDisposal` writes `pendingTaskDisposals` in THIS tick, and the `to === wip` branch
+         above READS that map to serialise a fast bounce (in-progress -> todo -> in-progress; the
+         FN-5256 note it carries). Deferring the branch selection to a microtask lets the second
+         event's prologue read the map before the first event's write lands — which reopens exactly
+         the race that comment exists to close.
+      B. This is an if / else-if CHAIN, so the guards are entangled: converting one changes which
+         branch a move falls into. They convert together or not at all, and (A) blocks the set.
+
+    UNBLOCKING therefore needs the async resolver reachable from a SYNCHRONOUS consumer, which means
+    either a sync reader that answers for custom workflows AND survives a writer on another node, or
+    restructuring the disposal bookkeeping so nothing is read in-tick — the constraints are written up
+    in `sync-workflow-ir-second-blocker.test.ts`.
     */
     store.on("task:moved", ({ task, from, to, source }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
