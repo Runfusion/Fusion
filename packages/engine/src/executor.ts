@@ -3552,6 +3552,38 @@ export class TaskExecutor {
       return {removed, failed};
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:20 (FLAGGED AND LEFT COUNTED — do NOT convert with
+    `resolveTaskWorkflowIrSync` / `resolvePlannerLanes`):
+
+    Four lifecycle literals live in this listener and they are genuinely wrong on a renamed board:
+    execution never starts on a move INTO the board's own wip lane, terminal session release never
+    runs on a move into its archive lane, and the two `from` guards never fire, so in-flight work is
+    not aborted when a card leaves implementation. Nothing errors; the engine simply stops reacting.
+
+    THE OBVIOUS FIX IS INERT, AND THAT IS NOW PROVED RATHER THAN ARGUED. `task:moved` is emitted
+    synchronously, so an await here reorders this handler against every other subscriber — which
+    points at the sync IR path. That path cannot answer for a renamed board, for TWO independent
+    reasons (`sync-workflow-ir-second-blocker.test.ts`):
+
+      1. `getTaskWorkflowSelectionImpl` returns `undefined` unconditionally under PostgreSQL, so
+         `resolveTaskWorkflowIrSync` always takes its `!workflowId` branch;
+      2. even with a selection, the CUSTOM-workflow branch loads its IR through `store.db`, whose
+         implementation is an unconditional throw — so it falls into the catch and returns the
+         DEFAULT IR anyway.
+
+    A renamed lane IS a custom workflow, so (2) alone is decisive: the sync path can never serve this
+    listener's case. `check-inert-sync-lane-conversions` already baselines twenty guards in exactly
+    that state in `scheduler.ts`; these four must not join them.
+
+    They stay literal and COUNTED, which is the honest state — an unconverted literal is visible to
+    the census, while an inert conversion leaves the backlog and takes the evidence with it.
+
+    UNBLOCKING needs the async resolver reachable from here, which means either an async listener
+    contract (a behaviour change to handler ordering, not a column conversion) or a sync reader that
+    answers for custom workflows AND survives a writer on another node — the three constraints are
+    written up in `sync-workflow-ir-second-blocker.test.ts`.
+    */
     store.on("task:moved", ({ task, from, to, source }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
       if (to === "in-progress") {
