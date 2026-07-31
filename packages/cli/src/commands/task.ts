@@ -657,11 +657,53 @@ export async function runTaskList(projectName?: string) {
   fail-open direction used elsewhere, since showing a finished card with the wrong glyph is a far
   smaller error than the blank board this replaces.
   */
-  const terminalColumns = await resolveProjectColumnsForRoles(
+  for (const line of await buildTaskListBoardLines(
     context.store as Parameters<typeof resolveProjectColumnsForRoles>[0],
-    TERMINAL_ROLES,
-  ).catch(() => undefined);
+    tasks,
+  )) {
+    console.log(line);
+  }
 
+  await closeBoardContextAndExit(context, 0);
+}
+
+/** A card as the board renderer reads it. */
+export interface BoardLineTask {
+  id: string;
+  column: string;
+  title?: string | null;
+  description: string;
+  dependencies: string[];
+}
+
+/**
+ * FNXC:CliBoardGlyph 2026-08-01-00:05:
+ * The board renderer, INCLUDING its terminal-lane resolve, behind one seam.
+ *
+ * WHY THIS EXISTS. The resolve below was unreachable by any test: it sat inline in `runTaskList`,
+ * which resolves a real project context and ends in `process.exit`, so driving it needs the
+ * mock-the-world shell `docs/testing.md` forbids. Blinding it left the whole CLI suite green.
+ *
+ * Extracting a helper that RECEIVES the lane set would not have helped — such a test passes with the
+ * resolve blinded, because the resolve is the uncovered thing, not the decision it feeds. This
+ * function RESOLVES, so blinding the resolve fails a test of it. Same seam shape as
+ * `resolveReliabilityLanes` in the dashboard.
+ *
+ * Returns the lines rather than printing them, so a test can read the glyph without capturing
+ * stdout. `runTaskList` prints them unchanged.
+ */
+export async function buildTaskListBoardLines(
+  store: Parameters<typeof resolveProjectColumnsForRoles>[0],
+  tasks: BoardLineTask[],
+): Promise<string[]> {
+  /*
+  Best-effort: a failed resolve falls back to the legacy pair rather than failing the command, and an
+  unresolved custom lane renders as active — showing a finished card with the wrong glyph is a far
+  smaller error than failing the whole board.
+  */
+  const terminalColumns = await resolveProjectColumnsForRoles(store, TERMINAL_ROLES).catch(() => undefined);
+
+  const lines: string[] = [];
   for (const col of boardColumnsForDisplay(tasks)) {
     const colTasks = tasks.filter((t) => t.column === col);
     if (colTasks.length === 0) continue;
@@ -693,16 +735,15 @@ export async function runTaskList(projectName?: string) {
        resolve failed, which is the documented unconverted-caller default. */
     const dot = (terminalColumns ? terminalColumns.has(col) : col === "done" || col === "archived") ? "○" : "●";
 
-    console.log(`  ${dot} ${label} (${colTasks.length})`);
+    lines.push(`  ${dot} ${label} (${colTasks.length})`);
     for (const t of colTasks) {
       const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
       const label = t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
-      console.log(`    ${t.id}  ${label}${deps}`);
+      lines.push(`    ${t.id}  ${label}${deps}`);
     }
-    console.log();
+    lines.push("");
   }
-
-  await closeBoardContextAndExit(context, 0);
+  return lines;
 }
 
 export async function runTaskUpdate(id: string, stepStr: string, status: string, projectName?: string) {
