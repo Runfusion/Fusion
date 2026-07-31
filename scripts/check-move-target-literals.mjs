@@ -103,9 +103,20 @@ if (isEntryPoint) {
   let files;
   try {
     files = execSync(
-      "git ls-files 'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx'",
+      /*
+      FNXC:MoveTargetRatchet 2026-07-31-22:30 (#3254's finding, same blind spot here):
+      `--cached --others --exclude-standard` so a BRAND-NEW file is visible before it is committed.
+      Plain `git ls-files` lists TRACKED files only, so a new file with `moveTask(id, "done")` scored
+      0 locally and flipped the ratchet the moment it was staged — the author sees a green gate, then
+      CI disagrees. Changes nothing in CI (nothing is untracked there) and nothing for the tracked
+      population; it only makes the local reading honest. #3254 made the same change to the census.
+      */
+      "git ls-files --cached --others --exclude-standard 'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx'",
       { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     ).split("\n").map((f) => f.trim()).filter(Boolean)
+      /* A path can appear under both --cached and --others in some index states; scanning it twice
+         would double-count its hits against a baseline that expects one. */
+      .filter((f, i, all) => all.indexOf(f) === i)
       .filter((f) => !f.includes("__tests__") && !/\.(test|spec)\.tsx?$/.test(f));
   } catch (err) {
     /* FAIL CLOSED: an unreadable file list means nothing was checked, which must not read as clean. */
