@@ -115,10 +115,18 @@ itself. Three in one session, each of which reads exactly like coverage:
 | `blind3.py <file> <var>` with an unmapped role | the script exited non-zero **silently**, `&&` skipped the check, `;` let vitest run against **unmodified source**. Reported 375/375 green "under blinding" with nothing blinded. |
 | `vitest run src/__tests__/notification` | missed `src/notification/__tests__/` entirely — a nested `__tests__` the glob never reached. Reported covered code as uncovered. |
 
-So: **an UNCOVERED verdict is a claim about the whole tree and needs the whole tree's tests.** Before
-believing one, confirm (a) the blind actually modified the file — `git diff --stat`, not the tool's
-exit code, and (b) the run included every test file that imports the module, including nested
-`__tests__` directories. A tool that can no-op must say what it changed and fail loudly when it
+A fourth, in the opposite direction: **a COVERED verdict needs a baseline.** The dashboard sweep
+reported 5 failing files under the global blind; **4 of them fail on clean `main`** and had nothing
+to do with lanes (a docs-inventory test, a model-routes test). Read as-is, that is four resolvers
+falsely credited as covered. Run the failing set again *unblinded* and subtract — whatever fails in
+both is noise. Pre-existing red is common enough in a non-blocking suite that this is not an edge
+case; it is the second time today it changed a conclusion.
+
+So: **an UNCOVERED verdict is a claim about the whole tree and needs the whole tree's tests**, and a
+COVERED verdict needs a baseline to subtract. Before believing either, confirm (a) the blind actually
+modified the file — `git diff --stat`, not the tool's exit code, (b) the run included every test file
+that imports the module, including nested `__tests__` directories, and (c) the failures you are
+crediting do not also fail without the blind. A tool that can no-op must say what it changed and fail loudly when it
 cannot; the same standard this program applies to product guards applies to the audit's own
 instruments.
 
@@ -145,10 +153,14 @@ Three groups resisted blinding for reasons worth writing down, so the next perso
 them. Recording *why* a site cannot be measured is a result — the same stance #3212 took for a site
 that cannot be covered.
 
-- **No TCP PostgreSQL.** `workflow-analytics.ts` and `team-analytics.ts` (4 resolvers) keep their
-  renamed-lane coverage in `.pg` suites. `pgDescribe` probes **TCP**; `pg_isready` succeeding on a
-  **Unix socket** is not the same thing, and mistaking one for the other turns 4 skipped suites into
-  4 false "uncovered" readings.
+- **~~No TCP PostgreSQL.~~ SUPERSEDED — these were measurable and one hid a real gap.** The caution
+  itself stands: `pgDescribe` probes **TCP**, `pg_isready` on a **Unix socket** is not the same
+  thing, and a skipped suite reads exactly like a passing one. But on an environment where the `.pg`
+  suites do run, all 4 resolvers were measured: `workflow-analytics.ts` has **both** halves covered,
+  `team-analytics.ts` has `completeLanes` covered and **`activeLanes` uncovered** — a half-covered
+  pair in a file named `team-analytics-renamed-lanes`, now pinned. **Before recording a site as
+  unmeasurable for environment reasons, confirm the suite actually skips here** — otherwise the note
+  converts a real finding into a permanent excuse for not looking.
 - **No injectable seam.** `reads.ts`'s incremental-sync scan composes Drizzle conditions against
   `layer.db` directly. A test there would assert the query that was built rather than the rows that
   were excluded — green, and blind to the bug.
@@ -197,9 +209,31 @@ ones above, where a harness runs the code but cannot see the difference: **no am
 helps when the entry point is never called.** Check that something exercises the code at all before
 concluding a green blind means anything.
 
-**`packages/core`'s 17 files are entirely unaudited** — including `store.ts`'s wip read behind the
-engine-downtime timing shift and the archived reads in `task-store/reads.ts`. Nothing is known about
-whether they are pinned; that is a gap in the audit, not a clean bill.
+`packages/core` is now fully blinded too — **14 sites, 9 already covered, 5 uncovered, all 5
+pinned**:
+
+| site | verdict |
+|---|---|
+| `store.ts:874` (downtime wip read) | uncovered → pinned |
+| `store.ts:1135` (open-undo finished lanes) | uncovered → pinned |
+| `branch-and-pr-entities.ts:445` / `:484` | uncovered → pinned |
+| `async-mission-store.ts:1179` (archived) | uncovered → pinned; `:1178` (complete) was covered |
+| `task-id-integrity.ts:502` (lineage gate) | uncovered → pinned |
+| `reads.ts` ×3, `productivity`/`github`/`gitlab` analytics, `eval-automation`, `task-artifacts-ops` | already covered |
+
+`packages/dashboard` and `packages/cli` complete the sweep — **1 covered, 4 flagged**:
+
+| site | verdict |
+|---|---|
+| `register-task-workflow-routes.ts:1268` (hold) | already covered |
+| `server.ts:1922` / `:1923` / `:1938` | uncovered, **not pinnable without a mock-the-world shell** (see the route-closure note above) |
+| `cli/commands/task.ts:660` | uncovered; the glyph decision is inline in `runTaskList`, whose own test file records that driving it needs the same forbidden shell |
+
+The `cli` site deserves one warning. Extracting a pure helper and testing it would look like coverage
+and **would not be** — blinding the resolver leaves such a test green, because the helper receives
+the set rather than resolving it. The uncovered thing is the *resolve call*, not the decision.
+
+Every `resolveProjectColumnsForRoles` call site in the repository has now been blinded individually.
 
 ## When you cannot pin it, say so at the site
 
