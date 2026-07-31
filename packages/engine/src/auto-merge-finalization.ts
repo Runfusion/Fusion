@@ -80,23 +80,40 @@ function hasIncompleteWorkflowSteps(task: Task): boolean {
 
 export async function validateWorkflowDoneMergeProof(
   task: Task,
-  options: { result?: MergeResult; checkWorkflowSteps?: boolean } = {},
+  options: {
+    result?: MergeResult;
+    checkWorkflowSteps?: boolean;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:20:
+    The RESOLVED complete test, supplied by the caller. Omitted → the `done` literal, i.e. today's
+    behaviour, which is the same default-to-legacy contract the lane-parameter vocabulary uses
+    elsewhere. `resolveFinalizationColumns` in this file already builds exactly this predicate for
+    its own guard; the two callers below now hand it down instead of re-asking with an id.
+    */
+    isCompleteColumn?: (columnId: string) => boolean;
+  } = {},
 ): Promise<WorkflowDoneMergeProofVerdict> {
   const hasProof = hasDurableMergeProof(task, options.result);
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:45 (audited — REAL but DIAGNOSTIC-ONLY):
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:25 (the deferral is now paid — see the note above):
   This literal selects which REASON STRING is reported, not which branch runs. Both arms return
-  `{ ok: false }`, so on a renamed board a card sitting in the complete lane is refused with the
+  `{ ok: false }`, so on a renamed board a card sitting in the complete lane was refused with the
   generic `missing-merge-confirmation` instead of the specific `done-without-merge-confirmation`.
 
-  Worth recording rather than converting from here: the resolver two functions up already computes
-  `isCompleteColumn` for exactly this workflow, and threading it in is the right fix — but this
-  function does not receive it, and widening the signature to improve an error string is a change
-  whose cost outweighs the diagnosis it sharpens. The other two census entries in this file are NOT
-  defects: the `columnId === "done"` at the top is the resolver's documented degraded fallback (the
-  live arm calls `columnHasFlag`), and the `step.status` comparison is a STEP status, not a column.
+  The earlier note recorded this as "REAL but DIAGNOSTIC-ONLY" and declined it on the grounds that
+  widening a signature to improve an error string is a poor trade. That undersold the consequence:
+  this reason is not a log line. It is asserted as run-audit metadata alongside `previousColumn`
+  (`merger-merge-lifecycle.test.ts`), so the audit trail — the record an operator reads to find out
+  why a merge was refused — carried the wrong classification for every renamed board.
+
+  The trade is also cheaper than it looked. This function is ALREADY async and ALREADY takes an
+  options bag, and `resolveFinalizationColumns` two functions up ALREADY builds this exact predicate
+  for its own guard. Nothing new is resolved; the answer that existed is handed down instead of
+  being re-asked with an id — which is the half-conversion shape this program keeps finding, here
+  within one file.
   */
-  if (!hasProof) return { ok: false, reason: task.column === "done" ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
+  const isCompleteLane = options.isCompleteColumn ? options.isCompleteColumn(task.column) : task.column === "done";
+  if (!hasProof) return { ok: false, reason: isCompleteLane ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
   if (options.checkWorkflowSteps !== false && hasIncompleteWorkflowSteps(task)) {
     return { ok: false, reason: "incomplete-workflow-steps" };
   }
@@ -210,7 +227,7 @@ export async function finalizeProvenAutoMergeTask({
    * Workflow-owned completion requires current merge proof, not just a stale `mergeConfirmed` flag. A task cannot reach or remain accepted as `done` when workflow steps are still pending or a no-op claims landed files. Branch-only residue is ignored because squash landing validates the task patch, not branch-history cleanliness.
    */
   if (isCompleteColumn(latest.column)) {
-    const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails: validationMergeDetails } as Task, { result });
+    const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails: validationMergeDetails } as Task, { result, isCompleteColumn });
     if (!proofVerdict.ok) {
       await recordFinalizationAudit({
         store,
@@ -279,6 +296,7 @@ export async function finalizeProvenAutoMergeTask({
   const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails } as Task, {
     result,
     checkWorkflowSteps: false,
+    isCompleteColumn,
   });
   if (!proofVerdict.ok) {
     await recordFinalizationAudit({
