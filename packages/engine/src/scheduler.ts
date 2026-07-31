@@ -1227,11 +1227,27 @@ export class Scheduler {
 
       They stay literal and COUNTED, which is the honest state: an unconverted literal is at least
       visible to the census, while an inert conversion leaves the backlog and takes the evidence with
-      it. Both live in a synchronous `task:updated` listener, so the async resolver is unavailable
-      without reordering this handler against every other subscriber.
+      it. That decision is unchanged.
 
-      Unblocking needs a sync-capable workflow-selection reader — one change that un-inerts every
-      sync-path conversion in this file at once.
+      FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (fleet — narrowing the REASON, not the verdict):
+      "Both live in a synchronous `task:updated` listener, so the async resolver is unavailable" is
+      broader than what actually blocks them, and left standing it tells the next worker this whole
+      listener is off-limits. It is not: two guards in THIS listener were converted asynchronously
+      (the unpause wake and the planning-finished wake), because their answers only gate
+      `schedule()`, which is itself async, fire-and-forget and re-entrance-guarded.
+
+      THE CRITERION IS WHETHER THE ANSWER IS CONSUMED SYNCHRONOUSLY, not whether the enclosing
+      listener is declared sync. These two meet it for their own reasons, and those are what to check
+      before trying again:
+
+        - the `in-progress` guard feeds `failedTaskIds`, edge-trigger bookkeeping READ LATER IN THE
+          SAME TICK by the mission-failure reconcile below. Deferring the add lets that read miss it
+          — the same hazard that keeps `planningTaskIds.delete` synchronous a few lines down.
+        - the `in-review` guard is an early `return` gating the whole PR-monitoring tail. Deferring it
+          means restructuring that tail, which is a control-flow change, not a lane resolution.
+
+      A sync-capable workflow-selection reader would still un-inert every sync-path conversion in this
+      file at once, and remains the cleanest unblock for both.
       */
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
