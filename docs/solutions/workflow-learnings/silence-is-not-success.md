@@ -8,6 +8,9 @@ applies_when: reading the output of a test run, gate, or script as evidence it p
 
 # Silence is not success
 
+Companion to [one-sample-is-not-a-diagnosis](./one-sample-is-not-a-diagnosis.md), which covers the
+next step — reading a single observation as an explanation.
+
 Sibling to [a-falling-count-is-not-evidence](./a-falling-count-is-not-evidence.md) (a metric moving
 is not proof the system moved) and
 [blind-the-resolver-to-find-uncovered-conversions](./blind-the-resolver-to-find-uncovered-conversions.md)
