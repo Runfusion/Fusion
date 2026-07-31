@@ -1,25 +1,7 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-    "packages/engine/src/self-healing.ts": 138,
-=======
-    "packages/engine/src/self-healing.ts": 40,
-=======
-    "packages/engine/src/self-healing.ts": 31,
->>>>>>> 04c4299026 (fleet(engine): convert the agent-link and merge-worktree lane guards (40 -> 31))
-=======
-    "packages/engine/src/self-healing.ts": 23,
->>>>>>> 4b3a28475a (fleet(engine): convert eight more sweep guards (31 -> 23))
-=======
-    "packages/engine/src/self-healing.ts": 19,
->>>>>>> 86c7c0bf13 (fleet(engine): convert reconcilePreExecutionWorktrees' live-lane guard (23 -> 19))
-    "packages/engine/src/scheduler.ts": 12,
-    "packages/engine/src/executor.ts": 7,
->>>>>>> bf30037f85 (fleet(engine): convert reconcileTaskWorktreeMetadata's lane guards (46 -> 40))
+    "packages/engine/src/self-healing.ts": 17,
     "packages/engine/src/notification/notification-service.ts": 5,
     "packages/engine/src/executor.ts": 4,
     "packages/engine/src/restart-recovery-coordinator.ts": 4,
@@ -54,11 +36,9 @@
     "packages/engine/src/triage.ts": 1
   },
   "deliberateByFile": {
-    "packages/engine/src/self-healing.ts\u0000in-review": 9,
-    "packages/engine/src/self-healing.ts\u0000done": 6,
     "packages/core/src/task-store/async-comments-attachments.ts\u0000archived": 5,
     "packages/dashboard/app/components/TaskContextMenu.tsx\u0000in-review": 3,
-    "packages/engine/src/self-healing.ts\u0000archived": 3,
+    "packages/engine/src/self-healing.ts\u0000in-review": 3,
     "packages/core/src/live-agent-count.ts\u0000in-progress": 2,
     "packages/core/src/live-agent-count.ts\u0000in-review": 2,
     "packages/core/src/store.ts\u0000in-review": 2,
@@ -78,6 +58,7 @@
     "packages/engine/src/scheduler.ts\u0000done": 2,
     "packages/engine/src/scheduler.ts\u0000in-progress": 2,
     "packages/engine/src/scheduler.ts\u0000in-review": 2,
+    "packages/engine/src/self-healing.ts\u0000done": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000archived": 2,
     "packages/engine/src/usage-limit-detector.ts\u0000done": 2,
     "plugins/fusion-plugin-reports/src/store/report-store.ts\u0000archived": 2,
@@ -148,17 +129,18 @@
     "packages/engine/src/hold-release.ts\u0000in-review": 1,
     "packages/engine/src/project-engine.ts\u0000in-review": 1,
     "packages/engine/src/scheduler.ts\u0000todo": 1,
+    "packages/engine/src/self-healing.ts\u0000archived": 1,
     "packages/engine/src/triage.ts\u0000triage": 1,
     "plugins/fusion-plugin-even-realities-glasses/src/notifications/diff.ts\u0000done": 1,
     "plugins/fusion-plugin-reports/src/store/report-types.ts\u0000archived": 1
   },
   "queryByFile": {
-    "packages/engine/src/self-healing.ts": 3,
     "packages/core/src/task-store/async-persistence.ts": 2,
     "packages/core/src/task-store/merge-queue-ops.ts": 2,
     "packages/core/src/task-store/archive-lifecycle-2.ts": 1,
     "packages/core/src/task-store/async-archive-lineage.ts": 1,
     "packages/core/src/task-store/async-self-healing.ts": 1,
-    "packages/engine/src/agent-tools.ts": 1
+    "packages/engine/src/agent-tools.ts": 1,
+    "packages/engine/src/self-healing.ts": 1
   }
 }

@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+import { resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
@@ -12064,6 +12064,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   async recoverPausedAbortFailures(): Promise<number> {
       /* FNXC:WorkflowResolvedColumns 2026-07-31-06:30: resolved once per sweep — see the guard(s) below. */
       const pausedAbortReviewColumns = await resolveProjectColumnsForRoles(this.store, REVIEW_ROLES);
+      /* Waiting MEMBERSHIP (hold u intake) for the notification guard below; the requeue TARGET is a
+         single column and resolves per task at its call site. */
+      const pausedAbortWaitingColumns = await resolveProjectColumnsForRoles(this.store, ["hold", "intake"]);
     try {
       // FNXC:WorkflowLifecycle 2026-06-20-00:00: self-guard against global/engine
       // pause at the method entry, not just the batch-2 runner. This method is
@@ -12139,12 +12142,31 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           await this.store.updateTask(task.id, {
             status: null,
             error: null,
-            ...(fresh.column === "todo" && workflowTransitionNotification
+            ...(pausedAbortWaitingColumns.has(fresh.column) && workflowTransitionNotification
               ? { workflowTransitionNotification }
               : {}),
           });
-          if (route.kind === "node-requeue" && fresh.column !== "todo") {
-            await this.store.moveTask(task.id, "todo", {
+          /*
+          FNXC:WorkflowResolvedColumns 2026-07-31-07:20:
+          THE GUARD AND ITS MOVE TARGET CONVERT TOGETHER — converting only the guard is worse than
+          converting neither, which is the property `self-healing-converted-sweeps-have-no-literal-
+          lane-guards` ratchets and which caught this exact partial state.
+
+          `moveTask` REJECTS a target the workflow does not declare, EXCEPT under `recoveryRehome`
+          with a legacy id (`moves.ts:570` — the #1411 escape hatch that stops a custom-workflow card
+          being unrescuable). A converted guard feeding the literal `"todo"` would therefore fire
+          correctly on a renamed board and then rehome the card into a column its workflow does not
+          declare: the undeclared-column state other reconcilers exist to repair.
+
+          MEMBERSHIP for the guard, a SINGLE column for the target. `resolveTaskLifecycleColumns` is
+          first-match per role — wrong for "is this card waiting?", exactly right for "where should it
+          land". Precedence hold -> intake -> legacy is the one `moves.ts:1296` documents, because a
+          workflow may declare intake and no hold.
+          */
+          const requeueLifecycle = await resolveTaskLifecycleColumns(this.store, task.id);
+          const requeueTarget = requeueLifecycle?.hold ?? requeueLifecycle?.intake ?? "todo";
+          if (route.kind === "node-requeue" && fresh.column !== requeueTarget) {
+            await this.store.moveTask(task.id, requeueTarget, {
               preserveProgress: true,
               moveSource: "engine",
               recoveryRehome: true,
