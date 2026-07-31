@@ -2561,6 +2561,28 @@ mobile and desktop offer the same View task / Return to sessions choices.
     border-radius: 0;
   }
 
+  /*
+  FNXC:PlanningMode 2026-07-31-20:33:
+  THE SHEET IS NO LONGER THE VIEWPORT. The rule above sizes dialog Planning as a full-viewport
+  sheet, which was true until the modal branch moved inside `FloatingWindow`
+  (`FNXC:ModalTouchGeometry 2026-07-26-14:10`). Its host body is shorter than the viewport — it sits
+  below a title bar — so `min-height: 100dvh` now asks the sheet to be TALLER than the box it lives
+  in. `min-height` beats `max-height: 100%`, so the sheet cannot shrink to its host and simply
+  overflows.
+
+  Measured at 768x900: host body 763px tall, sheet forced to 900px, and the plan action rail
+  carrying "Add comment to selection" landed at top=928 — 28px past the fold. The control was
+  unreachable without scrolling, which is the one thing `planning-browser-e2e`'s placement case
+  exists to prevent. Embedded Planning was never affected: it is excluded from the rule above.
+
+  Scoped to the floating host rather than editing the rule above, so a Planning sheet rendered
+  outside `FloatingWindow` keeps its full-viewport sizing.
+  */
+  .floating-window .planning-modal:not(.planning-modal--embedded) {
+    height: 100%;
+    min-height: 0;
+  }
+
   .planning-error {
     margin: var(--space-lg) var(--space-lg) 0;
   }
