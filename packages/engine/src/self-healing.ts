@@ -11969,13 +11969,41 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }
 
     try {
-      const tasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-07:40 (the query-filter class, eighteenth sweep):
+      A card holding a wip slot with NO worktree, NO branch and no step started — nothing is running and
+      nothing will. The literal read meant that on a renamed board it was never found, so the card kept
+      its slot indefinitely and the capacity it holds is denied to work that could actually run.
+
+      The `task.column !== "in-progress"` check was redundant while the query pinned the column; under a
+      resolved read it becomes the per-card verdict, so it converts rather than being deleted.
+      */
+      const limboWipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
+      const limboById = new Map<string, Task>();
+      for (const column of limboWipColumns) {
+        for (const entry of await this.store.listTasks({ column, slim: true })) limboById.set(entry.id, entry);
+      }
+      const tasks = [...limboById.values()];
+      /*
+      NARROW WHEN THE CARD CAN ANSWER, BROAD WHEN IT CANNOT (#2891): `resolveWorkflowIrForTask`
+      SUBSTITUTES the built-in IR rather than failing, so an unreadable selection would otherwise reject
+      the very card the project-scoped query just admitted from a renamed lane.
+      */
+      const limboLanes = new Map<string, Set<string>>();
+      for (const entry of tasks) {
+        try {
+          const { ir, source } = await resolveWorkflowIrForTaskWithProvenance(this.store, entry.id);
+          limboLanes.set(entry.id, source === "default" ? new Set(limboWipColumns) : new Set(columnsWithFlag(ir, "countsTowardWip")));
+        } catch {
+          limboLanes.set(entry.id, new Set(limboWipColumns));
+        }
+      }
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const activeHeartbeatTaskIds = await this.listActiveHeartbeatTaskIds();
       const now = Date.now();
 
       const stranded = tasks.filter((task) => {
-        if (task.column !== "in-progress" || task.paused) {
+        if (!(limboLanes.get(task.id) ?? limboWipColumns).has(task.column) || task.paused) {
           return false;
         }
         const hasMissingWorktreePath = typeof task.worktree === "string" && task.worktree.length > 0 && !existsSync(task.worktree);
