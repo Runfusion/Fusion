@@ -277,17 +277,35 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const menuRef = useRef<HTMLDivElement | null>(null);
   const countFlashing = useFlashOnIncrease(tasks.length);
   const { confirm } = useConfirm();
+  const getTaskContextMenuColumns = useCallback((task: Task) => (
+    taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
+  ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
+  const getTaskColumnFlags = useCallback((task: Task) => (
+    getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags ?? (task.column === column ? columnFlags : undefined)
+  ), [column, columnFlags, getTaskContextMenuColumns]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
+  HOISTED so `getTaskColumnFlags` can be a DEPENDENCY below, not merely a closed-over value.
+
+  It previously sat after this callback, with a note observing that the body only runs during render
+  so the const is initialised by then. That is true of the BODY and false of the dependency array,
+  which evaluates eagerly — so the reference could not be listed, and the callback silently kept the
+  closure built during the PRE-LOAD render, over an empty trait map. The note reasoned about
+  declaration order and nothing about staleness, which is how it read as considered.
+
+  Both callbacks close over props only, so the move is mechanical: no behaviour rides on it beyond
+  making the dependency expressible.
+  */
   const resolveNearDuplicateCanonicalInactive = useCallback((task: Task): boolean | undefined => {
     const nearDuplicateOf = task.sourceMetadata?.nearDuplicateOf;
     if (typeof nearDuplicateOf !== "string" || !allTasks) {
       return undefined;
     }
     const canonical = allTasks.find((candidate) => candidate.id === nearDuplicateOf);
-    /* FNXC:WorkflowResolvedColumns 2026-07-30-01:10: the canonical's own flags. Declared above
-       `getTaskColumnFlags` in source order, but this body only runs during render, so the const is
-       initialised by then — tsc and the suite both confirm it. */
+    /* The canonical's OWN flags — a different task from the card being rendered, so this must not
+       reuse the row's flags. */
     return isNearDuplicateCanonicalInactive(canonical, canonical ? getTaskColumnFlags(canonical) : undefined);
-  }, [allTasks]);
+  }, [allTasks, getTaskColumnFlags]);
 
   // Clear the inline capacity-exhausted banner once the column's task list
   // changes via SSE (e.g. an occupant moves out and capacity frees up). The
@@ -337,12 +355,6 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const isHoldColumn = isHoldColumnRole(columnFlags, column);
   const isCollapsed = isArchived && collapsed;
   const isWipProcessingColumn = isWipColumnRole(columnFlags, column);
-  const getTaskContextMenuColumns = useCallback((task: Task) => (
-    taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
-  ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
-  const getTaskColumnFlags = useCallback((task: Task) => (
-    getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags ?? (task.column === column ? columnFlags : undefined)
-  ), [column, columnFlags, getTaskContextMenuColumns]);
   /*
   FNXC:WorktreeGroupingSetting 2026-06-27-22:30:
   The project setting is an explicit show/hide control: worktree grouping and labels render only when enabled and only for the board's WIP/processing column. Turning it off must leave plain task cards with no legacy group shell in either legacy or workflow-mode columns.
