@@ -1,7 +1,6 @@
 {
   "generatedFrom": "node scripts/lifecycle-column-census.mjs --strict --update-baseline",
   "byFile": {
-    "packages/dashboard/app/utils/taskRevert.ts": 2,
     "packages/engine/src/scheduler.ts": 2,
     "packages/core/src/mission-store.ts": 1,
     "packages/core/src/task-store/audit-ops.ts": 1,
@@ -11,7 +10,6 @@
     "packages/core/src/task-store/task-id-integrity.ts": 1,
     "packages/dashboard/app/components/ResearchTaskActionModal.tsx": 1,
     "packages/dashboard/app/components/TaskCard.tsx": 1,
-    "packages/engine/src/auto-merge-finalization.ts": 1,
     "packages/engine/src/notification/notification-service.ts": 1,
     "packages/engine/src/self-healing.ts": 1,
     "packages/engine/src/triage.ts": 1
@@ -110,7 +108,6 @@
     "packages/dashboard/src/test/mockCoreEngine.ts\u0000in-review": 1,
     "packages/engine/src/agent-heartbeat.ts\u0000archived": 1,
     "packages/engine/src/agent-heartbeat.ts\u0000done": 1,
-    "packages/engine/src/auto-merge-finalization.ts\u0000done": 1,
     "packages/engine/src/cli-agent/task-session.ts\u0000done": 1,
     "packages/engine/src/executor.ts\u0000in-progress": 1,
     "packages/engine/src/hold-release.ts\u0000archived": 1,

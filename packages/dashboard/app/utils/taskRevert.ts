@@ -1,4 +1,5 @@
 import type { Task } from "@fusion/core";
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "@fusion/core";
 
 /**
  * FNXC:TaskRevert 2026-07-04-00:00:
@@ -72,7 +73,17 @@ behaviour. This searches for an OPEN undo task, so a finished one must be skippe
 literals, a renamed board never skipped anything: a completed undo task counted as still open, and
 the UI offered to resume work that had already landed.
 */
-export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: string): Task | undefined {
+export function findOpenUndoTaskForSource(
+  tasks: readonly Task[],
+  sourceTaskId: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:20:
+  PER-NEIGHBOUR flags, keyed by task id — the thing the note below said did not exist. Optional and
+  fail-soft: a candidate the map does not cover yields `undefined` and the role helper falls back to
+  the legacy ids, which is the documented degraded answer rather than a fabricated one.
+  */
+  flagsByTaskId?: ReadonlyMap<string, ColumnRoleTraitFlags>,
+): Task | undefined {
   const trimmedSourceId = sourceTaskId.trim();
   if (trimmedSourceId.length === 0) {
     return undefined;
@@ -88,35 +99,35 @@ export function findOpenUndoTaskForSource(tasks: readonly Task[], sourceTaskId: 
     STILL A LITERAL, deliberately, and left counted.
 
     I converted this and added a `columnFlags` parameter — SINCE REMOVED, so this function takes only
-    `(tasks, sourceTaskId)` today. Its only caller is TaskDetailModal ~line
-    926, which sits ~60 lines ABOVE where `detailColumnFlags` is derived, so it could not supply one.
-    The parameter was therefore never passed: the guard was gone, the census counted a conversion,
-    and the behaviour was the legacy fallback forever.
+    `(tasks, sourceTaskId)` today. Its only caller is TaskDetailModal ~line 926, which sits ~60 lines
+    ABOVE where `detailColumnFlags` is derived, so it could not supply one. The parameter was therefore
+    never passed: the guard was gone, the census counted a conversion, and the behaviour was the legacy
+    fallback forever.
 
     Reverted rather than left as a dead seam. An unsupplied optional parameter is strictly worse than
     the literal — the literal is at least honest, and the census keeps pointing here.
 
     FNXC:WorkflowResolvedColumns 2026-07-30-20:50 (correcting the unblock recorded above):
-    HOISTING THE FLAGS WOULD NOT UNBLOCK THIS — IT WOULD INTRODUCE A WORSE DEFECT.
+    HOISTING THE FLAGS WOULD NOT UNBLOCK THIS — the column classified here belongs to a NEIGHBOUR, and
+    `detailColumnFlags` describes the MODAL'S OWN task. Supplying it would answer "is this neighbour
+    finished?" with a different row's traits — wrong on data, not merely stale on vocabulary.
 
-    The note above says the blocker is hook ordering, i.e. a cost. It is not: it is a correctness
-    boundary. This function scans the `tasks` list for OTHER tasks pointing back at the source, so the
-    column it classifies belongs to a NEIGHBOUR. `detailColumnFlags` in TaskDetailModal describes the
-    MODAL'S OWN task, and its own FNXC note says so explicitly — it is guarded by
-    `detailFlagsAreForThisTask` precisely because using it for anything else is wrong.
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:20 (CONVERTED — the blocker named the wrong variable):
+    Both notes above are right that `detailColumnFlags` is the wrong supplier. The conclusion drawn
+    from that — "the modal does not have per-neighbour flags and should not fetch mid-render" — is
+    false, and the counter-example is in the same component.
 
-    So supplying it here would answer "is this neighbour finished?" with the modal task's traits: on a
-    project where two workflows reuse a column id, an open undo task would be classified by a workflow
-    it does not belong to and the affordance would vanish or persist wrongly. That is the flags-for-
-    the-wrong-row shape, and it is worse than the literal because it is wrong on data rather than
-    merely stale on vocabulary.
+    `columnFlagsByTaskId` is a per-task map, already a prop of TaskDetailModal (declared :367,
+    destructured :727), and the call site at :992 is BELOW that destructure. TaskDetailModal itself
+    already uses it exactly this way for the near-duplicate canonical
+    (`columnFlagsByTaskId?.get(nearDuplicateCanonical.id)`), under a note making the same point: the
+    blocker there had been "asserted from the shape of the problem rather than tested against what was
+    in scope". This is the same assertion, one function over.
 
-    A CORRECT conversion needs per-NEIGHBOUR flags — the caller would have to resolve each candidate's
-    own workflow, which the modal does not have and should not fetch mid-render. Until a per-task lane
-    map is available at that call site, the literal is the right answer and the census entry is
-    accurate debt rather than a missed conversion.
+    So the supplier the 22:40 note went looking for exists, it is per-neighbour, and it needs no fetch.
+    The parameter is supplied at the only call site in the same commit, so this is not a dead seam.
     */
-    if (candidate.column === "done" || candidate.column === "archived") {
+    if (isTerminalColumnRole(flagsByTaskId?.get(candidate.id), candidate.column)) {
       continue;
     }
     if (getRevertOfId(candidate.sourceMetadata) !== trimmedSourceId) {

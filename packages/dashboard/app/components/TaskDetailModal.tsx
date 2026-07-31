@@ -989,7 +989,9 @@ export function TaskDetailContent({
    * (open board columns only) so a done/archived/soft-deleted prior undo attempt never renders as
    * an active "Undo task" link — that would be a stale/leftover affordance.
    */
-  const openUndoTask = findOpenUndoTaskForSource(tasks, workingTask.id);
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:20: the CANDIDATES' own flags, keyed by id — the same
+     per-neighbour supply this component already uses for the near-duplicate canonical above. */
+  const openUndoTask = findOpenUndoTaskForSource(tasks, workingTask.id, columnFlagsByTaskId);
 
   const previousInitialTabRef = useRef<TabId | undefined>(initialTab);
   const taskColumnRef = useRef(task.column);
