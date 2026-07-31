@@ -428,6 +428,50 @@ Two corollaries worth keeping:
   are the same shape — they need the emitter-side / async-threading work, not another conversion pass.
   `--claims` now marks sync-resolver files as inert-risk and keeps them out of the start-here list.
 
+## The census has FOUR blind spots, and only some of them deserve a ratchet
+
+The census counts **comparisons** against legacy ids. Four other shapes carry the same defect and it
+counts none of them. All four were swept in one session; each is recorded here with its outcome,
+because the interesting result is that **two of them should not be guarded**.
+
+| shape | example | population | defects found | guarded? |
+|---|---|---|---|---|
+| **comparisons** | `task.column === "todo"` | the census's own backlog | the whole program | yes — census ratchet, in the gate |
+| **definitions / collections** | `new Set(["in-progress","done"])` then `.has(task.column)` | 69 collections / 49 files (30 used as gates) | 1 of 30 | **no — see below** |
+| **move targets** | `moveTask(id, "todo")` | 31 sites, 25 in `self-healing.ts` | all 31 | yes — `no-legacy-move-targets`, in the gate |
+| **type positions** | `column: "in-progress" \| "in-review"` | ~192 raw candidates | 2 confirmed | **no — see below** |
+
+### Move targets earned a ratchet; the other two did not
+
+The discriminator is **what a hit means**, not how many hits there are.
+
+`moveTask` targets converted to **zero**, so any future hit is a defect by construction — and the
+failure is hard: `moveTaskInternal` REJECTS an undeclared target (`TransitionRejectionError:
+unknown-column`), so a regression throws inside a recovery path rather than degrading. Clean signal,
+severe failure, guard justified.
+
+**Collections do not converge to zero.** 68 of 69 are correct *by design* — `LEGACY_*` constants used
+as `if (!flags) return LEGACY_SET.has(column)` fallbacks, seed-then-add resolved sets, builtin
+workflow IR definitions, trait-keyed display buckets. A baseline of 69 across 49 files would encode
+"this is fine" 68 times and churn on every legitimate new fallback. The meaningful signal is "a
+legacy collection gates a live column **with no flags fallback in scope**" — and that predicate needs
+the kind of scope analysis the parser does not do. Without the discriminator the guard is noise, and
+a noisy guard trains its readers to skip the line, which this document already records as how the
+next real finding gets missed.
+
+**Type positions are worse still**: ~192 raw candidates, almost all object-literal *values*
+(`status: "archived"`), agent roles, and unrelated stream events (`type: "done"`). Two were genuine.
+
+So both were swept by hand, their defects fixed (#3149, #3158, #3159), and deliberately left
+unguarded — with this note so the next person does not mistake the absence of a ratchet for the
+absence of a sweep.
+
+### The rule
+
+**A ratchet is worth building when a hit is presumptively a defect.** When most hits are correct, the
+honest artifact is a sweep plus a written record of what was checked — not a baseline that makes the
+population look managed while teaching everyone to ignore it.
+
 ## The rule that produced every fix above
 
 **A green guard is evidence only once you have watched it go red.**
