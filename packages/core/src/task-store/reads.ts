@@ -779,10 +779,23 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
       : undefined;
     const sourceLimit = includeArchived ? mergedPrefixLimit : limit;
     const sourceOffset = includeArchived ? 0 : offset;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    Search excludes the board's OWN archive lanes, not the `archived` id. Against the literal, a card
+    filed away on a renamed board still surfaced in every live search — including the CREATE-time
+    near-duplicate check, which would then reject a new task as a duplicate of one the operator had
+    already archived.
+
+    Resolved once here and threaded into both search paths. `resolveArchivedLanes` returns undefined
+    on an unreadable workflow list, and `liveSearchPredicate` falls back to the literal, so an
+    unconverted board is byte-identical.
+    */
+    const searchArchivedLanes = await resolveProjectColumnsForRoles(store, ["archived"]).catch(() => undefined);
     let pgRows = await searchTasksTsvector(layer.db, trimmedQuery, {
       limit: sourceLimit,
       offset: sourceOffset,
       includeArchived,
+      archivedColumns: searchArchivedLanes,
       // FNXC:MultiProjectIsolation 2026-07-10: scope search to the bound project
       // (load-bearing for the CREATE-time near-duplicate check via searchTasks).
       projectId: layer.projectId,
@@ -792,6 +805,7 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
         limit: sourceLimit,
         offset: sourceOffset,
         includeArchived,
+        archivedColumns: searchArchivedLanes,
         projectId: layer.projectId,
       });
     }
