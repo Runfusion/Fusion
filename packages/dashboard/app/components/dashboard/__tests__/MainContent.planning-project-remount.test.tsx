@@ -98,25 +98,19 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
 }
 
 describe("MainContent planning project remount", () => {
-  it("remounts embedded Planning when the active project changes", () => {
-    const { rerender } = render(<MainContent {...mainContentProps()} />);
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-30-23:40:
+  THE PLANNING CASE MOVED TO App.test.tsx — it is not gone, and must not be re-added here.
 
-    expect(screen.getByLabelText("Planning project")).toHaveTextContent("project-1");
-    expect(planningMounts).toEqual(["project-1"]);
+  It rendered MainContent and counted Planning mounts per project. FN-8619 moved Planning out of
+  MainContent entirely (its branch returns `null`; see MainContent.tsx) into `PlanningKeepAlive`,
+  which App mounts as a sibling. Asserting it here could only fail, and it did — this was the last
+  red test in the dashboard lane.
 
-    rerender(
-      <MainContent
-        {...mainContentProps({
-          currentProject: { id: "project-2", name: "Project 2" } as MainContentProps["currentProject"],
-        })}
-      />,
-    );
-
-    // A fresh mount for the new project — not a prop update on the old instance.
-    expect(screen.getByLabelText("Planning project")).toHaveTextContent("project-2");
-    expect(planningMounts).toEqual(["project-1", "project-2"]);
-  });
-
+  App owns BOTH halves of the guarantee, which is why the replacement lives there: the
+  `planningEverOpenedProjectId === currentProject.id` gate and the project id inside the host's
+  `key`. Chat and Missions still render from MainContent, so their cases stay.
+  */
   it("remounts embedded Chat when the active project changes", () => {
     const { rerender } = render(<MainContent {...mainContentProps({ taskView: "chat" })} />);
     expect(chatMounts).toEqual(["project-1"]);

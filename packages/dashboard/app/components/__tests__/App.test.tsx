@@ -3235,6 +3235,64 @@ describe("App Planning Mode", () => {
     expect(screen.getByTestId("planning-view")).toBeTruthy();
   });
 
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-30-23:45:
+  A PROJECT SWITCH MUST NOT LEAVE THE PREVIOUS PROJECT'S PLANNING SUBTREE MOUNTED.
+
+  Relocated from `MainContent.planning-project-remount.test.tsx`. FN-8619 moved Planning out of
+  MainContent into `PlanningKeepAlive`, mounted by App — so the old file could only fail, and the
+  invariant it guarded had no assertion anywhere. The product was already correct; only the coverage
+  was left behind.
+
+  What is at stake is a cross-project leak, not layout: before the project-keyed host, Planning kept a
+  running plan's stream, selected session and sidebar list from the PREVIOUS project, and persisted
+  its session under the NEW project's storage key.
+
+  WHY THE ASSERTION IS "gone OR a different node", and why single-guard mutations do NOT break it.
+  App defends this twice, independently:
+
+    1. the `planningEverOpenedProjectId === currentProject.id` gate (App.tsx), which unmounts the
+       host for a project that never opened Planning; and
+    2. the project id inside the host's `key`, which forces a remount rather than reconciling the
+       live instance under the new project.
+
+  Either alone upholds the invariant, so breaking one leaves this green — correctly. MEASURED:
+  breaking BOTH fails it. An earlier draft of mine asserted the subtree must be ABSENT, which is
+  wrong: `planningViewActive` stays true across the switch, so the latch re-arms and a fresh host is
+  expected. Both outcomes satisfy "project A's instance is not reused", which is the actual contract.
+  */
+  it("never leaves the previous project's Planning subtree mounted after a switch", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    const projectA = { ...DEFAULT_PROJECT, id: "proj_switch_a", name: "Project A" };
+    const projectB = { ...DEFAULT_PROJECT, id: "proj_switch_b", name: "Project B" };
+    mockCurrentProjectState.currentProject = projectA;
+    vi.mocked(fetchSettings).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: true },
+    });
+
+    const { rerender } = render(<App />);
+
+    await screen.findByTestId("sidebar-nav-planning");
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).toBeTruthy();
+    });
+
+    /* Control: capture A's live subtree, so "not this node" below is a real statement. */
+    const subtreeForA = screen.getByTestId("planning-keep-alive");
+
+    mockCurrentProjectState.currentProject = projectB;
+    rerender(<App />);
+
+    await waitFor(() => {
+      const current = screen.queryByTestId("planning-keep-alive");
+      expect(current === null || current !== subtreeForA).toBe(true);
+    });
+    /* The load-bearing half: A's instance is off the page either way. */
+    expect(subtreeForA.isConnected).toBe(false);
+  });
+
   it("renders planning embedded view with correct initial state", async () => {
     localStorage.setItem(taskViewStorageKey(), "planning");
 
