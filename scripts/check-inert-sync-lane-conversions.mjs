@@ -119,19 +119,40 @@ function syncLaneSources(sf) {
   return names;
 }
 
-/** Locals assigned from one of those sources: `const parked = resolveTaskParkedColumnsSync(...)`. */
+/** Locals assigned from one of those sources: `const parked = resolveTaskParkedColumnsSync(...)`.
+ *
+ * FNXC:LifecycleColumnCensus 2026-07-31-23:45 (third evasion — laundering through a wrapper):
+ * A sync answer passed THROUGH another call still carries the defect, and the direct-assignment rule
+ * missed it. Measured, and it went live: #3109 rewrote the scheduler's `task:moved` guards as
+ *
+ *     const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(store, id), lanes);
+ *
+ * which prefers the event payload but falls back to the sync answer whenever `lanes` is absent —
+ * and before every emitter carried lanes that was most move paths. The callee is `mergeParkedColumns`,
+ * not a source, so nine guards silently left the count and the ratchet reported a DROP, i.e. progress.
+ * That is precisely the "fall for the wrong reason" this script warns about, one layer up, in itself.
+ *
+ * So a call is tainted when the callee is a source OR when any ARGUMENT is a source call. One level,
+ * deliberately: it covers the wrapper shape that exists, and full value-level dataflow remains the
+ * stated limit rather than a claim. A merge-wrapper guard is a WEAKER defect than a raw one — it is
+ * correct whenever lanes arrive — but it is not clean, and counting it as clean is how the ledger
+ * stops meaning anything. */
 function syncLaneLocals(sf, sources) {
   const locals = new Set();
+  const isSourceCall = (node) => {
+    let call = node;
+    if (ts.isAwaitExpression(call)) call = call.expression;
+    if (!ts.isCallExpression(call)) return false;
+    const callee = ts.isPropertyAccessExpression(call.expression)
+      ? call.expression.name.getText(sf)
+      : call.expression.getText(sf);
+    if (sources.has(callee)) return true;
+    /* Laundered: `wrapper(resolveTaskParkedColumnsSync(...), lanes)`. */
+    return call.arguments.some((arg) => isSourceCall(arg));
+  };
   const visit = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
-      let call = node.initializer;
-      if (ts.isAwaitExpression(call)) call = call.expression;
-      if (ts.isCallExpression(call)) {
-        const callee = ts.isPropertyAccessExpression(call.expression)
-          ? call.expression.name.getText(sf)
-          : call.expression.getText(sf);
-        if (sources.has(callee)) locals.add(node.name.getText(sf));
-      }
+      if (isSourceCall(node.initializer)) locals.add(node.name.getText(sf));
     }
     ts.forEachChild(node, visit);
   };

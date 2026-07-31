@@ -1,6 +1,7 @@
 {
-  "total": 7,
+  "total": 20,
   "byFile": {
+    "packages/engine/src/scheduler.ts": 13,
     "packages/engine/src/triage.ts": 7
   }
 }
