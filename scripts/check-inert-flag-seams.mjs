@@ -488,11 +488,34 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   }
 
+  /*
+  FNXC:LifecycleColumnCensus 2026-07-30-23:55 (a STALE exemption WARNS; it does not fail):
+
+  This used to exit 1. Same mistake as the SQL ratchet's drop check, and with the same measured cost:
+  an entry goes stale precisely because somebody FIXED the seam it covered, so the gate punished the
+  people who did the right thing.
+
+  Three times this week — `getTotalAgentActiveMs`, the two near-duplicate omission entries, and
+  `isPlanningContinuationTaskDispatchable`. Each fix was correct, each left an entry behind, and each
+  turned the check red for everyone until the entry was deleted by hand. Twice that was main.
+
+  A stale entry is worth removing: it exempts a function nobody is guarding any more. But the cost of
+  leaving it is bounded — one function unguarded, listed loudly on every run — while a gate that fails
+  on other people's correct fixes gets ignored, and then nothing is guarded at all. That is the
+  census's reasoning, applied unchanged.
+
+  The RISE case — a NEW unsupplied or partially-supplied seam, the actual purpose — still fails hard
+  below. Unlike the SQL baseline this cannot auto-prune: the entries live in source with their reasons
+  attached, and rewriting them from a script would delete the reasoning with the line.
+  */
   if (stale.length > 0) {
-    console.error("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
-    for (const line of stale.sort()) console.error(line);
-    console.error("\nRemove them, or the check silently stops guarding those functions.\n");
-    process.exit(1);
+    console.warn("\n[check-inert-flag-seams] STALE allow-list entries — supplied now, or no longer declared:\n");
+    for (const line of stale.sort()) console.warn(line);
+    console.warn(
+      "\nDelete them: each exempts a function that is no longer unguarded, so the list now claims to\n"
+      + "tolerate something it does not. Not fatal — the seam it covered is FIXED, and failing here\n"
+      + "would punish whoever fixed it.\n",
+    );
   }
 
   if (offenders.length > 0) {
