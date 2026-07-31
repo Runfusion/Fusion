@@ -7,7 +7,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
-import { useBlockerFanout } from "../hooks/useBlockerFanout";
+import { useBlockerFanout, type BlockerFanoutColumnFlags } from "../hooks/useBlockerFanout";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -203,9 +203,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     return document.getElementById("header-workflow-slot");
   });
   const viewportMode = useViewportMode();
-  const blockerFanoutMap = useBlockerFanout(tasks, {
-    staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
-  });
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   useEffect(() => {
@@ -379,6 +376,29 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     setBoardWorkflowsState,
   } = useBoardWorkflows({ projectId });
   const draggingTaskIdRef = useRef<string | null>(null);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:15 (the board's fan-out read the LEGACY lanes):
+  Resolve each card's traits through its OWN workflow — the construction `App.tsx` already uses for
+  the footer index — so the fan-out map classifies against the operator's column names. Without it
+  core fell back to `todo`/`in-review`/`done`, and since "active" is defined by exclusion, a finished
+  card in a renamed completion lane stayed an active blocker forever.
+  */
+  const blockerFanoutColumnFlagsByTaskId = useMemo(() => {
+    const index = new Map<string, BlockerFanoutColumnFlags>();
+    if (!boardWorkflows) return index;
+    const workflowsById = new Map(boardWorkflows.workflows.map((workflow) => [workflow.id, workflow]));
+    for (const task of tasks) {
+      const workflow = workflowsById.get(boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId);
+      const flags = workflow?.columns.find((column) => column.id === task.column)?.flags;
+      if (flags) index.set(task.id, flags);
+    }
+    return index;
+  }, [boardWorkflows, tasks]);
+  const blockerFanoutMap = useBlockerFanout(tasks, {
+    staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
+    columnFlagsByTaskId: blockerFanoutColumnFlagsByTaskId,
+  });
 
   const handlePromote = useCallback(async (taskId: string, options?: { force?: boolean }) => {
     // `force` only ever arrives from Column's confirmed unplanned-for-execution override.

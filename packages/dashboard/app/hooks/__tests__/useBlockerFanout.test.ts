@@ -143,3 +143,87 @@ describe("computeBlockerFanoutMap", () => {
     expect(source).toContain("SelfHealingManager must call resolveMaxAutoMergeRetries(settings)");
   });
 });
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:30:
+The dashboard wrapper passed core NO lane answers, so every fan-out surface classified against
+`todo` / `in-review` / `done`. Core defines ACTIVE by exclusion — not terminal — so on a renamed
+board a FINISHED card never became terminal and stayed an active blocker forever.
+
+The board below is the built-in vocabulary renamed and nothing else, which is the point: every case
+above passes either way because `done` satisfies the literal default.
+*/
+describe("computeBlockerFanoutMap on a RENAMED board", () => {
+  const shippedFlags = { complete: true };
+  const draftingFlags = { hold: true };
+  const buildingFlags = { countsTowardWip: true };
+
+  it("does NOT count a dependent of a FINISHED card as active", () => {
+    const blocker = createTask("FN-BLOCKER", "shipped");
+    const dependent = createTask("FN-DEPENDENT", "drafting", { dependencies: ["FN-BLOCKER"] });
+    const flags = new Map([
+      ["FN-BLOCKER", shippedFlags],
+      ["FN-DEPENDENT", draftingFlags],
+    ]);
+
+    const withLanes = computeBlockerFanoutMap([blocker, dependent], { columnFlagsByTaskId: flags });
+    const withoutLanes = computeBlockerFanoutMap([blocker, dependent]);
+
+    /* The dependent rests in the board's HOLD lane, so it is counted there — not as a legacy todo. */
+    expect(withLanes.get("FN-BLOCKER")?.activeTodoCount).toBe(1);
+    /* Unresolved, `drafting` is not `todo`, so the same card lands in neither bucket correctly. */
+    expect(withoutLanes.get("FN-BLOCKER")?.activeTodoCount).toBe(0);
+  });
+
+  it("counts a dependent in a renamed WIP lane as active", () => {
+    const blocker = createTask("FN-BLOCKER", "building");
+    const dependent = createTask("FN-DEPENDENT", "building", { dependencies: ["FN-BLOCKER"] });
+    const flags = new Map([
+      ["FN-BLOCKER", buildingFlags],
+      ["FN-DEPENDENT", buildingFlags],
+    ]);
+
+    /* `totalCount` is the ACTIVE count — active is "not terminal". */
+    expect(computeBlockerFanoutMap([blocker, dependent], { columnFlagsByTaskId: flags })
+      .get("FN-BLOCKER")?.totalCount).toBe(1);
+  });
+
+  it("escalates a stale high-fan-out blocker resting in a renamed WIP lane", () => {
+    /*
+    The sharpest consequence: `shouldEscalate` requires the blocker to be in an ESCALATION lane
+    (wip ∪ review). Unresolved, `building` is neither `in-progress` nor `in-review`, so escalation
+    was false for every blocker on a renamed board — a stale blocker holding up many cards never
+    escalated. The fan-out numbers stayed correct, which is what makes it easy to miss: the metric
+    says there is a problem and the mechanism that acts on it is switched off.
+    */
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const blocker = createTask("FN-BLOCKER", "building", {
+      columnMovedAt: threeHoursAgo,
+      updatedAt: threeHoursAgo,
+    });
+    /* HIGH_FANOUT_BLOCKER_TODO_THRESHOLD is 5, counted via `blockedBy` in the HOLD lane. */
+    const dependents = Array.from({ length: 5 }, (_, i) =>
+      createTask(`FN-DEP-${i}`, "drafting", { blockedBy: "FN-BLOCKER" }));
+    const flags = new Map<string, { complete?: boolean; hold?: boolean; countsTowardWip?: boolean }>([
+      ["FN-BLOCKER", buildingFlags],
+      ...dependents.map((task) => [task.id, draftingFlags] as const),
+    ]);
+    const tasks = [blocker, ...dependents];
+
+    expect(computeBlockerFanoutMap(tasks, { columnFlagsByTaskId: flags }).get("FN-BLOCKER")?.escalation)
+      .toBeDefined();
+    /* Same board, no resolved traits: not high fan-out (nothing is in `todo`) and never escalates. */
+    expect(computeBlockerFanoutMap(tasks).get("FN-BLOCKER")?.escalation).toBeUndefined();
+  });
+
+  it("is byte-identical when no traits resolved (the pre-load window)", () => {
+    const tasks = [
+      createTask("FN-1", "in-progress"),
+      createTask("FN-2", "todo", { dependencies: ["FN-1"] }),
+    ];
+
+    expect(computeBlockerFanoutMap(tasks, { columnFlagsByTaskId: new Map() }).get("FN-1"))
+      .toEqual(computeBlockerFanoutMap(tasks).get("FN-1"));
+  });
+});
