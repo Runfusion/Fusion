@@ -30,7 +30,7 @@ vi.mock("../../api", () => ({
   fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
   fetchTasks: (...args: unknown[]) => mockFetchTasks(...args),
   /*
-  FNXC:ResearchViewTests 2026-08-01-00:30:
+  FNXC:ResearchViewTests 2026-07-31-20:24:
   This factory REPLACES the whole `../../api` module, so every import anywhere in the rendered tree
   must appear here or it resolves to undefined. `fetchBoardWorkflows` reached this file indirectly —
   the task modals ResearchView opens import it — and its absence failed four cases with
