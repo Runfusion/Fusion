@@ -63,6 +63,34 @@ if (files.length === 0) {
 }
 
 /** True when the statement enclosing `node` carries a DELIBERATE-LITERAL in its LEADING comments. */
+/*
+FNXC:MoveTargetRatchet 2026-07-31-21:55 (probe of this gate's own claim):
+TERNARY DESTINATIONS. The gate prints "POPULATION EMPTY ... keep it empty", and a staged probe showed
+that claim held for two spellings and not a third: `moveTask(id, ok ? "done" : "in-review")` was
+invisible, because the check required arguments[1] to BE a literal. A ternary over two lanes is a
+natural way to write exactly the destination this gate exists to prevent.
+
+ONE hit per call site, not per branch — a two-branch ternary is one move, and counting both would
+inflate a population the ratchet holds at zero.
+
+DELIBERATELY NOT DESCENDING into `??` or `||`. `moveTask(id, lanes.complete ?? "done")` is the
+documented degraded arm this program writes on purpose — a resolved value with a legacy fallback,
+which the lifecycle census classifies as `traitFallback` rather than backlog. Counting those would
+report correct code as debt. Probed and left alone rather than assumed: both forms measure 0.
+
+STILL NOT DETECTED, stated so nobody assumes coverage: a destination bound to a local first
+(`const t = "archived"; moveTask(id, t)`). Resolving that needs symbol/dataflow analysis rather than a
+shape test, which is a different tool than this file is.
+*/
+function destinationLiterals(expr) {
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return [expr.text];
+  if (ts.isConditionalExpression(expr)) {
+    return [...destinationLiterals(expr.whenTrue), ...destinationLiterals(expr.whenFalse)];
+  }
+  if (ts.isParenthesizedExpression(expr)) return destinationLiterals(expr.expression);
+  return [];
+}
+
 function hasDeliberateMarker(node, source) {
   for (let cur = node; cur; cur = cur.parent) {
     const ranges = ts.getLeadingCommentRanges(source, cur.getFullStart()) ?? [];
@@ -101,9 +129,8 @@ for (const file of files) {
            `{ reason: "done" }` in an options bag as a move target — work that does not exist and
            that no real fix could clear. Backtick form included. */
         const destination = node.arguments[1];
-        const isLiteral = destination
-          && (ts.isStringLiteral(destination) || ts.isNoSubstitutionTemplateLiteral(destination));
-        if (isLiteral && LEGACY_COLUMN_IDS.has(destination.text) && !hasDeliberateMarker(node, source)) {
+        const hit = destination && destinationLiterals(destination).find((text) => LEGACY_COLUMN_IDS.has(text));
+        if (hit && !hasDeliberateMarker(node, source)) {
           count += 1;
         }
       }
