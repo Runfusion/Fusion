@@ -81,9 +81,9 @@ Optional, defaulting to the legacy id, so no existing caller or test changes beh
 */
 export function isRecoverableMissingWorktreeReviewFailureWithProgress(
   task: Task,
-  reviewColumns?: ReadonlySet<string>,
+  reviewColumns: ReadonlySet<string>,
 ): boolean {
-  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
+  return reviewColumns.has(task.column)
     && !task.paused
     && task.status === "failed"
     && isMissingWorktreeSessionStartFailure(task.error)
@@ -92,9 +92,9 @@ export function isRecoverableMissingWorktreeReviewFailureWithProgress(
 
 export function isRecoverableMissingWorktreeReviewFailureNoProgress(
   task: Task,
-  reviewColumns?: ReadonlySet<string>,
+  reviewColumns: ReadonlySet<string>,
 ): boolean {
-  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
+  return reviewColumns.has(task.column)
     && !task.paused
     && task.status === "failed"
     && isMissingWorktreeSessionStartFailure(task.error)
@@ -106,9 +106,9 @@ const MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET = new Set<string>(MERGE_ACTIVE_MI
 
 export function isMergeActiveMissingWorktreeSessionStartFailure(
   task: Task,
-  reviewColumns?: ReadonlySet<string>,
+  reviewColumns: ReadonlySet<string>,
 ): boolean {
-  return (reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review")
+  return reviewColumns.has(task.column)
     && !task.paused
     && typeof task.status === "string"
     && MERGE_ACTIVE_MISSING_WORKTREE_STATUS_SET.has(task.status)
@@ -152,7 +152,7 @@ export function isInReviewMissingWorktreeSessionStartFailure(
 
 export function isRecoverableMissingWorktreeReviewFailure(
   task: Task,
-  reviewColumns?: ReadonlySet<string>,
+  reviewColumns: ReadonlySet<string>,
 ): boolean {
   /* The combiner threads the set to all three, so a caller cannot convert the outer question and leave one
      of the three inner ones on the legacy id — the half-conversion shape this program keeps finding. */

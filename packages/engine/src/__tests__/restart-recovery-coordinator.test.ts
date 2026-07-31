@@ -37,6 +37,19 @@ literal, because each one individually looks right.
 `reviewColumns` is optional and defaults to the legacy id, so the three existing call sites are
 unchanged until each passes its own resolved set.
 */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-11:20 (fleet: restart-recovery roles):
+`reviewColumns` is REQUIRED now. It was optional with a `task.column === "in-review"` fallback that
+production never took — `self-healing.ts` supplies the resolved set at every call site — so the
+literal survived only because these tests omitted the argument. Passing the set preserves exactly
+what each case asserts while removing the last thing keeping the fallback alive.
+
+Worth recording: making the parameter required produced ZERO tsc errors, because the engine
+tsconfig covers `src` and not `__tests__`. A clean typecheck was not evidence here; only running
+the tests found these call sites.
+*/
+const REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
 describe("isInReviewMissingWorktreeSessionStartFailure", () => {
   /*
   FNXC:MissingWorktreeRetry 2026-07-30-10:05 (PR #2728, aligned to #2736's signature):
@@ -107,13 +120,13 @@ describe("RestartRecoveryCoordinator", () => {
       steps: [{ id: "s1", title: "step", status: "done" }] as any,
     });
 
-    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in missing worktree: /tmp/wt" })).toBe(true);
-    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in incomplete worktree: /tmp/wt" })).toBe(true);
-    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in unregistered git worktree: /tmp/wt" })).toBe(true);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in missing worktree: /tmp/wt" }, REVIEW_LANES)).toBe(true);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in incomplete worktree: /tmp/wt" }, REVIEW_LANES)).toBe(true);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...baseTask, error: "Refusing to start coding agent in unregistered git worktree: /tmp/wt" }, REVIEW_LANES)).toBe(true);
 
-    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, paused: true, error: "Refusing to start coding agent in missing worktree: /tmp/wt" })).toBe(false);
-    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, error: "other" })).toBe(false);
-    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error: "Refusing to start coding agent in missing worktree: /tmp/wt" })).toBe(false);
+    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, paused: true, error: "Refusing to start coding agent in missing worktree: /tmp/wt" }, REVIEW_LANES)).toBe(false);
+    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, error: "other" }, REVIEW_LANES)).toBe(false);
+    expect(isRecoverableMissingWorktreeReviewFailureWithProgress({ ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error: "Refusing to start coding agent in missing worktree: /tmp/wt" }, REVIEW_LANES)).toBe(false);
 
     const errors = [
       "Refusing to start coding agent in missing worktree: /tmp/wt",
@@ -123,9 +136,9 @@ describe("RestartRecoveryCoordinator", () => {
     for (const error of errors) {
       const withProgressTask = { ...baseTask, error };
       const noProgressTask = { ...baseTask, steps: [{ id: "s2", title: "y", status: "pending" }] as any, error };
-      expect(isRecoverableMissingWorktreeReviewFailureWithProgress(withProgressTask)).toBe(true);
-      expect(isRecoverableMissingWorktreeReviewFailureNoProgress(noProgressTask)).toBe(true);
-      expect(isRecoverableMissingWorktreeReviewFailure(noProgressTask)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailureWithProgress(withProgressTask, REVIEW_LANES)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailureNoProgress(noProgressTask, REVIEW_LANES)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailure(noProgressTask, REVIEW_LANES)).toBe(true);
     }
   });
 
@@ -139,13 +152,13 @@ describe("RestartRecoveryCoordinator", () => {
 
     for (const status of ["merging", "merging-pr", "merging-fix"] as const) {
       const task = { ...baseTask, status };
-      expect(isMergeActiveMissingWorktreeSessionStartFailure(task)).toBe(true);
-      expect(isRecoverableMissingWorktreeReviewFailure(task)).toBe(true);
+      expect(isMergeActiveMissingWorktreeSessionStartFailure(task, REVIEW_LANES)).toBe(true);
+      expect(isRecoverableMissingWorktreeReviewFailure(task, REVIEW_LANES)).toBe(true);
     }
 
-    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "failed" })).toBe(false);
-    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: null as any })).toBe(false);
-    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "merging", error: "ordinary merge failure" })).toBe(false);
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "failed" }, REVIEW_LANES)).toBe(false);
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: null as any }, REVIEW_LANES)).toBe(false);
+    expect(isMergeActiveMissingWorktreeSessionStartFailure({ ...baseTask, status: "merging", error: "ordinary merge failure" }, REVIEW_LANES)).toBe(false);
   });
 
   it("requeues interrupted failed tasks with no progress, then resumes remaining orphans", async () => {
