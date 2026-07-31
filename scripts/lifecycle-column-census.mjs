@@ -165,7 +165,21 @@ anywhere in a 40-line window and quietly reclassify live guards as reviewed, whi
 in the opposite direction. These are the literal phrasings present in the tree, added as evidence
 rather than as a net.
 */
-const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|NOT CONVERTED|not converted|do not convert|do NOT convert|STAYS INLINE|STILL A LITERAL|archived-column-gate-parity|non-renameable system column|SIZED, NOT/;
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-16:24 (the pick-list was 100% false positives):
+Measured on `main`: `--triage` listed 2 sites as unexamined and BOTH carry a full deferral note —
+`triage.ts:793` ("the arm goes back to the literal, which is honest about being one", restored by
+#3126 after #3114 converted it inertly) and `scheduler.ts:1323` ("the second of the two honest
+literals ... converting it here would be inert"). Neither phrasing was in the set.
+
+Every entry on a list headed "this is the list to pick work from" was already decided. That is the
+harmful direction for this tool and it is not hypothetical: sending a worker at a site whose owner
+wrote down why it must not move is the #3108 -> #3114 -> #3126 sequence, which cost three PRs.
+
+Added phrases are specific to declining a conversion ("honest literal", "would be inert"), not generic
+words, because over-matching hides real work instead. Verified in both directions below.
+*/
+const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|NOT CONVERTED|not converted|do not convert|do NOT convert|STAYS INLINE|STILL A LITERAL|archived-column-gate-parity|non-renameable system column|SIZED, NOT|honest literal|honest about being one|would be inert|is inert|the two honest/;
 
 /** Split the column guards into documented-deferral vs unexamined, by comment proximity. */
 function triageFindings() {
