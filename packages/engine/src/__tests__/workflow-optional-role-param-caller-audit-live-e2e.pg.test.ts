@@ -11,10 +11,16 @@ no column literal at all — the literal lives one function away. So the census 
 literals (correctly annotated) and sees nothing at the call sites, and the conversion reads as
 complete from every angle except running it.
 
-TWO MEASURED SEAMS, both with a minority of callers converted:
+TWO MEASURED SEAMS:
 
-  shouldHoldActiveFileScopeLease   2 of 4 call sites pass the resolved answer   (#2795)
+  shouldHoldActiveFileScopeLease   4 of 4 call sites pass the resolved answer   (#2795, closed by #2975)
   evaluateParkedAgentTaskLink      2 of 6 call sites pass the resolved answer   (this file)
+
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:30 (first seam CLOSED; number updated deliberately):
+The lease seam was 2-of-4 when measured. #2975 converted both self-healing sites, this counter failed
+on the advance that landed it, and the number below moved on purpose — which is the whole reason the
+audit asserts an exact count instead of a floor. The parked-link seam is UNCHANGED at 2-of-6, so the
+class this file exists to measure is not closed; one of its two instances is.
 
 The second is the more damaging. Its own FNXC note states the consequence exactly: without the
 resolved columns "the card would be treated as unparked and its live agent link cleared" — a
@@ -127,7 +133,7 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     ).toBe(true);
   });
 
-  it("AUDIT — the call-site split for both measured seams is 2-of-6 and 2-of-4", async () => {
+  it("AUDIT — the call-site split for both measured seams is 2-of-6 and 4-of-4", async () => {
     /*
     NOT driven: reaching all six sites needs the heartbeat and self-healing harnesses. Asserted
     against source text and labelled as such rather than dressed up as an end-to-end result.
@@ -152,13 +158,23 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     expect(parkedCalls.length).toBe(6);
     expect(parkedConverted.length).toBe(2);
 
+    /* The lease seam's two SELF-HEALING sites. Its other two are in `scheduler.ts` and were converted
+       from the start, so 2 converted here is the seam at 4-of-4.
+
+       `&&`, not the `||` this replaces. The predicate asks two INDEPENDENT role questions, so a site
+       answering only one is still half-converted — and `||` counted it as converted. Measured, not
+       reasoned: with `||`, deleting one site's `isReviewColumn` leaves this whole file green (4/4
+       passing); with `&&` it fails. An audit that cannot tell a closed seam from a half-closed one is
+       the exact blind spot this file was written to remove. */
     const leaseCalls = read("self-healing.ts").split("shouldHoldActiveFileScopeLease(").slice(1);
     const leaseConverted = leaseCalls.filter((s) => {
       const w = s.slice(0, s.indexOf("})"));
-      return w.includes("isWipColumn") || w.includes("isReviewColumn");
+      return w.includes("isWipColumn") && w.includes("isReviewColumn");
     });
 
     expect(leaseCalls.length).toBe(2);
-    expect(leaseConverted.length).toBe(0); // both scheduler sites are converted; both here are not
+    expect(leaseConverted.length).toBe(2); // closed by #2975. The FORM of the answer — resolved set
+                                           // membership, not a hardcoded `true` — is asserted in
+                                           // workflow-file-scope-lease-caller-gap-live-e2e.pg.test.ts
   });
 });

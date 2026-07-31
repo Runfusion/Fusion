@@ -14,19 +14,36 @@ parameters with literal defaults:
 A caller that has resolved the column's traits passes the answer; a caller that has not gets exactly
 the pre-conversion behaviour. That shape is a deliberate migration device and the source says so.
 
-But the migration was only half made. Of the four production call sites:
+The migration was only half made. Of the four production call sites, as this file found them:
 
     scheduler.ts:1986   passes { isWipColumn: true }        -> converted
     scheduler.ts:2006   passes { isReviewColumn: true }     -> converted
     self-healing.ts:4525  passes NEITHER                    -> still the literals
     self-healing.ts:5443  passes NEITHER                    -> still the literals
 
-So the same predicate is right on the scheduler's path and wrong on self-healing's, and the harm is
+So the same predicate was right on the scheduler's path and wrong on self-healing's, and the harm is
 the one the function's own FNXC note describes: on a renamed board both branches fall through, the
 predicate returns false for every card, `activeScopes` stays empty, and the dispatch path sees no
 overlap — two agents editing the same files, which is what the overlap machinery exists to prevent.
 At the self-healing sites the consequence is narrower but the same shape: a stale-lease reconciler
 concludes a live blocker holds no lease and proceeds to clear state the scheduler would have honoured.
+
+FNXC:OverlapScheduling 2026-07-30-23:30 (the alarm fired DOWNWARD — the seam is now 4-of-4):
+#2975 converted both self-healing sites, and this file's last case failed on the advance that landed
+it. That is the alarm working in the direction it was written for: the source-level case is a counter,
+so it fails when someone CLOSES the gap as well as when someone widens it, and whoever closes it is
+sent here to update the number deliberately.
+
+Both sites now derive their answers from `resolveProjectColumnsForRoles(...)` sets the sweep had
+already resolved a few lines above — trait membership, not a literal — so the conversion is real
+rather than a call-shape that merely looks converted. The last case now asserts that FORM, not just
+the presence of the two keys: a site that satisfied it by hardcoding `isWipColumn: true` would be the
+same defect wearing the converted shape, and would restore exactly the pre-#2975 behaviour on any
+board where the blocker is not actually in a wip column.
+
+The three behavioural cases below are UNCHANGED and still meaningful: the optional parameters and
+their literal defaults still exist, so the differential they drive is still the live behaviour of the
+predicate for any future caller that omits them.
 
 WHY THIS IS NOT VISIBLE TO THE EXISTING INSTRUMENTS. There is no column literal at the self-healing
 call sites — the literal lives inside the callee's default, one function away. A census that counts
@@ -35,11 +52,11 @@ an unconverted caller they ARE the intended behaviour) and nothing at all at the
 conversion therefore reads as complete from every angle except running it.
 
 SCOPE, STATED HONESTLY. The differential below is driven end to end: real persisted rows from a live
-PostgreSQL store, the real exported predicate, both call shapes. The CALL-SITE fact — that the two
-self-healing sites pass neither option — is asserted against source text, not driven through the
-self-healing sweep, which would need the full dependency-lease reconcile harness. That is a real limit
-and it is why the last case reads the file rather than pretending otherwise. It doubles as the alarm:
-when someone converts those call sites, that case fails and points at this file.
+PostgreSQL store, the real exported predicate, both call shapes. The CALL-SITE fact — what the two
+self-healing sites pass — is asserted against source text, not driven through the self-healing sweep,
+which would need the full dependency-lease reconcile harness. That is a real limit and it is why the
+last case reads the file rather than pretending otherwise. It doubles as the alarm, in both
+directions: dropping an option fails it, and so does closing the gap.
 
 LANE. `.pg.test.ts`, skipped via `pgDescribe` when no PostgreSQL is reachable, so the merge gate is
 unaffected. Throwaway per-file database; never port 4040.
@@ -128,14 +145,21 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
     expect(shouldHoldActiveFileScopeLease(card, [card], { isWipColumn: true })).toBe(true);
   });
 
-  it("SOURCE-LEVEL — the two self-healing call sites still pass neither option", async () => {
+  it("SOURCE-LEVEL — both self-healing call sites now pass both options, RESOLVED not hardcoded", async () => {
     /*
     NOT driven through the self-healing sweep, deliberately: reaching those sites needs the full
     dependency-lease reconcile harness. Asserted against source text instead, and labelled as such
     rather than dressed up as an end-to-end result.
 
-    Its job is to be an alarm. When those call sites are converted this fails, and whoever converted
-    them is pointed at the three cases above, which describe what changes.
+    Updated on purpose when #2975 closed the gap and this case failed — see the header. The value
+    check is the part that matters now: presence of the two keys alone would be satisfied by
+    `isWipColumn: true`, which is the ORIGINAL defect wearing the converted call shape (it answers
+    "yes" for a blocker resting anywhere, not just in a wip column). Requiring the answer to come from
+    a resolved set keeps the assertion attached to the property that made the fix a fix.
+
+    The scheduler's own sites DO pass literal `true`, correctly — they have already filtered to a
+    role-resolved bucket, so the answer is a fact about the loop rather than about the card. The check
+    below is scoped to `self-healing.ts` for exactly that reason.
     */
     const source = readFileSync(join(__dirname, "..", "self-healing.ts"), "utf8");
 
@@ -144,10 +168,13 @@ pgDescribe("file-scope lease: the converted call site against the unconverted on
 
     for (const site of callSites) {
       /* The options object literal ends at the first `})` that closes the call. Bounding the window
-         keeps a later, unrelated `isWipColumn` in the file from masking an omission here. */
+         keeps a later, unrelated `isWipColumn` in the file from reading as this site's argument. */
       const optionsWindow = site.slice(0, site.indexOf("})"));
-      expect(optionsWindow).not.toContain("isWipColumn");
-      expect(optionsWindow).not.toContain("isReviewColumn");
+
+      /* `<someSet>.has(<card>.column)` — membership in a set the sweep resolved by trait. Written as
+         a shape rather than a fixed identifier so renaming the local set does not fail this. */
+      expect(optionsWindow).toMatch(/isWipColumn:\s*\w+\.has\(\w+\.column\)/);
+      expect(optionsWindow).toMatch(/isReviewColumn:\s*\w+\.has\(\w+\.column\)/);
     }
   });
 });
