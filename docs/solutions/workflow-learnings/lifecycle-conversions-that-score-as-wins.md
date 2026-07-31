@@ -179,9 +179,25 @@ and the raw count is misleading: on inspection they are all either
   — `symbol-locks.ts` `terminalLanesFor` and `branch-group-ops.ts` `satisfiedColumns` both do exactly
   this, with the reasoning recorded at the site.
 
+**`switch (task.column)` with legacy `case` labels** — a `SwitchStatement` is not a `BinaryExpression`,
+so the comparison walk cannot see it. **Zero sites**, measured 2026-07-30. The codebase dispatches on
+column with `if`/ternaries, not `switch`.
+
+**A legacy id hoisted into a single const**, then compared — `const LANE = "done"; task.column === LANE`.
+This is the exact shape that HAD a real population in SQL (see the const-resolution fix to
+`check-sql-column-literals`), so it was worth measuring on the TypeScript side rather than assuming
+the answer carried over. **One site**, and it is correct code: `self-healing.ts` seeds
+`let holdColumn = "todo"` as its documented legacy floor and then overwrites it from
+`resolveLifecycleColumns(...).hold`. The census is right not to flag it; a naive version of this probe
+reports it as a defect.
+
 So the census's comparison-only scope is adequate for this codebase. Filing "48 uncounted sites"
 would have been the same mistake as gating on `{ column: "<literal>" }` call arguments (79 sites,
 mostly legitimate): a number that looks like a work list and is not.
+
+The same conclusion does NOT transfer between instruments. Three of these shapes are empty in
+TypeScript while the equivalent shape in SQL was live — the population is a property of how people
+write that particular kind of code, so each instrument has to be measured on its own.
 
 **The rule:** measure a candidate surface, then inspect a sample, before reporting it OR instrumenting
 it. A raw count is a hypothesis. The SQL surface survived this test and got a ratchet; these two did
@@ -256,6 +272,30 @@ What actually finds these:
    days; it was the subset one scanner happened to model.
 
 A false positive is loud and gets fixed. A false negative prints a baseline and reads as coverage.
+
+### The probe harness lies more often than the gate does
+
+Probing four gates with unimagined shapes in one session produced **two rounds of silently invalid
+results**, each from the harness rather than the instrument, and each agreeing with what was expected
+— which is why neither was noticed on the spot.
+
+1. **`node gate.mjs | tail` then `echo $?` reads `tail`'s exit status, not the gate's.** Every probe
+   reported "caught". The gate was in fact failing on `main` for an unrelated reason, so the runs
+   proved nothing about the probes at all. Capture the status into a variable before any pipe.
+2. **A gate that lists files with `git ls-files` cannot see an untracked probe file.** Six census
+   probes all reported "missed", including the shape the census is explicitly built for — the tell
+   that the harness, not the instrument, was broken. Gates that walk the filesystem
+   (`check-sql-column-literals`, `check-inert-flag-seams`) see untracked files; the census does not.
+   `git add -N` the probe, then reset it.
+
+The general rule: **a probe run needs its own control.** Include one shape the instrument is known to
+catch and one it must not flag. If the known-good shape does not come back caught, stop — you are
+measuring your harness. Both failures above would have been caught immediately by that single check,
+and in the second case the control is what exposed it.
+
+This matters more than it sounds. A probe that wrongly reports "caught" retires a real hole; a probe
+that wrongly reports "missed" sends you rewriting an instrument that was already correct. The first
+nearly shipped a double-counting change to the SQL gate, on evidence that was entirely fictional.
 
 ## The rule that produced every fix above
 
