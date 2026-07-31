@@ -770,4 +770,54 @@ describe("self-healing sweeps are bounded by a hardcoded column QUERY, not by th
 
     expect(updateTask).not.toHaveBeenCalled();
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-16:10 (the query-filter class, twenty-ninth sweep):
+  `recoverNoProgressNoTaskDoneFailures` requeues a wip card the executor failed for "no fn_task_done"
+  that made NO step progress and left no git work — nothing to salvage, so requeueing is safe. The
+  literal read meant that on a renamed board it was never requeued: a card that produced nothing sat
+  failed while still holding its wip slot.
+
+  Observable is `hasRecoverableGitWork`, private and called once per candidate before any requeue, so no
+  git fixture is needed. The error string carries the REAL phrase `isNoTaskDoneFailure` matches.
+
+  REVERT CHECKS, both measured, each alone:
+    - literal read restored -> fails, the card is never listed
+    - verdict back to `task.column === "in-progress"` -> fails, the renamed wip lane is filtered out
+  */
+  function noProgressFixture(column: string) {
+    const card = {
+      ...shippedCard(),
+      id: "FN-NOPROGRESS",
+      column,
+      status: "failed",
+      error: "Agent finished without calling fn_task_done",
+      steps: [{ id: "s1", status: "pending" }],
+    } as unknown as Task;
+    const { store } = productionFaithfulStore([card]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+    const hasRecoverableGitWork = vi.fn(async () => true); // true -> sweep leaves it alone, so nothing else needs stubbing
+    Object.assign(manager, { hasRecoverableGitWork });
+    return { manager, hasRecoverableGitWork };
+  }
+
+  it("considers a no-progress failure on a RENAMED wip lane", async () => {
+    const { manager, hasRecoverableGitWork } = noProgressFixture(RENAMED_VOCAB.wip);
+
+    await manager.recoverNoProgressNoTaskDoneFailures();
+
+    expect(hasRecoverableGitWork).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-NOPROGRESS" }));
+  });
+
+  it("does not consider the same failure once the card reached the RENAMED review lane", async () => {
+    /*
+    Non-vacuous companion: a card in review has handed off; requeueing it from here would undo a
+    completed hand-off rather than rescue a stalled one.
+    */
+    const { manager, hasRecoverableGitWork } = noProgressFixture(RENAMED_VOCAB.review);
+
+    await manager.recoverNoProgressNoTaskDoneFailures();
+
+    expect(hasRecoverableGitWork).not.toHaveBeenCalled();
+  });
 });
