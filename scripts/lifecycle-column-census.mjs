@@ -47,6 +47,7 @@ import {
   censusFiles as censusFilesText,
   summarize as summarizeText,
   mixedVocabularyFiles,
+  hasDeferralNote,
 } from "./lib/lifecycle-column-census.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -179,7 +180,7 @@ wrote down why it must not move is the #3108 -> #3114 -> #3126 sequence, which c
 Added phrases are specific to declining a conversion ("honest literal", "would be inert"), not generic
 words, because over-matching hides real work instead. Verified in both directions below.
 */
-const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|NOT CONVERTED|not converted|do not convert|do NOT convert|STAYS INLINE|STILL A LITERAL|archived-column-gate-parity|non-renameable system column|SIZED, NOT|honest literal|honest about being one|would be inert|is inert|the two honest/;
+/* Moved to ./lib/lifecycle-column-census.mjs so the rule is testable; imported above. */
 
 /** Split the column guards into documented-deferral vs unexamined, by comment proximity. */
 function triageFindings() {
@@ -197,8 +198,7 @@ function triageFindings() {
       lines = readFileSync(join(REPO_ROOT, f.file), "utf8").split("\n");
       sourceCache.set(f.file, lines);
     }
-    const window = lines.slice(Math.max(0, f.line - 41), f.line).join(" ");
-    (FLAG_MARKERS.test(window) ? flagged : open).push(f);
+    (hasDeferralNote(lines, f.line) ? flagged : open).push(f);
   }
   return { flagged, open };
 }

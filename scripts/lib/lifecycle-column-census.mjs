@@ -265,3 +265,23 @@ export function mixedVocabularyFiles(byFile, readFile) {
   }
   return mixed.sort((a, b) => b.count - a.count);
 }
+
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-10:40 (u12 — extraction, no behavior change):
+`FLAG_MARKERS` and the 40-line proximity window moved here VERBATIM from the CLI wrapper so the
+deferral classification is reachable from `packages/engine/src/__tests__/lifecycle-column-census.test.ts`,
+which imports this module. It was previously a private const plus an inline `.slice()` inside the CLI,
+so the only way to exercise it was to run the whole script against the real tree — which is why the
+rule had no test in either direction despite deciding what work the fleet is sent at.
+
+Window is `[line-41, line)`: the 40 lines ABOVE the guard, excluding the guard's own line.
+*/
+export const FLAG_MARKERS = /FLAGGED|LEFT COUNTED|left counted|deliberately NOT converted|Recorded instead|Left as a literal|DELIBERATE-LITERAL|accurate debt|blocked on|NOT CONVERTED|not converted|do not convert|do NOT convert|STAYS INLINE|STILL A LITERAL|archived-column-gate-parity|non-renameable system column|SIZED, NOT|honest literal|honest about being one|would be inert|is inert|the two honest/;
+
+/**
+ * True when a guard at 1-indexed `line` carries a documented deferral note in the 40 lines above it.
+ * `lines` is the file's source split on newlines.
+ */
+export function hasDeferralNote(lines, line) {
+  return FLAG_MARKERS.test(lines.slice(Math.max(0, line - 41), line).join(" "));
+}
