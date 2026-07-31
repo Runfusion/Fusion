@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
+import { isHoldColumnRole, isCompleteColumnRole, isArchivedColumnRole, isWipColumnRole, isReviewColumnRole } from "../utils/columnRoles";
 import { useColumnScrollSnap } from "../hooks/useColumnScrollSnap";
 import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -203,9 +204,6 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     return document.getElementById("header-workflow-slot");
   });
   const viewportMode = useViewportMode();
-  const blockerFanoutMap = useBlockerFanout(tasks, {
-    staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
-  });
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   useEffect(() => {
@@ -610,6 +608,47 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     }
     return map;
   }, [boardWorkflows, getEffectiveTaskWorkflowId, tasks, workflowContextMenuColumnsByWorkflowId, workflowMode]);
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:30:
+  PER-TASK column flags for the blocker fan-out, resolved against the card's OWN workflow.
+
+  `taskContextMenuColumnsByTaskId` is the per-task metadata this component already builds; the same
+  accessor shape is used in ListView for exactly this reason. Two rules, both load-bearing:
+
+  - a task whose workflow IS known but which sits in a column that workflow no longer declares gets
+    ABSENT flags, not another workflow's traits. Knowing the workflow and finding no such column is
+    an answer; the role helpers then degrade to the legacy id, which is the documented no-metadata
+    path;
+  - no per-task metadata at all (workflow mode off, first paint) also yields absent flags. This
+    component has no board-wide union to fall back to, and reaching for one would be the union read
+    that serves a neighbouring workflow's semantics to this card.
+
+  Absent flags reproduce the previous defaults exactly — `done`/`archived`, `todo`,
+  `in-progress`/`in-review` — so an unconverted board is byte-identical.
+  */
+  const getTaskColumnFlags = useCallback((task: Task) => (
+    taskContextMenuColumnsByTaskId.get(task.id)?.find((column) => column.id === task.column)?.flags
+  ), [taskContextMenuColumnsByTaskId]);
+
+  /* Terminal is complete OR archived — the pair core's LEGACY_TERMINAL_COLUMNS names. */
+  const classifyTaskLanes = useCallback((task: Task) => ({
+    isHold: isHoldColumnRole(getTaskColumnFlags(task), task.column),
+    isTerminal: isCompleteColumnRole(getTaskColumnFlags(task), task.column)
+      || isArchivedColumnRole(getTaskColumnFlags(task), task.column),
+  }), [getTaskColumnFlags]);
+
+  /* A blocker escalates while it occupies an ACTIVE lane — wip ∪ review, core's escalation pair. */
+  const classifyTaskEscalation = useCallback((task: Task) => (
+    isWipColumnRole(getTaskColumnFlags(task), task.column)
+      || isReviewColumnRole(getTaskColumnFlags(task), task.column)
+  ), [getTaskColumnFlags]);
+
+  const blockerFanoutMap = useBlockerFanout(tasks, {
+    staleHighFanoutAgeThresholdMs: staleHighFanoutBlockerAgeThresholdMs,
+    classify: classifyTaskLanes,
+    escalationClassify: classifyTaskEscalation,
+  });
 
   const selectedWorkflowTasksByColumn = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
