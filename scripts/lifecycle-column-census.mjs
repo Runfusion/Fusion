@@ -56,7 +56,26 @@ I extracted `triageFindings` in #3207 without considering an injected list.
 list still scans the real tree, and a list with no root still reads from the real one. Production sets
 neither, so the default is unchanged.
 */
-const REPO_ROOT = process.env.FUSION_CENSUS_FILE_ROOT
+/*
+FNXC:LifecycleColumnCensus 2026-07-31-15:05 (#3230 review — coderabbitai, and the objection is right):
+PARTIAL INJECTION FAILS CLOSED. The two variables are only meaningful together, and the original note
+said so without enforcing it — a root with no list scans the REAL tree and reads it from the fixture,
+a list with no root lists the fixture and reads it from the repo. Both produce ENOENT or, worse, a
+plausible-looking partial census over the wrong file set. This is a fixture-only seam, so a
+half-configured run is always a mistake and never a state to degrade through.
+*/
+const CENSUS_FILE_ROOT = process.env.FUSION_CENSUS_FILE_ROOT;
+const CENSUS_FILE_LIST = process.env.FUSION_CENSUS_FILE_LIST;
+if ((CENSUS_FILE_ROOT === undefined) !== (CENSUS_FILE_LIST === undefined)) {
+  console.error(
+    "lifecycle-column-census: FUSION_CENSUS_FILE_ROOT and FUSION_CENSUS_FILE_LIST must be set TOGETHER.\n"
+    + `  FUSION_CENSUS_FILE_ROOT=${CENSUS_FILE_ROOT === undefined ? "<unset>" : CENSUS_FILE_ROOT}\n`
+    + `  FUSION_CENSUS_FILE_LIST=${CENSUS_FILE_LIST === undefined ? "<unset>" : "<set>"}\n`
+    + "  One without the other lists one tree and reads another; refusing rather than reporting on a mixed file set.",
+  );
+  process.exit(1);
+}
+const REPO_ROOT = CENSUS_FILE_ROOT
   ?? join(dirname(fileURLToPath(import.meta.url)), "..");
 import {
   censusFiles as censusFilesText,
@@ -85,9 +104,12 @@ const BASELINE_PATH = process.env.FUSION_CENSUS_BASELINE_PATH
 
 let files;
 /* Injected list short-circuits the git scan; paths are resolved against REPO_ROOT above. */
-const injectedList = process.env.FUSION_CENSUS_FILE_LIST;
+/* Trimmed and emptied-filtered like the git output below: an untrimmed " b.ts" misses, and an empty
+   entry from a trailing separator resolves to REPO_ROOT itself — a DIRECTORY, which reads as EISDIR
+   rather than as the "file not found" the caller would expect. (#3230 review — coderabbitai.) */
+const injectedList = CENSUS_FILE_LIST?.split(/[,\n]/).map((f) => f.trim()).filter(Boolean);
 try {
-  files = injectedList !== undefined ? injectedList.split(/[,\n]/) : execSync(
+  files = injectedList !== undefined ? injectedList : execSync(
     "git ls-files 'packages/*/src/**/*.ts' 'packages/*/src/*.ts' 'packages/*/src/**/*.tsx' 'packages/*/app/**/*.ts' 'packages/*/app/**/*.tsx' 'plugins/*/src/**/*.ts' 'plugins/*/src/**/*.tsx'",
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   )
