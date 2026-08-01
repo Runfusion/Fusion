@@ -21936,8 +21936,23 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           const spawnMaxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
           if (typeof spawnMaxWorktrees === "number" && Number.isFinite(spawnMaxWorktrees)) {
             const spawnTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+            /*
+            FNXC:CapacityModel 2026-08-01-01:48 (the worktree ledger counted by legacy lane ids):
+            `!== "done" && !== "archived"` asked "is this task still live" by naming two columns of the
+            default board. On a renamed board neither id exists, so EVERY task passed the filter —
+            including finished and archived ones that no longer hold a tree — and the ledger
+            over-counted held worktrees, refusing spawns while capacity was actually free. The failure
+            is silent and one-directional: it never over-grants, it just wedges a board shut.
+
+            `resolveProjectColumnsForRoles(..., ["complete", "archived"])` is the project-wide union of
+            the columns carrying those traits, which is the right scope for a project-wide capacity
+            ledger (the same reasoning team-analytics records: analytics and capacity both aggregate a
+            whole project, so a per-task resolution is not needed). Awaited, so it reads the real
+            selection rather than the sync resolver's default-board answer.
+            */
+            const spawnTerminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
             const heldWorktrees = spawnTasks.filter((t) =>
-              t.column !== "done" && t.column !== "archived"
+              !spawnTerminalColumns.has(t.column)
               && typeof t.worktree === "string" && t.worktree.length > 0).length;
             // totalSpawnedCount already includes THIS reservation; heldWorktrees covers task lanes.
             if (heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees) {

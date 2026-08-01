@@ -2145,8 +2145,16 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
+        /*
+        FNXC:CapacityModel 2026-08-01-01:48 (the same legacy-id ledger as the executor's spawn gate):
+        See `executor.ts`'s note — on a renamed board neither `done` nor `archived` exists, so every
+        task counted as holding a worktree and planning admission throttled itself to zero on a board
+        with free capacity. Resolved as the project-wide union of the complete/archived traits, which
+        matches this ledger's project-wide scope.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
         const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
+          !terminalColumns.has(t.column)
           && typeof t.worktree === "string" && t.worktree.length > 0).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
