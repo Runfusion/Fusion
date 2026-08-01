@@ -1158,13 +1158,15 @@ function TaskCardComponent({
   const retryWarningThreshold = useRetryWarning();
   const costBadge = useCostBadge();
   /*
-  FNXC:TaskCardCostBadge 2026-07-11-12:20:
-  The optional spend chip sits beside execution time but stays fully absent unless the default-off setting is enabled and the task has positive token usage. Use the shared read-time taskTokenCost helper so unpriced models show the guess-free “—” sentinel instead of a fabricated $0.
+  FNXC:TaskCardCostBadge 2026-07-31-23:39:
+  Board cards must omit the optional spend chip entirely when the derived cost is unavailable, avoiding a dash-only badge or empty Promote row. Detail and analytics surfaces retain formatCost's guess-free “—” sentinel rather than fabricating a $0 value.
   */
   const cardCost = costBadge.enabled && hasTaskCost(task as TaskDetail)
     ? taskTotalCost(task as TaskDetail, costBadge.pricingOverrides)
     : null;
-  const cardCostLabel = cardCost ? formatCost(cardCost.usd, cardCost.unavailable) : null;
+  const cardCostLabel = cardCost && !cardCost.unavailable && cardCost.usd !== null
+    ? formatCost(cardCost.usd, false)
+    : null;
 
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);

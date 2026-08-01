@@ -8,7 +8,7 @@
    Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
-/* Aurora, Calm, Dawn, Sage, and Factory Dark swatches stay globally resolvable while a different theme is active. */
+/* Aurora, Calm, Dawn, Sage, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
 :root {
   --aurora-swatch-sample-1: #0a1022;
   --aurora-swatch-sample-2: #162044;
@@ -30,6 +30,10 @@
   --factory-dark-swatch-sample-2: #1a1d1f;
   --factory-dark-swatch-sample-3: #e89532;
   --factory-dark-swatch-sample-4: #7fa6b8;
+  --factory-light-swatch-sample-1: #171716;
+  --factory-light-swatch-sample-2: #292926;
+  --factory-light-swatch-sample-3: #f0a24a;
+  --factory-light-swatch-sample-4: #93a5ad;
 }
 
 [data-theme="light"] {
@@ -53,6 +57,10 @@
   --factory-dark-swatch-sample-2: #d9dde0;
   --factory-dark-swatch-sample-3: #a95612;
   --factory-dark-swatch-sample-4: #35687d;
+  --factory-light-swatch-sample-1: #f7f7f5;
+  --factory-light-swatch-sample-2: #e9eae8;
+  --factory-light-swatch-sample-3: #b45309;
+  --factory-light-swatch-sample-4: #476b7a;
 }
 
 /* OCEAN - Deep blues and cyans */
@@ -7753,6 +7761,82 @@ Factory Dark is the low-ambient-light industrial sibling of Factory: graphite an
   --cta-border-hover: #6f370a;
   --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
   --accent: #a95612;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-31-23:51:
+Factory Light is the daylight industrial sibling of Factory and Factory Dark: warm graphite stays readable in dark mode, while poured-concrete and warm-white surfaces, steel-gray borders, and contrast-safe safety orange serve bright environments in light mode. Its globally resolved preview tokens intentionally do not bind to the active theme.
+*/
+[data-color-theme="factory-light"] {
+  --bg: #171716;
+  --surface: #20201e;
+  --card: #292926;
+  --card-hover: #343431;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #4d5555;
+  --text: #f6f4ef;
+  --text-muted: #c2c4bd;
+  --text-dim: #8e938c;
+
+  --todo: #9ab8c4;
+  --in-progress: #78b4c8;
+  --in-progress-rgb: 120, 180, 200;
+  --in-review: #b7b9b2;
+  --triage: #f0a24a;
+  --done: #9da69d;
+  --color-success: #9dc09a;
+  --color-warning: #f0a24a;
+  --color-error: #eb8374;
+  --color-info: #78b4c8;
+
+  --cta-bg: #d98225;
+  --cta-border: #f4b968;
+  --cta-text: #1d1308;
+  --cta-bg-hover: #f0a24a;
+  --cta-border-hover: #ffd494;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #f0a24a;
+  --accent-text: #1d1308;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="factory-light"][data-theme="light"] {
+  --bg: #f7f7f5;
+  --surface: #efefec;
+  --card: #ffffff;
+  --card-hover: #e5e6e3;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #aab2b3;
+  --text: #202523;
+  --text-muted: #4f5b5b;
+  --text-dim: #737d7d;
+
+  --todo: #476b7a;
+  --in-progress: #236d86;
+  --in-progress-rgb: 35, 109, 134;
+  --in-review: #5d6968;
+  --triage: #b45309;
+  --done: #68736e;
+  --color-success: #3d7147;
+  --color-warning: #b45309;
+  --color-error: #af3e37;
+  --color-info: #236d86;
+
+  --cta-bg: #b45309;
+  --cta-border: #8f4108;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #954207;
+  --cta-border-hover: #713205;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #b45309;
   --accent-text: #ffffff;
   --logo-accent: var(--accent);
   --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);

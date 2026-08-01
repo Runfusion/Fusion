@@ -80,6 +80,7 @@ export const COLOR_THEMES: { value: ColorTheme; label: string; className: string
   { value: "dawn", label: "Dawn", className: "theme-swatch-dawn" },
   { value: "sage", label: "Sage", className: "theme-swatch-sage" },
   { value: "factory-dark", label: "Factory Dark", className: "theme-swatch-factory-dark" },
+  { value: "factory-light", label: "Factory Light", className: "theme-swatch-factory-light" },
   { value: "shadcn", label: "Shadcn", className: "theme-swatch-shadcn" },
   { value: "shadcn-ember", label: "Shadcn Ember (Default)", className: "theme-swatch-shadcn-ember" },
   { value: "shadcn-custom", label: "Shadcn Custom", className: "theme-swatch-shadcn-custom" },

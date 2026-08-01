@@ -347,6 +347,13 @@
   --swatch-sample-4: var(--factory-dark-swatch-sample-4);
 }
 
+.theme-swatch-factory-light {
+  --swatch-sample-1: var(--factory-light-swatch-sample-1);
+  --swatch-sample-2: var(--factory-light-swatch-sample-2);
+  --swatch-sample-3: var(--factory-light-swatch-sample-3);
+  --swatch-sample-4: var(--factory-light-swatch-sample-4);
+}
+
 .theme-swatch-silver {
   --swatch-sample-1: #27272a;
   --swatch-sample-2: #3f3f46;
@@ -1207,6 +1214,13 @@
   --swatch-sample-2: var(--factory-dark-swatch-sample-2);
   --swatch-sample-3: var(--factory-dark-swatch-sample-3);
   --swatch-sample-4: var(--factory-dark-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-factory-light {
+  --swatch-sample-1: var(--factory-light-swatch-sample-1);
+  --swatch-sample-2: var(--factory-light-swatch-sample-2);
+  --swatch-sample-3: var(--factory-light-swatch-sample-3);
+  --swatch-sample-4: var(--factory-light-swatch-sample-4);
 }
 
 [data-theme="light"] .theme-swatch-silver {

@@ -127,6 +127,44 @@ both report zero hits, and neither is a finding.
   result: a path can appear under both flags in some index states). Ignored paths stay excluded, so
   build output does not leak into the count.
 
+## The general shape: a green that answers a different question
+
+The two defects above are instances of one thing, and it kept happening — **four times in a single
+session**, from four unrelated directions. Each time the signal was real; it was simply the answer to
+a question other than the one being asked.
+
+| what was read as "pass" | what the green actually meant |
+| --- | --- |
+| `node scripts/check-*.mjs` exits 0 | report-only mode — the failure path needs `--strict` |
+| a census reports 0 for a new file | the file is untracked, so it was never scanned |
+| a backgrounded `cmd > log; grep …` reports exit 0 | that is `grep`'s status; the suite inside had 8 failures |
+| a rebased branch's tests pass | the rebase never started, so it ran on the **old** base |
+
+The last two are worth spelling out because neither involves a ratchet at all.
+
+**Exit codes belong to the last command in the pipeline.** `run_tests > log 2>&1; echo done; grep X log`
+exits with `grep`'s status. A harness that reports "completed, exit 0" is reporting on the pipeline,
+not on the tests. Read the summary line out of the log; never infer a suite's result from a wrapper's
+exit code.
+
+**A failed rebase leaves you on the old base, and the tests still pass there.** `git rebase` refused
+with `cannot rebase: You have unstaged changes` — so the branch never moved. `git diff origin/main`
+then listed 20+ files including other workers' commits, which reads exactly like the branch had
+reverted their work, and a full test run on that tree came back green. Both signals were true about a
+tree nobody cared about.
+
+```sh
+git merge-base --is-ancestor origin/main HEAD    # the only check that distinguishes the two
+```
+
+It said STALE while the tests said pass. Run it after any rebase, before trusting a verification —
+especially before reporting "verified on current main".
+
+**The tell, in all four cases, is a result that is too clean or too alarming for what changed.** Every
+probe shape passing, including ones that obviously should not. A two-file branch that appears to
+revert twenty. When the answer does not fit the size of the question, check what was actually
+measured before believing it.
+
 ## Provenance
 
 Both defects were found by probing, not by reading: staged probe files measured against the tools with

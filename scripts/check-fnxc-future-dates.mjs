@@ -101,13 +101,33 @@ FNXC:FnxcStampHygiene 2026-07-31-03:40 (#2941 review): `toISOString()` is UTC, s
 Greenwich it rolls the date forward for part of each day — a stamp written correctly at 5pm in
 California read as "tomorrow" and failed the gate. Authors write the local date, so the comparison
 has to use the local one.
+
+FNXC:FnxcStampHygiene 2026-08-01-00:10 (five reds in two hours — LOCAL alone is not enough either):
+The fleet writes stamps from MANY machines and this gate evaluates them on ONE. #2941 fixed the
+author-west-of-the-runner case; the mirror case is an author EAST of it, and that is what broke main
+five times in two hours. Measured: three direct-to-main commits landed at 16:12/16:32/16:40 PDT —
+23:12/23:32/23:40 UTC on the 31st — carrying stamps of 2026-08-01-00:20/00:50/01:05. Those are
+neither the runner's local date nor UTC; they are the AUTHOR's local date in a UTC+1 container. The
+gate, running in PDT, called every one of them "tomorrow" and reddened main for every other lane.
+
+So "future" cannot mean "after the runner's calendar". It means after EVERY calendar a correct
+author could plausibly be writing from, which is bounded below by the runner's local date and above
+by UTC (or vice versa west of Greenwich). Comparing against the LATER of the two accepts both
+honest cases and still catches a genuinely invented date — the 2026-08-06 stamp in scheduler.ts,
+six days out, fails under this rule exactly as it did before.
+
+This preserves #2941's fix rather than reverting it: west of Greenwich the local date is the earlier
+of the pair, so a 5pm-in-California stamp still passes.
 */
 const now = new Date();
-const today = [
+const localToday = [
   now.getFullYear(),
   String(now.getMonth() + 1).padStart(2, "0"),
   String(now.getDate()).padStart(2, "0"),
 ].join("-");
+const utcToday = now.toISOString().slice(0, 10);
+/** The later of the two — a stamp is future only if it is ahead of both. */
+const today = localToday > utcToday ? localToday : utcToday;
 
 function scan() {
   const counts = {};

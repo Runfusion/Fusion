@@ -6617,7 +6617,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-footer-row")).toBeNull();
   });
 
-  it("places the unavailable cost sentinel inside todo meta without adding an icon", () => {
+  it("omits an unavailable cost chip and its footer shell", () => {
     const { container } = render(
       <CostBadgeProvider value={{ enabled: true }}>
         <TaskCard
@@ -6642,14 +6642,10 @@ describe("TaskCard", () => {
       </CostBadgeProvider>,
     );
 
-    const costBadge = container.querySelector(".card-cost-indicator") as HTMLElement | null;
-    expect(costBadge).not.toBeNull();
-    expect(costBadge?.textContent).toContain("—");
-    expect(costBadge?.querySelector("svg")).toBeNull();
-    expect(costBadge?.getAttribute("aria-label")).toBe("Estimated cost —");
-    expect(costBadge?.getAttribute("title")).toBe("Estimated cost —");
-    expect(costBadge?.closest(".card-meta")).toBe(container.querySelector(".card-meta"));
-    expect(costBadge?.closest(".card-footer-row")).toBeNull();
+    expect(container.querySelector(".card-cost-indicator")).toBeNull();
+    expect(container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
+    expect(container.querySelector(".card-promote-cost-row")).toBeNull();
+    expect(container.querySelector(".card-footer-row-right")).toBeNull();
     expect(container.querySelector(".card-footer-row")).toBeNull();
   });
 
