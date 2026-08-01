@@ -956,6 +956,7 @@ export function releaseReservedSlot(reservedSlots: number): number {
 export class Scheduler {
   private running = false;
   private scheduling = false;
+  private schedulingSince = 0;
   private wasWorktreeLimited = false;
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
@@ -2032,8 +2033,14 @@ export class Scheduler {
    */
   async schedule(): Promise<void> {
     if (!this.running) return;
-    if (this.scheduling) return;
+    if (this.scheduling) {
+      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. Dispatch prep runs real git work per candidate, so the threshold is generous. */
+      const stuckMs = this.schedulingSince > 0 ? Date.now() - this.schedulingSince : 0;
+      if (stuckMs < 600_000) return;
+      schedulerLog.warn(`schedule watchdog: previous pass still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open so dispatch resumes`);
+    }
     this.scheduling = true;
+    this.schedulingSince = Date.now();
 
     try {
       let tasks = await this.store.listTasks({ slim: true, includeArchived: false, startupMemo: false });
