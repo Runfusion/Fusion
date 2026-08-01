@@ -1024,7 +1024,7 @@ export class Scheduler {
       logger: schedulerLog,
     });
     /*
-    FNXC:ConcurrencyAdmission 2026-07-31-09:00:
+    FNXC:ConcurrencyAdmission 2026-07-21-22:30:
     FN-8453's union must outlive a single scheduler poll. A temporary provider
     was gone before planning/merge asked for capacity, allowing newer work to
     overtake ready execute work. The refreshed map is the durable lane view.
@@ -1468,7 +1468,7 @@ export class Scheduler {
 
           const deletedParked = await resolveTaskParkedColumns(this.store, task.id);
           /*
-          FNXC:WorkflowLifecycleColumns 2026-07-31-05:00:
+          FNXC:WorkflowLifecycleColumns 2026-07-30-20:55:
           A HALF-CONVERTED PAIR, one line apart. The hold read above already resolved its lane while
           the wip read below stayed on the literal, so on a renamed board this dependent sweep saw
           the queued cards and none of the running ones — a dependency held by an in-flight task was
