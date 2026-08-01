@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import { TaskExecutor } from "../executor.js";
 
 /*
@@ -48,6 +49,55 @@ async function trySpawn(executor: TaskExecutor, taskId: string, maxConcurrent: n
   }).createSpawnAgentTool(taskId, "/tmp/wt", { maxConcurrent });
   return tool.execute("call-1", { name: "child", role: "engineer", task: "do a thing" });
 }
+
+describe("fn_spawn_agent worktree ledger on a RENAMED board", () => {
+  /*
+  FNXC:CapacityModel 2026-08-01-02:20 (coverage for the spawn-gate half of #3297):
+  The spawn gate counted a task as holding a worktree unless its column was literally `done` or
+  `archived`. On a renamed board neither id exists, so FINISHED work still consumed the worktree
+  budget and the gate refused spawns while capacity was free — silently, and only ever in the
+  refusing direction.
+
+  This is the executor half of the ledger; `triage-plan-admission-throttle-audit.test.ts` covers the
+  planning-admission half. Both were uncovered: blinding either guard left engine-core green at 499.
+
+  The store exposes `listWorkflowDefinitions` on purpose. Without it `resolveProjectColumnsForRoles`
+  fails soft to the legacy ids by design — the degraded contract every unconverted caller keeps — and
+  a store that cannot resolve would make this case pass pre-fix for the wrong reason.
+  */
+  function executorWithHeldWorktree(): TaskExecutor {
+    const executor = Object.create(TaskExecutor.prototype) as TaskExecutor;
+    const priv = executor as unknown as Record<string, unknown>;
+    priv.store = {
+      /* One FINISHED card on a renamed board, still carrying a worktree path. */
+      listTasks: vi.fn(async () => [{ id: "FN-SHIPPED", column: RENAMED_VOCAB.complete, worktree: "/tmp/wt/shipped" }]),
+      getTask: vi.fn(async (id: string) => ({ id, column: RENAMED_VOCAB.complete })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: lifecycleIr(RENAMED_VOCAB, "custom:spawn-ledger") }]),
+    };
+    priv.options = { agentStore: { createAgent: vi.fn() } };
+    priv.spawnedAgents = new Map<string, Set<string>>();
+    priv.totalSpawnedCount = 0;
+    return executor;
+  }
+
+  it("does not count a FINISHED renamed-lane card against the worktree budget", async () => {
+    const executor = executorWithHeldWorktree();
+    const tool = (executor as unknown as {
+      createSpawnAgentTool(taskId: string, worktreePath: string, settings: unknown): {
+        execute(id: string, params: unknown): Promise<{ content: Array<{ text: string }>; details: { state: string } }>;
+      };
+    }).createSpawnAgentTool("FN-PARENT", "/tmp/wt", { maxConcurrent: 5, maxWorktrees: 1 });
+
+    const result = await tool.execute("call-1", { name: "child", role: "engineer", task: "do a thing" });
+
+    /* Pre-fix `shipped` is neither `done` nor `archived`, so the finished card consumes the only
+       worktree slot and this refuses with "Worktree capacity reached". */
+    const text = result.content.map((c) => c.text).join(" ");
+    expect(text).not.toContain("Worktree capacity reached");
+  });
+});
 
 describe("fn_spawn_agent capacity", () => {
   /*
