@@ -1,5 +1,5 @@
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
-import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-22:30 (batch-core):

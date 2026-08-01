@@ -1,4 +1,4 @@
-import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
 
 /*
 FNXC:WakeDeltaMultiAssign 2026-07-13-12:15:

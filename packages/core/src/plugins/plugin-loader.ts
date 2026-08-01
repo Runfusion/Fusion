@@ -47,7 +47,7 @@ import { createLogger } from "../process/logger.js";
 import { getCreateAiSessionFactory, getCreateInteractiveAiSessionFactory } from "../ai/ai-engine-loader.js";
 import { scanPluginSecurity } from "./plugin-security-scan.js";
 import { resolvePluginRootFromEntryPath } from "./plugin-skill-paths.js";
-import { createPluginGatedTaskStore } from "./plugin-task-store-gate.js";
+import { createPluginGatedTaskStore } from "../plugin-task-store-gate.js";
 
 // Minimum Fusion version for plugin compatibility checks (can be expanded later)
 const MINIMUM_FUSION_VERSION = "0.1.0";

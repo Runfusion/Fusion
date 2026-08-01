@@ -26,19 +26,18 @@ import {
   evaluateTransitionInvariants,
 } from "../workflows/workflow-transition-policy.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, isReopenIntoPlanning} from "../workflows/default-workflow-hooks.js";
-import {makeTransitionRejection, makeTransitionPending} from "../tasks/transition-types.js";
-import {writeTransitionPending, clearTransitionPending} from "../tasks/transition-pending.js";
-import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async/async-transition-pending.js";
-import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import {columnsWithFlag, resolveLifecycleColumns, resolveReviewColumns, toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import {makeTransitionRejection, makeTransitionPending} from "../tasks/transition-types.js";
+import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async/async-transition-pending.js";
+import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 import {acquireTaskAdvisoryXactLock} from "./task-advisory-lock.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {getTaskMergeBlocker} from "../merge/task-merge.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "../task-store/async/async-persistence.js";
+import {readTaskRow as readTaskRowAsync, readTaskRowInTransaction, upsertTaskRowInTransaction} from "./async/async-persistence.js";
 import {disposeTaskBeforeMove} from "../tasks/task-move-disposer.js";
 import {resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 
@@ -97,7 +96,7 @@ async function resolveWorkflowIrForSelectedWorkflowId(store: TaskStore, workflow
     return resolveDefaultWorkflowIr();
   }
 }
-import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "../task-store/async/async-merge-coordination.js";
+import {enqueueMergeQueueInTransaction, dequeueMergeQueueOnColumnExitInTransaction} from "./async/async-merge-coordination.js";
 
 /*
 FNXC:WorkflowCapacity 2026-07-28-16:10 (PR #2499 review — split capacity snapshot):
@@ -1146,7 +1145,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
               store.countActiveInCapacitySlotAsync({
                 tx,
                 targetColumn: budgetColumn,
-                workflowId: effectiveWorkflowIdForMove,
+                workflowId: capacityPoolId,
                 countPending,
                 excludeTaskId: id,
               }),

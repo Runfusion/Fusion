@@ -1,7 +1,7 @@
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflow-lifecycle-traits.js";
-import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import * as schema from "../postgres/schema/index.js";
 import { projectOwnershipPartition, recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
 import type { DbTransaction } from "../postgres/data-layer.js";

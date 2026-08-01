@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { TaskMoveLanes } from "./workflow-lifecycle-traits.js";
+import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -116,7 +116,7 @@ import { resolveTaskSymbolsForTask, type TaskSymbolResolution } from "./tasks/ta
 import { acquireSymbolLocksAsync, inspectSymbolLockConflictsAsync, reconcileStaleSymbolLocksAsync, releaseSymbolLocksAsync, renewSymbolLocksAsync } from "./task-store/symbol-locks.js";
 import type { AcquireSymbolLocksResult, ReconcileStaleSymbolLocksResult, ReleaseSymbolLocksResult, RenewSymbolLocksResult, SymbolLockConflict, SymbolLockOwner } from "./tasks/symbol-lock-types.js";
 import { queryRunAuditEvents } from "./task-store/async/async-audit.js";
-import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
+import { isValidMergeRequestTransitionImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, replaceActiveTaskWorkflowContinuationImpl, seedStrandedPlanReviewContinuationImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
 import { runPluginColumnTransitionHooksImpl, logEntryImpl } from "./task-store/audit-ops.js";
@@ -134,9 +134,9 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
-import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflows/workflow-lifecycle-traits.js";
 import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
-import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask } from "./workflows/workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
 // persistence/allocator/settings/search/lifecycle/merge/archive helpers preserve

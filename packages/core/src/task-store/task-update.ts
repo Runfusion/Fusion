@@ -7,9 +7,9 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, storeLog} from "../store.js";
-import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
-import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
-import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
+import {toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";

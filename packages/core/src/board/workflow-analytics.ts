@@ -1,5 +1,5 @@
-import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
-import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "./project-lane-vocabulary.js";
+import { isReviewColumnRole, isWipColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "../project-lane-vocabulary.js";
 import { sql } from "drizzle-orm";
 import type { Database } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";

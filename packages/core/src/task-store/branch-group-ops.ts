@@ -7,9 +7,9 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
-import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflow-lifecycle-traits.js";
-import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
-import type {WorkflowIr} from "../workflow-ir-types.js";
+import {resolveTaskLifecycleColumns, columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
+import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import type {Task, ColumnId, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, Agent} from "../types.js";
 import {runReconciliationAbort} from "../workflows/workflow-reconciliation.js";
 import "../builtin-traits.js";

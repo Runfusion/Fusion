@@ -15,15 +15,17 @@ import * as schema from "../postgres/schema/index.js";
 import { and, eq } from "drizzle-orm";
 import "../builtin-traits.js";
 import {allowsAutoMergeProcessing} from "../merge/task-merge.js";
-import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS, InReviewStallContext} from "../tasks/in-review-stall.js";
+import {getInReviewStallReason, DEFAULT_STALE_MERGING_MIN_AGE_MS, type InReviewStallContext} from "../tasks/in-review-stall.js";
 import {getAgentLogFilePath} from "../agents/agent-log-file-store.js";
-import {getInReviewStalledSignal, InReviewStalledContext} from "../tasks/in-review-stalled.js";
-import {getStalePausedReviewSignal, StalePausedReviewContext} from "../tasks/stale-paused-review.js";
+import {getInReviewStalledSignal, type InReviewStalledContext} from "../tasks/in-review-stalled.js";
+import {getStalePausedReviewSignal, type StalePausedReviewContext} from "../tasks/stale-paused-review.js";
 import {getStalePausedTodoSignal} from "../tasks/stale-paused-todo.js";
-import {resolveLifecycleColumns, resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import {resolveLifecycleColumns, resolveReviewColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
+
 import {getTaskAgeStalenessSignal, type TaskAgeStalenessThresholds} from "../tasks/task-age-staleness.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import {detectStalledReview} from "../tasks/stalled-review-detector.js";
 import {computeRetrySummary} from "../tasks/retry-summary.js";
 // FNXC:TaskLookup404 2026-07-26-11:20: typed miss signal so API boundaries can
@@ -125,14 +127,38 @@ function hasFreshAgentLogActivitySinceTaskUpdate(
 }
 
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {readTaskRow, readLiveTaskRows} from "../task-store/async/async-persistence.js";
-import {searchTasksTsvector, searchTasksLike} from "../task-store/async/async-search.js";
+import {readTaskRow, readLiveTaskRows} from "./async/async-persistence.js";
+import {searchTasksTsvector, searchTasksLike} from "./async/async-search.js";
 import {
   getArchivedTask,
   listArchivedTasks as listArchivedTaskEntries,
   listArchivedTasksByCreatedOrder,
   searchArchivedTasks,
 } from "../async-stores/async-archive-db.js";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-04:00 (PR #2470 review, P1):
+Resolve a task's HOLD column for the stalePausedTodo badge. B1 gave
+`getStalePausedTodoSignal` a `holdColumn` parameter, but both hydration sites
+here omitted it — so the guard still compared against the literal "todo" and the
+dashboard badge was silent for a paused card in a renamed hold column.
+
+Fail-soft to "todo": this is read-path badge hydration, so a workflow lookup
+failure must degrade to today's behavior, never break a board list. The cache is
+caller-owned so a list hydration reads one IR per workflow rather than per card.
+*/
+async function resolveHoldColumnForTask(
+  store: TaskStore,
+  taskId: string,
+  cache?: Map<string, WorkflowIr>,
+): Promise<string> {
+  try {
+    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId, cache));
+    return lifecycle?.hold ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-29-15:20:
@@ -390,6 +416,15 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
     const settings = await store.getSettingsFast();
     const mergeQueuedTaskIds = await store.getMergeQueuedTaskIdsAsync();
     /*
+    FNXC:WorkflowLifecycleColumns 2026-07-28-18:05 (PR #2479 review, P2):
+    ONE IR cache for the whole list pass. Without it, every paused row resolved
+    its workflow independently, repeating workflow-definition and prompt-override
+    reads for a board with many paused cards on the same workflow. Caller-owned by
+    design (U1's `resolveTaskLifecycleColumns` takes the cache for exactly this),
+    so reads scale with the number of WORKFLOWS, not the number of cards.
+    */
+    const listPassIrCache = new Map<string, WorkflowIr>();
+    /*
      * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
      * Compute staleness thresholds once for the whole list pass, mirroring
      * the SQLite path. The ageStaleness/stalePausedReview/stalePausedTodo
@@ -445,6 +480,10 @@ export async function listTasksImpl(store: TaskStore, options?: { limit?: number
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
         thresholdMs: settings.stalePausedTodoThresholdMs,
+        // Paused-only (the signal is a no-op otherwise), sharing the list-pass
+        // IR cache so one workflow is read once per pass, not once per card.
+        holdColumn:
+          task.paused === true ? await resolveHoldColumnForTask(store, task.id, listPassIrCache) : undefined,
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });
@@ -672,6 +711,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
       task.stalePausedTodo = getStalePausedTodoSignal(task, {
         now,
         thresholdMs: settings.stalePausedTodoThresholdMs,
+        holdColumn: holdColumnByTaskId.get(task.id),
         engineActiveSinceMs: settings.engineActiveSinceMs,
         engineActivationGraceMs: settings.engineActivationGraceMs,
       });

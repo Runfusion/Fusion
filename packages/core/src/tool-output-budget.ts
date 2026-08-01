@@ -1,4 +1,4 @@
-import { createLogger } from "./logger.js";
+import { createLogger } from "./process/logger.js";
 
 /*
 FNXC:EngineDiagnostics 2026-07-30-04:00:

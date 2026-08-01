@@ -35,9 +35,9 @@ workflow calls its column review, which is the flat-set mistake this program has
 times.
 */
 
-import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflow-lifecycle-traits.js";
-import { parseWorkflowIr } from "./workflow-ir.js";
-import type { TraitFlags } from "./trait-types.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "./workflows/workflow-lifecycle-traits.js";
+import { parseWorkflowIr } from "./workflows/workflow-ir.js";
+import type { TraitFlags } from "./workflows/trait-types.js";
 
 /** The store surface this needs — deliberately narrow so callers can pass a fake. */
 export interface ProjectLaneVocabularyStore {

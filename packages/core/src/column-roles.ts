@@ -1,4 +1,4 @@
-import type { TraitFlags } from "./trait-types.js";
+import type { TraitFlags } from "./workflows/trait-types.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-30-15:05:

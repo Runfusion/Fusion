@@ -1,5 +1,5 @@
 import type { TaskStore } from "./store.js";
-import type { PluginPermissions } from "./plugin-types.js";
+import type { PluginPermissions } from "./plugins/plugin-types.js";
 
 /*
 FNXC:PluginTaskStoreGate 2026-07-26-12:20:

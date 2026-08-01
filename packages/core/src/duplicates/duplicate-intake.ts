@@ -1,4 +1,4 @@
-import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "./column-roles.js";
+import { isTerminalColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
 import { computeContentFingerprint, findDuplicateMatches, tokenize } from "./duplicate-detection.js";
 import type { ColumnId } from "../types.js";
 import type { TaskStore } from "../store.js";
