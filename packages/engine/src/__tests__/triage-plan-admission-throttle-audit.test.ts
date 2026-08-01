@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
 
@@ -263,6 +264,55 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
     await (processor as unknown as { poll: () => Promise<void> }).poll();
     await new Promise((resolve) => setImmediate(resolve));
 
+    expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
+  });
+
+  it("REGRESSION — the worktree ledger honours a RENAMED board's terminal lanes", async () => {
+    /*
+    FNXC:CapacityModel 2026-08-01-02:05 (coverage for the ledger converted in #3297):
+    The ledger counted a task as holding a worktree unless its column was literally `done` or
+    `archived`. On a renamed board neither id exists, so FINISHED work still counted against
+    `maxWorktrees` and admission throttled itself on a board with free capacity — silently, and only
+    ever in the refusing direction.
+
+    Blinding the converted guard leaves `engine-core` green at 499 passed, so nothing reached this
+    ledger before. This case does: a renamed board whose completed lane is `shipped`, one finished
+    card still carrying a worktree path, and `maxWorktrees: 1`.
+
+    Pre-fix that card consumes the only worktree slot (`shipped` is neither `done` nor `archived`),
+    worktreeRoom is 0, and the eligible card is throttled with `blockedBy` recorded. Post-fix
+    `resolveProjectColumnsForRoles(store, ["complete","archived"])` resolves `shipped`, the finished
+    card is excluded, and admission proceeds.
+
+    The store exposes `listWorkflowDefinitions` deliberately: without it the resolver fails soft to the
+    legacy ids by design, which is the degraded contract every unconverted caller keeps — and a store
+    that cannot resolve would make this case vacuous rather than failing.
+    */
+    const finishedCardHoldingATree = {
+      ...runningTask("FN-SHIPPED"),
+      column: RENAMED_VOCAB.complete,
+      worktree: "/tmp/does-not-need-to-exist/shipped",
+    } as Task;
+
+    const store = createStore([eligibleTodoTask("FN-RENAMED-ROOM"), finishedCardHoldingATree], recorded, {
+      maxConcurrent: 3,
+      maxWorktrees: 1,
+    });
+    /* The shared fixture, not a hand-rolled object: `parseWorkflowIr` VALIDATES (it rejects a graph
+       without exactly one start and one end), and the resolver isolates a bad definition per-row and
+       falls back to the legacy ids. A malformed fixture therefore produces a GREEN pre-fix run rather
+       than an error — measured: my first draft hand-built the IR, the resolver silently discarded it,
+       and the case failed for the wrong reason. */
+    (store as unknown as { listWorkflowDefinitions: () => Promise<unknown[]> }).listWorkflowDefinitions =
+      async () => [{ ir: lifecycleIr(RENAMED_VOCAB, "custom:worktree-ledger") }];
+
+    const processor = new TriageProcessor(store, "/tmp/fn-worktree-ledger-root", {});
+    vi.spyOn(processor, "specifyTask").mockResolvedValue(undefined);
+    (processor as unknown as { running: boolean }).running = true;
+    await (processor as unknown as { poll: () => Promise<void> }).poll();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    /* The finished card does not hold a slot, so the eligible card is admitted and nothing throttles. */
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
   });
 
