@@ -37,6 +37,7 @@ import {
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
   resolveProjectColumnsForRoles,
+  TERMINAL_ROLES,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -2145,8 +2146,15 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-08-01-02:10 (u12 — same shape as the executor's spawn gate):
+        `!== "done" && !== "archived"` matches nothing on a renamed board, so finished cards holding a
+        retained worktree are counted as capacity holders and planning admission starves. Project-scoped
+        because the cap is a project-wide sum; degrades to the legacy pair when unreadable.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
         const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
+          !terminalColumns.has(t.column)
           && typeof t.worktree === "string" && t.worktree.length > 0).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
