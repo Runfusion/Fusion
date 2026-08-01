@@ -165,6 +165,49 @@ probe shape passing, including ones that obviously should not. A two-file branch
 revert twenty. When the answer does not fit the size of the question, check what was actually
 measured before believing it.
 
+## Your environment is a variable in every measurement you report
+
+The sections above are about tools that answer a different question than the one asked. This one is
+about the machine underneath them, which is the variable nobody writes down.
+
+**One stale install produced five wrong reports.** A `node_modules` that had drifted from the lockfile
+(`jsdom@29.0.1` installed, `29.1.1` pinned) generated failures that existed on no CI machine and no
+other checkout. They were not subtle: deterministic, reproducible on demand, with plausible stack
+traces and real-looking assertion diffs. Each round of triage got *more precise about the wrong data*:
+
+| round | claim | why it was wrong |
+| --- | --- | --- |
+| 1 | "4 deterministic failures" | measured in a 4-file batch, called it isolation |
+| 2 | "3 deterministic, 2 order-dependent" | isolated correctly, but a race is not deterministic |
+| 3 | "TaskCard is broken" | stale jsdom; the CSS assertion was correct |
+| 4 | "no contamination" | true of four app files; published unqualified |
+| 5 | "quarantine these two" | never read the failure text — both were timeouts |
+
+The through-line is not carelessness about the code. It is that **the environment was never treated
+as part of the claim**, so no amount of care about the analysis could recover.
+
+### The checks, in the order they cost the most
+
+```bash
+pnpm install --frozen-lockfile   # your node_modules is not evidence until it matches the lockfile
+<run the file ALONE, 3+ times>   # isolation and repetition answer different questions
+<read the failure TEXT>          # a timeout and an assertion failure need opposite responses
+uptime                           # a loaded box manufactures timeouts that mean nothing
+```
+
+The last one deserves its own note. Two tests "failing" in a full-suite run turned out to be
+`Test timed out in 15000ms` on a box at load average 9.7 with 84 users. Under AGENTS.md's
+quarantine-on-sight rule that reads as a flake to quarantine — and the ledger's 14-day deletion
+ratchet would have made the lost coverage permanent. **The rule presumes the failure is a property of
+the test, not of the machine.** A wall-clock budget crossed under local contention is evidence about
+the hardware.
+
+### The tell
+
+A finding is environment-derived when it is **local, recent, and unshared**: nobody else has reported
+it, CI is green, and it appeared without a commit that could explain it. Any two of those should stop
+a report before it is written. All three did apply, and the report went out anyway, five times.
+
 ## Provenance
 
 Both defects were found by probing, not by reading: staged probe files measured against the tools with
