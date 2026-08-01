@@ -924,6 +924,31 @@ export function nonWipWorktreeHolderIdsOf(
     .map((task) => task.id);
 }
 
+/*
+FNXC:WorktreeCapacity 2026-08-01-01:53:
+THE ADMISSION-SIDE HOLDER COUNT, extracted for the same reason as `nonWipWorktreeHolderIdsOf` above.
+
+Two other gates arbitrate the SAME maxWorktrees budget and each carried its own copy of this filter:
+planning admission (`triage.ts`) and the spawned-child gate (`executor.ts`). They differ from the
+scheduler's ledger in having no WIP-set exclusion — every non-terminal holder counts, once — but the
+holder test itself is identical, and three copies of one budget's definition is how the two live
+defects recorded above went unnoticed in the first place.
+
+`isTerminalColumn` is passed in rather than resolved here: the two callers answer it differently
+(project-wide role set vs the scheduler's per-workflow flags map) and this function has no store.
+
+This commit is the MOVE only — the predicate the callers pass is byte-for-byte what they filtered on
+before. The lane-vocabulary fix rides in the next commit so the diff that changes behaviour is the
+one small enough to read.
+*/
+export function heldWorktreeCountOf(
+  tasks: readonly Task[],
+  isTerminalColumn: (task: Task) => boolean,
+): number {
+  return tasks.filter((task) => !isTerminalColumn(task)
+    && typeof task.worktree === "string" && task.worktree.length > 0).length;
+}
+
 /**
  * Slots a candidate must clear to dispatch. A candidate that ALREADY holds a worktree subtracts its
  * own slot: on release the slot TRANSFERS (it executes in the same worktree) rather than adding.

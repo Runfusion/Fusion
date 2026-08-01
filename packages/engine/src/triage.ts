@@ -58,6 +58,7 @@ import {
   parsePlanningPlanMd,
   type NearDuplicateCandidate,
 } from "@fusion/core";
+import { heldWorktreeCountOf } from "./scheduler.js";
 
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
@@ -2145,9 +2146,10 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
-        const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
-          && typeof t.worktree === "string" && t.worktree.length > 0).length;
+        const heldWorktrees = heldWorktreeCountOf(
+          allTasks,
+          (t) => t.column === "done" || t.column === "archived",
+        );
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
       const maxToStart = Math.min(projectRoom, worktreeRoom);
