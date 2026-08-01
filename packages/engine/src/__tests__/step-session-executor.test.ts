@@ -991,7 +991,7 @@ vi.mock("../agents/agent-session-helpers.js", async () => {
 // Mock logger
 vi.mock("../logger.js", () => {
   const createMockLogger = () => ({
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   });

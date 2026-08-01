@@ -24,6 +24,8 @@ import {
   COLUMN_LABELS,
   type Column,
   countRunningAgentTasks,
+  enrichRunningAgentTaskShape,
+  resolveWorkflowIrForTask,
   readProjectIdentity,
   writeProjectIdentity,
 } from "@fusion/core";
@@ -163,7 +165,23 @@ async function getTaskCounts(projectPath: string): Promise<TaskCountSummary> {
     for (const task of tasks) {
       counts[task.column] = (counts[task.column] || 0) + 1;
     }
-    return { byColumn: counts, runningAgentCount: countRunningAgentTasks(tasks) };
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-12:20 (Phase B conversion — CLI project counts):
+    ENRICH before counting. `isRunningAgentTask` reads trait-derived fields and falls back to
+    the legacy `in-progress` / `in-review` literals when they are absent — so counting raw
+    rows reported ZERO running agents for a board whose wip column is renamed, in `fn project`
+    output an operator reads to decide whether the board is busy.
+
+    The dashboard's `project-store-resolver` already enriches for exactly this reason
+    (FN-8453). This was the remaining unenriched caller: same helper, same pure predicate, one
+    of two call sites doing it correctly. The `irCache` keeps it one IR read per workflow
+    rather than per task.
+    */
+    const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+    const enriched = await Promise.all(tasks.map(async (task) =>
+      enrichRunningAgentTaskShape(task, await resolveWorkflowIrForTask(resolvedStore, task.id, irCache)),
+    ));
+    return { byColumn: counts, runningAgentCount: countRunningAgentTasks(enriched) };
   } catch {
     // Return empty counts if we can't read the project (not-found, corrupt
     // store, or lock-retry exhaustion — all fail soft here by design).

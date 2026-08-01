@@ -19,11 +19,12 @@ in `workflow-events-outbox.pg.test.ts` — a hand-written fake of the lease
 predicate would only prove the fake redelivers.
 */
 import { describe, expect, it, vi } from "vitest";
-import { createWorkflowEventBus } from "../workflow-events.js";
+import { createWorkflowEventBus, emitWorkflowLifecycleEvent, getWorkflowEventBus, resetWorkflowEventBusForTesting } from "../workflow-events.js";
 import {
   findWorkflowEventShapeViolations,
   isIdsOnlyWorkflowEvent,
   MAX_ID_VALUE_LENGTH,
+  IMPLEMENTATION_EXITS,
   type WorkflowLifecycleEvent,
 } from "../types/workflow-events.js";
 
@@ -294,5 +295,47 @@ describe("workflow event bus — reactions are non-authoritative (R5, KTD-3)", (
     bus.emit(transitioned());
     await bus.drain();
     expect(survivor).toHaveBeenCalledTimes(1);
+  });
+});
+
+/*
+FNXC:WorkflowEvents 2026-07-28-22:30 (U8, PR #2507 review — greptile):
+The `exit` key carries a CLOSED vocabulary, and the closed-ness is enforced at the emit boundary
+rather than only in the type. The type protects TypeScript producers; the boundary protects the
+ones that can actually cause the silent failure — a JS caller, a plugin, or a future seam
+emitting an id nobody routes, where the symptom is a card that quietly does not advance.
+*/
+describe("closed-vocabulary values (exit)", () => {
+  const base = { type: "NodeCompleted", taskId: "FN-1", at: "2026-07-28T00:00:00.000Z", nodeId: "execute", outcome: "success" };
+
+  it("accepts every declared exit id", () => {
+    for (const exit of IMPLEMENTATION_EXITS) {
+      expect(findWorkflowEventShapeViolations({ ...base, exit })).toEqual([]);
+    }
+  });
+
+  it("refuses an exit id that is not in the vocabulary", () => {
+    /* A perfectly good scalar — which is exactly why value-shape checking alone is not enough. */
+    expect(findWorkflowEventShapeViolations({ ...base, exit: "review-handoff-invented" })).toEqual([
+      { path: "exit", reason: "unknown-enum-value" },
+    ]);
+  });
+
+  it("still accepts NodeCompleted with no exit at all", () => {
+    expect(findWorkflowEventShapeViolations(base)).toEqual([]);
+  });
+
+  it("drops an event carrying an unrouted exit rather than delivering it", () => {
+    /* End to end through the bus: a violating payload must never reach a subscriber. */
+    resetWorkflowEventBusForTesting();
+    const seen: unknown[] = [];
+    getWorkflowEventBus().subscribe((e) => { seen.push(e); }, { name: "closed-vocab" });
+    emitWorkflowLifecycleEvent({ ...base, exit: "not-a-real-exit" } as never);
+    emitWorkflowLifecycleEvent({ ...base, exit: "complete" } as never);
+    return getWorkflowEventBus().drain().then(() => {
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ exit: "complete" });
+      resetWorkflowEventBusForTesting();
+    });
   });
 });

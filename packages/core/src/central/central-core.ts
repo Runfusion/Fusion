@@ -39,7 +39,6 @@ import type {
   RegisteredProject,
   ProjectHealth,
   CentralActivityLogEntry,
-  GlobalConcurrencyState,
   IsolationMode,
   ProjectStatus,
   ActivityEventType,
@@ -160,7 +159,6 @@ export interface CentralCoreEvents {
   /** Emitted when a discovered node is lost */
   "discovery:node:lost": [name: string];
   /** Emitted when global concurrency state changes */
-  "concurrency:changed": [state: GlobalConcurrencyState];
   /** Emitted when a node's version info is updated */
   "node:version:updated": [payload: { nodeId: string; versionInfo: NodeVersionInfo }];
   /** Emitted when plugin sync comparison completes */
@@ -217,6 +215,16 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private readonly ensureGitRepositoryForProjectPath: typeof ensureGitRepositoryForProjectPath;
   private ownedBackendShutdown: (() => Promise<void>) | null = null;
   private ownedBackendReleaseConnections: (() => Promise<void>) | null = null;
+  private initializationPromise: Promise<void> | null = null;
+  private lifecycleOperation: Promise<void> = Promise.resolve();
+  private closeRequested = false;
+  private closed = false;
+
+  private runLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.lifecycleOperation.then(operation, operation);
+    this.lifecycleOperation = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   /**
    * FNXC:CentralCore 2026-06-26-12:30:
@@ -244,9 +252,15 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * call, backendMode is true and all methods delegate to PostgreSQL.
    */
   async attachBackendLayer(layer: AsyncDataLayer): Promise<void> {
+    this.assertAcceptingOperations();
     if (!layer) {
       throw new Error("attachBackendLayer requires a non-null AsyncDataLayer");
     }
+    return this.runLifecycleOperation(() => this.attachBackendLayerOnce(layer));
+  }
+
+  private async attachBackendLayerOnce(layer: AsyncDataLayer): Promise<void> {
+    this.assertOpen();
     // Release a central-only pool before adopting the runtime's shared layer.
     if (this.ownedBackendReleaseConnections) {
       /*
@@ -272,7 +286,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     // post-construction injection point.
     (this as { asyncLayer: AsyncDataLayer | null }).asyncLayer = layer;
     this.initialized = false;
-    await this.init();
+    await this.initializeOnce();
   }
 
   private readonly onDiscoveryNodeDiscovered = (node: DiscoveredNode): void => {
@@ -320,19 +334,39 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Idempotent — safe to call multiple times.
    */
   async init(): Promise<void> {
+    this.assertAcceptingOperations();
     if (this.initialized) return;
 
     /*
+     * FNXC:CentralCore 2026-07-29-16:10:
+     * Layer-less initialization allocates an owned PostgreSQL lifecycle. Concurrent callers must share one in-flight attempt so a second backend cannot be orphaned when ownership fields are overwritten. Clear the promise after either outcome so a failed bootstrap remains retryable.
+     */
+    if (!this.initializationPromise) {
+      this.initializationPromise = this.runLifecycleOperation(() => this.initializeOnce());
+    }
+    const initialization = this.initializationPromise;
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) this.initializationPromise = null;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
+    this.assertOpen();
+    if (this.initialized) return;
+    /*
     FNXC:SqliteDualPathCleanup 2026-07-26-14:15:
-    CentralCore.init is PostgreSQL-only. When no asyncLayer is attached yet, mark initialized without opening SQLite; attachBackendLayer bootstraps PG later.
+    CentralCore.init is PostgreSQL-only (SQLite CentralDatabase path deleted).
+
+    FNXC:CentralCore 2026-07-28-03:00:
+    #2454 accidentally early-returned on layer-less init and left the PG bootstrap as dead code. Dashboard routes (e.g. GET /api/activity-feed) and CLI fallbacks call `new CentralCore(); await init(); getRecentActivity()` without attachBackendLayer, so a no-op init throws backendHandle ("only available in backend mode"). Restore layer-less createCentralBackendLayer bootstrap. When a pre-injected asyncLayer exists, bootstrap that shared layer only. Runtime serve may still call attachBackendLayer later to adopt the TaskStore pool (releases any owned central-only pool).
     */
     if (this.asyncLayer) {
       await asyncCentralCore.ensureBackendBootstrap(this.asyncLayer);
       this.initialized = true;
       return;
     }
-    this.initialized = true;
-    return;
 
     /*
      * FNXC:CentralPostgresCutover 2026-07-14-17:14:
@@ -366,13 +400,22 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * Closes database connections and releases resources.
    */
   async close(): Promise<void> {
+    this.closeRequested = true;
+    return this.runLifecycleOperation(() => this.closeOnce());
+  }
+
+  private async closeOnce(): Promise<void> {
+    /*
+    FNXC:CentralPostgresCutover 2026-07-29-16:26:
+    Initialization, layer replacement, and close share one lifecycle queue. Cleanup must observe and release the backend the preceding operation publishes instead of returning early, leaking it, or letting attachment revive a core after shutdown.
+
+    FNXC:CentralPostgresCutover 2026-07-29-17:43:
+    Close is terminal. Operations queued after cleanup must fail instead of allocating or attaching a backend after listeners and owned resources have been released.
+    */
+    this.closed = true;
     if (this.nodeDiscovery) {
       this.stopDiscovery();
     }
-
-    await this.markLocalNodeOffline().catch((error) => {
-      severityAuditLog.warn("[central-core] Failed to persist local node offline during close", error);
-    });
 
     // FNXC:CentralCore 2026-06-26-12:30: In backend mode there is no SQLite
     // CentralDatabase to close; the shared connection pool is owned by the
@@ -389,6 +432,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
     this.initialized = false;
     this.removeAllListeners();
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error("CentralCore is closed");
+  }
+
+  private assertAcceptingOperations(): void {
+    if (this.closeRequested) throw new Error("CentralCore is closed");
   }
 
   /** Persist the local mesh node's terminal state before its backend closes. */
@@ -2075,118 +2126,34 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   // ── Global Concurrency API ─────────────────────────────────────────────
 
-  /**
-   * Get the current global concurrency state.
-   *
-   * @returns Current concurrency state including per-project active counts
-   */
-  async getGlobalConcurrencyState(): Promise<GlobalConcurrencyState> {
-    this.ensureInitialized();
+  /*
+  FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+  `getGlobalConcurrencyState`, `updateGlobalConcurrency`, `acquireGlobalSlot` and
+  `releaseGlobalSlot` are DELETED, along with the `concurrency:changed` event they
+  emitted. Capacity is two numbers PER PROJECT; a machine-wide cap was a third
+  limiter living in a separate authority (the `global_concurrency` singleton row).
 
-        return asyncCentralCore.getGlobalConcurrencyState(this.backendHandle);
-}
+  The slot pair was already dead before this change — measured in the enforcement
+  half: no production caller ever invoked it, so `currentlyActive` was never
+  incremented by real work and the durable counter it maintained was fiction.
 
-  /**
-   * FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
-   * Live running-agent counts from the registered side-effect-safe source.
-   * Falls back to persisted concurrency/health bookkeeping when no host source
-   * is registered so headless core callers keep their previous semantics.
-   */
+  `getLiveRunningAgentCounts` SURVIVES and is now the only global readout. It is
+  TELEMETRY, not a limiter: it derives live per-project agent counts from the
+  registered side-effect-safe source so the dashboard can show "N running (all
+  projects)". Nothing gates on it.
+  */
   async getLiveRunningAgentCounts(options?: { source?: RunningAgentCountSource }): Promise<RunningAgentCounts> {
     this.ensureInitialized();
 
     const source = options?.source ?? getRunningAgentCountSource();
     if (!source) {
-      const state = await this.getGlobalConcurrencyState();
-      return {
-        currentlyActive: state.currentlyActive,
-        projectsActive: state.projectsActive,
-      };
+      return { currentlyActive: 0, projectsActive: {} };
     }
 
     const projectIds = (await this.listProjects()).map((project) => project.id);
     const perProject = await source(projectIds);
     return deriveRunningAgentCounts(perProject);
   }
-
-  /**
-   * Update global concurrency settings.
-   * Only allows updating globalMaxConcurrent, currentlyActive, and queuedCount.
-   *
-   * @param updates — Partial concurrency state updates
-   * @returns Updated concurrency state
-   */
-  async updateGlobalConcurrency(
-    updates: Partial<Pick<GlobalConcurrencyState, "globalMaxConcurrent" | "currentlyActive" | "queuedCount">>
-  ): Promise<GlobalConcurrencyState> {
-    this.ensureInitialized();
-
-    if (
-      updates.globalMaxConcurrent !== undefined &&
-      (!Number.isFinite(updates.globalMaxConcurrent) || updates.globalMaxConcurrent < 1 || updates.globalMaxConcurrent > 10000)
-    ) {
-      throw new Error("globalMaxConcurrent must be between 1 and 10000");
-    }
-
-    const current = await this.getGlobalConcurrencyState();
-    const updated = {
-      ...current,
-      ...updates,
-    };
-
-        await asyncCentralCore.updateGlobalConcurrencyRow(
-      this.backendHandle,
-      updated,
-      new Date().toISOString(),
-    );
-    this.emit("concurrency:changed", updated);
-    return updated;
-}
-
-  /**
-   * Acquire a global concurrency slot.
-   * Atomically checks if a slot is available and acquires it if so.
-   *
-   * @param projectId — Project requesting the slot
-   * @returns true if slot acquired, false if at limit (queued)
-   */
-  async acquireGlobalSlot(projectId: string): Promise<boolean> {
-    this.ensureInitialized();
-
-    // Check if project exists
-    const project = await this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-    let acquired = false;
-
-        acquired = await asyncCentralCore.acquireGlobalSlotAtomic(this.asyncLayer!, projectId);
-    const state = await this.getGlobalConcurrencyState();
-    this.emit("concurrency:changed", state);
-    return acquired;
-}
-
-  /**
-   * Release a global concurrency slot.
-   * Decrements the global active count and project's active count.
-   *
-   * @param projectId — Project releasing the slot
-   */
-  async releaseGlobalSlot(projectId: string): Promise<void> {
-    this.ensureInitialized();
-
-    // Check if project exists
-    const project = await this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-        await asyncCentralCore.releaseGlobalSlotAtomic(this.asyncLayer!, projectId);
-    const state = await this.getGlobalConcurrencyState();
-    this.emit("concurrency:changed", state);
-    return;
-}
 
   // ── Utility Methods ─────────────────────────────────────────────────────
 

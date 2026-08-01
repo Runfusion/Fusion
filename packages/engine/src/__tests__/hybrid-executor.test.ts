@@ -329,21 +329,12 @@ describe("HybridExecutor", () => {
     });
   });
 
-  describe("concurrency slots", () => {
-    beforeEach(async () => {
-      await executor.initialize();
-    });
-
-    it("should acquire global slot", async () => {
-      const acquired = await executor.acquireGlobalSlot("proj_test123");
-      expect(acquired).toBe(true);
-    });
-
-    it("should release global slot", async () => {
-      await executor.releaseGlobalSlot("proj_test123");
-      // Should not throw
-    });
-  });
+  /*
+  FNXC:CapacityModel 2026-07-28-20:40 (drop the cross-project cap):
+  The "concurrency slots" block is DELETED with the acquireGlobalSlot /
+  releaseGlobalSlot passthroughs it covered. Those had NO production callers, so
+  the central-DB slot counter they maintained was never incremented by real work.
+  */
 
   describe("event forwarding", () => {
     beforeEach(async () => {

@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
+import { isArchivedColumnRole, isCompleteColumnRole } from "../utils/columnRoles";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
 import "./DockTaskList.css";
 
 export interface DockTaskListProps {
+  /** Per-task resolved column traits, from the dock's render props. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>;
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
@@ -21,7 +24,19 @@ The Tasks tab empty state is a real compact task list, not a blank placeholder. 
 FNXC:RightDockTasks 2026-06-28-18:25:
 The compact right-dock Tasks list is an active-work queue by default. It hides completed work until the local Show Done toggle is enabled and never renders archived tasks, including in the expanded dock modal that reuses this component.
 */
-export function DockTaskList({
+/*
+FNXC:RightDockTasks 2026-07-22-12:05:
+Row-key helper: the first occurrence of an id keys as the bare id (stable across reorders — no remount), later occurrences of the same id get an occurrence suffix so duplicate-id data never produces React duplicate-key warnings.
+*/
+function dockRowKey(taskId: string, index: number, list: Array<Task | TaskDetail>): string {
+  let occurrence = 0;
+  for (let i = 0; i < index; i += 1) {
+    if (list[i].id === taskId) occurrence += 1;
+  }
+  return occurrence === 0 ? taskId : `${taskId}--dup-${occurrence}`;
+}
+
+export function DockTaskList({ columnFlagsByTaskId,
   tasks,
   projectId,
   onOpenTask,
@@ -36,12 +51,28 @@ export function DockTaskList({
     onOpenTask?.(task);
   }, [onOpenTask]);
 
-  const doneTasks = useMemo(() => tasks.filter((task) => task.column === "done"), [tasks]);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-04:00 (batch-dashboard-app — the dock-wide fix landed):
+  These three decide what the right dock lists: completed cards grouped, archived hidden, done shown
+  only behind `showDone`. Keyed on the literals none matched on a renamed board, so the dock showed
+  ARCHIVED cards and never grouped completed ones.
+
+  Previously sized as blocked, because this component mounts only through `overflowViewRegistry` and
+  those render props carried no flags. That gap is now closed at the source — App threads the map it
+  already builds for the footer through useRightDockController into the registry — so the same change
+  also fixes DevServerView's dock surface. Per TASK, not per column id.
+  */
+  const isTerminal = useCallback((task: Task | TaskDetail) => {
+    const flags = columnFlagsByTaskId?.get(task.id);
+    return { complete: isCompleteColumnRole(flags, task.column), archived: isArchivedColumnRole(flags, task.column) };
+  }, [columnFlagsByTaskId]);
+  const doneTasks = useMemo(() => tasks.filter((task) => isTerminal(task).complete), [tasks, isTerminal]);
   const visibleTasks = useMemo(() => tasks.filter((task) => {
-    if (task.column === "archived") return false;
-    if (task.column === "done") return showDone;
+    const roles = isTerminal(task);
+    if (roles.archived) return false;
+    if (roles.complete) return showDone;
     return true;
-  }), [showDone, tasks]);
+  }), [showDone, tasks, isTerminal]);
   const hasDoneTasks = doneTasks.length > 0;
   const isEmpty = visibleTasks.length === 0;
   const emptyTitle = tasks.length === 0 ? "No tasks yet" : "No active tasks";
@@ -71,8 +102,14 @@ export function DockTaskList({
           <p className="dock-task-list__empty-title">{emptyTitle}</p>
           <p className="dock-task-list__empty-copy">{emptyCopy}</p>
         </div>
-      ) : visibleTasks.map((task, index) => (
-        <div key={`${task.id}-${index}`} className="dock-task-list__row" data-testid={`dock-task-list-row-${task.id}`}>
+      ) : visibleTasks.map((task, index, list) => (
+        /*
+        FNXC:RightDockTasks 2026-07-22-12:05:
+        Rows are keyed by task.id (with an occurrence suffix only for duplicate ids). The old `${task.id}-${index}` key remounted every surviving TaskCard on any reorder, filter toggle, or status change, discarding card-local state (open menus, edit drafts).
+        Keying by id also guarantees an instance never migrates between tasks, so no stale per-card oversight/authorization state can cross tasks; TaskCard's FN-8251 render guard covers within-instance prop switches.
+        Duplicate ids (a data anomaly this list deliberately tolerates) keep distinct identities without duplicate-key warnings via the occurrence count.
+        */
+        <div key={dockRowKey(task.id, index, list)} className="dock-task-list__row" data-testid={`dock-task-list-row-${task.id}`}>
           <TaskCard
             task={task as Task}
             projectId={projectId}

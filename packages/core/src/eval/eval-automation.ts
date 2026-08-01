@@ -1,5 +1,6 @@
 import type { AutomationStore } from "../automation/automation-store.js";
 import type { ScheduledTask, ScheduledTaskCreateInput } from "../automation/automation.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import type { EvalRun, EvalTaskResultCreateInput } from "./eval-types.js";
 import { EvalLifecycleError } from "./eval-store.js";
 import type { EvalStore } from "./eval-store.js";
@@ -172,9 +173,30 @@ export async function runScheduledEvalBatch(
   await evalStore.updateRun(run.id, { status: "running", startedAt });
 
   try {
-    const doneTasks = (await params.store.listTasks({ column: "done" })).filter((task) =>
-      task.column === "done"
-      && Boolean(task.executionCompletedAt)
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-03:10:
+    THE QUERY plus its redundant re-assertion — the scheduled eval run selected NOTHING.
+
+    `listTasks({ column })` filters in the store, so on a renamed board this read returned an empty
+    array and every scheduled eval run completed having evaluated zero tasks. The `.filter`'s
+    `task.column === "done"` below it re-asserted the column the query had already selected on, so
+    converting that comparison alone would have dropped a census count and changed nothing — the list
+    was empty before the filter ran.
+
+    The redundant clause is DELETED rather than converted: a second copy of the same rule is how a
+    read and its filter drift apart. The completion-timestamp window is the only thing it contributed
+    beyond the column, and that is kept.
+
+    Project-level resolution, because a read has no task in hand, unioned with the legacy id so a
+    board mid-rename still evaluates rows stored under the old one.
+    */
+    const completeColumns = await resolveProjectColumnsForRoles(params.store as never, ["complete"]);
+    const byId = new Map<string, Awaited<ReturnType<typeof params.store.listTasks>>[number]>();
+    for (const column of completeColumns) {
+      for (const task of await params.store.listTasks({ column })) byId.set(task.id, task);
+    }
+    const doneTasks = [...byId.values()].filter((task) =>
+      Boolean(task.executionCompletedAt)
       && (!windowStartExclusive || task.executionCompletedAt! > windowStartExclusive)
       && task.executionCompletedAt! <= windowEndInclusive,
     );

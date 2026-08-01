@@ -36,6 +36,7 @@ import {
   listMissionEvents,
   listMissions as listMissionRows,
 } from "../../async-stores/async-mission-store.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../index.js";
 
 const pgTest = pgDescribe;
 
@@ -385,15 +386,188 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     });
 
     /* FNXC:MissionAdmission 2026-07-23-21:10: a late same-fingerprint task claimed by another feature is not a duplicate eligible for archival. */
-    expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "triage" });
+    /* FNXC:MergedPlanningColumn 2026-07-29-15:30 (U11): the assertion is "not archived" — the card
+       stays where it was created, which for the default lineage is now the merged planning column
+       `todo` rather than `triage`. */
+    expect(await taskStore.getTask(siblingTask.id)).toMatchObject({ id: siblingTask.id, column: "todo" });
     expect(await m.getFeature(siblingFeature.id)).toMatchObject({ taskId: siblingTask.id, status: "triaged" });
     expect(await m.getFeature(firstFeature.id)).toMatchObject({ taskId: claimedTask.id, status: "triaged" });
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-10:20:
+  THE BOOTSTRAP DUPLICATE WAS PARKED IN A LANE THE BOARD DOES NOT DECLARE.
+
+  This path writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
+  lifecycle census (which reads comparisons) nor the move-target census (which reads `moveTask`
+  arguments) could see the literal `archived`. On a board whose archive lane is renamed, the
+  duplicate landed in a column that workflow does not declare — a card in a lane the board cannot
+  render, from a path that runs during ordinary feature bootstrap.
+
+  DIFFERENTIAL: `filed` collides with no legacy id, so a surviving `"archived"` cannot pass by luck.
+  */
+  it("archives a bootstrap duplicate into the RENAMED archive lane", async () => {
+    const m = missions();
+    const taskStore = h.store();
+
+    const ir = JSON.parse(JSON.stringify(BUILTIN_CODING_WORKFLOW_IR)) as {
+      id: string; nodes?: { column?: string }[]; columns?: { id: string }[];
+    };
+    ir.id = "custom:renamed-archive-missions";
+    for (const node of ir.nodes ?? []) if (node.column === "archived") node.column = "filed";
+    for (const column of ir.columns ?? []) if (column.id === "archived") column.id = "filed";
+    expect((ir.columns ?? []).map((c) => c.id)).not.toContain("archived");
+    const definition = await taskStore.createWorkflowDefinition({ name: "Renamed archive", kind: "workflow", ir } as never);
+    const workflowId = (definition as unknown as { id: string }).id;
+
+    const mission = await m.createMission({ title: "Renamed archive bootstrap" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+
+    const claimedTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await m.linkFeatureToTask(feature.id, claimedTask.id);
+    const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await taskStore.writeTaskWorkflowSelection(duplicateTask.id, workflowId, []);
+
+    await m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    });
+
+    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "filed" });
+  });
+
+  /* Control: with no renamed workflow the duplicate still lands in the legacy archive lane, so an
+     unconverted board is byte-identical. */
+  it("archives a bootstrap duplicate into `archived` on the default lineage", async () => {
+    const m = missions();
+    const taskStore = h.store();
+    const mission = await m.createMission({ title: "Default archive bootstrap" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Feature" });
+
+    const claimedTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+    await m.linkFeatureToTask(feature.id, claimedTask.id);
+    const duplicateTask = await taskStore.createTask({ description: "same fingerprint work", missionId: mission.id, sliceId: slice.id });
+
+    await m.archiveDefinedFeatureBootstrapDuplicate({
+      featureId: feature.id,
+      taskId: claimedTask.id,
+      duplicateTaskId: duplicateTask.id,
+    });
+
+    expect(await taskStore.getTask(duplicateTask.id)).toMatchObject({ id: duplicateTask.id, column: "archived" });
   });
 
   /*
   FNXC:MissionReconciliation 2026-07-20-08:34:
   Regression coverage exercises every terminal-evidence representation through the real PostgreSQL store. Reconciliation must never route through ordinary triage linking, mutate loop attempts or mission controls, or partially commit when the transaction fails.
   */
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+  THE INVARIANT: terminal evidence is the card's ROLE, not the id `done`.
+
+  `getTerminalTaskEvidence` tested only `column === "done"`, so a genuinely completed card on a
+  renamed board fell through every branch to `nonterminal` and this method threw
+  `TASK_NOT_TERMINAL: ... must be in done or supported archived state, not shipped`. Mission
+  shipped-delivery repair refused valid work — and the message named the real column while the check
+  could not see it, which is the tell that the classifier and the reporter disagreed.
+
+  I deferred this twice on the premise that `AsyncMissionStore` "holds a layer, not a store". It
+  holds an OPTIONAL `taskStore`, and the single production construction site supplies it. That is the
+  third deferral of mine this session to dissolve on inspection, which is the argument for checking a
+  premise before recording it as a blocker.
+
+  REVERT PROOF, measured: restore `column === "done"` and this fails with a
+  `TASK_NOT_TERMINAL` rejection naming `shipped`.
+  */
+  it("accepts a completed card whose board calls the lane something else", async () => {
+    const m = missions();
+    const store = h.store();
+    await store.createWorkflowDefinition({
+      name: "Renamed complete",
+      ir: {
+        version: "v2",
+        name: "Renamed complete",
+        columns: [
+          { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          { id: "end", kind: "end", column: "shipped" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      } as never,
+    });
+    const mission = await m.createMission({ title: "Renamed-lane repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Delivered" });
+    const task = await store.createTask({ description: "shipped elsewhere", column: "shipped" as never });
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:40:
+  THE ARCHIVED HALF OF THE SAME PAIR. The case above pins the `complete` resolver; the `archived`
+  one is declared on the very next line and nothing reached it — blinding it back to `["archived"]`
+  left the whole 16-file lane-detector set green while blinding its neighbour failed immediately.
+
+  Terminal evidence is "done OR supported archived state", so an archived card is equally valid
+  repair evidence. On a board whose archive lane is `vaulted`, the archived half could not see it and
+  the method threw `TASK_NOT_TERMINAL` for a card that was genuinely filed away — the same refusal
+  the case above fixed, reached through the other door.
+
+  Being adjacent to a covered resolver is not coverage; this is the third such split found in core.
+  */
+  it("accepts an ARCHIVED card whose board calls the archive lane something else", async () => {
+    const m = missions();
+    const store = h.store();
+    await store.createWorkflowDefinition({
+      name: "Renamed archive",
+      ir: {
+        version: "v2",
+        name: "Renamed archive",
+        columns: [
+          { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+          { id: "vaulted", name: "Vaulted", traits: [{ trait: "archived" }] },
+        ],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          { id: "end", kind: "end", column: "done" },
+        ],
+        edges: [{ from: "start", to: "end", condition: "success" }],
+      } as never,
+    });
+    const mission = await m.createMission({ title: "Renamed-archive repair" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Delivered" });
+    const task = await store.createTask({ description: "filed away", column: "done" });
+    /*
+    A REAL archive, then the lane rename. The `archived` verdict requires all three of
+    `deletedAt !== null`, an archive-snapshot row, and `isArchived(column)` — a live card merely
+    sitting in an archive-trait column is `invalid-deleted`, not `archived`, so seeding one would
+    fail for a reason that has nothing to do with the lane read under test. Archiving first and
+    then renaming the recorded lane isolates exactly the third condition.
+    */
+    await store.archiveTask(task.id, { cleanup: false });
+    await h.adminDb().execute(sql`UPDATE project.tasks SET "column" = 'vaulted' WHERE id = ${task.id}`);
+    store.taskCache.delete(task.id);
+
+    const reconciled = await m.reconcileFeatureDoneWithTerminalTask(feature.id, task.id);
+
+    expect(reconciled).toMatchObject({ taskId: task.id, status: "done" });
+  });
+
   it("atomically reconciles live done evidence and remains idempotent", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Parked repair" });
@@ -832,4 +1006,41 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(await m.getMissionWithHierarchy("M-DOES-NOT-EXIST")).toBeUndefined();
     expect(await m.getMissionHealth("M-DOES-NOT-EXIST")).toBeUndefined();
   });
+
+  /*
+  FNXC:MissionTaskPrefix 2026-07-26-12:00:
+  Per-mission taskPrefix round-trips on create/update and clears to NULL so triage re-inherits the project prefix (PR #1930 / #2347).
+  */
+  it("round-trips mission taskPrefix on create/update and clears to undefined", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Prefixed", taskPrefix: "ERR" });
+    expect((await m.getMission(mission.id))?.taskPrefix).toBe("ERR");
+
+    const updated = await m.updateMission(mission.id, { taskPrefix: "BUG" });
+    expect(updated.taskPrefix).toBe("BUG");
+    expect((await m.getMission(mission.id))?.taskPrefix).toBe("BUG");
+
+    const cleared = await m.updateMission(mission.id, { taskPrefix: undefined });
+    expect(cleared.taskPrefix).toBeUndefined();
+    expect((await m.getMission(mission.id))?.taskPrefix).toBeUndefined();
+
+    const raw = (await h.layer().db.execute(
+      sql`SELECT task_prefix FROM project.missions WHERE id = ${mission.id}`,
+    )) as unknown as Array<{ task_prefix: string | null }>;
+    expect(raw[0]?.task_prefix).toBeNull();
+  });
+
+  it("mints triaged task ids with the mission's taskPrefix", async () => {
+    const m = missions();
+    await h.store().updateSettings({ taskPrefix: "FN" });
+    const mission = await m.createMission({ title: "Mission", taskPrefix: "ERR" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "Ship prefix", acceptanceCriteria: "id uses ERR" });
+
+    const triaged = await m.triageFeature(feature.id);
+    expect(triaged.taskId).toBeTruthy();
+    expect(triaged.taskId).toMatch(/^ERR-\d+$/);
+  });
+
 });

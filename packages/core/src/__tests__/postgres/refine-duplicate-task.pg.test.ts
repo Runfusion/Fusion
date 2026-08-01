@@ -43,7 +43,9 @@ pgDescribe("refineTask / duplicateTask backend mode (PostgreSQL)", () => {
       expect(refined.id).not.toBe(source.id);
       expect(refined.sourceType).toBe("task_refine");
       expect(refined.sourceParentTaskId).toBe(source.id);
-      expect(refined.column).toBe("triage");
+      // FNXC:MergedPlanningColumn 2026-07-31-22:40: refine resolves the workflow intake lane; the
+      // default coding workflow's intake is the merged `todo` Planning column ("triage" is deleted).
+      expect(refined.column).toBe("todo");
       expect(refined.dependencies).toEqual([source.id]);
       expect(refined.description).toContain("Please tighten the empty-state copy");
 

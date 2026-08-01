@@ -16,6 +16,16 @@ export interface StalePausedReviewContext {
   /** The workflow's REVIEW (merge-orchestration) column. Defaults to the legacy
    *  `"in-review"` so unconverted callers are byte-identical. */
   reviewColumn?: string;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (the lane seam, MEMBERSHIP not one column):
+  `reviewColumn` is `resolveLifecycleColumns().review` — the FIRST column carrying a review role. A
+  board declaring a separate merge lane beside its human-review lane has TWO, and a card in the second
+  read as not-in-review. This takes the SET.
+
+  Optional, with today's behaviour preserved as the fallback, so a caller that does not pass it is
+  byte-identical.
+  */
+  reviewColumns?: ReadonlySet<string>;
   now?: number;
   thresholdMs?: number;
   engineActiveSinceMs?: number;
@@ -37,8 +47,11 @@ export function getStalePausedReviewSignal(
   any workflow that renames its review column. Defaults to the legacy id, so
   every existing caller is byte-identical.
   */
-  const reviewColumn = context.reviewColumn ?? "in-review";
-  if (task.column !== reviewColumn || task.paused !== true) return undefined;
+  const inReviewLane = context.reviewColumns
+    ? context.reviewColumns.has(task.column)
+    /* DELIBERATE-LITERAL — the no-metadata fallback; a supplied set always wins. */
+    : task.column === (context.reviewColumn ?? "in-review");
+  if (!inReviewLane || task.paused !== true) return undefined;
   if (task.mergeDetails?.mergeConfirmed === true) return undefined;
 
   const thresholdMs = context.thresholdMs ?? DEFAULT_STALE_PAUSED_REVIEW_THRESHOLD_MS;

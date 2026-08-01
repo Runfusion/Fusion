@@ -8,7 +8,7 @@
    Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
-/* Aurora, Calm, and Dawn swatches stay globally resolvable while a different theme is active. */
+/* Aurora, Calm, Dawn, Sage, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
 :root {
   --aurora-swatch-sample-1: #0a1022;
   --aurora-swatch-sample-2: #162044;
@@ -22,6 +22,18 @@
   --dawn-swatch-sample-2: #2a2248;
   --dawn-swatch-sample-3: #efb66a;
   --dawn-swatch-sample-4: #c8a4ff;
+  --sage-swatch-sample-1: #16201a;
+  --sage-swatch-sample-2: #27382e;
+  --sage-swatch-sample-3: #9ab58a;
+  --sage-swatch-sample-4: #8baaa0;
+  --factory-dark-swatch-sample-1: #0d0f10;
+  --factory-dark-swatch-sample-2: #1a1d1f;
+  --factory-dark-swatch-sample-3: #e89532;
+  --factory-dark-swatch-sample-4: #7fa6b8;
+  --factory-light-swatch-sample-1: #171716;
+  --factory-light-swatch-sample-2: #292926;
+  --factory-light-swatch-sample-3: #f0a24a;
+  --factory-light-swatch-sample-4: #93a5ad;
 }
 
 [data-theme="light"] {
@@ -37,6 +49,18 @@
   --dawn-swatch-sample-2: #f1ddd7;
   --dawn-swatch-sample-3: #9b5618;
   --dawn-swatch-sample-4: #704eaa;
+  --sage-swatch-sample-1: #f5f8f4;
+  --sage-swatch-sample-2: #e2eadf;
+  --sage-swatch-sample-3: #55764d;
+  --sage-swatch-sample-4: #46756b;
+  --factory-dark-swatch-sample-1: #eceef0;
+  --factory-dark-swatch-sample-2: #d9dde0;
+  --factory-dark-swatch-sample-3: #a95612;
+  --factory-dark-swatch-sample-4: #35687d;
+  --factory-light-swatch-sample-1: #f7f7f5;
+  --factory-light-swatch-sample-2: #e9eae8;
+  --factory-light-swatch-sample-3: #b45309;
+  --factory-light-swatch-sample-4: #476b7a;
 }
 
 /* OCEAN - Deep blues and cyans */
@@ -7590,6 +7614,234 @@ Dawn pairs deep indigo and plum dark surfaces with muted peach, amber, and viole
   --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
   --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
   --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-31-21:28:
+Sage uses soft green-gray surfaces with a muted olive accent, preserving readable neutral text ramps in dark and light modes. Global previews remain independent of the active theme so unselected Sage rows retain all four swatch colors.
+*/
+[data-color-theme="sage"] {
+  --bg: #16201a;
+  --surface: #1e2b23;
+  --card: #27382e;
+  --card-hover: #33463a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #4c6254;
+  --text: #edf3e9;
+  --text-muted: #bdcbbd;
+  --text-dim: #869a8b;
+
+  --todo: #9bb9b2;
+  --in-progress: #8bbdb0;
+  --in-progress-rgb: 139, 189, 176;
+  --in-review: #b1c58b;
+  --triage: #d0b676;
+  --done: #91a198;
+  --color-success: #9fc48e;
+  --color-warning: #d0b676;
+  --color-error: #de8f88;
+  --color-info: #8bbdb0;
+
+  --cta-bg: #9ab58a;
+  --cta-border: #b8cba8;
+  --cta-text: #16201a;
+  --cta-bg-hover: #aec49e;
+  --cta-border-hover: #d2dfc7;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #9ab58a;
+  --accent-text: #16201a;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="sage"][data-theme="light"] {
+  --bg: #f5f8f4;
+  --surface: #eaf0e8;
+  --card: #ffffff;
+  --card-hover: #e2eadf;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #b9c9b6;
+  --text: #253529;
+  --text-muted: #526957;
+  --text-dim: #788f7d;
+
+  --todo: #46756b;
+  --in-progress: #3f776b;
+  --in-progress-rgb: 63, 119, 107;
+  --in-review: #617d47;
+  --triage: #896d31;
+  --done: #687d70;
+  --color-success: #4d7a45;
+  --color-warning: #896d31;
+  --color-error: #ac4f49;
+  --color-info: #3f776b;
+
+  --cta-bg: #55764d;
+  --cta-border: #405f3a;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #46663f;
+  --cta-border-hover: #355330;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #55764d;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-31-20:39:
+Factory Dark is the low-ambient-light industrial sibling of Factory: graphite and steel surfaces, cool gunmetal borders, and restrained safety-orange actions. Its concrete-gray light counterpart keeps the same visual identity with readable dark text; global previews remain independent of the active theme.
+*/
+[data-color-theme="factory-dark"] {
+  --bg: #0d0f10;
+  --surface: #141719;
+  --card: #1a1d1f;
+  --card-hover: #252a2d;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #3b454a;
+  --text: #f2f3f2;
+  --text-muted: #b6bec1;
+  --text-dim: #7d898e;
+
+  --todo: #8db6ca;
+  --in-progress: #6eb2ca;
+  --in-progress-rgb: 110, 178, 202;
+  --in-review: #a8b8c0;
+  --triage: #e89532;
+  --done: #89969a;
+  --color-success: #8fbf9a;
+  --color-warning: #e89532;
+  --color-error: #e47a6e;
+  --color-info: #6eb2ca;
+
+  --cta-bg: #d77b20;
+  --cta-border: #f1ad5a;
+  --cta-text: #1a1007;
+  --cta-bg-hover: #e89532;
+  --cta-border-hover: #ffd08c;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #e89532;
+  --accent-text: #1a1007;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="factory-dark"][data-theme="light"] {
+  --bg: #eceef0;
+  --surface: #e2e5e7;
+  --card: #f7f8f8;
+  --card-hover: #d9dde0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #aeb8bd;
+  --text: #20282c;
+  --text-muted: #536168;
+  --text-dim: #738087;
+
+  --todo: #35687d;
+  --in-progress: #24728c;
+  --in-progress-rgb: 36, 114, 140;
+  --in-review: #526871;
+  --triage: #a95612;
+  --done: #68767b;
+  --color-success: #386c48;
+  --color-warning: #a95612;
+  --color-error: #ad403a;
+  --color-info: #24728c;
+
+  --cta-bg: #a95612;
+  --cta-border: #85430d;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #8f480e;
+  --cta-border-hover: #6f370a;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #a95612;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/*
+FNXC:DashboardTheming 2026-07-31-23:51:
+Factory Light is the daylight industrial sibling of Factory and Factory Dark: warm graphite stays readable in dark mode, while poured-concrete and warm-white surfaces, steel-gray borders, and contrast-safe safety orange serve bright environments in light mode. Its globally resolved preview tokens intentionally do not bind to the active theme.
+*/
+[data-color-theme="factory-light"] {
+  --bg: #171716;
+  --surface: #20201e;
+  --card: #292926;
+  --card-hover: #343431;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #4d5555;
+  --text: #f6f4ef;
+  --text-muted: #c2c4bd;
+  --text-dim: #8e938c;
+
+  --todo: #9ab8c4;
+  --in-progress: #78b4c8;
+  --in-progress-rgb: 120, 180, 200;
+  --in-review: #b7b9b2;
+  --triage: #f0a24a;
+  --done: #9da69d;
+  --color-success: #9dc09a;
+  --color-warning: #f0a24a;
+  --color-error: #eb8374;
+  --color-info: #78b4c8;
+
+  --cta-bg: #d98225;
+  --cta-border: #f4b968;
+  --cta-text: #1d1308;
+  --cta-bg-hover: #f0a24a;
+  --cta-border-hover: #ffd494;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #f0a24a;
+  --accent-text: #1d1308;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="factory-light"][data-theme="light"] {
+  --bg: #f7f7f5;
+  --surface: #efefec;
+  --card: #ffffff;
+  --card-hover: #e5e6e3;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #aab2b3;
+  --text: #202523;
+  --text-muted: #4f5b5b;
+  --text-dim: #737d7d;
+
+  --todo: #476b7a;
+  --in-progress: #236d86;
+  --in-progress-rgb: 35, 109, 134;
+  --in-review: #5d6968;
+  --triage: #b45309;
+  --done: #68736e;
+  --color-success: #3d7147;
+  --color-warning: #b45309;
+  --color-error: #af3e37;
+  --color-info: #236d86;
+
+  --cta-bg: #b45309;
+  --cta-border: #8f4108;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #954207;
+  --cta-border-hover: #713205;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #b45309;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 [data-color-theme="dawn"][data-theme="light"] {

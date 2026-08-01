@@ -29,6 +29,7 @@ import type {
   TaskStore,
   PermanentAgentGatingContext,
 } from "@fusion/core";
+import { completeColumnsForTask, wipColumnsForTask } from "./task-lifecycle-lanes.js";
 import type { AgentActionGateContext, SkillSelectionContext } from "@fusion/engine";
 import {
   ApprovalRequestStore,
@@ -84,6 +85,17 @@ import {
   resolveMcpServersForStore,
   resolveExecutorThinkingLevel,
   wrapToolsWithActionGate,
+  createTaskArchiveTool,
+  createTaskUnarchiveTool,
+  createTaskDeleteTool,
+  createTaskRetryTool,
+  createTaskPauseTool,
+  createTaskUnpauseTool,
+  createTaskDuplicateTool,
+  createTaskMergeTool,
+  createTraitListTool,
+  createReadEvaluationsTool,
+  createUpdateIdentityTool,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -458,14 +470,16 @@ async function createChatMissionGateContexts(
     createApprovalRequest,
     findApprovalByDedupeKey: async (dedupeKey) => {
       const latest = await approvalStore.findLatestByDedupeKey({ requesterActorId: agent.id, dedupeKey });
-      return latest ? { id: latest.id, status: latest.status } : null;
+      // FNXC:ApprovalRedemption 2026-07-26-13:50: decidedAt lets resolveGateOutcome apply the approval-grant TTL at redemption.
+      return latest ? { id: latest.id, status: latest.status, decidedAt: latest.decidedAt } : null;
     },
     pauseForApproval: async () => {
       await agentStore.updateAgentState(agent.id, "paused");
       await agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
     },
     markApprovalCompleted: async (approvalRequestId) => {
-      await approvalStore.markCompleted(approvalRequestId, { actor: requester, note: "Tool executed after approval" });
+      // FNXC:ApprovalRedemption 2026-07-26-14:35: ownership guard — an agent must not be able to burn another agent's approval by id.
+      await approvalStore.markCompleted(approvalRequestId, { actor: requester, note: "Tool executed after approval", expectedRequesterActorId: agent.id });
     },
   };
   const permanentAgentGating: PermanentAgentGatingContext = {
@@ -485,6 +499,11 @@ async function createChatMissionGateContexts(
     findPendingApprovalRequest: async (dedupeKey) => {
       const pending = await approvalStore.list({ status: "pending", requesterActorId: agent.id, limit: 100 });
       return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+    },
+    // FNXC:AgentGating 2026-07-26-14:50: gate-path parity — pause the bound agent when the permanent gate parks a pending approval, matching the action-gate context above.
+    pauseForApproval: async () => {
+      await agentStore.updateAgentState(agent.id, "paused");
+      await agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
     },
   };
 
@@ -515,7 +534,13 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
       const profile = typeof raw.profile === "string" ? raw.profile : "verify:fast";
       if (!taskId || !profiles.has(profile)) return { content: [{ type: "text" as const, text: "ERROR: task_id and an allowlisted profile are required; raw commands are not accepted." }], isError: true, details: {} };
       const task = await taskStore.getTask(taskId);
-      if (!task || task.column !== "in-progress" || !task.worktree || !existsSync(task.worktree)) return { content: [{ type: "text" as const, text: "ERROR: verification requires an in-progress task with a live executor worktree." }], isError: true, details: {} };
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
+      Verification requires a card that is actively being worked, resolved from its own workflow.
+      Keyed on the literal, chat-driven verification refused every task on a renamed board with
+      "requires an in-progress task" — naming a column that board does not have.
+      */
+      if (!task || !(await wipColumnsForTask(taskStore, taskId)).has(task.column) || !task.worktree || !existsSync(task.worktree)) return { content: [{ type: "text" as const, text: "ERROR: verification requires an in-progress task with a live executor worktree." }], isError: true, details: {} };
       const settings = await taskStore.getSettings();
       const command = profile === "verify:fast" ? "pnpm verify:fast" : typeof settings.testCommand === "string" ? settings.testCommand : "";
       if (!command) return { content: [{ type: "text" as const, text: "ERROR: the selected verification profile is not configured." }], isError: true, details: {} };
@@ -548,7 +573,7 @@ function createTaskVerificationTools(taskStore: TaskStore, actionGateContext?: A
 }
 
 export async function createChatFusionToolset(options: ChatFusionToolsetOptions): Promise<ChatCustomTool[]> {
-  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false } = options;
+  const { taskStore, agentStore, rootDir, agentId, missionMutationGated = false, actionGateContext } = options;
   const tools: ChatCustomTool[] = [];
 
   if (taskStore) {
@@ -559,8 +584,36 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
       createTaskSearchTool(taskStore),
       ...createTaskVerificationTools(taskStore, options.actionGateContext),
       createTaskCreateTool(taskStore, { sourceType: "api" }, { rootDir }),
-      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Promotion is a mission mutation because it creates canonical roadmap work; dashboard chat exposes it only through the same permanent-agent action gate as all hierarchy writes. */
-      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)), 
+    );
+
+    /*
+    FNXC:ChatTaskMutationGate 2026-07-22-00:00:
+    Task-lifecycle mutations are only exposed when an enforceable action-gate context is
+    present for the bound agent. wrapToolsWithActionGate is a pass-through when the gate
+    context is absent or ephemeral (see pi.ts), so registering these tools without a gate
+    would leave archive/delete/retry/etc. callable with NO task_agent_mutation policy
+    enforcement. Withhold them from the surface instead of advertising unenforceable
+    mutations. fn_task_update, fn_task_add_dep, and fn_task_promote are intentionally NOT
+    bound in project-scoped chat: they target the factory's ambient task id, which project
+    chat does not have (binding "" makes them operate on no task). The executor/heartbeat
+    lanes bind those with a concrete current-task id.
+    */
+    if (actionGateContext) {
+      tools.push(
+        createTaskArchiveTool(taskStore),
+        createTaskUnarchiveTool(taskStore),
+        createTaskDeleteTool(taskStore),
+        createTaskRetryTool(taskStore),
+        createTaskPauseTool(taskStore),
+        createTaskUnpauseTool(taskStore),
+        createTaskDuplicateTool(taskStore),
+        createTaskMergeTool(taskStore, ""),
+      );
+    }
+
+    tools.push(
+      /* FNXC:ResearchMissionBridge 2026-07-18-12:00: Mission writes are exposed only through the same permanent-agent action gate as all hierarchy writes. */
+      ...createMissionTools(taskStore).filter((tool) => missionMutationGated || CHAT_MISSION_READ_TOOL_NAMES.has(tool.name)),
       /* FNXC:Ideation 2026-07-30-15:30: Unbound or ephemeral chat exposes only positive ideation reads; mutations require the same durable gate context as Mission writes. */
       ...createIdeationTools(taskStore).filter((tool) => missionMutationGated || CHAT_IDEATION_READ_TOOL_NAMES.has(tool.name)),
       ...createGoalRetrievalTools(taskStore),
@@ -578,10 +631,21 @@ export async function createChatFusionToolset(options: ChatFusionToolsetOptions)
     }
     if (agentId) {
       tools.push(createGetAgentConfigTool(agentStore, agentId));
+      tools.push(createUpdateIdentityTool(agentStore, agentId));
+      /*
+      FNXC:ChatEvaluations 2026-07-22-00:00:
+      Chat has no ReflectionStore/AgentReflectionService, so pass undefined for the
+      reflection store (fn_read_evaluations degrades to ratings-only) and omit
+      fn_reflect_on_performance entirely — matching the heartbeat/executor guard that
+      only binds the reflect tool when a reflection service is available.
+      */
+      tools.push(createReadEvaluationsTool(agentStore, undefined, agentId));
     }
   }
 
   tools.push(createWebFetchTool());
+  tools.push(createTraitListTool());
+  tools.push(createAskQuestionTool());
   return dedupeChatTools(tools);
 }
 
@@ -594,7 +658,17 @@ export function dedupeChatTools(tools: ChatCustomTool[]): ChatCustomTool[] {
   });
 }
 
-function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getPricingOverrides: () => Promise<Settings["modelPricingOverrides"] | undefined>) {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (batch-dashboard-src):
+EXPORTED so the RESOLVER side of the metrics seam is testable, not just the guard.
+
+The formatter takes `wipColumns` and its own tests inject that set by hand — which proves the guard
+and says nothing about whether production fills it. Measured: deleting the `wipColumns` argument
+below left the whole 3830-test dashboard suite green. An options-bag property is also invisible to
+`check-inert-flag-seams.mjs`, which only tracks trailing optional PARAMETERS, so nothing else was
+watching this either. Exporting the factory is the cheapest way to put a test on the producer.
+*/
+export function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getPricingOverrides: () => Promise<Settings["modelPricingOverrides"] | undefined>) {
   return {
     name: "fn_task_planner_get_task_metrics",
     label: "Get Current Task Metrics",
@@ -607,9 +681,17 @@ function createTaskPlannerMetricsTool(taskStore: TaskStore, taskId: string, getP
     execute: async () => {
       try {
         const task = await taskStore.getTask(taskId, { activityLogLimit: 100 });
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-16:10 (batch-dashboard-src):
+        Supplies the task's OWN wip lanes. This is the production path for the metrics tool, so
+        wiring it here is what makes the option live rather than one only tests fill — without it
+        the formatter keeps the legacy `in-progress` and a renamed execution lane reports a frozen
+        active runtime.
+        */
         const metrics = formatTaskPlannerChatMetrics(task, {
           pricingOverrides: await getPricingOverrides(),
           nowMs: Date.now(),
+          wipColumns: await wipColumnsForTask(taskStore, taskId),
         });
         return {
           content: [{ type: "text" as const, text: metrics.summaryText }],
@@ -647,7 +729,14 @@ function createTaskPlannerRefinementTool(taskStore: TaskStore, taskId: string) {
       }
       try {
         const sourceTask = await taskStore.getTask(taskId);
-        if (sourceTask.column !== "done") {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
+        Refinement is for FINISHED work — complete only, not the landed set: an archived task is off
+        the board and is not a refinement source. Paired with the tool-registration guard in
+        `createSession`; if only one of the two resolved, the tool would either be offered and then
+        refuse, or be withheld from tasks it would have accepted. Both move together.
+        */
+        if (!(await completeColumnsForTask(taskStore, taskId)).has(sourceTask.column)) {
           return {
             content: [{ type: "text" as const, text: `ERROR: Current task ${taskId} is ${sourceTask.column}; use planner steering for live tasks instead of creating a refinement.` }],
             details: { sourceTaskId: taskId, column: sourceTask.column },
@@ -2623,7 +2712,15 @@ export class ChatManager {
       FNXC:TaskDetailPlannerChat 2026-07-01-21:44:
       Done-task planner Chat uses a separate task-scoped refinement tool rather than Activity steering. The tool is registered only for synthetic task-planner sessions whose server-loaded current task is done, accepts only feedback text, and calls TaskStore.refineTask with the bound source id so models cannot route refinements to arbitrary tasks/projects/workflows.
       */
-      const taskPlannerRefinementTools = this.taskStore && taskPlannerChatTaskId && taskPlannerTaskColumn === "done"
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-05:05 (batch-core):
+      The registration half of the refinement pair — see the guard inside the tool itself. Resolved
+      the same way so a renamed board offers the tool exactly where the tool would accept it.
+      */
+      const taskPlannerTaskIsComplete = this.taskStore && taskPlannerChatTaskId
+        ? (await completeColumnsForTask(this.taskStore, taskPlannerChatTaskId)).has(taskPlannerTaskColumn)
+        : false;
+      const taskPlannerRefinementTools = this.taskStore && taskPlannerChatTaskId && taskPlannerTaskIsComplete
         ? [createTaskPlannerRefinementTool(this.taskStore, taskPlannerChatTaskId)]
         : [];
 

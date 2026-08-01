@@ -322,33 +322,6 @@ describe("ProjectEngineManager", () => {
       expect(offlineOrder).toBeLessThan(engineStopOrder);
     });
 
-    it("stopAll frees residual slots from each stopped project scope", async () => {
-      const manager = new ProjectEngineManager(centralCore);
-      await manager.startAll();
-      const engineA = manager.getEngine("proj_aaa")!;
-      const engineB = manager.getEngine("proj_bbb")!;
-      const sharedSemaphore = (manager as any).globalSemaphore;
-      const scopeA = new ScopedAgentSemaphore(sharedSemaphore);
-      const scopeB = new ScopedAgentSemaphore(sharedSemaphore);
-
-      await scopeA.acquire();
-      await scopeB.acquire();
-      expect(sharedSemaphore.activeCount).toBe(2);
-
-      (engineA.stop as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
-        scopeA.returnAllHeldSlots();
-      });
-      (engineB.stop as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
-        scopeB.returnAllHeldSlots();
-      });
-
-      await manager.stopAll();
-
-      expect(scopeA.heldCount).toBe(0);
-      expect(scopeB.heldCount).toBe(0);
-      expect(sharedSemaphore.activeCount).toBe(0);
-      expect(sharedSemaphore.availableCount).toBe(4);
-    });
 
     it("handles stop errors gracefully", async () => {
       const manager = new ProjectEngineManager(centralCore);
@@ -420,36 +393,6 @@ describe("ProjectEngineManager", () => {
       expect(manager.getEngine("proj_aaa")).toBeUndefined();
     });
 
-    it("frees only the paused project's residual shared semaphore slots", async () => {
-      const manager = new ProjectEngineManager(centralCore);
-      const engineA = await manager.ensureEngine("proj_aaa");
-      await manager.ensureEngine("proj_bbb");
-      const sharedSemaphore = (manager as any).globalSemaphore;
-      const scopeA = new ScopedAgentSemaphore(sharedSemaphore);
-      const scopeB = new ScopedAgentSemaphore(sharedSemaphore);
-
-      await scopeA.acquire();
-      await scopeA.acquire();
-      await scopeB.acquire();
-      expect(sharedSemaphore.activeCount).toBe(3);
-      expect(sharedSemaphore.availableCount).toBe(1);
-
-      (engineA.stop as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
-        scopeA.returnAllHeldSlots();
-      });
-
-      await manager.pauseProject("proj_aaa");
-
-      expect(scopeA.heldCount).toBe(0);
-      expect(scopeB.heldCount).toBe(1);
-      expect(sharedSemaphore.activeCount).toBe(1);
-      expect(sharedSemaphore.availableCount).toBe(3);
-      expect(scopeB.tryAcquire()).toBe(true);
-      expect(scopeB.tryAcquire()).toBe(true);
-      expect(scopeB.tryAcquire()).toBe(true);
-      expect(scopeB.tryAcquire()).toBe(false);
-      scopeB.returnAllHeldSlots();
-    });
 
     it("removes from starting set to prevent stalled starts from completing", async () => {
       const manager = new ProjectEngineManager(centralCore);

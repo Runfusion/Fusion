@@ -1,160 +1,189 @@
 // @vitest-environment node
-import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteTaskImpl } from "../task-store/archive-lifecycle.js";
-import type { Task } from "../types.js";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((innerResolve) => {
-    resolve = innerResolve;
-  });
-  return { promise, resolve };
-}
+/*
+FNXC:TaskDeletion 2026-07-30-19:00 (PG cutover fallout):
+What this file used to assert, and why most of it is GONE rather than repaired.
+
+It covered "delete soft-deletes before delayed branch cleanup finishes", driven through a SQLite
+store fake that matched raw SQL strings (`UPDATE tasks SET "column" = 'archived'`). Both cases went
+red on main with "store.deleteTaskBackend is not a function": `deleteTaskImpl` is now a thin
+delegator onto the PostgreSQL backend, and the SQLite arms the fake modelled were deleted
+(FNXC:SqliteDualPathCleanup 2026-07-26).
+
+The non-blocking-branch-cleanup behaviour this file was NAMED for no longer exists on the delete
+path. `_scheduleDeleteBranchCleanup` in archive-lifecycle.ts has exactly ONE reference in the tree —
+its own definition — and the only live `store.cleanupBranchForTask` call is in the ARCHIVE path
+(archive-lifecycle-2.ts:306). So those cases were not adapted: asserting that delete schedules branch
+cleanup would pin behaviour the product does not have, and reshaping the fake until they passed would
+be appeasement.
+
+What survives are the gates that are still real, rewritten against the PG backend so they exercise
+the delegation rather than a mock.
+*/
+
+import { EventEmitter } from "node:events";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Task } from "../types.js";
+import { softDeleteTaskRowInTransaction } from "../task-store/async-persistence.js";
+
+let pgRow: Task | null = null;
+let lineageChildIds: string[] = [];
+
+vi.mock("../task-store/async-persistence.js", () => ({
+  readTaskRow: vi.fn(async () => pgRow),
+  softDeleteTaskRowInTransaction: vi.fn(async () => undefined),
+}));
+vi.mock("../task-store/async-lifecycle.js", () => ({
+  findLiveLineageChildren: vi.fn(async () => lineageChildIds),
+  projectPartition: vi.fn(() => undefined),
+  removeLineageReferences: vi.fn(async () => undefined),
+}));
+vi.mock("../async-mission-store-queries.js", () => ({
+  getFeatureByTaskId: vi.fn(async () => null),
+  unlinkFeatureFromTaskId: vi.fn(async () => undefined),
+  recordGeneratedFixOperatorStop: vi.fn(async () => undefined),
+}));
+
+import { deleteTaskImpl } from "../task-store/archive-lifecycle.js";
+import { deleteTaskBackendImpl } from "../task-store/archive-lifecycle-2.js";
 
 function createTask(overrides: Partial<Task> & { id: string }): Task {
   const now = "2026-07-15T09:00:00.000Z";
   return {
-    id: overrides.id,
-    title: overrides.title ?? overrides.id,
-    description: overrides.description ?? overrides.id,
-    column: overrides.column ?? "todo",
-    dependencies: overrides.dependencies ?? [],
-    createdAt: overrides.createdAt ?? now,
-    updatedAt: overrides.updatedAt ?? now,
+    title: overrides.id,
+    description: overrides.id,
+    column: "todo",
+    dependencies: [],
+    createdAt: now,
+    updatedAt: now,
     size: "M",
     subtasks: [],
-    log: overrides.log ?? [],
+    log: [],
     tags: [],
     blockedBy: [],
     source: { sourceType: "api" },
     ...overrides,
+    id: overrides.id,
   } as Task;
 }
 
-function makeDeleteStore(input: {
-  task: Task;
-  dependentIds?: string[];
-  lineageChildIds?: string[];
-  cleanupBranchForTask?: (task: Task) => Promise<string[]>;
-}) {
+type AuditRow = { mutationType: string; taskId?: string };
+
+/** PostgreSQL-path store fake; the real backend impl is wired in, not stubbed. */
+function makeDeleteStore(task: Task, children: string[] = []) {
   const events = new EventEmitter();
-  const tasks = new Map<string, Task>([[input.task.id, { ...input.task, log: [...(input.task.log ?? [])] }]]);
-  const auditEvents: Array<{ mutationType: string; taskId?: string }> = [];
-  const prepareRun = vi.fn((sql: string, args: unknown[]) => {
-    if (sql.includes("UPDATE tasks SET \"column\" = 'archived'")) {
-      const [deletedAt, allowResurrection, updatedAt, id] = args as [string, number, string, string];
-      const task = tasks.get(id)!;
-      task.column = "archived";
-      task.deletedAt = deletedAt;
-      task.allowResurrection = allowResurrection === 1;
-      task.updatedAt = updatedAt;
-      return;
-    }
-    if (sql.includes("UPDATE tasks SET log = ?")) {
-      const [logJson, updatedAt, id] = args as [string, string, string];
-      const task = tasks.get(id)!;
-      task.log = JSON.parse(logJson) as Task["log"];
-      task.updatedAt = updatedAt;
-    }
-  });
+  const auditEvents: AuditRow[] = [];
+  pgRow = task;
+  lineageChildIds = children;
 
   const store = {
-    backendMode: false,
-    agentLogBuffer: [],
+    backendMode: true,
     isWatching: true,
-    taskCache: new Map<string, Task>([[input.task.id, input.task]]),
-    missionStore: undefined,
-    db: {
-      transaction: (fn: () => void) => fn(),
-      prepare: (sql: string) => ({
-        run: (...args: unknown[]) => prepareRun(sql, args),
-      }),
-      bumpLastModified: vi.fn(),
+    taskCache: new Map<string, Task>([[task.id, task]]),
+    asyncLayer: {
+      db: {},
+      projectId: "project-1",
+      transactionImmediate: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})),
     },
-    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<Task>) => fn()),
-    flushAgentLogBuffer: vi.fn(),
-    readTaskFromDb: vi.fn((id: string) => tasks.get(id) ?? null),
-    findLiveDependents: vi.fn(() => input.dependentIds ?? []),
-    findLiveLineageChildren: vi.fn(async () => input.lineageChildIds ?? []),
-    cleanupBranchForTask: vi.fn(input.cleanupBranchForTask ?? (async () => [])),
-    rewriteDependentsForRemoval: vi.fn(() => []),
-    rewriteBlockedByResidueDependentsForRemoval: vi.fn(() => []),
-    rewriteLineageChildrenForRemoval: vi.fn(() => []),
-    recordRunAuditEvent: vi.fn(async (event: { mutationType: string; taskId?: string }) => {
+    rowToTask: vi.fn((row: unknown) => row as Task),
+    pgRowToTaskRow: vi.fn((row: unknown) => row),
+    // Signature is (tx, event) — the transaction handle comes FIRST.
+    recordRunAuditEventBackend: vi.fn(async (_tx: unknown, event: AuditRow) => {
       auditEvents.push(event);
     }),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
-    clearLinkedAgentTaskIds: vi.fn(),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+    cleanupBranchForTask: vi.fn(async () => [] as string[]),
     clearNearDuplicateReferencesToFailSoft: vi.fn(async () => undefined),
     emit: vi.fn((event: string, ...args: unknown[]) => events.emit(event, ...args)),
     on: events.on.bind(events),
-    getStoredTask: (id: string) => tasks.get(id),
     getAuditEvents: () => auditEvents,
-    prepareRun,
-  };
+  } as Record<string, unknown>;
 
-  return store;
+  store.deleteTaskBackend = (id: string, options?: unknown) =>
+    deleteTaskBackendImpl(store as never, id, options as never);
+  return store as typeof store & {
+    getAuditEvents: () => AuditRow[];
+    cleanupBranchForTask: ReturnType<typeof vi.fn>;
+  };
 }
 
-describe("deleteTask non-blocking cleanup", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+describe("deleteTask gates that survived the PostgreSQL cutover", () => {
+  /*
+  FNXC:TaskDeletion 2026-07-30-20:15 (PR #2697 review — greptile):
+  The module mock is shared across this file and the config clears nothing, so a call-count
+  assertion would otherwise depend on which tests ran before it. Cleared per test so the count
+  means "this test", not "the file so far".
+  */
+  beforeEach(() => {
+    vi.mocked(softDeleteTaskRowInTransaction).mockClear();
   });
 
-  it("soft-deletes before delayed branch cleanup finishes and still records cleanup", async () => {
-    const task = createTask({ id: "FN-7968", branch: "fusion/fn-7968" });
-    const cleanup = deferred<string[]>();
-    const store = makeDeleteStore({
-      task,
-      cleanupBranchForTask: async () => cleanup.promise,
-    });
+  it("is idempotent: re-deleting an already soft-deleted task is a no-op with no audit row", async () => {
+    const task = createTask({ id: "FN-DELETED", deletedAt: "2026-07-15T09:01:00.000Z", column: "archived" });
+    const store = makeDeleteStore(task);
 
-    const deletedEvents: string[] = [];
-    store.on("task:deleted", (deleted: Task) => {
-      deletedEvents.push(deleted.id);
-    });
+    await expect(deleteTaskImpl(store as never, task.id)).resolves.toMatchObject({ id: task.id });
 
-    let resolved = false;
-    const deletePromise = deleteTaskImpl(store as never, task.id).then((deleted) => {
-      resolved = true;
-      return deleted;
-    });
+    // No second audit row, and no destructive work on a row that is already gone.
+    expect(store.getAuditEvents()).toHaveLength(0);
+    expect(store.cleanupBranchForTask).not.toHaveBeenCalled();
+  });
 
-    await vi.waitFor(() => expect(resolved).toBe(true), { timeout: 100 });
-    const deleted = await deletePromise;
+  it("refuses to delete a parent with live lineage children unless references are removed", async () => {
+    const parent = createTask({ id: "FN-LINEAGE-PARENT", branch: "fusion/lineage-parent" });
+    const store = makeDeleteStore(parent, ["FN-LINEAGE-CHILD"]);
 
-    expect(deleted).toMatchObject({ id: task.id, column: "archived" });
-    expect(deleted.deletedAt).toEqual(expect.any(String));
-    expect(store.cleanupBranchForTask).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }));
-    expect(store.getStoredTask(task.id)?.log).toEqual([]);
-    expect(deletedEvents).toEqual([task.id]);
+    await expect(deleteTaskImpl(store as never, parent.id))
+      .rejects.toMatchObject({ name: "TaskHasLineageChildrenError" });
+
+    // A rejected gate must not emit an audit row for a delete that did not happen.
+    expect(store.getAuditEvents()).toHaveLength(0);
+  });
+
+  it("deletes a clean task and records exactly one task:deleted audit row", async () => {
+    const task = createTask({ id: "FN-CLEAN" });
+    const store = makeDeleteStore(task);
+
+    const emitted: string[] = [];
+    store.on("task:deleted", (deleted: Task) => emitted.push(deleted.id));
+
+    const deleted = await deleteTaskImpl(store as never, task.id);
+
+    expect(deleted).toMatchObject({ id: task.id });
+    /*
+    FNXC:TaskDeletion 2026-07-30-20:15 (PR #2697 review — greptile):
+    THE PERSISTENCE CALL IS THE DELETION; the audit row and the event are only its announcements.
+    Asserted first and by name because without it, removing the soft-delete write while leaving the
+    two side effects in place still passed — the suite would have reported a task deleted that was
+    still in the table, which is the one outcome this file exists to prevent.
+    */
+    expect(softDeleteTaskRowInTransaction).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(softDeleteTaskRowInTransaction).mock.calls[0]?.[1]).toBe(task.id);
+
     expect(store.getAuditEvents().filter((event) => event.mutationType === "task:deleted")).toHaveLength(1);
-
-    cleanup.resolve(["fusion/fn-7968"]);
-
-    await vi.waitFor(() => {
-      expect(store.getStoredTask(task.id)?.log?.some((entry) => entry.action === "Cleaned up branch: fusion/fn-7968")).toBe(true);
-    });
-  });
-
-  it("keeps idempotent and gated deletes fast without scheduling branch cleanup", async () => {
-    const deletedTask = createTask({ id: "FN-DELETED", deletedAt: "2026-07-15T09:01:00.000Z", column: "archived" });
-    const deletedStore = makeDeleteStore({ task: deletedTask });
-    await expect(deleteTaskImpl(deletedStore as never, deletedTask.id)).resolves.toMatchObject({ id: deletedTask.id });
-    expect(deletedStore.cleanupBranchForTask).not.toHaveBeenCalled();
-    expect(deletedStore.getAuditEvents()).toHaveLength(0);
-
-    const dependentParent = createTask({ id: "FN-DEPENDENT-PARENT", branch: "fusion/dependent-parent" });
-    const dependentStore = makeDeleteStore({ task: dependentParent, dependentIds: ["FN-DEPENDENT-CHILD"] });
-    await expect(deleteTaskImpl(dependentStore as never, dependentParent.id)).rejects.toMatchObject({ name: "TaskHasDependentsError" });
-    expect(dependentStore.cleanupBranchForTask).not.toHaveBeenCalled();
-    expect(dependentStore.getAuditEvents()).toHaveLength(0);
-
-    const lineageParent = createTask({ id: "FN-LINEAGE-PARENT", branch: "fusion/lineage-parent" });
-    const lineageStore = makeDeleteStore({ task: lineageParent, lineageChildIds: ["FN-LINEAGE-CHILD"] });
-    await expect(deleteTaskImpl(lineageStore as never, lineageParent.id)).rejects.toMatchObject({ name: "TaskHasLineageChildrenError" });
-    expect(lineageStore.cleanupBranchForTask).not.toHaveBeenCalled();
-    expect(lineageStore.getAuditEvents()).toHaveLength(0);
+    expect(emitted).toEqual([task.id]);
+    /*
+    Deliberately NOT asserting `deleted.deletedAt`. The PG backend returns the PRE-delete snapshot —
+    its own comment says so ("`task` is still the pre-delete snapshot at this point") because the
+    lifecycle emit and the audit row both need the previous column. My first draft asserted a
+    populated `deletedAt` here and failed: that was my assumption about the contract, not the
+    contract. Recorded so nobody "fixes" the impl to satisfy the wrong expectation.
+    */
   });
 });
+
+/*
+FNXC:TaskDeletion 2026-07-30-19:00 FLAGGED, NOT FIXED:
+The DEPENDENTS gate is not asserted here because it appears to be GONE from the delete path.
+
+The removed version of this file asserted `TaskHasDependentsError` when deleting a task other live
+tasks depend on. That error is neither imported nor thrown anywhere in archive-lifecycle-2.ts — the
+PG backend raises only `TaskHasLineageChildrenError`, `TaskNotFoundError` and `TaskSelfDeleteError`.
+
+Two readings, and choosing between them is a product question rather than a test fix: either the
+delete path now REWRITES dependency references (there is a `removeDependencyReferences` option and a
+`rewriteDependentsForRemoval` impl) and blocking was dropped deliberately, or the gate was lost in
+the cutover and a task can be soft-deleted out from under its dependents. Asserting either shape
+would encode a guess, so this records the question instead.
+*/

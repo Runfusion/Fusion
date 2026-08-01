@@ -3840,6 +3840,121 @@ describe("useTasks", () => {
       expect(result.current.tasks[0]?.recentAgentActivityAt).toBeUndefined();
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+    The SOURCE of the planner-activity signal. It only stamped `recentAgentActivityAt`
+    for cards literally in `triage`, and #2515 removed that column from the default
+    lineage — so after that merge the stamp never happened for a default-workflow card
+    and every consumer (pulsing Planning badge, agent-active border, column executing
+    count) had no data to act on, however correctly they resolved their own traits.
+
+    REVERT CHECK: restore `task.column !== "triage"` and this fails — the card is in the
+    merged planning column `todo`, so nothing is stamped and the badge has nothing to
+    render.
+    */
+    it("stamps planner activity for a card in the MERGED planning column", async () => {
+      const initialTask = createMockTask({
+        column: "todo",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBe("2026-07-28T12:00:01.000Z");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:55:
+    THE SAME SOURCE, one vocabulary further out.
+
+    The note above fixed the stamp for the MERGED default lane. It still gated on the literal pair
+    `{triage, todo}`, so on a board whose intake lane is named anything else the stamp is never
+    written — and the same consumers have nothing to act on, however correctly they resolve traits.
+    The existing note argues over-stamping is harmless because consumers re-check for an intake lane;
+    that protects against false positives and says nothing about this direction.
+
+    REVERT CHECK: drop `resolveColumnFlags` from the options and this fails — `drafting` is not in the
+    legacy pair, so nothing is stamped.
+    */
+    it("stamps planner activity for a card in a RENAMED intake lane", async () => {
+      const initialTask = createMockTask({
+        column: "drafting",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks({
+        resolveColumnFlags: () => ({ intake: true, hold: true }),
+      }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBe("2026-07-28T12:00:01.000Z");
+    });
+
+    /* The paired negative: resolved traits must still NARROW. A renamed WIP lane is not planning. */
+    it("does not stamp planner activity for a card in a RENAMED wip lane", async () => {
+      const initialTask = createMockTask({
+        column: "building",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks({
+        resolveColumnFlags: () => ({ countsTowardWip: true }),
+      }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBeUndefined();
+    });
+
+    it("does not stamp planner activity for a card outside any planning lane", async () => {
+      // The stamp must still NARROW: an executing card is not planner activity.
+      const initialTask = createMockTask({
+        column: "in-progress",
+        status: null,
+        updatedAt: "2026-07-28T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0]._emit("agent:log", {
+          taskId: initialTask.id,
+          timestamp: "2026-07-28T12:00:01.000Z",
+          type: "tool",
+          agent: "triage",
+        });
+      });
+      expect(result.current.tasks[0]?.recentAgentActivityAt).toBeUndefined();
+    });
+
     it("keeps clearing in-review stalls when a fresh agent log arrives", async () => {
       const initialTask = createMockTask({
         column: "in-review",

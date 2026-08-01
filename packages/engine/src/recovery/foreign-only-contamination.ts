@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { resolveReboundTargetForTask } from "@fusion/core";
 import {
   classifyForeignOnlyContamination,
   reanchorBranchToBase,
@@ -72,7 +73,12 @@ export async function recoverForeignOnlyContamination(
       taskId: task.id,
     });
 
-    await deps.taskStore.moveTask(task.id, "todo", {
+    /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
+       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
+       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
+       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
+       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
+    await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
       moveSource: "engine",
       preserveResumeState: true,
       preserveProgress: true,
@@ -105,7 +111,12 @@ export async function recoverForeignOnlyContamination(
   await execAsync("git worktree prune", { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
   await execAsync(`git branch -D ${quote(task.branch)}`, { cwd: deps.repoDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER }).catch(() => undefined);
 
-  await deps.taskStore.moveTask(task.id, "todo", {
+  /* FNXC:WorkflowResolvedColumns 2026-07-30-19:55 (#2808 review — coderabbit): census-invisible moveTask
+       DESTINATION — a call argument, not a comparison, so the census never scored it. This requeue is not a
+       #1411 `recoveryRehome` escape, so an undeclared destination is REJECTED and the recovery never completes:
+       that is what the hardcoded `todo` used to cause on any board without that column. The destination now
+       comes from the task's own workflow, and the legacy id remains only as the unresolvable fallback. */
+  await deps.taskStore.moveTask(task.id, await resolveReboundTargetForTask(deps.taskStore, task.id), {
     moveSource: "engine",
     preserveResumeState: true,
     preserveProgress: true,

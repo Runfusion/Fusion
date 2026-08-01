@@ -5,7 +5,7 @@ import type { TaskStore, AutomationStore, ScheduledTask, AutomationRunResult, Au
 import { randomUUID } from "node:crypto";
 
 const cronLoggerSpies = vi.hoisted(() => ({
-  log: vi.fn(),
+  log: vi.fn(), debug: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 }));
@@ -23,6 +23,17 @@ const coreModuleMocks = vi.hoisted(() => ({
 vi.mock("../logger.js", () => ({
   createLogger: () => ({
     log: cronLoggerSpies.log,
+    /*
+    FNXC:TestInfrastructure 2026-07-29-14:20 (#2573 review — greptile P1):
+    The spy object carries `debug` but this factory did not wire it through, so
+    the logger handed to production still lacked it. cron-runner's tick() calls
+    log.debug on the dedupe / scope-mismatch / lost-atomic-claim paths, and the
+    resulting TypeError was SWALLOWED by tick()'s own error handler — the polling
+    cycle aborted early while the test carried on and still passed. A silently
+    truncated run is worse than a red one: it asserts against a cycle that never
+    happened.
+    */
+    debug: cronLoggerSpies.debug,
     warn: cronLoggerSpies.warn,
     error: cronLoggerSpies.error,
   }),
@@ -1623,7 +1634,18 @@ describe("CronRunner", () => {
       expect(createTaskMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ thinkingLevel: undefined }));
     });
 
-    it("defaults column to triage when taskColumn is not set", async () => {
+    /*
+    FNXC:Automations 2026-07-30-17:05 (greptile #2652 — this test PINNED the defect):
+    Was "defaults column to triage when taskColumn is not set", asserting `column: "triage"`. That is
+    the bug written down as a contract: U11 deletes `triage` from the default workflow, so a scheduled
+    create-task step with no column created its task into a column the board does not declare.
+
+    An EXPLICIT column also bypasses the workflow entry-column resolution added for column-less creates,
+    so substituting `todo` instead would be the same mistake one column over — a custom workflow
+    declaring no `todo` is stranded just as surely. The corrected invariant is that the runner sends NO
+    column and `createTask` resolves each workflow's own intake.
+    */
+    it("sends NO column when taskColumn is not set, so workflow intake resolves it", async () => {
       const mockTask = { id: "FN-9999", title: "", description: "Some task" };
       const createTaskMock = vi.fn().mockResolvedValue(mockTask);
       const store = createMockStore({} as any);
@@ -1639,8 +1661,26 @@ describe("CronRunner", () => {
       await runner.executeSchedule(schedule);
 
       expect(createTaskMock).toHaveBeenCalledWith(
-        expect.objectContaining({ column: "triage" }),
+        expect.objectContaining({ column: undefined }),
       );
+      expect(createTaskMock.mock.calls[0][0].column, "not `triage`, and not a substituted `todo`").toBeUndefined();
+    });
+
+    it("still honours an explicit taskColumn", async () => {
+      // The fix must not stop an operator from naming a column deliberately.
+      const createTaskMock = vi.fn().mockResolvedValue({ id: "FN-9998", title: "", description: "Explicit" });
+      const store = createMockStore({} as any);
+      (store as any).createTask = createTaskMock;
+
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [makeCreateTaskStep({ taskDescription: "Explicit", taskColumn: "in-progress" })],
+      });
+      runner = new CronRunner(store, createMockAutomationStore([schedule]));
+
+      await runner.executeSchedule(schedule);
+
+      expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({ column: "in-progress" }));
     });
 
     it("handles store.createTask() errors gracefully", async () => {
@@ -2358,3 +2398,4 @@ describe("CronRunner", () => {
     });
   });
 });
+

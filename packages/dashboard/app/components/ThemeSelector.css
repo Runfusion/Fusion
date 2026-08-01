@@ -333,6 +333,27 @@
   --swatch-sample-4: var(--dawn-swatch-sample-4);
 }
 
+.theme-swatch-sage {
+  --swatch-sample-1: var(--sage-swatch-sample-1);
+  --swatch-sample-2: var(--sage-swatch-sample-2);
+  --swatch-sample-3: var(--sage-swatch-sample-3);
+  --swatch-sample-4: var(--sage-swatch-sample-4);
+}
+
+.theme-swatch-factory-dark {
+  --swatch-sample-1: var(--factory-dark-swatch-sample-1);
+  --swatch-sample-2: var(--factory-dark-swatch-sample-2);
+  --swatch-sample-3: var(--factory-dark-swatch-sample-3);
+  --swatch-sample-4: var(--factory-dark-swatch-sample-4);
+}
+
+.theme-swatch-factory-light {
+  --swatch-sample-1: var(--factory-light-swatch-sample-1);
+  --swatch-sample-2: var(--factory-light-swatch-sample-2);
+  --swatch-sample-3: var(--factory-light-swatch-sample-3);
+  --swatch-sample-4: var(--factory-light-swatch-sample-4);
+}
+
 .theme-swatch-silver {
   --swatch-sample-1: #27272a;
   --swatch-sample-2: #3f3f46;
@@ -1179,6 +1200,27 @@
   --swatch-sample-2: var(--dawn-swatch-sample-2);
   --swatch-sample-3: var(--dawn-swatch-sample-3);
   --swatch-sample-4: var(--dawn-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-sage {
+  --swatch-sample-1: var(--sage-swatch-sample-1);
+  --swatch-sample-2: var(--sage-swatch-sample-2);
+  --swatch-sample-3: var(--sage-swatch-sample-3);
+  --swatch-sample-4: var(--sage-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-factory-dark {
+  --swatch-sample-1: var(--factory-dark-swatch-sample-1);
+  --swatch-sample-2: var(--factory-dark-swatch-sample-2);
+  --swatch-sample-3: var(--factory-dark-swatch-sample-3);
+  --swatch-sample-4: var(--factory-dark-swatch-sample-4);
+}
+
+[data-theme="light"] .theme-swatch-factory-light {
+  --swatch-sample-1: var(--factory-light-swatch-sample-1);
+  --swatch-sample-2: var(--factory-light-swatch-sample-2);
+  --swatch-sample-3: var(--factory-light-swatch-sample-3);
+  --swatch-sample-4: var(--factory-light-swatch-sample-4);
 }
 
 [data-theme="light"] .theme-swatch-silver {

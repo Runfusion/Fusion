@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
-import { AgentSemaphore } from "../concurrency.js";
 import { TriageProcessor } from "../triage.js";
 
 /*
@@ -54,7 +53,29 @@ function eligibleTodoTask(id: string): Task {
 
 interface RecordedEvent { type: string; target: string; metadata?: Record<string, unknown> }
 
+/*
+FNXC:CapacityModel 2026-07-29-18:40 (PR #2562 review):
+The card that CONSUMES the project's single agent slot. Previously an exhausted host
+semaphore forced the withhold; that gate is deleted, so the binding gate is now the
+per-project agent count and something has to be holding it.
+*/
+function runningTask(id: string): Task {
+  return {
+    id,
+    description: "already running",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-07-26T15:00:00.000Z",
+    updatedAt: "2026-07-26T15:00:00.000Z",
+  } as Task;
+}
+
 function createStore(tasks: Task[], recorded: RecordedEvent[], settings: Partial<Settings> = {}): TaskStore {
+  // The running claimant is added here so every case exhausts the one project slot.
+  tasks = [runningTask("FN-RUNNING"), ...tasks];
   return {
     getTask: vi.fn().mockImplementation(async (id: string) => {
       const task = tasks.find((candidate) => candidate.id === id);
@@ -62,7 +83,9 @@ function createStore(tasks: Task[], recorded: RecordedEvent[], settings: Partial
     }),
     listTasks: vi.fn().mockResolvedValue(tasks),
     getSettings: vi.fn().mockResolvedValue({
-      maxConcurrent: 12,
+      // FNXC:CapacityModel 2026-07-29-18:40: one slot, consumed by the in-progress
+      // row below, so planning admission is withheld by the PROJECT agent count.
+      maxConcurrent: 1,
       maxWorktrees: 4,
       pollIntervalMs: 600_000,
       groupOverlappingFiles: false,
@@ -92,9 +115,23 @@ function createStore(tasks: Task[], recorded: RecordedEvent[], settings: Partial
   } as unknown as TaskStore;
 }
 
-/** Runs one real poll pass against an exhausted host semaphore. */
-async function pollWithExhaustedSemaphore(store: TaskStore, semaphore: AgentSemaphore): Promise<TriageProcessor> {
-  const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", { semaphore });
+/*
+FNXC:CapacityModel 2026-07-29-18:40 (PR #2562 review — greptile P1):
+Drive the throttle through the PROJECT AGENT COUNT, not an exhausted host semaphore.
+
+These cases previously spent a 1-slot `AgentSemaphore` to force the withhold. That
+gate is deleted with the cross-project cap, so the poll no longer consults it and no
+throttle event was emitted — the suite exercised a limiter that no longer exists and
+would have gone quietly non-firing.
+
+The REQUIREMENT is unchanged and is what these cases still pin: when planning
+admission is withheld while eligible cards wait, the binding gate must be recorded
+durably (FN-8600 — an operator asked why a card sat "Queued to plan" for seven
+minutes and it was unanswerable after the fact). Only the gate that can bind has
+changed, so the setup exhausts `maxConcurrent` instead.
+*/
+async function pollWithExhaustedProjectCapacity(store: TaskStore): Promise<TriageProcessor> {
+  const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
   // poll() is a no-op unless the processor is running; these tests drive one pass directly rather
   // than starting the interval timer, which would make them time-dependent.
   (processor as unknown as { running: boolean }).running = true;
@@ -113,32 +150,25 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
   });
 
   it("records the binding gate when planning is withheld with eligible work", async () => {
-    const semaphore = new AgentSemaphore(1);
-    expect(semaphore.tryAcquire()).toBe(true); // host capacity fully spent
-
+    
     const store = createStore([eligibleTodoTask("FN-8600")], recorded);
-    await pollWithExhaustedSemaphore(store, semaphore);
+    await pollWithExhaustedProjectCapacity(store);
 
     const throttle = recorded.filter((event) => event.type === "task:plan-admission-throttled");
     expect(throttle).toHaveLength(1);
     // The gate the operator could not previously determine.
     expect(throttle[0].metadata).toMatchObject({
-      blockedBy: "global semaphore",
-      maxConcurrent: 12,
+      blockedBy: "running-agent cap",
+      maxConcurrent: 1,
       eligibleCount: 1,
       eligibleTaskIds: ["FN-8600"],
-      semaphoreLimit: 1,
-      semaphoreAvailableCount: 0,
     });
-    semaphore.release();
   });
 
   it("emits one row for a sustained stall instead of one per poll", async () => {
-    const semaphore = new AgentSemaphore(1);
-    expect(semaphore.tryAcquire()).toBe(true);
-
+    
     const store = createStore([eligibleTodoTask("FN-8600")], recorded);
-    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", { semaphore });
+    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
     (processor as unknown as { running: boolean }).running = true;
     const poll = (processor as unknown as { poll: () => Promise<void> }).poll.bind(processor);
     await poll();
@@ -147,7 +177,6 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(1);
-    semaphore.release();
   });
 
   /*
@@ -157,25 +186,27 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
   whole job is answering "why is THIS card queued".
   */
   it("emits again when a different card is the one stalling, even with identical counts", async () => {
-    const semaphore = new AgentSemaphore(1);
-    expect(semaphore.tryAcquire()).toBe(true);
-
+    
     const first = eligibleTodoTask("FN-8600");
     const store = createStore([first], recorded);
-    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", { semaphore });
+    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
     (processor as unknown as { running: boolean }).running = true;
     const poll = (processor as unknown as { poll: () => Promise<void> }).poll.bind(processor);
     await poll();
 
-    // Same counts, different card: A leaves the queue as C enters.
+    /*
+    Same counts, different card: A leaves the queue as C enters. The running
+    claimant must be re-supplied — this mock REPLACES the list, and without it the
+    project slot frees up, the gate stops binding and no second row is emitted
+    (which is a correct outcome for a different scenario, not this one).
+    */
     (store.listTasks as unknown as { mockResolvedValue: (v: Task[]) => void })
-      .mockResolvedValue([eligibleTodoTask("FN-8601")]);
+      .mockResolvedValue([runningTask("FN-RUNNING"), eligibleTodoTask("FN-8601")]);
     await poll();
 
     const throttle = recorded.filter((event) => event.type === "task:plan-admission-throttled");
     expect(throttle).toHaveLength(2);
     expect(throttle[1].metadata).toMatchObject({ eligibleTaskIds: ["FN-8601"] });
-    semaphore.release();
   });
 
   /*
@@ -185,9 +216,7 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
   original unanswerable-stall problem.
   */
   it("retries the audit write on the next poll when the first write fails", async () => {
-    const semaphore = new AgentSemaphore(1);
-    expect(semaphore.tryAcquire()).toBe(true);
-
+    
     const store = createStore([eligibleTodoTask("FN-8600")], recorded);
     let attempts = 0;
     (store as unknown as { recordRunAuditEvent: unknown }).recordRunAuditEvent = vi.fn()
@@ -197,7 +226,7 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
         recorded.push({ type: event.mutationType, target: event.target, metadata: event.metadata });
       });
 
-    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", { semaphore });
+    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
     (processor as unknown as { running: boolean }).running = true;
     const poll = (processor as unknown as { poll: () => Promise<void> }).poll.bind(processor);
 
@@ -209,28 +238,42 @@ describe("plan admission throttle run-audit (FN-8600)", () => {
     await poll();
     await new Promise((resolve) => setImmediate(resolve));
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(1);
-    semaphore.release();
   });
 
   it("stays silent when planning has capacity", async () => {
-    const semaphore = new AgentSemaphore(4);
-    const store = createStore([], recorded);
-    await pollWithExhaustedSemaphore(store, semaphore);
+    /*
+    FNXC:PlanAdmissionThrottle 2026-07-30-11:25 (PR #2562 review — coderabbit):
+    THIS TEST PROVED THE WRONG SILENCE. It used `createStore([])`, which seeds only
+    the running claimant and NO eligible card — so it asserted that an EMPTY QUEUE
+    emits no throttle, which is true of any implementation, including one that emits
+    a throttle on every poll where a card is waiting. The name says "has capacity";
+    the setup had no candidate for capacity to matter to.
+
+    Now the real shape: an eligible card AND room to start it. `maxConcurrent: 3`
+    against one running claimant leaves projectRoom > 0, so admission proceeds and
+    the throttle must stay silent for the reason the name claims.
+
+    `specifyTask` is stubbed because admission now actually dispatches — without it
+    the test would drive a real planning session.
+    */
+    const store = createStore([eligibleTodoTask("FN-8600-ROOM")], recorded, { maxConcurrent: 3 });
+    const processor = new TriageProcessor(store, "/tmp/fn-8600-throttle-root", {});
+    vi.spyOn(processor, "specifyTask").mockResolvedValue(undefined);
+    (processor as unknown as { running: boolean }).running = true;
+    await (processor as unknown as { poll: () => Promise<void> }).poll();
+    await new Promise((resolve) => setImmediate(resolve));
 
     expect(recorded.filter((event) => event.type === "task:plan-admission-throttled")).toHaveLength(0);
   });
 
   it("carries no prompt, title, or reason prose — ids and counts only", async () => {
-    const semaphore = new AgentSemaphore(1);
-    expect(semaphore.tryAcquire()).toBe(true);
-
+    
     const store = createStore([eligibleTodoTask("FN-8600")], recorded);
-    await pollWithExhaustedSemaphore(store, semaphore);
+    await pollWithExhaustedProjectCapacity(store);
 
     const throttle = recorded.find((event) => event.type === "task:plan-admission-throttled");
     expect(throttle).toBeDefined();
     const serialized = JSON.stringify(throttle!.metadata ?? {});
     expect(serialized).not.toContain("favorite projects");
-    semaphore.release();
   });
 });

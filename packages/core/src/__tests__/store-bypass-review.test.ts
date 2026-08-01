@@ -81,6 +81,39 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
     expect(logged).toBe(true);
   });
 
+  /*
+  FNXC:ReviewBypass 2026-07-29-09:30 (U9):
+  The case above asserts `verdict` is undefined against a fixture whose verdict is
+  ALREADY undefined, so the assertion is vacuous: deleting `delete bypassed.verdict`
+  from store.ts leaves it green. Measured by mutation — NEW-failures=0 across
+  store-bypass-review, task-merge-bypass, task-merge and legacy-adoption.
+
+  The invariant only has teeth when the failed step CARRIES a verdict. That is the
+  real risk: a reviewer said REVISE, an operator bypasses, and the verdict rides
+  forward onto a `skipped` step — so every downstream reader sees a reviewer verdict
+  attached to a step no reviewer passed. FN-7720 requires the bypass to clear it and
+  preserve the original only in the audit field.
+  */
+  it("clears a real verdict off the bypassed step and keeps it only as audit history", async () => {
+    await seedInReviewTask("FN-BYP-VERDICT", {
+      workflowStepResults: [failedStep({ verdict: "REVISE", output: "reviewer asked for changes" })],
+    });
+
+    const updated = await store().bypassFailedPreMergeReviewStep("FN-BYP-VERDICT", {
+      reason: "operator override after reviewer outage",
+      actor: "operator-2",
+    });
+
+    const result = updated.workflowStepResults?.[0];
+    expect(result?.status).toBe("skipped");
+    // The bypass must NOT carry the reviewer's verdict onto the skipped step.
+    expect(result?.verdict).toBeUndefined();
+    // ...but it must not lose it either: the audit field preserves what was bypassed.
+    expect(result?.bypassedFromVerdict).toBe("REVISE");
+    expect(result?.bypassedFromStatus).toBe("failed");
+    expect(result?.bypassedBy).toBe("operator-2");
+  });
+
   it("records a run-audit event for the bypass", async () => {
     await seedInReviewTask("FN-BYP-002", { workflowStepResults: [failedStep()] });
     await store().bypassFailedPreMergeReviewStep("FN-BYP-002", { reason: "infra failure", actor: "operator-2" });
@@ -148,5 +181,81 @@ pgDescribe("TaskStore.bypassFailedPreMergeReviewStep", () => {
       (task.workflowStepResults ?? []).filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")[0];
 
     expect(latestFailedPreMergeStep(updated)).toBeUndefined();
+  });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (PR #2709 review — greptile):
+  THE REJECTION MUST NAME THE COLUMN THE CHECK USED. The guard was converted to the resolved review
+  lane while the message still said `in-review`, so on a custom board an operator was refused and
+  then told to move the card to a column their board does not have — through both the CLI and the
+  dashboard, with nothing in the error to reveal the real target.
+
+  That is worse than an unconverted guard. An inert guard fails visibly; this one refuses CORRECTLY
+  and then misdirects, so the operator's next three attempts are all wrong for a reason the product
+  told them.
+  */
+  it("accepts a humanReview-ONLY lane, which the singular `.review` excluded", async () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (PR #2718 review — greptile):
+    `.review` is the single `mergeOrchestration` column, so a board hosting review on a `humanReview`-
+    only lane failed this guard — `TaskContextMenu` offered "Bypass failed review" (it asks by ROLE)
+    and the store refused it. The operator's only escape from a stranded failed pre-merge step returned
+    a conflict.
+
+    The BROAD set is right here because this guard refuses or permits and moves nothing; #2750
+    documents why a caller that admits and then MOVES wants the narrow lane instead.
+    */
+    const definition = await store().createWorkflowDefinition({
+      name: "human-review-bypass",
+      ir: {
+        version: "v2",
+        name: "human-review-bypass",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    await store().createTaskWithReservedId(
+      { description: "human-review bypass", column: "signoff", workflowId: definition.id } as never,
+      { taskId: "FN-HRB", applyDefaultWorkflowSteps: false },
+    );
+    await store().updateTask("FN-HRB", { workflowStepResults: [failedStep()] });
+
+    /* Passes the lane guard; any later refusal is a different gate, which is the point. */
+    await expect(
+      store().bypassFailedPreMergeReviewStep("FN-HRB", { reason: "operator override" } as never),
+    ).resolves.toBeDefined();
+  });
+
+  it("names the board's OWN review column when refusing a card that is elsewhere", async () => {
+    const definition = await store().createWorkflowDefinition({
+      name: "renamed-review",
+      ir: {
+        version: "v2",
+        name: "renamed-review",
+        columns: [
+          { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "validating", name: "Validating", traits: [{ trait: "merge" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "backlog" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+
+    await store().createTaskWithReservedId(
+      { description: "renamed board card", column: "building", workflowId: definition.id } as never,
+      { taskId: "FN-RENAMED", applyDefaultWorkflowSteps: false },
+    );
+
+    await expect(
+      store().bypassFailedPreMergeReviewStep("FN-RENAMED", { reason: "operator override" } as never),
+    ).rejects.toThrow(/must be in 'validating'/);
   });
 });

@@ -97,22 +97,49 @@ function leaseAvailable(now: string) {
 }
 
 /**
- * Predicate: the queue row's task is still in the `in-review` column.
+ * Predicate: the queue row's task is still in a REVIEW lane.
  *
  * FNXC:MultiProjectIsolation 2026-07-10: when `projectId` is bound, the EXISTS
  * additionally requires the task to belong to this project so a project's
  * merger can only lease its OWN queue rows (merge_queue has no project_id, so
  * it is scoped transitively through its task on the shared embedded-PG cluster).
+ *
+ * FNXC:WorkflowResolvedColumns 2026-07-30-13:55 (#2819 review — greptile,
+ * "renamed entries remain unleaseable"):
+ *
+ * THE STALE SWEEP SPARED RENAMED ROWS AND THE LEASE PREDICATE THEN REFUSED THEM.
+ *
+ * The first pass fixed only `cleanupStaleMergeQueueRowsInTransaction`, so on a
+ * board whose review lane is called `signoff` the queue row survived — and then
+ * both eligibility predicates (targeted acquire and queue-head acquire) still
+ * demanded the literal `in-review`, matched nothing, and the row sat forever.
+ * Sparing a row you will never lease is worse than deleting it: deletion at
+ * least surfaces as an audit event, while this is a silent permanent stall.
+ *
+ * THE LANES ARE INJECTED INTO THE SQL rather than verified after the fact. The
+ * WHERE clause here is also the concurrency control — the acquire re-checks it
+ * inside `UPDATE ... WHERE` so a racing worker updates zero rows. Verifying the
+ * column in JS between SELECT and UPDATE would move that check outside the
+ * atomic step and let two workers lease the same task. `reviewColumns` is
+ * therefore a resolved set the caller supplies, and it goes into the predicate.
  */
-function taskStillInReview(projectId?: string) {
+function taskStillInReview(projectId?: string, reviewColumns?: ReadonlySet<string>) {
   const projectClause = projectId
     ? sql`AND ${schema.project.tasks.projectId} = ${projectId}`
     : sql``;
+  const lanes = [...(reviewColumns ?? new Set(["in-review"]))];
+  /*
+  An EMPTY resolved set means the board declares no review lane at all. `inArray` with no
+  values is not portable across drizzle versions (it has both thrown and folded to FALSE),
+  so the FALSE is written explicitly. Nothing can be enqueued on such a board either — the
+  enqueue guard resolves the same set — so an unleaseable queue there is not a new stall.
+  */
+  const laneClause = lanes.length > 0 ? inArray(schema.project.tasks.column, lanes) : sql`FALSE`;
   return sql<boolean>`
     EXISTS (
       SELECT 1 FROM ${schema.project.tasks}
       WHERE ${schema.project.tasks.id} = ${schema.project.mergeQueue.taskId}
-        AND ${schema.project.tasks.column} = 'in-review'
+        AND ${laneClause}
         ${projectClause}
     )
   `;
@@ -143,11 +170,24 @@ function taskStillInReview(projectId?: string) {
  * @param audit Optional audit context (agentId/runId) for the enqueue event.
  * @returns The enqueued (or pre-existing) queue entry.
  */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
+`reviewColumns` is the caller's RESOLVED review set. It has to come in rather than be resolved here:
+this runs inside an open transaction with only a `tx` handle — there is no store to resolve from, and
+adding a workflow read inside the merge-queue transaction would extend its lock window for a question
+the caller has already answered.
+
+SYMMETRY IS THE POINT. Enqueue admits a card from its review lane; `dequeueMergeQueueOnColumnExitInTransaction`
+removes it when the card leaves. If only one of the two resolved, a renamed board would either enqueue
+cards nothing ever dequeues (a queue that fills and never drains) or dequeue against a queue nothing
+ever filled. Both take the same set, from the same caller, in the same transaction.
+*/
 export async function enqueueMergeQueueInTransaction(
   tx: DbTransaction,
   taskId: string,
   opts: MergeQueueEnqueueOptions = {},
   audit?: { agentId?: string; runId?: string },
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<MergeQueueEntry> {
   // Read the task row for the column check + priority.
   const taskRows = await tx
@@ -159,7 +199,7 @@ export async function enqueueMergeQueueInTransaction(
   if (!taskRow) {
     throw new MergeQueueTaskNotFoundError(taskId);
   }
-  if (taskRow.column !== "in-review") {
+  if (!(reviewColumns ?? new Set(["in-review"])).has(taskRow.column)) {
     // Record the rejection inside the transaction so it rolls back with the
     // caller's write if the caller aborts.
     await recordRunAuditEventWithinTransaction(tx, {
@@ -228,9 +268,19 @@ export async function enqueueMergeQueue(
   taskId: string,
   opts: MergeQueueEnqueueOptions = {},
   audit?: { agentId?: string; runId?: string },
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-02:10:
+  The board's review columns, forwarded to the in-transaction helper. Omitted, that helper falls back
+  to `new Set(["in-review"])` and REJECTS a task resting in a renamed review column — it is not a
+  quiet legacy-id degradation like most of these seams, it records `mergeQueue:enqueue-rejected` and
+  throws `MergeQueueInvalidColumnError`. Both `moves.ts` callers already resolve and pass this; this
+  wrapper did not, so the automatic handoff-to-review path worked on a renamed board while the manual
+  and recovery re-enqueue paths through `store.enqueueMergeQueue` (merger.ts, self-healing.ts) threw.
+  */
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<MergeQueueEntry> {
   return layer.transactionImmediate((tx) =>
-    enqueueMergeQueueInTransaction(tx, taskId, opts, audit),
+    enqueueMergeQueueInTransaction(tx, taskId, opts, audit, reviewColumns),
   );
 }
 
@@ -247,6 +297,13 @@ export async function enqueueMergeQueue(
 export async function cleanupStaleMergeQueueRowsInTransaction(
   tx: DbTransaction,
   now: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  Per-task review lanes, supplied by the caller. This runs inside an open transaction with only a
+  `tx` handle, so it cannot resolve a workflow itself — and the lanes are genuinely per task, because
+  queued tasks can run different workflows.
+  */
+  resolveReviewColumnsFor?: (taskId: string) => Promise<ReadonlySet<string>>,
 ): Promise<void> {
   const staleRows = await tx
     .select({
@@ -264,7 +321,42 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
       ),
     );
 
-  if (staleRows.length === 0) return;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-01:20 (#2819 review — greptile):
+  THE SQL PREDICATE IS A SUPERSET NOW, NOT THE VERDICT.
+
+  `column IS DISTINCT FROM 'in-review'` is evaluated by PostgreSQL, which cannot know a task's
+  workflow — so on a board whose review lane is named anything else, EVERY queued row matched and was
+  deleted at the start of lease acquisition. The merge queue filled (enqueue resolves lanes) and was
+  then emptied a moment later by this sweep, so nothing was ever merged and no error was raised: the
+  audit rows even claimed `reason: "not-in-review"` for tasks sitting in their board's review lane.
+
+  Deleting is the destructive direction, so the SQL now only proposes CANDIDATES and each one is
+  verified against its own workflow before removal. Rows whose task is gone are stale regardless and
+  skip the check.
+  */
+  const verifiedStale = resolveReviewColumnsFor === undefined
+    ? staleRows
+    : (await Promise.all(staleRows.map(async (row) => {
+        if (row.column === null) return row;
+        const reviewLanes = await resolveReviewColumnsFor(row.taskId).catch(() => undefined);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-15:10 (#2819 review — greptile,
+        "resolution failures delete valid rows"):
+        A FAILED RESOLUTION SPARES THE ROW. The first pass returned the row here, i.e. deleted it —
+        which reintroduced the exact bug this sweep fix exists to remove, just behind a narrower
+        trigger: any transient workflow-read failure silently dropped a valid card out of the merge
+        queue, and the audit event claimed `reason: "not-in-review"` for a task sitting in review.
+
+        Sparing is safe in a way deleting is not. The lease predicates resolve the same lanes, so a
+        row spared here but genuinely stale is still refused a lease, and the next acquire re-runs
+        this sweep and removes it once resolution succeeds. Deleting is unrecoverable.
+        */
+        if (reviewLanes === undefined) return undefined;
+        return reviewLanes.has(row.column) ? undefined : row;
+      }))).filter((row): row is typeof staleRows[number] => row !== undefined);
+
+  if (verifiedStale.length === 0) return;
 
   // FNXC:TaskStoreMergeCoordination 2026-06-26-10:10:
   // Batch the cleanup to avoid an N+1: previously each stale row cost 2
@@ -273,12 +365,12 @@ export async function cleanupStaleMergeQueueRowsInTransaction(
   // acquired. Now the deletes are a single bulk DELETE ... WHERE IN (...) and
   // the audit events are a single bulk INSERT ... VALUES (...). Each metadata
   // payload is still per-row (the column/lease context differs per task).
-  const staleTaskIds = staleRows.map((row) => row.taskId);
+  const staleTaskIds = verifiedStale.map((row) => row.taskId);
   await tx
     .delete(schema.project.mergeQueue)
     .where(inArray(schema.project.mergeQueue.taskId, staleTaskIds));
 
-  const auditValues = staleRows.map((row) => ({
+  const auditValues = verifiedStale.map((row) => ({
     id: randomUUID(),
     timestamp: now,
     taskId: row.taskId,
@@ -340,20 +432,37 @@ export async function acquireMergeQueueLease(
   // must be scoped to this project so a project's merger can never lease (and
   // then merge in the wrong repo) another project's in-review task.
   const projectId = layer.projectId;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-14:05 (#2819 review):
+  One resolution per task id per acquire, memoised, because the same id is asked
+  about twice on the targeted path (candidate SELECT, then the atomic UPDATE) and
+  the two MUST agree — resolving twice and getting different answers would let the
+  UPDATE's predicate diverge from the one that admitted the candidate.
+  */
+  const laneCache = new Map<string, ReadonlySet<string>>();
+  const reviewLanesFor = async (taskId: string): Promise<ReadonlySet<string> | undefined> => {
+    if (!opts.resolveReviewColumnsFor) return undefined;
+    const cached = laneCache.get(taskId);
+    if (cached) return cached;
+    const resolved = await opts.resolveReviewColumnsFor(taskId).catch(() => undefined);
+    if (resolved) laneCache.set(taskId, resolved);
+    return resolved;
+  };
   return layer.transactionImmediate(async (tx) => {
     const now = opts.now ?? new Date().toISOString();
     const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
-    await cleanupStaleMergeQueueRowsInTransaction(tx, now);
+    await cleanupStaleMergeQueueRowsInTransaction(tx, now, opts.resolveReviewColumnsFor);
 
     if (opts.targetTaskId) {
       // ── Targeted acquire: lease this specific task or fail ──────────────
+      const targetLanes = await reviewLanesFor(opts.targetTaskId);
       const candidateRows = await tx
         .select({ taskId: schema.project.mergeQueue.taskId })
         .from(schema.project.mergeQueue)
         .where(
           and(
             eq(schema.project.mergeQueue.taskId, opts.targetTaskId),
-            taskStillInReview(projectId),
+            taskStillInReview(projectId, targetLanes),
             leaseAvailable(now),
           ),
         )
@@ -406,7 +515,7 @@ export async function acquireMergeQueueLease(
         .where(
           and(
             eq(schema.project.mergeQueue.taskId, opts.targetTaskId),
-            taskStillInReview(projectId),
+            taskStillInReview(projectId, targetLanes),
             leaseAvailable(now),
           ),
         )
@@ -435,10 +544,27 @@ export async function acquireMergeQueueLease(
       return entry;
     }
 
-    // ── Queue-head acquire: lease the highest-priority, earliest available row ──
-    // Select the candidate first (priority-first, FIFO within priority), then
-    // UPDATE it while re-checking availability to avoid a lost-update race.
-    const headRows = await tx
+    /*
+    ── Queue-head acquire: lease the highest-priority, earliest available row ──
+
+    FNXC:WorkflowResolvedColumns 2026-07-30-14:20 (#2819 review):
+    THE HEAD SELECT CANNOT NAME THE LANES, BECAUSE IT DOES NOT YET KNOW THE TASK.
+    Each queued row can run a DIFFERENT workflow, so "is this row in review?" has a
+    different answer per row and the resolver is keyed by task id. The select is
+    therefore a CANDIDATE SUPERSET — ordered exactly as before — and each candidate
+    is resolved in turn until one qualifies. The chosen row's own resolved lanes then
+    go into the UPDATE's WHERE, so the atomic re-check is preserved: the row is only
+    leased if it is STILL both available and in one of ITS review lanes.
+
+    Without a resolver (callers that cannot resolve workflows) the predicate stays
+    the literal and the loop stops at the first candidate — the previous behaviour.
+
+    The candidate scan is bounded. The stale sweep above has already deleted rows
+    whose task left review, so under normal operation the first candidate qualifies;
+    the bound only caps the pathological case where the sweep could not resolve.
+    */
+    const HEAD_CANDIDATE_SCAN_LIMIT = 25;
+    const candidateHeadRows = await tx
       .select({ taskId: schema.project.mergeQueue.taskId })
       .from(schema.project.mergeQueue)
       .innerJoin(
@@ -447,15 +573,35 @@ export async function acquireMergeQueueLease(
       )
       .where(
         and(
-          eq(schema.project.tasks.column, "in-review"),
           // FNXC:MultiProjectIsolation 2026-07-10: only this project's tasks.
           taskProjectScope(layer),
           leaseAvailable(now),
         ),
       )
       .orderBy(MERGE_QUEUE_PRIORITY_RANK, schema.project.mergeQueue.enqueuedAt)
-      .limit(1);
-    const head = headRows[0];
+      .limit(opts.resolveReviewColumnsFor ? HEAD_CANDIDATE_SCAN_LIMIT : 1);
+
+    let head: { taskId: string } | undefined;
+    let headLanes: ReadonlySet<string> | undefined;
+    for (const candidate of candidateHeadRows) {
+      const lanes = await reviewLanesFor(candidate.taskId);
+      const eligible = await tx
+        .select({ taskId: schema.project.mergeQueue.taskId })
+        .from(schema.project.mergeQueue)
+        .where(
+          and(
+            eq(schema.project.mergeQueue.taskId, candidate.taskId),
+            taskStillInReview(projectId, lanes),
+            leaseAvailable(now),
+          ),
+        )
+        .limit(1);
+      if (eligible.length > 0) {
+        head = candidate;
+        headLanes = lanes;
+        break;
+      }
+    }
     if (!head) {
       return null;
     }
@@ -470,6 +616,7 @@ export async function acquireMergeQueueLease(
       .where(
         and(
           eq(schema.project.mergeQueue.taskId, head.taskId),
+          taskStillInReview(projectId, headLanes),
           leaseAvailable(now),
         ),
       )
@@ -738,8 +885,16 @@ export async function dequeueMergeQueueOnColumnExitInTransaction(
   previousColumn: string,
   nextColumn: string,
   now: string,
+  reviewColumns?: ReadonlySet<string>,
 ): Promise<void> {
-  if (previousColumn !== "in-review" || nextColumn === "in-review") {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-07:40 (batch-core):
+  The dequeue half of the pair — see `enqueueMergeQueueInTransaction` for why the set is passed in and
+  why the two must share it. "Left the review lane" is a MEMBERSHIP question on both sides: a board
+  may declare a merge lane and a separate sign-off lane, and moving between them is not an exit.
+  */
+  const review = reviewColumns ?? new Set(["in-review"]);
+  if (!review.has(previousColumn) || review.has(nextColumn)) {
     return;
   }
 

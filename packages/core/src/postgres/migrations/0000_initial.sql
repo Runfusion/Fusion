@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   paused integer DEFAULT 0,
   user_paused integer DEFAULT 0,
   paused_reason text,
-  -- FNXC:TaskWedgeNotifications 2026-10-19-00:00: Fresh PostgreSQL baselines must include the durable terminal-wedge episode field that upgrade migration 0033 adds to existing databases.
+  -- FNXC:TaskWedgeNotifications 2026-07-22-00:00: Fresh PostgreSQL baselines must include the durable terminal-wedge episode field that upgrade migration 0033 adds to existing databases.
   wedge_notification text,
   base_branch text,
   branch text,
@@ -872,6 +872,8 @@ CREATE TABLE IF NOT EXISTS project.missions (
   branch_strategy text,
   auto_advance integer DEFAULT 0,
   auto_merge integer,
+  -- FNXC:MissionTaskPrefix 2026-07-26-12:00: optional per-mission ticket prefix; NULL inherits project settings.taskPrefix
+  task_prefix text,
   autopilot_enabled integer NOT NULL DEFAULT 0,
   autopilot_state text NOT NULL DEFAULT 'inactive',
   last_autopilot_activity_at text,

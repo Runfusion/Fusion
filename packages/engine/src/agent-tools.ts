@@ -273,6 +273,66 @@ export const taskPromoteParams = Type.Object({
   ),
 });
 
+export const taskArchiveParams = Type.Object({
+  id: Type.String({ description: "Task ID to archive from any live column (e.g. FN-001)." }),
+  removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before archiving, so a task still referenced as a lineage parent can be archived." })),
+});
+
+export const taskDeleteParams = Type.Object({
+  id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
+  allowResurrection: Type.Optional(Type.Boolean({ description: "When true, mark this tombstone as explicitly reusable for future recreation." })),
+  removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references before deleting." })),
+});
+
+export const taskUnarchiveParams = Type.Object({
+  id: Type.String({ description: "Task ID to unarchive (e.g. FN-001). Must be in 'archived' column." }),
+});
+
+export const taskRetryParams = Type.Object({
+  id: Type.String({ description: "Task ID to retry (e.g. FN-001)." }),
+});
+
+export const taskPauseParams = Type.Object({
+  id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+});
+
+export const taskUnpauseParams = Type.Object({
+  id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+});
+
+export const taskDuplicateParams = Type.Object({
+  id: Type.String({ description: "Source task ID to duplicate (e.g. FN-001)" }),
+});
+
+export const taskMergeParams = Type.Object({
+  task_id: Type.String({ description: "The task ID to merge into the current task." }),
+});
+
+export const taskAddDepParams = Type.Object({
+  task_id: Type.String({ description: "The ID of the task to depend on (e.g. \"KB-001\")" }),
+  confirm: Type.Optional(Type.Boolean({ description: "Set to true to confirm adding the dependency. Required because adding a dependency to an in-progress task will stop execution and discard current work." })),
+});
+
+export const STEP_STATUSES = ["pending", "in-progress", "done", "skipped"] as const;
+
+export const taskUpdateParams = Type.Object({
+  step: Type.Optional(Type.Number({ description: "Step number (0-indexed; matches the `### Step N:` numbers in PROMPT.md — Step 0 is Preflight). Omit when updating only custom_fields/dependencies." })),
+  status: Type.Optional(Type.Union(
+    STEP_STATUSES.map((s) => Type.Literal(s)),
+    { description: "New status: pending, in-progress, done, or skipped. Required when step is set." },
+  )),
+  dependencies: Type.Optional(Type.Array(Type.String(), {
+    description: "Optional task dependency array. Replaces existing dependencies. Pass ['FN-001', 'FN-002'] to set dependencies. Pass [] to clear all dependencies. Omit parameter to preserve existing dependencies.",
+  })),
+  custom_fields: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {
+    description:
+      "Optional patch of workflow-defined custom field values, keyed by field id. " +
+      "Values are validated against the task's workflow field schema (type/enum membership); " +
+      "pass null for a field to clear it. Rejected writes return the offending field id and reason. " +
+      "Only fields declared by the task's workflow may be written.",
+  })),
+});
+
 export const workflowCreateParams = Type.Object({
   name: Type.String({ description: "Workflow name (required, non-empty)." }),
   description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
@@ -1183,6 +1243,14 @@ async function findDefinedFeatureBootstrapDuplicate(
   if (!sourceAgentId && !sourceParentTaskId) return undefined;
   const candidates = await store.listTasks({ slim: true, includeArchived: true, includeDeleted: true });
   const byId = new Map(candidates.map((task) => [task.id, task]));
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+  Resolved AHEAD of the synchronous `flatMap` below, which cannot await. NOT the query-filter class: this
+  query passes `includeArchived: true`, so the predicate inside the callback is the ONLY archived guard on
+  this path — on a renamed archive lane an archived sibling became a bootstrap canonical, and
+  `claimDefinedFeatureTask` then rejects the non-live row, so the claim fails outright.
+  */
+  const isArchivedCandidate = await resolveArchivedColumnsForTasks(store, candidates);
   const matches = findSameAgentDuplicates({
     title: input.title,
     description: input.description,
@@ -1195,7 +1263,7 @@ async function findDefinedFeatureBootstrapDuplicate(
     task boundary. An archived sibling cannot be a bootstrap canonical because
     claimDefinedFeatureTask rejects non-live task rows.
     */
-    if (Number.isNaN(createdAt) || task.deletedAt || task.column === "archived") return [];
+    if (Number.isNaN(createdAt) || task.deletedAt || isArchivedCandidate(task)) return [];
     return [{
       id: task.id,
       title: task.title ?? "",
@@ -1225,6 +1293,67 @@ async function carryCanonicalTaskRouting(
     task = await store.moveTask(task.id, input.column);
   }
   return task;
+}
+
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-23:05 (batch-engine — the agent tools listed finished cards as active):
+`fn_task_list` describes itself as "list active tasks that aren't done or archived", and `fn_task_search`
+offers `includeDone: false`. Both filtered with `task.column !== "done"`, so on a board whose complete lane
+is renamed a FINISHED card came back as active — to an AGENT, which then reasons and acts on it as
+outstanding work. `includeArchived: false` is handled by the query, but "done" was only ever a TS predicate.
+
+MEMBERSHIP over the complete AND archived roles, unioned with the legacy pair: `resolveWorkflowIrForTask`
+returns the BUILT-IN IR for a missing or corrupt workflow rather than throwing, so without the union a
+degraded renamed board would resolve a terminal set that excludes its own terminal lane and the filter
+would go inert.
+
+ONE CACHE per call, so a list spanning three workflows reads three IRs rather than one per task.
+*/
+export async function resolveTerminalColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const terminalByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (terminalByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["done", "archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) {
+        for (const id of fusionCore.columnsWithFlag(ir, "complete")) columns.add(id);
+        for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+      }
+    } catch { /* degraded: legacy pair only */ }
+    terminalByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
+}
+
+/**
+ * MEMBERSHIP over the `archived` role for a fixed task set, unioned with the legacy id.
+ *
+ * Split from `resolveTerminalColumnsForTasks` rather than parameterised: the two callers ask genuinely
+ * different questions — "is this finished?" (complete OR archived) versus "is this archived?" — and
+ * collapsing them would make an archived-only guard also reject completed rows.
+ */
+async function resolveArchivedColumnsForTasks(
+  store: TaskStore,
+  tasks: readonly Task[],
+): Promise<(task: Task) => boolean> {
+  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
+  const archivedByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const task of tasks) {
+    if (archivedByTaskId.has(task.id)) continue;
+    const columns = new Set<string>(["archived"]);
+    try {
+      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
+      if (ir) for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    archivedByTaskId.set(task.id, columns);
+  }
+  return (task: Task) => archivedByTaskId.get(task.id)?.has(task.column) === true;
 }
 
 export async function createAgentTask(
@@ -1279,11 +1408,19 @@ export async function createAgentTask(
       try {
         const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
         const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-        const candidates = (await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
+        const searched = await store.searchTasks(crossParentDiagnosticClaim.searchTerm, {
           slim: true,
           includeArchived: false,
-        }))
-          .filter((candidate) => candidate.column !== "done" && candidate.column !== "archived")
+        });
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-10:05 (batch-engine tail):
+        On a renamed complete lane a FINISHED diagnostic card passed this filter, so the dedup guard
+        adopted it as canonical and returned `wasDuplicate: true` — silently absorbing new diagnostic
+        work into a task nobody is working on. Same shape as the eval-followup dedup defect.
+        */
+        const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, searched);
+        const candidates = searched
+          .filter((candidate) => !isTerminalCandidate(candidate))
           .filter((candidate) => Date.parse(candidate.createdAt) >= cutoffMs)
           .filter((candidate) => !acknowledged.has(candidate.id))
           .filter((candidate) => computeCrossParentDiagnosticClaimId({
@@ -1642,7 +1779,8 @@ export function createTaskListTool(store: TaskStore): ToolDefinition {
     parameters: taskListParams,
     execute: async () => {
       const tasks = await store.listTasks({ slim: true, includeArchived: false });
-      const active = tasks.filter((task) => task.column !== "done");
+      const isTerminal = await resolveTerminalColumnsForTasks(store, tasks);
+      const active = tasks.filter((task) => !isTerminal(task));
       const lines = active.map(formatTaskSummaryLine);
       return {
         content: [{ type: "text" as const, text: formatTaskReadLines(lines, "No active tasks.") }],
@@ -1675,7 +1813,8 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
         limit,
       });
       const includeDone = params.includeDone ?? true;
-      const filtered = includeDone ? results : results.filter((task) => task.column !== "done");
+      const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
+      const filtered = includeDone ? results : results.filter((task) => !isTerminalResult!(task));
       const lines = filtered.map(formatTaskSummaryLine);
       const text = formatTaskReadLines(
         lines.length > 0 ? [`Search results for "${query}" (${filtered.length}):`, ...lines] : [],
@@ -2871,6 +3010,30 @@ export function createWorkflowSelectTool(store: TaskStore, currentTaskId: string
         };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
+        /*
+        FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+        TRANSLATE the switch re-home failure so the agent gets an actionable, retryable
+        result instead of an opaque message. `selectionCommitted` is the field that
+        matters: false means nothing was written and the task is intact (destination
+        column full, caught before any commit) so the agent can make room and retry;
+        true means the selection committed and the re-home then lost a race, so the
+        task is INCONSISTENT and the agent must not treat the switch as done.
+        */
+        if (err?.name === "WorkflowSwitchRehomeFailedError") {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${err.message}` }],
+            details: {
+              code: "workflow-switch-rehome-failed",
+              taskId: err.taskId,
+              workflowId: err.workflowId,
+              fromColumn: err.fromColumn,
+              intendedColumn: err.intendedColumn,
+              selectionCommitted: err.committed === true,
+              ...(err.reason !== undefined ? { reason: err.reason } : {}),
+            },
+            isError: true,
+          };
+        }
         return {
           content: [{ type: "text" as const, text: `ERROR: Failed to select workflow: ${err?.message ?? err}` }],
           details: {},
@@ -2945,6 +3108,293 @@ export function createTaskPromoteTool(store: TaskStore, currentTaskId: string): 
           details: {},
           isError: true,
         };
+      }
+    },
+  };
+}
+
+/*
+FNXC:ChatTaskMutationTools 2026-07-26-12:00:
+Chat permission-parity (#2376) adds these lifecycle tools so permanent-agent chat can archive/delete/retry/etc under the same task_agent_mutation gate as heartbeat/executor.
+Keep catch blocks typed as unknown (no-explicit-any) and surface err.message via instanceof — the PR lint gate fails bare `any` here even though older factories still use the disable-comment pattern.
+*/
+function toolErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function createTaskArchiveTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_archive",
+    label: "Archive Task",
+    description:
+      "Archive a task from any live column (move to archived). " +
+      "Archived tasks are preserved for historical reference but moved out of the main board view. " +
+      "If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed.",
+    parameters: taskArchiveParams,
+    execute: async (_id: string, params: Static<typeof taskArchiveParams>) => {
+      try {
+        const task = await store.archiveTask(params.id, {
+          removeLineageReferences: params.removeLineageReferences === true,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Archived ${task.id} → ${task.column}` }],
+          details: { taskId: task.id, column: task.column },
+        };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to archive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUnarchiveTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_unarchive",
+    label: "Unarchive Task",
+    description:
+      "Unarchive an archived task (move from archived → its restore column). " +
+      "Restores to the pre-archive column when available, with active execution columns downgraded to todo.",
+    parameters: taskUnarchiveParams,
+    execute: async (_id: string, params: Static<typeof taskUnarchiveParams>) => {
+      try {
+        const task = await store.unarchiveTask(params.id);
+        return {
+          content: [{ type: "text" as const, text: `Unarchived ${task.id} → ${task.column}` }],
+          details: { taskId: task.id, column: task.column },
+        };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unarchive task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskDeleteTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_delete",
+    label: "Delete Task",
+    description:
+      "Soft-delete a task from active Fusion board views. " +
+      "The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. " +
+      "If the task is still referenced as a lineage parent by another task, deletion is rejected unless removeLineageReferences:true is passed.",
+    parameters: taskDeleteParams,
+    execute: async (_id: string, params: Static<typeof taskDeleteParams>) => {
+      try {
+        const task = await store.deleteTask(params.id, {
+          allowResurrection: params.allowResurrection === true,
+          removeLineageReferences: params.removeLineageReferences === true,
+          auditContext: { agentId: "chat", runId: `chat-delete-${params.id}-${Date.now()}`, taskId: params.id },
+        });
+        return { content: [{ type: "text" as const, text: `Deleted ${task.id}` }], details: { taskId: task.id } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to delete task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskRetryTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_retry",
+    label: "Retry Task",
+    description: "Retry a failed task. Clears failure state and re-queues the task for execution.",
+    parameters: taskRetryParams,
+    execute: async (_id: string, params: Static<typeof taskRetryParams>) => {
+      try {
+        const task = await store.getTask(params.id);
+        if (task.status !== "failed" && task.status !== "stuck-killed") {
+          return { content: [{ type: "text" as const, text: `Task ${params.id} is not in a retryable state (status: ${task.status || "none"})` }], details: { taskId: params.id, currentStatus: task.status }, isError: true };
+        }
+        await store.updateTask(params.id, { status: null, error: null });
+        /*
+        FNXC:TaskRetry 2026-07-31-23:59 (review finding on #3152 — the move resolved, the REPORT did not):
+        The rebound target is resolved once and reused for the move, the log line, the response text
+        and `details.newColumn`. Converting only the `moveTask` argument left three places still
+        naming `"todo"`, so on a renamed board the card correctly landed in (say) `backlog` while the
+        operator and the task log were both told it went to `todo` — a lie that is worse than the
+        original literal, because the original at least agreed with itself.
+
+        `details.newColumn` is the one that travels: it is machine-readable output other tooling can
+        act on, so a wrong value there is not merely cosmetic.
+        */
+        const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+        await store.moveTask(params.id, retryTarget);
+        await store.logEntry(params.id, "Retry requested via chat tool", `Task reset to ${retryTarget} for retry`);
+        return { content: [{ type: "text" as const, text: `Retried ${params.id} → ${retryTarget}` }], details: { taskId: params.id, newColumn: retryTarget } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to retry task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskPauseTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_pause",
+    label: "Pause Task",
+    description: "Pause an active task so the executor will not pick it up on the next heartbeat.",
+    parameters: taskPauseParams,
+    execute: async (_id: string, params: Static<typeof taskPauseParams>) => {
+      try {
+        const task = await store.pauseTask(params.id, true);
+        return { content: [{ type: "text" as const, text: `Paused ${task.id}` }], details: { taskId: task.id, column: task.column } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to pause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUnpauseTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_unpause",
+    label: "Unpause Task",
+    description: "Resume a previously paused task so the executor can pick it up again.",
+    parameters: taskUnpauseParams,
+    execute: async (_id: string, params: Static<typeof taskUnpauseParams>) => {
+      try {
+        const task = await store.pauseTask(params.id, false);
+        return { content: [{ type: "text" as const, text: `Unpaused ${task.id}` }], details: { taskId: task.id, column: task.column } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to unpause task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskDuplicateTool(store: TaskStore): ToolDefinition {
+  return {
+    name: "fn_task_duplicate",
+    label: "Duplicate Task",
+    description: "Duplicate an existing task, preserving its description, workflow, and dependencies.",
+    parameters: taskDuplicateParams,
+    execute: async (_id: string, params: Static<typeof taskDuplicateParams>) => {
+      try {
+        const task = await store.duplicateTask(params.id);
+        return { content: [{ type: "text" as const, text: `Duplicated to ${task.id}` }], details: { taskId: task.id } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to duplicate task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+/*
+FNXC:ChatTaskMutationTools 2026-07-26-12:00:
+fn_task_merge targets params.task_id only; the ambient currentTaskId arg is retained for call-site parity with other task tools but is intentionally unused (project chat passes "").
+Prefix with underscore so the lint gate does not fail on the unused parameter.
+*/
+export function createTaskMergeTool(store: TaskStore, _currentTaskId: string): ToolDefinition {
+  return {
+    name: "fn_task_merge",
+    label: "Merge Task",
+    description:
+      "Merge a task into the current/parent task. The target task is closed and its work is rolled into the parent.",
+    parameters: taskMergeParams,
+    execute: async (_id: string, params: Static<typeof taskMergeParams>) => {
+      const targetId = params.task_id?.trim();
+      if (!targetId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };
+      try {
+        const result = await store.mergeTask(targetId);
+        const mergedInto = result?.task?.id ?? targetId;
+        return { content: [{ type: "text" as const, text: `Merged ${targetId} into ${mergedInto}` }], details: { targetId, mergedInto } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to merge task: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskUpdateTool(store: TaskStore, taskId: string): ToolDefinition {
+  return {
+    name: "fn_task_update",
+    label: "Update Step / Custom Fields / Dependencies",
+    description:
+      "Update a task step status, dependencies, or workflow custom fields without leaving chat. " +
+      "Use step+status to report progress, dependencies to rewire blockers, or custom_fields to set workflow-defined fields.",
+    parameters: taskUpdateParams,
+    execute: async (_id: string, params: Static<typeof taskUpdateParams>) => {
+      try {
+        if (params.custom_fields !== undefined) {
+          const res = await store.updateTaskCustomFields(taskId, params.custom_fields);
+          if (!res.ok) {
+            const r = res.rejection;
+            return {
+              content: [{ type: "text" as const, text: `ERROR: custom field '${r.fieldId}' rejected (${r.code}): ${r.detail}` }],
+              details: { fieldId: r.fieldId, code: r.code, detail: r.detail },
+              isError: true,
+            };
+          }
+        }
+        if (params.dependencies !== undefined) {
+          if (params.dependencies.includes(taskId)) {
+            return { content: [{ type: "text" as const, text: "ERROR: self-dependency not allowed." }], details: {}, isError: true };
+          }
+          const invalidIds: string[] = [];
+          for (const depId of params.dependencies) {
+            try { await store.getTask(depId); } catch { invalidIds.push(depId); }
+          }
+          if (invalidIds.length) {
+            return { content: [{ type: "text" as const, text: `ERROR: Unknown dependency task(s): ${invalidIds.join(", ")}` }], details: {}, isError: true };
+          }
+          await store.updateTask(taskId, { dependencies: params.dependencies });
+        }
+        if (params.step !== undefined && params.status !== undefined) {
+          const task = await store.updateStep(taskId, params.step, params.status);
+          return { content: [{ type: "text" as const, text: `Updated ${taskId}: step ${params.step} → ${params.status}` }], details: { taskId: task.id, step: params.step, status: params.status } };
+        }
+        if (params.custom_fields !== undefined || params.dependencies !== undefined) {
+          return { content: [{ type: "text" as const, text: "Updated." }], details: {} };
+        }
+        return { content: [{ type: "text" as const, text: "No-op: provide step+status, dependencies, or custom_fields." }], details: {} };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: ${toolErrorMessage(err)}` }], details: {}, isError: true };
+      }
+    },
+  };
+}
+
+export function createTaskAddDepTool(store: TaskStore, taskId: string): ToolDefinition {
+  return {
+    name: "fn_task_add_dep",
+    label: "Add Task Dependency",
+    description:
+      "Add a dependency to the current task. Adding a dependency to an in-progress task will stop execution " +
+      "and discard current work. Confirm is required for in-progress tasks.",
+    parameters: taskAddDepParams,
+    execute: async (_id: string, params: Static<typeof taskAddDepParams>) => {
+      try {
+        const depId = params.task_id?.trim();
+        if (!depId) return { content: [{ type: "text" as const, text: "ERROR: task_id is required." }], details: {}, isError: true };
+        const task = await store.getTask(taskId);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-30-00:30:
+        The board's WIP lanes, not the literal. This guard is the only thing standing between an
+        operator and losing in-flight work: adding a dependency to a running task stops execution and
+        discards it, so the confirmation must fire on whatever lane that board calls "in progress".
+        Keyed on the literal it was silently skipped on every renamed board — the work is destroyed
+        with no prompt, which is the failure you cannot undo.
+
+        Same shape as the terminal-column resolution earlier in this file: seed the legacy id as the
+        floor, union the resolved trait columns, and degrade to the legacy id alone if the workflow
+        cannot be read.
+        */
+        const wipColumns = new Set<string>(["in-progress"]);
+        try {
+          const wipIr = await fusionCore.resolveWorkflowIrForTask(store, taskId);
+          if (wipIr) for (const id of fusionCore.columnsWithFlag(wipIr, "countsTowardWip")) wipColumns.add(id);
+        } catch { /* degraded: legacy id only */ }
+        if (wipColumns.has(task.column) && params.confirm !== true) {
+          return {
+            content: [{ type: "text" as const, text: "WARNING: adding a dependency to an in-progress task will stop execution and discard current work. Pass confirm:true to proceed." }],
+            details: { requiresConfirm: true, taskId },
+          };
+        }
+        if (depId === taskId) return { content: [{ type: "text" as const, text: "ERROR: cannot add self-dependency." }], details: {}, isError: true };
+        await store.updateTask(taskId, { dependencies: [...(task.dependencies || []), depId] });
+        return { content: [{ type: "text" as const, text: `Added dependency ${depId} to ${taskId}` }], details: { taskId, dependency: depId } };
+      } catch (err: unknown) {
+        return { content: [{ type: "text" as const, text: `ERROR: Failed to add dependency: ${toolErrorMessage(err)}` }], details: {}, isError: true };
       }
     },
   };
@@ -4508,9 +4958,44 @@ export function createGetAgentConfigTool(agentStore: AgentStore, callingAgentId:
   };
 }
 
-function isCallerPrivileged(caller: { id: string; role: string; reportsTo?: string | null } | null): boolean {
+/*
+FNXC:AgentProvisioningGate 2026-07-26-13:05:
+Deliberate decision: only the "ceo" role is provisioning-privileged. Top-level position
+(reportsTo == null) is NOT trust — any orphaned/imported/misconfigured top-level agent used
+to auto-bypass resolveAgentProvisioningPolicy entirely, making the deny/require-approval
+branches unreachable for it. Operator trust is expressed via
+settings.agentProvisioning.trustedAgentIds/trustedRoles, not org position. Top-level
+non-ceo agents now flow through the normal approval policy (default mode "trusted-only"
+=> require-approval).
+*/
+/*
+FNXC:AgentProvisioning 2026-07-26-18:20:
+Provisioning privilege comes from OPERATOR CONFIGURATION only — `agentProvisioning.trustedAgentIds`
+and `agentProvisioning.trustedRoles` — never from a hardcoded role name and never from org-chart
+position.
+
+Two earlier shapes were both wrong. `caller.reportsTo == null` made EVERY top-level agent privileged,
+so an agent that created a manager-less agent escalated permanently. Replacing it with
+`caller.role === "ceo"` swapped one implicit rule for a magic string: it silently grants a role that
+any agent config can claim, while an operator who genuinely wants a privileged agent has no supported
+way to say so other than naming it "ceo".
+
+Fails CLOSED: with no resolvable settings there is no privileged caller. This governs ONLY the
+org-chart escape hatch (creating/deleting agents outside your own direct reports). It is deliberately
+NOT fed to `resolveAgentProvisioningPolicy` as `isPrivileged`, because that flag short-circuits the
+policy before `alwaysApproveDelete` — a trusted caller should still route a delete through approval.
+The policy applies the same trusted-id/trusted-role rules itself, in the right order.
+*/
+function isCallerPrivileged(
+  caller: { id: string; role: string; reportsTo?: string | null } | null,
+  settings: ProjectSettings | undefined,
+): boolean {
   if (!caller) return false;
-  return caller.role === "ceo" || caller.reportsTo == null;
+  const provisioning = settings?.agentProvisioning;
+  if (!provisioning) return false;
+  if ((provisioning.trustedAgentIds ?? []).includes(caller.id)) return true;
+  const trustedRoles = (provisioning.trustedRoles ?? []).map((role) => role.toLowerCase());
+  return Boolean(caller.role) && trustedRoles.includes(caller.role.toLowerCase());
 }
 
 export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
@@ -4620,7 +5105,7 @@ export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgent
  * @param taskStore - TaskStore for task creation
  * @returns ToolDefinition for the `fn_delegate_task` tool
  */
-type AgentProvisioningToolOptions = {
+export type AgentProvisioningToolOptions = {
   hireApprovalEnabled?: boolean;
   approvalRequestStore?: ApprovalRequestStore;
   settingsProvider?: () => Promise<ProjectSettings | undefined>;
@@ -4639,7 +5124,9 @@ export function createAgentCreateTool(
     parameters: createAgentParams,
     execute: async (_id: string, params: Static<typeof createAgentParams>) => {
       const caller = await agentStore.getAgent(callingAgentId);
-      const privileged = isCallerPrivileged(caller);
+      // FNXC:AgentProvisioning 2026-07-26-18:20: settings resolve BEFORE the org-chart check because privilege is now operator-configured rather than role-derived.
+      const settings = await options?.settingsProvider?.();
+      const privileged = isCallerPrivileged(caller, settings);
       const reportsTo = params.reportsTo ?? callingAgentId;
 
       if (!privileged && reportsTo !== callingAgentId) {
@@ -4649,14 +5136,20 @@ export function createAgentCreateTool(
         };
       }
 
-      const settings = await options?.settingsProvider?.();
-      const fallbackSettings = !options?.settingsProvider && !options?.approvalRequestStore
-        ? { agentProvisioning: { approvalMode: "never" as const } }
-        : settings;
+      /*
+      FNXC:AgentProvisioningGate 2026-07-26-13:10:
+      Never synthesize approvalMode "never" when the factory receives no options. All three
+      production call sites (heartbeat idle + task lanes, executor lane) previously passed no
+      options, so the synthesized "never" disabled the provisioning gate everywhere outside
+      tests. With no settingsProvider the policy now resolves with settings undefined
+      (normalizeMode default "trusted-only"); a require-approval decision with no
+      approvalRequestStore fails CLOSED below — never silently allows.
+      */
+      // FNXC:AgentProvisioning 2026-07-26-18:20: `isPrivileged` is deliberately NOT forwarded — it short-circuits the policy ahead of `alwaysApproveDelete`. The policy re-applies trusted-id/trusted-role itself, in the correct order.
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_create",
-        caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
-        settings: fallbackSettings,
+        caller: caller ? { id: caller.id, role: caller.role } : undefined,
+        settings,
       });
       await options?.runAuditor?.database({ type: "agent:create:requested", target: callingAgentId, metadata: { policy } });
 
@@ -4757,7 +5250,9 @@ export function createAgentDeleteTool(
         };
       }
 
-      const privileged = isCallerPrivileged(caller);
+      // FNXC:AgentProvisioning 2026-07-26-18:20: operator-configured privilege; see isCallerPrivileged.
+      const deleteSettings = await options?.settingsProvider?.();
+      const privileged = isCallerPrivileged(caller, deleteSettings);
       if (!privileged && target.reportsTo !== callingAgentId) {
         return {
           content: [{ type: "text" as const, text: "ERROR: You can only delete agents that report to you" }],
@@ -4769,14 +5264,18 @@ export function createAgentDeleteTool(
         return { content: [{ type: "text" as const, text: `ERROR: Cannot delete ephemeral/runtime agent ${params.agent_id}` }], details: {} };
       }
 
-      const settings = await options?.settingsProvider?.();
-      const fallbackSettings = !options?.settingsProvider && !options?.approvalRequestStore
-        ? { agentProvisioning: { approvalMode: "never" as const } }
-        : settings;
+      /*
+      FNXC:AgentProvisioningGate 2026-07-26-13:10:
+      Same fail-closed contract as fn_agent_create: no synthesized "never" mode when options
+      are absent; settings undefined resolves to the "trusted-only" default and a
+      require-approval decision with no approvalRequestStore is DENIED below.
+      */
+      // FNXC:AgentProvisioning 2026-07-26-18:20: reuse the already-resolved settings; `isPrivileged` is not forwarded so `alwaysApproveDelete` still applies to trusted callers.
+      const settings = deleteSettings;
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_delete",
-        caller: caller ? { id: caller.id, role: caller.role, isPrivileged: privileged } : undefined,
-        settings: fallbackSettings,
+        caller: caller ? { id: caller.id, role: caller.role } : undefined,
+        settings,
       });
       await options?.runAuditor?.database({ type: "agent:delete:requested", target: target.id, metadata: { policy } });
 

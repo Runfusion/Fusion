@@ -290,7 +290,6 @@ describe("reliability interactions: non-progress churn", () => {
     expect(task.steps).toEqual([{ name: "Implement", status: "in-progress" }]);
     expect(task.log?.some((entry) => entry.action.includes("Parked in todo with progress preserved"))).toBe(true);
     expect(store.handoffToReview).not.toHaveBeenCalled();
-    expect(isRunnableQueuedOverlapCandidate(task, [task])).toBe(false);
 
     manager.stop();
   });

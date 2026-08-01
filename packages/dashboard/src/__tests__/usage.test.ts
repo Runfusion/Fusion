@@ -3819,7 +3819,7 @@ describe("usage", () => {
       expect(mockRequest).toHaveBeenCalledTimes(1);
     });
 
-    it("treats an omitted exhausted percentage as 100% used for a valid weekly CLI billing period", async () => {
+    it("keeps a healthy unmeterable CLI login authenticated when the billing percentage is omitted", async () => {
       mockReadFile.mockImplementation(async (filePath: string) => {
         if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
         return Promise.reject(new Error("File not found"));
@@ -3843,14 +3843,144 @@ describe("usage", () => {
       const grok = providers.find((provider) => provider.name === "Grok")!;
 
       expect(grok.status).toBe("ok");
+      expect(grok.windows).toEqual([]);
+      expect(grok.windows.some((window) => window.percentUsed === 100)).toBe(false);
+      expect(grok.error ?? "").not.toMatch(/auth expired/i);
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it("renders a zero-percent weekly CLI credit window", async () => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      const periodEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+      mockGrokBillingResponse(200, {
+        config: {
+          currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end: periodEnd },
+          billingPeriodEnd: periodEnd,
+          creditUsagePercent: 0,
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
       expect(grok.windows).toHaveLength(1);
       expect(grok.windows[0]).toMatchObject({
         label: "Weekly (credits)",
-        percentUsed: 100,
-        percentLeft: 0,
+        percentUsed: 0,
+        percentLeft: 100,
       });
-      expect(grok.windows[0].resetText).toContain("resets in");
-      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["not-a-number", null])("falls back without a CLI credit window for a non-numeric percentage: %j", async (creditUsagePercent) => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockGrokBillingResponse(200, {
+        config: { creditUsagePercent },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(grok.windows).toEqual([]);
+      expect(grok.error ?? "").not.toMatch(/auth expired/i);
+    });
+
+    it.each([
+      ["missing config", {}],
+      ["invalid config", { config: null }],
+      ["empty body", ""],
+    ])("keeps a CLI login authenticated for %s billing data", async (_description, body) => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockGrokBillingResponse(200, body);
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("ok");
+      expect(grok.windows).toEqual([]);
+      expect(grok.error ?? "").not.toMatch(/auth expired/i);
+    });
+
+    it("retains the Credits label for a non-weekly numeric CLI percentage", async () => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockGrokBillingResponse(200, {
+        config: {
+          currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY" },
+          creditUsagePercent: 25,
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.windows).toHaveLength(1);
+      expect(grok.windows[0]).toMatchObject({
+        label: "Credits",
+        percentUsed: 25,
+        percentLeft: 75,
+      });
+    });
+
+    it.each([401, 403])("shows CLI auth expiry only for observed billing HTTP %s without an API key", async (statusCode) => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockGrokBillingResponse(statusCode, { error: "unauthorized" });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("error");
+      expect(grok.error).toMatch(/auth expired/i);
+    });
+
+    it.each([429, 500])("reports billing HTTP %s without claiming CLI auth expired", async (statusCode) => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockGrokBillingResponse(statusCode, { error: "unavailable" });
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("error");
+      expect(grok.error).toContain(`HTTP ${statusCode}`);
+      expect(grok.error ?? "").not.toMatch(/auth expired/i);
+    });
+
+    it("reports a CLI billing transport failure without claiming auth expired", async () => {
+      mockReadFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes(".grok/auth.json")) return GROK_CLI_AUTH_JSON;
+        return Promise.reject(new Error("File not found"));
+      });
+      mockRequest.mockImplementation(() => ({
+        on: vi.fn((event: string, handler: (error: Error) => void) => {
+          if (event === "error") handler(new Error("network unavailable"));
+        }),
+        write: vi.fn(),
+        end: vi.fn(),
+      }));
+
+      const providers = await fetchAllProviderUsage();
+      const grok = providers.find((provider) => provider.name === "Grok")!;
+
+      expect(grok.status).toBe("error");
+      expect(grok.error).toContain("network unavailable");
+      expect(grok.error ?? "").not.toMatch(/auth expired/i);
     });
 
     it("falls back to the xAI API-key validity card when CLI billing fails", async () => {

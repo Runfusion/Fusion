@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore, resolveProjectColumnsForRoles} from "@fusion/core";
 import { createLogger } from "../logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
@@ -56,9 +56,48 @@ export class BacklogPressureReporter {
         return { alerted: false, reason: "invalid-config" };
       }
 
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-20:10:
+      THE QUERY, not the comparison — this reporter had no comparison to convert at all.
+
+      `listTasks({ column })` filters in the store, so on a board whose lanes are renamed both reads
+      return EMPTY and the ratio is computed as 0/0: the backlog-pressure alert never fires, on a
+      board that may be under exactly the pressure it exists to report. Nothing errors, and the
+      census never pointed here because a query filter is not a comparison.
+
+      Resolved through `resolveProjectColumnsForRoles`, which answers the PROJECT-level question a
+      read needs (there is no task in hand yet to resolve from) and always unions the legacy id, so a
+      board mid-rename still counts rows stored under the old one.
+      */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-19:10:
+      THE THIRD LANE QUESTION IN THIS REPORTER WAS STILL LITERAL. Hold and wip were resolved here;
+      "is this card's dependency finished?" was asked one method down with `dependency.column !== "done"`.
+      Two lane answers about the same board, one resolved and one not.
+
+      Consequence is a report that reads plausible and is wrong: on a renamed board EVERY dependency
+      looks unfinished, so `isRunnableCandidate` rejects every card that has one and the backlog-pressure
+      alert names only dependency-free cards as the runnable ones. The operator is told the queue is
+      blocked on nothing in particular.
+
+      MEMBERSHIP over complete ∪ archived, because a dependency that has been archived is finished too —
+      this reporter reads with `includeArchived: true` precisely so archived blockers resolve.
+      */
+      const [holdColumns, wipColumns, dependencyFinishedColumns] = await Promise.all([
+        resolveProjectColumnsForRoles(this.store, ["hold"]),
+        resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]),
+        resolveProjectColumnsForRoles(this.store, ["complete", "archived"]),
+      ]);
+      const listByColumns = async (columns: ReadonlySet<string>, slim: boolean): Promise<Task[]> => {
+        const byId = new Map<string, Task>();
+        for (const column of columns) {
+          for (const task of await this.store.listTasks({ column, slim })) byId.set(task.id, task);
+        }
+        return [...byId.values()];
+      };
       const [todoSlim, inProgressSlim] = await Promise.all([
-        this.store.listTasks({ column: "todo", slim: true }),
-        this.store.listTasks({ column: "in-progress", slim: true }),
+        listByColumns(holdColumns, true),
+        listByColumns(wipColumns, true),
       ]);
 
       const todoCount = todoSlim.length;
@@ -69,12 +108,12 @@ export class BacklogPressureReporter {
       }
 
       const [todoFull, allTasks] = await Promise.all([
-        this.store.listTasks({ column: "todo" }),
+        listByColumns(holdColumns, false),
         this.store.listTasks({ slim: true, includeArchived: true }),
       ]);
       const byId = new Map(allTasks.map((task) => [task.id, task]));
       const candidates = todoFull
-        .filter((task) => this.isRunnableCandidate(task, byId))
+        .filter((task) => this.isRunnableCandidate(task, byId, dependencyFinishedColumns))
         .sort((a, b) => {
           const pa = PRIORITY_WEIGHT[a.priority ?? "normal"];
           const pb = PRIORITY_WEIGHT[b.priority ?? "normal"];
@@ -161,7 +200,16 @@ export class BacklogPressureReporter {
     }
   }
 
-  private isRunnableCandidate(task: Task, byId: Map<string, Task>): boolean {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-19:10:
+  `finishedColumns` is REQUIRED and resolved by the caller — this predicate is sync (it runs inside
+  `Array.filter`, where an `await` would make every element pass) and its caller is async.
+
+  Required rather than optional-with-a-literal-default: an optional parameter leaves `done` in the
+  file as a silent fallback, and the next caller gets the pre-conversion answer by writing nothing.
+  `resolveProjectColumnsForRoles` seeds the legacy ids itself, so an unconverted board is unchanged.
+  */
+  private isRunnableCandidate(task: Task, byId: Map<string, Task>, finishedColumns: ReadonlySet<string>): boolean {
     if (task.paused) return false;
     if ((task.blockedBy ?? "").trim().length > 0) return false;
     if ((task.overlapBlockedBy ?? "").trim().length > 0) return false;
@@ -170,7 +218,7 @@ export class BacklogPressureReporter {
     for (const depId of task.dependencies ?? []) {
       const dependency = byId.get(depId);
       if (!dependency) continue;
-      if (dependency.column !== "done") {
+      if (!finishedColumns.has(dependency.column)) {
         return false;
       }
     }

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { TaskMoveLanes } from "./workflow-lifecycle-traits.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -102,12 +103,12 @@ import { addPrInfoImpl, addSteeringCommentImpl, archiveAllDoneImpl, cleanupStale
 import { approveCliAutonomyImpl, approveWorkflowCliCommandImpl, cleanupOrphanedMaterializedStepsImpl, consumePluginGateVerdictsImpl, getAgentLogsByTimeRangeImpl, getDatabaseHealthImpl, getDistributedTaskIdAllocatorImpl, getExperimentSessionStoreImpl, getInReviewDurationEventsImpl, getMissionStoreImpl, getIdeationStoreImpl, getPluginStoreImpl, getSecretsStoreImpl, getSettingsSyncImpl, getTaskMergedTaskIdsImpl, getTaskWorkflowSelectionImpl, getImportTranslationImpl, recordImportTranslationImpl, pruneImportTranslationsImpl, type ImportTranslationCacheKey, type ImportTranslationCacheEntry, getVerificationCacheHitImpl, getWorkflowDefinitionImpl, healthCheckImpl, importLegacyAgentLogsOnceImpl, insertWorkflowDefinitionSyncImpl, isCliAutonomyApprovedImpl, isPluginInstalledImpl, isWorkflowCliCommandApprovedImpl, listWorkflowDefinitionsImpl, materializeExplicitWorkflowStepsImpl, materializeWorkflowStepsImpl, migrateActiveArchivedTasksToArchiveDbImpl, migrateLegacyArchiveEntriesToArchiveDbImpl, nextWorkflowDefinitionIdImpl, occupantsByColumnForWorkflowImpl, parseWorkflowLayoutImpl, pruneAgentLogFilesImpl, purgeTaskWorkflowSelectionRowsImpl, readAllWorkflowDefinitionsImpl, readRawProjectSettingsImpl, recordPluginGateVerdictImpl, recordVerificationCachePassImpl, removeMaterializedSelectionImpl, resolvePluginWorkflowStepImpl, resolveTaskWorkflowIrSyncImpl, revokeCliAutonomyImpl, selectTaskWorkflowAndReconcileImpl, writeTaskWorkflowSelectionImpl, getTaskWorkflowSelectionAsyncImpl,  } from "./task-store/workflow-definitions.js";
 import { getTaskCommitAssociationsByLineageIdImpl, replaceLegacyTaskCommitAssociationsImpl } from "./task-store/task-commit-associations.js";
 import { findRecentTasksBySourceParentTaskIdImpl } from "./task-store/branch-and-pr-entities.js";
-import { addTaskCommentImpl, applyBuiltInPromptOverridesAsyncImpl, applyBuiltInPromptOverridesSyncImpl, areAllDependenciesDoneImpl, artifactStoredNameImpl, assertWorkflowIrTraitsValidImpl, clearActivityLogImpl, clearTaskWorkflowSelectionImpl, deleteTaskByIdImpl, getDefaultWorkflowIdImpl, resolveOriginWorkflowOverrideIdImpl, type TaskOriginWorkflowKind, getInsightStoreImpl, getMergeQueuedTaskIdsImpl, getMergeRequestRecordImpl, getMergeRequestRecordAsyncImpl, getResearchStoreImpl, getTaskIdFromDirImpl, getTodoStoreImpl, getWorkflowWorkItemByIdentityImpl, hasActiveTaskImpl, invalidateConfigCacheAfterMigrationImpl, isTaskIdConflictErrorImpl, listLegacyAutoMergeStampCandidatesImpl, readTaskRowFromDbImpl, recordBranchGroupMemberLandedImpl, refreshDatabaseHealthAsyncImpl, refreshDatabaseHealthImpl, resolveEffectiveWorkflowIdSyncImpl, resolveTaskCustomFieldDefsSyncImpl, resolveWorkflowBypassGuardsImpl, serializeConfigForDiskImpl, setPluginWorkflowStepTemplatesImpl, shouldSkipWorkflowMovePoliciesImpl, suppressWatcherImpl, upsertTaskWithFtsRecoveryImpl } from "./task-store/task-store-helpers.js";
+import { addTaskCommentImpl, applyBuiltInPromptOverridesAsyncImpl, applyBuiltInPromptOverridesSyncImpl, areAllDependenciesDoneImpl, artifactStoredNameImpl, assertWorkflowIrTraitsValidImpl, clearActivityLogImpl, clearTaskWorkflowSelectionImpl, deleteTaskByIdImpl, getDefaultWorkflowIdImpl, resolveOriginWorkflowOverrideIdImpl, type TaskOriginWorkflowKind, getInsightStoreImpl, getMergeQueuedTaskIdsImpl, getMergeRequestRecordImpl, getMergeRequestRecordAsyncImpl, getResearchStoreImpl, getTaskIdFromDirImpl, getTodoStoreImpl, getWorkflowWorkItemByIdentityImpl, hasActiveTaskImpl, invalidateConfigCacheAfterMigrationImpl, isTaskIdConflictErrorImpl, listLegacyAutoMergeStampCandidatesImpl, readTaskRowFromDbImpl, recordBranchGroupMemberLandedImpl, refreshDatabaseHealthAsyncImpl, refreshDatabaseHealthImpl, resolveTaskCustomFieldDefsSyncImpl, resolveWorkflowBypassGuardsImpl, serializeConfigForDiskImpl, setPluginWorkflowStepTemplatesImpl, shouldSkipWorkflowMovePoliciesImpl, suppressWatcherImpl, upsertTaskWithFtsRecoveryImpl } from "./task-store/task-store-helpers.js";
 import { getTaskSelectClauseImpl2, createTaskPersistSerializationContextImpl, getTaskPersistValuesImpl, getTaskPatchDescriptorsImpl, normalizeTaskFromDiskImpl, writeTaskJsonFileImpl, rowToPrEntityImpl, generatePrEntityIdImpl, readTaskForMoveImpl, rowToMergeQueueEntryImpl, rowToMergeRequestRecordImpl, rowToCompletionHandoffMarkerImpl, rowToWorkflowWorkItemImpl, rowToRunAuditEventImpl } from "./task-store/task-row-mappers.js";
-import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, evacuateCustomColumnsToLegacyImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
+import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl, getSoftDeletedWriteConflictImpl, readTaskJsonImpl, writeConfigImpl, _maybeAutoArchiveSameAgentDuplicateBackendImpl, updateBranchGroupImpl, updatePrEntityImpl, listTasksForGithubTrackingReconcileImpl, listTasksForGitlabTrackingReconcileImpl, renewCheckoutLeaseImpl, updateTaskAtomicImpl, resolveTaskWedgeNotificationEpisodeImpl, getWorkflowPromptOverridesImpl, updateWorkflowSettingValuesImpl, rollbackConfigurationImpl, cancelActiveWorkflowWorkItemsForTaskImpl, setCompletionHandoffAcceptedMarkerImpl, reconcileLegacyAutoMergeStampsImpl, recoverExpiredMergeQueueLeasesImpl, rewriteDependentsForRemovalImpl, cleanupBranchForTaskImpl, addAttachmentImpl, deleteAttachmentImpl, registerArtifactImpl, updatePrInfoImpl, unlinkGithubIssueImpl, cleanupArchivedTasksImpl, generatePromptFromArchiveEntryImpl, listWorkflowOccupantTaskIdsImpl, listApprovedCliAutonomyAdaptersImpl, closeImpl, getActivityLogImpl } from "./task-store/task-mutation-ops.js";
 import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWithAuditImpl, duplicateTaskImpl, listStrandedRefinementsImpl, tryClaimCheckoutImpl, evaluateWorkflowMovePoliciesImpl, recordRunAuditEventImpl, getRunAuditEventsImpl, dequeueMergeQueueOnColumnExitImpl, updateIssueInfoImpl, listWorkflowStepsImpl, getWorkflowStepImpl, createWorkflowDefinitionImpl, countActiveInCapacitySlotSyncImpl, countActiveInCapacitySlotAsyncImpl, generateSpecifiedPromptImpl, recordActivityImpl, getEvalStoreImpl } from "./task-store/project-store-ops.js";
-import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
-import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
+import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
+import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl, type RehomeOccupantResult } from "./task-store/branch-group-ops.js";
 import { taskToArchiveEntryImpl, deleteTaskBackendImpl, deleteTaskIfBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
 import { pruneOperationalLogsAsync, pruneAgentLogFilesAsync, type OperationalLogPruneResult } from "./task-store/async/async-maintenance.js";
 import { reconcilePhantomCommittedReservationsAsync } from "./task-store/async/async-phantom-reservations.js";
@@ -133,6 +134,9 @@ import { createTaskBackendImpl, _createTaskInternalBackendImpl, createTaskImpl, 
 import { getTaskImpl, listTasksImpl, searchTasksImpl, listTasksModifiedSinceImpl, getTaskVerificationRequestAsyncImpl } from "./task-store/reads.js";
 import { updateTaskUnlockedImpl } from "./task-store/task-update.js";
 import { __setTaskActivityLogLimitsForTesting } from "./task-store/comments.js";
+import { declaresAnyLifecycleTrait, resolveReviewColumns, resolveTaskLifecycleColumns, type LifecycleColumns } from "./workflow-lifecycle-traits.js";
+import { resolveProjectColumnsForRoles } from "./project-lane-vocabulary.js";
+import { resolveWorkflowIrForTask } from "./workflow-ir-resolver.js";
 // FNXC:RuntimeBackendAsync 2026-06-24-10:15:
 // Async helper imports for backend-mode (AsyncDataLayer/PostgreSQL) delegation.
 // persistence/allocator/settings/search/lifecycle/merge/archive helpers preserve
@@ -145,7 +149,25 @@ import type { BranchGroupRow, PrEntityRow, TaskDocumentRow, ArtifactRow, TaskDoc
 
 export interface TaskStoreEvents {
   "task:created": [task: Task];
-  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler" }];
+  /*
+  FNXC:WorkflowEvents 2026-07-31-21:00 (fleet — the emitter carries the lanes):
+  `lanes` is the moving task's RESOLVED lifecycle columns, attached by the emitter.
+
+  Listeners on this event run synchronously, so any that needed a lane answer had to resolve one
+  synchronously too — and the only sync resolver (`resolveTaskWorkflowIrSync`) returns the DEFAULT
+  workflow in production, making every such guard inert. Resolving asynchronously in the listener is
+  not available either: the scheduler's snapshot invalidation is asserted to run in the listener's
+  synchronous prologue.
+
+  Carrying the answer on the payload removes the dilemma rather than trading one horn for the other:
+  the emitter is already async and already resolves this task's IR, and the listener gets a correct
+  lane set with no await at all.
+
+  OPTIONAL because not every emit path can resolve (some fire from sync contexts or from a cached row
+  mid-teardown). A listener must therefore keep its existing fallback; absent `lanes` is "unknown",
+  never "legacy".
+  */
+  "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler"; lanes?: TaskMoveLanes }];
   "task:updated": [task: Task];
   "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
@@ -314,6 +336,31 @@ function filterRepairOverlapIgnoredPaths(paths: string[], ignorePaths: string[])
   return paths.filter((path) => !ignorePaths.some((ignorePath) => repairIgnoredOverlapPath(path, ignorePath)));
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+Does this candidate still hold an active file-scope lease? Hoisted to module scope because the
+overlap repair asks it in TWO places (the blocker pre-check and the reroute search) and they must not
+drift — one of the two answering differently is how the repair reroutes to a blocker the other half
+already dismissed.
+
+Pause/failed state is checked by each caller, which owns that half of the question; this decides only
+the LANE half.
+
+`lanes === undefined` means the candidate's workflow could not be read: keep today's literals.
+A resolved workflow with no wip/review lane answers false for that half rather than substituting one.
+*/
+export function holdsRepairFileScopeLease(
+  candidate: Pick<Task, "column" | "worktree">,
+  lanes: { wip: string | undefined; review: string | undefined } | undefined,
+): boolean {
+  /* DELIBERATE-LITERAL — the unresolvable-workflow default documented above, reviewed 2026-07-31-01:10. */
+  if (!lanes) {
+    return candidate.column === "in-progress" || (candidate.column === "in-review" && Boolean(candidate.worktree));
+  }
+  if (lanes.wip !== undefined && candidate.column === lanes.wip) return true;
+  return lanes.review !== undefined && candidate.column === lanes.review && Boolean(candidate.worktree);
+}
+
 export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public static readonly ACTIVE_TASKS_WHERE = '"deletedAt" IS NULL';
   /**
@@ -348,8 +395,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /*
   FNXC:HandoffFailureInjection 2026-07-15-12:00:
-  PostgreSQL handoffs call enqueueMergeQueueInTransaction directly, bypassing the
-  legacy enqueueMergeQueueSyncInternal spy. Keep this test-only hook dormant in
+  PostgreSQL handoffs call enqueueMergeQueueInTransaction directly. The legacy sync
+  SQLite enqueue arm this once bypassed was deleted 2026-07-31 (it had no callers);
+  this hook is unrelated to it and stays. Keep this test-only hook dormant in
   production so VAL-DATA-013 can inject a late transaction failure and prove every
   handoff sub-write rolls back without adding queries or runtime behavior.
   */
@@ -756,7 +804,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return reconcileStaleSymbolLocksAsync(this);
   }
 
-  /** FNXC:SymbolLock 2026-07-31-10:00: FN-8306 resolves only durable task declarations; PROMPT is never re-read here. */
+  /** FNXC:SymbolLock 2026-07-30-10:00: FN-8306 resolves only durable task declarations; PROMPT is never re-read here. */
   async resolveTaskSymbols(taskId: string): Promise<TaskSymbolResolution> {
     try {
       return resolveTaskSymbolsForTask(await this.getTask(taskId));
@@ -824,7 +872,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
 
     const shiftedTaskIds: string[] = [];
-    const tasks = await this.listTasks({ column: "in-progress", includeArchived: false, slim: true });
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-01-05:00:
+    The engine-downtime timing shift read the wip lane by name, so on a renamed board it found NO
+    tasks and no active-timing anchor was ever shifted — every card's active time then silently
+    absorbed the stopped-engine wall-clock this sweep exists to exclude.
+    */
+    const wipColumns = await resolveProjectColumnsForRoles(this, ["countsTowardWip"]);
+    const byId = new Map<string, Task>();
+    for (const column of wipColumns) {
+      for (const task of await this.listTasks({ column, includeArchived: false, slim: true })) byId.set(task.id, task);
+    }
+    const tasks = [...byId.values()];
     for (const task of tasks) {
       const startedMs = Date.parse(task.executionStartedAt ?? "");
       if (!Number.isFinite(startedMs) || startedMs > heartbeatMs) continue;
@@ -1070,10 +1129,24 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     Scope by asyncLayer.projectId so a revert task from another project cannot match.
     */
     const layer = this.asyncLayer!;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+    "Is there an OPEN undo task for this source?" is a LANE question — a finished one must not render
+    as an active affordance. Against the literals a renamed board matched neither lane, so a
+    done/archived prior undo attempt kept surfacing as open. Same defect the dashboard-side twin had
+    (`taskRevert.ts`, #3129); this is the store-side query behind it.
+
+    Additive: the resolved sets are legacy-seeded and fall back to the literals, so an unconverted
+    board builds byte-identical SQL and the parity gate's encodings stay in step.
+    */
+    const revertFinishedLanes = await resolveProjectColumnsForRoles(this, ["complete", "archived"])
+      .catch(() => undefined);
+    const revertFinishedExclusions = revertFinishedLanes && revertFinishedLanes.size > 0
+      ? [...revertFinishedLanes].map((lane) => ne(schema.project.tasks.column, lane))
+      : [ne(schema.project.tasks.column, "archived"), ne(schema.project.tasks.column, "done")];
     const conditions = [
       isNull(schema.project.tasks.deletedAt),
-      ne(schema.project.tasks.column, "archived"),
-      ne(schema.project.tasks.column, "done"),
+      ...revertFinishedExclusions,
       sql`${schema.project.tasks.sourceMetadata}->>'revertOf' = ${trimmedId}`,
     ];
     if (layer.projectId) {
@@ -1188,8 +1261,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async selectNextTaskForAgent( agentId: string, agent?: Pick<Agent, "id" | "role"> & Partial<Pick<Agent, "runtimeConfig">>, ): Promise<InboxTask | null> {
     return selectNextTaskForAgentImpl(this, agentId, agent);
   }
-  public areAllDependenciesDone(dependencies: string[], tasksById: Map<string, Task>): boolean {
-    return areAllDependenciesDoneImpl(this, dependencies, tasksById);
+  public areAllDependenciesDone(dependencies: string[], tasksById: Map<string, Task>, satisfiedColumns?: ReadonlySet<string>): boolean {
+    return areAllDependenciesDoneImpl(this, dependencies, tasksById, satisfiedColumns);
   }
   public async readTaskForMove(id: string): Promise<Task> {
     return readTaskForMoveImpl(this, id);
@@ -1286,6 +1359,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async updateTaskAtomic( id: string, updater: ( current: Task, ) => Parameters<TaskStore["updateTask"]>[1] | null | undefined | Promise<Parameters<TaskStore["updateTask"]>[1] | null | undefined>, runContext?: RunMutationContext, ): Promise<Task> {
     return updateTaskAtomicImpl(this, id, updater, runContext);
   }
+  async resolveTaskWedgeNotificationEpisode(id: string, episodeId: string): Promise<{ task: Task; resolved: boolean }> {
+    return resolveTaskWedgeNotificationEpisodeImpl(this, id, episodeId);
+  }
   public mergeCustomFieldPatch( current: Record<string, unknown> | undefined, patch: Record<string, unknown>, ): Record<string, unknown> {
     return mergeCustomFieldPatchImpl(this, current, patch);
   }
@@ -1353,7 +1429,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async updateTaskUnlocked( id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext, ): Promise<Task> {
     return updateTaskUnlockedImpl(this, id, updates, runContext);
   }
-  async pauseTask( id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string }, ): Promise<Task> {
+  async pauseTask( id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string; userPaused?: boolean }, ): Promise<Task> {
     return pauseTaskImpl(this, id, paused, runContext, agentOptions);
   }
 
@@ -1387,8 +1463,47 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      if (task.column !== "in-review") {
-        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in 'in-review'`);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (PR #2709 review — greptile):
+      THE MESSAGE MUST NAME THE COLUMN THE CHECK ACTUALLY USED. The guard was converted to the
+      resolved review lane while the rejection still said `in-review`, so on a custom board an
+      operator was told to move the card to a column their board does not have — through both the
+      CLI and the dashboard, with no way to discover the real answer from the error.
+
+      Wrong guidance is worse than an unconverted guard: an inert guard fails visibly, while this
+      one refuses correctly and then sends the operator somewhere that does not exist. Resolved once
+      into a local so the check and the message cannot drift apart again.
+      */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-30-16:05 (PR #2718 review — greptile, on the guard I
+      converted in #2709):
+      EVERY REVIEW LANE, because `.review` is the single `mergeOrchestration` column. A board hosting
+      review on a `humanReview`- or `mergeBlocker`-only lane failed this check, so `TaskContextMenu`
+      offered "Bypass failed review" (it asks by ROLE) and the store refused it — the operator's only
+      escape from a stranded failed pre-merge step returned a conflict.
+
+      THE BROAD SET IS RIGHT HERE, and that is a decision rather than a default: this guard REFUSES or
+      PERMITS an operator action and moves nothing, so admitting every lane where review happens cannot
+      send a card anywhere the engine disagrees with. #2750 documents the split — a caller that admits
+      and then MOVES wants the narrow single lane instead.
+
+      The message names the lanes the check actually used, keeping #2709's fix: telling an operator to
+      move to a column their board does not have is worse than refusing.
+      */
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (#2819 review — the same empty-set hole, found by
+      sweeping every `resolveReviewColumns` call site rather than only the one the reviewer named):
+      A v1-upgraded board resolves to an EMPTY review set while its `in-review` column plainly exists,
+      so this guard would refuse the operator's bypass on every pre-v2 project with the unhelpful
+      message "must be in a review lane".
+      */
+      const reviewIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
+      const reviewColumns = reviewIr === undefined || !declaresAnyLifecycleTrait(reviewIr)
+        ? ["in-review"]
+        : resolveReviewColumns(reviewIr);
+      if (!reviewColumns.includes(task.column)) {
+        const named = reviewColumns.length > 0 ? reviewColumns.map((c: string) => `'${c}'`).join(" or ") : "a review lane";
+        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in ${named}`);
       }
       if (task.paused) {
         throw new Error(`Cannot bypass review lane for ${id}: task is paused`);
@@ -1610,8 +1725,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async recordRunAuditEvent(input: RunAuditEventInput): Promise<RunAuditEvent> {
     return recordRunAuditEventImpl(this, input);
   }
-  public isLegacyAutoMergeStampCandidate(task: Pick<Task, "column" | "autoMerge" | "autoMergeProvenance">): boolean {
-    return task.column === "in-review" && task.autoMerge === true && task.autoMergeProvenance !== "user";
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+  `reviewColumns` is an optional RESOLVED answer; omitted, this is exactly today's behaviour.
+
+  Synchronous by necessity — it is a pure row predicate used to filter an already-loaded list — so it
+  takes the answer rather than resolving one. Keyed on the literal it selected NOTHING on a renamed
+  board, so the legacy auto-merge stamp backfill silently reconciled zero rows and reported success.
+
+  DELIBERATE-LITERAL — the unconverted-caller default, reviewed 2026-07-31-01:10.
+  */
+  public isLegacyAutoMergeStampCandidate(
+    task: Pick<Task, "column" | "autoMerge" | "autoMergeProvenance">,
+    reviewColumns?: ReadonlySet<string>,
+  ): boolean {
+    const inReviewLane = reviewColumns ? reviewColumns.has(task.column) : task.column === "in-review";
+    return inReviewLane && task.autoMerge === true && task.autoMergeProvenance !== "user";
   }
   public async listLegacyAutoMergeStampCandidates(): Promise<Task[]> {
     return listLegacyAutoMergeStampCandidatesImpl(this);
@@ -1662,12 +1791,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return enqueueMergeQueueImpl(this, taskId, opts);
   }
 
-  /**
-   * FNXC:RuntimeLifecycleAsync 2026-06-24-11:15:
-   */
-  public enqueueMergeQueueSyncInternal(taskId: string, opts: MergeQueueEnqueueOptions): MergeQueueEntry {
-    return enqueueMergeQueueSyncInternalImpl(this, taskId, opts);
-  }
   public cleanupStaleMergeQueueRows(now: string): void {
     return cleanupStaleMergeQueueRowsImpl(this, now);
   }
@@ -1679,7 +1802,26 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * FNXC:RuntimeLifecycleAsync 2026-06-24-11:20:
    */
   async acquireMergeQueueLease(workerId: string, opts: MergeQueueAcquireOptions): Promise<MergeQueueEntry | null> {
-    return acquireMergeQueueLeaseImpl(this, workerId, opts);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-01:25 (#2819 review — greptile):
+    Supplies the per-task review-lane resolver for the stale-row sweep. This is the production path,
+    so wiring it here is what makes the option live rather than one only tests fill.
+    */
+    const withResolver: MergeQueueAcquireOptions = {
+      ...opts,
+      resolveReviewColumnsFor: opts.resolveReviewColumnsFor ?? (async (taskId: string) => {
+        /*
+        Three states, not two. `undefined` is "could not read"; an IR whose columns carry NO
+        lifecycle trait at all is a v1 graph upgraded by `synthesizeDefaultColumns`, whose
+        `in-review` column plainly exists and holds cards. Both take the legacy answer. Only a
+        board that expresses traits and still has no review lane is answering the question.
+        */
+        const ir = await resolveWorkflowIrForTask(this, taskId).catch(() => undefined);
+        if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["in-review"]);
+        return new Set(resolveReviewColumns(ir));
+      }),
+    };
+    return acquireMergeQueueLeaseImpl(this, workerId, withResolver);
   }
 
   /**
@@ -1740,7 +1882,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return { taskId: id, dryRun, repaired: false, statusCleared: false, reason: "no-overlap-blocker", message: `Task ${id} has no overlap blocker`, task };
     }
 
-    if (task.column !== "todo") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    ONE lane resolution for the whole repair, shared by every question below.
+
+    The overlap-blocker repair was inert end to end on a renamed board. It refused here first
+    ("not a repairable todo state") for a card sitting in the board's own hold lane; past that it
+    would have found no active lease holders and no queued reroute candidates either, because the
+    same three literals appear at each step. A repair that declines everything looks identical in the
+    logs to a board with nothing to repair.
+
+    `repairIrCache` is caller-owned per the contract on `resolveTaskLifecycleColumns`: this pass
+    resolves lanes for the task, its blocker, and every reroute candidate, so a board spanning three
+    workflows must read three IRs — not one per card.
+    */
+    const repairIrCache = new Map<string, WorkflowIr>();
+    const repairLanesFor = async (taskId: string) =>
+      (await resolveTaskLifecycleColumns(this, taskId, repairIrCache).catch(() => undefined));
+    const taskLanes = await repairLanesFor(task.id);
+    /*
+    The hold lane is resolved, NOT defaulted per field: `taskLanes === undefined` means the workflow
+    could not be read (keep the literal), while a resolved workflow with no hold lane is an ANSWER —
+    the board has nowhere repairable, so the repair declines and says so rather than inventing "todo".
+    */
+    const repairableHoldColumn = taskLanes === undefined ? "todo" : taskLanes.hold;
+    if (repairableHoldColumn === undefined || task.column !== repairableHoldColumn) {
       return {
         taskId: id,
         dryRun,
@@ -1748,7 +1914,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         statusCleared: false,
         previousOverlapBlockedBy,
         reason: "not-repairable-state",
-        message: `Task ${id} is in ${task.column}, not a repairable todo state`,
+        message: repairableHoldColumn === undefined
+          ? `Task ${id} is in ${task.column}; its workflow declares no hold lane, so there is no repairable state`
+          : `Task ${id} is in ${task.column}, not a repairable ${repairableHoldColumn} state`,
         task,
       };
     }
@@ -1770,10 +1938,22 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const taskScope = await getScope(task.id);
     if (blocker) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+      The blocker's OWN lanes decide whether it still holds a file-scope lease — it may live on a
+      different board from the task it blocks.
+
+      NOTE for whoever unifies this: `holdsRepairFileScopeLease` below and
+      `shouldHoldActiveFileScopeLease` in `engine/scheduler.ts` are a THIRD and FOURTH copy of this
+      same predicate. They must keep agreeing or the repair reroutes to a blocker the scheduler
+      ignores. Not unified here because the scheduler's copy lives in `@fusion/engine`, which core
+      cannot import, and moving it is a cross-batch refactor rather than a conversion.
+      */
+      const blockerLanes = await repairLanesFor(blocker.id);
       const blockerHoldsActiveLease = !blocker.paused
         && !blocker.userPaused
         && blocker.status !== "failed"
-        && (blocker.column === "in-progress" || (blocker.column === "in-review" && Boolean(blocker.worktree)));
+        && holdsRepairFileScopeLease(blocker, blockerLanes);
       const blockerScope = await getScope(blocker.id);
       if (blockerHoldsActiveLease && repairScopesOverlap(taskScope, blockerScope)) {
         return {
@@ -1790,12 +1970,27 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
-    const unresolvedDeps = (task.dependencies ?? []).filter((depId) => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    Each dependency's terminal columns come from ITS OWN workflow. Keyed on the literals, a finished
+    dependency on a renamed board never counted as resolved, so the repair kept re-blocking the card
+    it had just unblocked.
+    */
+    const dependencyLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
+    for (const depId of task.dependencies ?? []) {
+      dependencyLanesByTaskId.set(depId, await repairLanesFor(depId));
+    }
+    const isUnresolvedDependency = (depId: string): boolean => {
       const dep = taskById.get(depId);
-      return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "archived";
-    });
+      if (!dep || dep.deletedAt) return false;
+      const lanes = dependencyLanesByTaskId.get(depId);
+      /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-01:10. */
+      if (!lanes) return dep.column !== "done" && dep.column !== "archived";
+      return dep.column !== lanes.complete && dep.column !== lanes.archived;
+    };
+    const unresolvedDeps = (task.dependencies ?? []).filter(isUnresolvedDependency);
 
-    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy);
+    const currentOverlapBlocker = await this.findCurrentOverlapBlockerForRepair(task, taskScope, tasks, getScope, previousOverlapBlockedBy, repairLanesFor);
     const statusCleared = unresolvedDeps.length === 0 && !currentOverlapBlocker && task.status === "queued";
 
     /*
@@ -1873,10 +2068,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         skipped = overlapBlockerChangedResult(current);
         return null;
       }
-      const currentUnresolvedDeps = (current.dependencies ?? []).filter((depId) => {
-        const dep = taskById.get(depId);
-        return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "archived";
-      });
+      /* Same resolved answer as the pre-check above — a second copy here is how the two halves of
+         this repair end up disagreeing about whether a dependency is finished. */
+      const currentUnresolvedDeps = (current.dependencies ?? []).filter(isUnresolvedDependency);
       const currentStatusCleared = currentUnresolvedDeps.length === 0 && current.status === "queued";
       return {
         overlapBlockedBy: null,
@@ -1910,19 +2104,31 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     tasks: Task[],
     getScope: (taskId: string) => Promise<string[]>,
     previousOverlapBlockedBy: string,
+    /* The CALLER's resolver, so this search shares the repair's single IR cache rather than opening a
+       second one — and so both halves of the repair resolve a given card's lanes identically. */
+    resolveLanes: (taskId: string) => Promise<LifecycleColumns | undefined>,
   ): Promise<string | null> {
     /*
     FNXC:OverlapRepair 2026-06-25-05:49:
     Stale-overlap repair must reroute only to tasks that the scheduler would still treat as active file-scope lease holders. Operator-paused or failed active rows are parked work, not live blockers, so the repair should clear stale state instead of creating a fresh blocker edge to them.
     */
-    const holdsRepairFileScopeLease = (candidate: Task) => {
-      if (candidate.paused || candidate.userPaused || candidate.status === "failed") return false;
-      if (candidate.column === "in-progress") return true;
-      return candidate.column === "in-review" && Boolean(candidate.worktree);
-    };
-    const activeCandidates = tasks
-      .filter((candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy)
-      .filter(holdsRepairFileScopeLease)
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-01:10 (batch-core feed):
+    Resolve each candidate's lanes before the sync filter, sharing the caller's IR cache. Resolution
+    is restricted to candidates that survive the id filter so an unrelated backlog costs nothing.
+    */
+    const candidatePool = tasks.filter(
+      (candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy,
+    );
+    const candidateLanesByTaskId = new Map<string, LifecycleColumns | undefined>();
+    for (const candidate of candidatePool) {
+      candidateLanesByTaskId.set(candidate.id, await resolveLanes(candidate.id));
+    }
+    const activeCandidates = candidatePool
+      .filter((candidate) => {
+        if (candidate.paused || candidate.userPaused || candidate.status === "failed") return false;
+        return holdsRepairFileScopeLease(candidate, candidateLanesByTaskId.get(candidate.id));
+      })
       .sort((a, b) => a.id.localeCompare(b.id));
 
     for (const candidate of activeCandidates) {
@@ -1933,8 +2139,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const priorityRank: Record<TaskPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
     const taskRank = priorityRank[task.priority ?? "normal"] ?? 2;
     const taskCreatedAt = Date.parse(task.createdAt);
-    const queuedCandidates = tasks
-      .filter((candidate) => candidate.id !== task.id && candidate.id !== previousOverlapBlockedBy && candidate.column === "todo")
+    const queuedCandidates = candidatePool
+      .filter((candidate) => {
+        const lanes = candidateLanesByTaskId.get(candidate.id);
+        /* DELIBERATE-LITERAL — the unresolvable-workflow default, reviewed 2026-07-31-01:10. */
+        if (!lanes) return candidate.column === "todo";
+        return lanes.hold !== undefined && candidate.column === lanes.hold;
+      })
       .filter((candidate) => {
         const candidateRank = priorityRank[candidate.priority ?? "normal"] ?? 2;
         if (candidateRank < taskRank) return true;
@@ -2044,8 +2255,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async archiveTaskAndCleanup(id: string): Promise<Task> {
     return this.archiveTask(id, true);
   }
-  public resolveUnarchiveTargetColumn(preArchiveColumn: unknown): Column {
-    return resolveUnarchiveTargetColumnImpl(this, preArchiveColumn);
+  /* FNXC:WorkflowLifecycleColumns 2026-08-02-16:30 (fleet): async because the restore destination is resolved
+     from the task's workflow; `taskId` is optional so any caller that has not been updated keeps the legacy
+     answer rather than silently resolving the wrong board. */
+  public resolveUnarchiveTargetColumn(preArchiveColumn: unknown, taskId?: string): Promise<Column> {
+    return resolveUnarchiveTargetColumnImpl(this, preArchiveColumn, taskId);
   }
   public async readPreArchiveColumnFromTaskFile(dir: string): Promise<Column | undefined> {
     return readPreArchiveColumnFromTaskFileImpl(this, dir);
@@ -2232,7 +2446,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
 /** Update or clear Issue information for a task. */
-  async applyPrMergedTransition( taskId: string, ctx?: { agentId?: string; runId?: string }, ): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" }> {
+  async applyPrMergedTransition( taskId: string, ctx?: { agentId?: string; runId?: string }, ): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     return applyPrMergedTransitionImpl(this, taskId, ctx);
   }
   async updateIssueInfo( id: string, issueInfo: import("./types.js").IssueInfo | null, ): Promise<Task> {
@@ -2397,9 +2611,21 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   // never a raw column write, so capacity (KTD-10) and single transition authority
   // (KTD-3) are honored. Only consulted when `workflowColumns` flag is ON.
 
-  public async workflowColumnsFlagOn(): Promise<boolean> {
-    return isWorkflowColumnsCompatibilityFlagEnabled(await this.getSettingsFast());
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  `workflowColumnsFlagOn()` is DELETED — it has no callers left. Its six readers were
+  the three U5 reconciliation guards (now unconditional) and the three v1-IR
+  rollback-compat persistence sites (now unconditional, same stored bytes).
+
+  FNXC:WorkflowColumns 2026-07-30-04:00 (U12): `isWorkflowColumnsCompatibilityFlagEnabled` is now
+  DELETED TOO. Its last two readers were the move path — `moves.ts` and the preflight in
+  `workflow-task-create-ops.ts` — and both were un-gated in one commit because the preflight computes
+  what `moves.ts` consumes.
+
+  The equivalence-proof obligation that held this back is discharged, not waived:
+  `moves-flag-equivalence.test.ts` diffs the persisted row after the same journey under both flag
+  states against live PostgreSQL and finds them identical, mutation-verified in both directions.
+  */
   public async listWorkflowOccupantTaskIds(workflowId: string, includeNullSelection: boolean): Promise<string[]> {
     return listWorkflowOccupantTaskIdsImpl(this, workflowId, includeNullSelection);
   }
@@ -2409,20 +2635,20 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   public async occupantsByColumnForWorkflow( workflowId: string, includeNullSelection: boolean, ): Promise<Map<string, number>> {
     return occupantsByColumnForWorkflowImpl(this, workflowId, includeNullSelection);
   }
-  public async rehomeOccupant( taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>, ): Promise<void> {
+  public async rehomeOccupant( taskId: string, targetColumn: string, reason: "workflow-switch" | "workflow-delete" | "workflow-edit-rehome", metadata: Record<string, unknown>, ): Promise<RehomeOccupantResult> {
     return rehomeOccupantImpl(this, taskId, targetColumn, reason, metadata);
   }
 
-  // ── U12: workflow-columns integrity pass ──────────────────────────────────
-  // FNXC:WorkflowColumns 2026-06-20-00:00:
-  // Migration rewrites ZERO task rows (KTD-1): null selection resolves to built-in
-  // default workflow at read time with byte-identical column IDs. The integrity
-  // pass audits tasks whose stored column is not valid in their RESOLVED workflow
-  // and re-homes via recoveryRehome (guard-bypassing, capacity-honoring). Terminal
-  // cards (done/archived) are never disturbed. Idempotent. Flag-ON only.
-  async runWorkflowColumnsIntegrityPass(): Promise<{ scanned: number; rehomed: number; skippedTerminal: number }> {
-    return runWorkflowColumnsIntegrityPassImpl(this);
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R7, R9):
+  `runWorkflowColumnsIntegrityPass` is DELETED. It was the SUPERSEDED predecessor of
+  the shipped R7 sweep: `SelfHealingManager.reconcileUndeclaredTaskColumns`, which is
+  registered in startup recovery (`self-healing.ts`) and re-homes a card whose stored
+  column its workflow no longer declares. The old pass had NO caller anywhere — not
+  production, not tests — and read tasks through the synchronous SQLite handle, which
+  no longer resolves under the PostgreSQL runtime, so invoking it would have thrown
+  rather than reconciled. Deleted rather than wired up: its successor already runs.
+  */
 
   // ── #1401: transitionPending recovery sweep ───────────────────────────────
   // FNXC:WorkflowColumns 2026-06-20-00:00:
@@ -2435,16 +2661,23 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
     return recoverStaleTransitionPendingImpl(this);
   }
 
-  // ── #1409: flag ON→OFF evacuation ─────────────────────────────────────────
-  // FNXC:WorkflowColumns 2026-06-20-00:00:
-  // When `workflowColumns` is disabled, the board reverts to the legacy enum path
-  // where only COLUMNS are valid. Cards in CUSTOM (non-legacy) columns would be
-  // stuck. This pass re-homes each to the nearest legacy column (default workflow
-  // entry column `todo`) via recoveryRehome. Terminal cards (done/archived) left
-  // put. Idempotent.
-  async evacuateCustomColumnsToLegacy( trigger: "flag-off-init" | "flag-toggled-off", ): Promise<{ scanned: number; evacuated: number }> {
-    return evacuateCustomColumnsToLegacyImpl(this, trigger);
-  }
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  `evacuateCustomColumnsToLegacy` (#1409) is DELETED. It re-homed cards out of custom
+  columns when `workflowColumns` flipped OFF, so the legacy enum board would not strand
+  them.
+
+  CORRECTED (PR #2500 review — greptile P1): the ON→OFF transition IS reachable — stale
+  persisted `true` values are tolerated by design, so an import or configuration
+  rollback can flip one to false. The deletion rests on the evacuation being wrong, not
+  the trigger being dead: it moved cards out of columns their workflow legitimately
+  declares into legacy `triage`, to protect a legacy enum board that this same change
+  deletes. See `settings-ops.ts` for the full reasoning and the covering tests.
+
+  Custom columns are no longer an opt-in that can be revoked; they are the runtime, and
+  a card in a column its workflow does NOT declare is the self-healing sweep
+  `reconcileUndeclaredTaskColumns`'s job (R7).
+  */
 
   // ── Workflow selection (resolves a workflow to enabledWorkflowSteps) ────
   // Selection compiles a workflow into WorkflowStep rows and writes their ids into
@@ -2467,8 +2700,8 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
 
 /** Synchronous workflow-definition insert used by migration (U2/KTD-3). */
-  public insertWorkflowDefinitionSync( input: WorkflowDefinitionInput, flagOn: boolean, ): WorkflowDefinition {
-    return insertWorkflowDefinitionSyncImpl(this, input, flagOn);
+  public insertWorkflowDefinitionSync( input: WorkflowDefinitionInput ): WorkflowDefinition {
+    return insertWorkflowDefinitionSyncImpl(this, input);
   }
   async migrateLegacyWorkflowSteps(): Promise<{ migrated: number; skipped: number; combinedWorkflowId?: string; }> {
     return migrateLegacyWorkflowStepsImpl(this);
@@ -2512,9 +2745,6 @@ Issue #2149 requires read-only type filtering to occur in the file-store before 
   }
   public resolveTaskWorkflowIrSync(taskId: string): WorkflowIr {
     return resolveTaskWorkflowIrSyncImpl(this, taskId);
-  }
-  public resolveEffectiveWorkflowIdSync(taskId: string): string {
-    return resolveEffectiveWorkflowIdSyncImpl(this, taskId);
   }
   public countActiveInCapacitySlotSync(params: { targetColumn: string; workflowId: string; countPending: boolean; excludeTaskId: string; }): number {
     return countActiveInCapacitySlotSyncImpl(this, params);

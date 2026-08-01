@@ -6,6 +6,7 @@ import {
 } from "../backup/backup.js";
 import {
   clearActiveEmbeddedRuntimeUrl,
+  EmbeddedRuntimeStoppingError,
   getActiveEmbeddedRuntimeUrl,
   invalidateEmbeddedRuntimeUrl,
   registerEmbeddedRuntimeUrl,
@@ -45,14 +46,76 @@ describe("embedded backup runtime URL registry", () => {
     );
   });
 
-  it("keeps an owner URL live when only a joiner releases", () => {
+  it("keeps an owner URL live when only a joiner releases", async () => {
     const owner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true });
     const joiner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
 
-    releaseEmbeddedRuntimeLease(joiner);
+    await releaseEmbeddedRuntimeLease(joiner);
     expect(getActiveEmbeddedRuntimeUrl()).toBe(embeddedUrl);
 
-    releaseEmbeddedRuntimeLease(owner);
+    await releaseEmbeddedRuntimeLease(owner);
+    expect(getActiveEmbeddedRuntimeUrl()).toBeUndefined();
+  });
+
+  it("defers owner shutdown until the final joined lease releases", async () => {
+    const stopOwner = vi.fn(async () => undefined);
+    const owner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true });
+    const joiner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
+
+    await releaseEmbeddedRuntimeLease(owner, { stopOwner });
+    expect(stopOwner).not.toHaveBeenCalled();
+    expect(getActiveEmbeddedRuntimeUrl()).toBe(embeddedUrl);
+
+    await releaseEmbeddedRuntimeLease(joiner);
+    expect(stopOwner).toHaveBeenCalledOnce();
+    expect(getActiveEmbeddedRuntimeUrl()).toBeUndefined();
+  });
+
+  it("rejects registrations until a deferred owner stop completes", async () => {
+    const owner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true });
+    const joiner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
+    let finishStop!: () => void;
+    const stopFinished = new Promise<void>((resolve) => {
+      finishStop = resolve;
+    });
+    const stopOwner = vi.fn(async () => stopFinished);
+    await releaseEmbeddedRuntimeLease(owner, { stopOwner });
+
+    const finalRelease = releaseEmbeddedRuntimeLease(joiner);
+    await vi.waitFor(() => expect(stopOwner).toHaveBeenCalledOnce());
+    expect(getActiveEmbeddedRuntimeUrl()).toBeUndefined();
+    let stoppingError: EmbeddedRuntimeStoppingError | undefined;
+    try {
+      registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
+    } catch (error) {
+      if (error instanceof EmbeddedRuntimeStoppingError) stoppingError = error;
+    }
+    expect(stoppingError).toBeInstanceOf(EmbeddedRuntimeStoppingError);
+    if (!stoppingError) throw new Error("Expected stopping registration to expose completion");
+    const stopCompletion = stoppingError.completion;
+    let stopCompletionSettled = false;
+    void stopCompletion.then(() => {
+      stopCompletionSettled = true;
+    });
+    await Promise.resolve();
+    expect(stopCompletionSettled).toBe(false);
+
+    finishStop();
+    await stopCompletion;
+    await finalRelease;
+    expect(stopCompletionSettled).toBe(true);
+    expect(registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true })).toBeDefined();
+  });
+
+  it("stops the owner immediately when joined leases already released", async () => {
+    const stopOwner = vi.fn(async () => undefined);
+    const owner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: true });
+    const joiner = registerEmbeddedRuntimeUrl(embeddedUrl, { ownsProcess: false });
+
+    await releaseEmbeddedRuntimeLease(joiner);
+    await releaseEmbeddedRuntimeLease(owner, { stopOwner });
+
+    expect(stopOwner).toHaveBeenCalledOnce();
     expect(getActiveEmbeddedRuntimeUrl()).toBeUndefined();
   });
 

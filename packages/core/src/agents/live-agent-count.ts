@@ -65,6 +65,37 @@ export function resolveColumnTerminalKind(columnId: string, ir: WorkflowIr): Col
   return "none";
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-10:20 (Phase C convergence — live-agent-count.ts):
+
+THE PRE-IMPLEMENTATION FALLBACK, named once instead of spelled out at two call sites.
+
+DELIBERATE-LITERAL, and the reason is not "we ran out of time": this is the answer used when
+the caller supplies NO trait flags at all. There is nothing to resolve from. `enrich...FromFlags`
+exists precisely for callers that have board-column flags rather than an IR (the dashboard
+footer), and a column missing from that flag map is the renamed-or-undeclared case.
+
+Converting it would mean deciding what an ABSENT flag set means, and "not intake" is as much a
+guess as "todo is intake" — either choice silently moves an operator-visible count. The two
+counts this feeds (Running and Waiting) are complements over the same rows, so a card matching
+neither arm is reported as neither running nor waiting and the footer's queued total
+under-reports it. Guessing here is worse than the known legacy answer.
+
+The real fix for a renamed board is at the CALLER: supply flags (or use
+`enrichRunningAgentTaskShape`, which takes the IR and resolves every role by trait). This
+fallback only has to keep behaving exactly as it did for legacy rows.
+
+Both former literal sites now share this function, so the pair cannot drift apart — they were
+two hand-written copies of one rule, and line 84 answering differently from line 143 would put
+a card in both counts or neither.
+*/
+const LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
+
+/** Legacy-vocabulary "is this column a planner lane?", for callers that supply no traits. */
+function isLegacyPreImplementationColumn(columnId: string): boolean {
+  return LEGACY_PRE_IMPLEMENTATION_COLUMN_IDS.has(columnId);
+}
+
 /** Attach the workflow traits required by the pure Running and Waiting predicates. */
 export function enrichRunningAgentTaskShape<T extends RunningAgentTaskShape>(task: T, ir: WorkflowIr): T & Required<Pick<RunningAgentTaskShape, "columnTerminalKind" | "columnIsIntakeOrHold" | "columnCountsTowardWip" | "columnIsReviewOrMerge">> {
   return {
@@ -77,13 +108,34 @@ export function enrichRunningAgentTaskShape<T extends RunningAgentTaskShape>(tas
 }
 
 /** Attach the same traits from dashboard board-column flags without loading an IR. */
+/*
+FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
+Every literal below sits after a `??` or a `flags ? … :` — it is reached ONLY when the caller
+supplied no trait flags and no enriched shape, which is the case the enrichers exist to remove.
+There is nothing to resolve from in that state, so converting is not possible; the choice is only
+between the known legacy answer and a different guess.
+
+That choice is not neutral here. Running and Waiting are COMPLEMENTS over the same rows, so a card
+matching neither arm is reported as neither running nor waiting and the footer's queued total
+silently under-reports it. Guessing "not WIP" or "not review" is therefore worse than the legacy id,
+which at least matches every pre-rename board.
+
+The fix for a renamed board is at the CALLER — pass flags, or use `enrichRunningAgentTaskShape`,
+which takes the IR and resolves every role by trait. Same reasoning as the marker above
+`isLegacyPreImplementationColumn`, which this file already records.
+*/
 export function enrichRunningAgentTaskShapeFromFlags<T extends RunningAgentTaskShape>(task: T, flags?: Pick<TraitFlags, "complete" | "archived" | "intake" | "hold" | "countsTowardWip" | "mergeOrchestration" | "mergeBlocker">): T & Required<Pick<RunningAgentTaskShape, "columnTerminalKind" | "columnIsIntakeOrHold" | "columnCountsTowardWip" | "columnIsReviewOrMerge">> {
   return {
     ...task,
     columnTerminalKind: flags?.archived ? "archived" : flags?.complete ? "complete" : "none",
-    columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : task.column === "triage" || task.column === "todo",
+    columnIsIntakeOrHold: flags ? flags.intake === true || flags.hold === true : isLegacyPreImplementationColumn(task.column),
     columnCountsTowardWip: flags ? flags.countsTowardWip === true : task.column === "in-progress",
-    // The literal fallback is fixture-only; board/store callers always supply flags/IR.
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-23:10 (reason now at
+    `isLegacyPreImplementationColumn`): these id fallbacks are REACHABLE, not fixture-only —
+    a column absent from the board's flag map is the renamed-or-undeclared case. Supply flags
+    rather than relying on them.
+    */
     columnIsReviewOrMerge: flags ? flags.mergeOrchestration === true || flags.mergeBlocker === true : task.column === "in-review",
   };
 }
@@ -101,6 +153,12 @@ function hasLiveWorkflowStepLease(task: RunningAgentTaskShape): boolean {
   return task.workflowStepResults?.some((result) => result.status === "pending") === true;
 }
 
+/*
+FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
+Full rationale at the first marker of this name above (enrichRunningAgentTaskShapeFromFlags): these
+legacy-id literals are the flag-less fallback the enrichers exist to remove; converting here would
+guess, and a wrong guess under-reports the queued total. Fix at the CALLER by passing flags/IR.
+*/
 function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
   // Legacy literals are intentionally fixture-only degradation when workflow IR is unavailable.
   return task.columnTerminalKind ?? (task.column === "done" ? "complete" : task.column === "archived" ? "archived" : "none");
@@ -114,6 +172,12 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
  * A live `pending` workflow-step lease (e.g. an in-flight Code Review gate)
  * counts in any non-terminal column, since gate sessions run with null status.
  */
+/*
+FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
+Full rationale at the first marker of this name above (enrichRunningAgentTaskShapeFromFlags): these
+legacy-id literals are the flag-less fallback the enrichers exist to remove; converting here would
+guess, and a wrong guess under-reports the queued total. Fix at the CALLER by passing flags/IR.
+*/
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
   if (task.status === "planning") return true;
@@ -130,7 +194,7 @@ export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
 /** Exact footer waiting membership: unpaused, non-terminal intake/hold work that is not live. */
 export function isWaitingAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none" || isRunningAgentTask(task)) return false;
-  return task.columnIsIntakeOrHold ?? (task.column === "triage" || task.column === "todo");
+  return task.columnIsIntakeOrHold ?? isLegacyPreImplementationColumn(task.column);
 }
 
 export function countRunningAgentTasks(tasks: readonly RunningAgentTaskShape[]): number {
@@ -147,3 +211,5 @@ export function deriveRunningAgentCounts(perProject: Record<string, number>): Ru
   }
   return { currentlyActive, projectsActive };
 }
+
+

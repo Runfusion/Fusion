@@ -111,27 +111,15 @@ export function isProjectRuntimeRestartBlockedError(error: unknown): error is Pr
 export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
   private runtimes = new Map<string, ProjectRuntime>();
   private projectNames = new Map<string, string>();
-  private globalSemaphore: AgentSemaphore;
-  /** Mutable limit read by the shared semaphore's getter function. */
-  private currentGlobalLimit = 4;
-  private globalLimitRefreshInterval: ReturnType<typeof setInterval>;
-  /**
-   * FNXC:LiveGlobalConcurrency 2026-07-11:
-   * Listener that applies a live global-concurrency change to the shared
-   * semaphore's limit immediately, so a PUT /api/global-concurrency takes effect
-   * without waiting for the 30s refresh poll (or a process restart). This is the
-   * binding semaphore: it is injected into every InProcessRuntime (which only
-   * installs its OWN concurrency:changed listener when it has to create a local
-   * semaphore, i.e. NOT in the shared-semaphore path), so the subscription must
-   * live here. Mirrors project-engine-manager.ts.
-   */
-  private concurrencyListener = (state: unknown): void => {
-    const s = state as { globalMaxConcurrent?: number };
-    if (typeof s.globalMaxConcurrent === "number") {
-      this.currentGlobalLimit = s.globalMaxConcurrent;
-      projectManagerLog.log(`Global concurrency limit updated to ${this.currentGlobalLimit}`);
-    }
-  };
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The shared cross-project semaphore, its mutable limit, the 30s reconciliation
+  poll and the live `concurrency:changed` subscription are all DELETED. Capacity is
+  two numbers PER PROJECT; the machine-wide cap was a third limiter kept in a
+  separate authority (a central-DB singleton row) which every runtime then had to
+  subscribe to and periodically re-reconcile. Removing the limiter removes the
+  subscription, the poll, and the drift between them in one step.
+  */
 
   /**
    * @param centralCore - CentralCore reference for global coordination
@@ -140,35 +128,7 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     super();
     this.setMaxListeners(100);
 
-    // Initialize global semaphore with a getter that reads the mutable limit.
-    // This single semaphore instance is shared across all runtimes so
-    // cross-project concurrency is enforced correctly.
-    this.globalSemaphore = new AgentSemaphore(() => this.currentGlobalLimit);
-
-    // Subscribe to live concurrency changes so limit updates take effect
-    // immediately (no restart / no 30s poll wait) on the shared semaphore.
-    if (typeof centralCore.on === "function") {
-      centralCore.on("concurrency:changed", this.concurrencyListener);
-    }
-
-    // Refresh the global limit periodically (fallback reconciliation).
-    this.refreshGlobalLimit();
-    this.globalLimitRefreshInterval = setInterval(() => this.refreshGlobalLimit(), 30000);
-    this.globalLimitRefreshInterval.unref?.();
-
     projectManagerLog.log("ProjectManager initialized");
-  }
-
-  /**
-   * Refresh the global concurrency limit from CentralCore.
-   */
-  private async refreshGlobalLimit(): Promise<void> {
-    try {
-      const state = await this.centralCore.getGlobalConcurrencyState();
-      this.currentGlobalLimit = state.globalMaxConcurrent;
-    } catch (error) {
-      projectManagerLog.warn("Failed to refresh global concurrency limit:", error);
-    }
   }
 
   /**
@@ -202,8 +162,7 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
 
     // Create appropriate runtime based on isolation mode
     let runtime: ProjectRuntime;
-    // Inject the shared global semaphore so all runtimes share one concurrency pool.
-    const configWithSemaphore = { ...config, globalSemaphore: this.globalSemaphore };
+    const configWithSemaphore = { ...config };
 
     if (config.isolationMode === "child-process") {
       runtime = new ChildProcessRuntime(configWithSemaphore, this.centralCore);
@@ -483,30 +442,14 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     }
   }
 
-  /**
-   * Acquire a global concurrency slot.
-   * Call this before starting task execution.
-   */
-  async acquireGlobalSlot(projectId: string): Promise<boolean> {
-    try {
-      return await this.centralCore.acquireGlobalSlot(projectId);
-    } catch (error) {
-      projectManagerLog.error(`Failed to acquire global slot for ${projectId}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Release a global concurrency slot.
-   * Call this after task execution completes.
-   */
-  async releaseGlobalSlot(projectId: string): Promise<void> {
-    try {
-      await this.centralCore.releaseGlobalSlot(projectId);
-    } catch (error) {
-      projectManagerLog.error(`Failed to release global slot for ${projectId}:`, error);
-    }
-  }
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  `acquireGlobalSlot` / `releaseGlobalSlot` are DELETED. Measured: they had NO
+  production callers — only tests — so the central-DB `currentlyActive` counter
+  they maintained was never incremented by real work. The cross-project cap had two
+  mechanisms, an in-memory semaphore (live) and this durable slot counter (dead);
+  both are gone with the limiter itself.
+  */
 
 
   async restartProjectRuntime(projectId: string, options?: { reason?: string; force?: boolean }): Promise<void> {
@@ -559,10 +502,6 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
 
     await Promise.all(stopPromises);
 
-    clearInterval(this.globalLimitRefreshInterval);
-    if (typeof this.centralCore.off === "function") {
-      this.centralCore.off("concurrency:changed", this.concurrencyListener);
-    }
     projectManagerLog.log("All project runtimes stopped");
     this.removeAllListeners();
   }

@@ -118,6 +118,38 @@ describe("stalled-card watchdog", () => {
     expect(await manager(store).detectStalledCards()).toBe(0);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:45:
+  `sweepTerminalColumns` was UNCOVERED on the #3115 map. The case directly above asserts the terminal
+  skip using `done` and `archived` — the ids — so blinding the resolver leaves it green.
+
+  On a renamed board the skip matched nothing, so FINISHED cards were scanned as live and a card
+  parked in a renamed completion lane could be reported stalled. A watchdog that cries about
+  completed work is worse than a quiet one: it trains operators to ignore the alert, which is the
+  failure mode this sweep's dedup logic exists to avoid.
+  */
+  it("stays silent for a card resting in a RENAMED terminal lane", async () => {
+    const store = storeFor([
+      task("FN-SHIPPED", { column: "shipped", status: "planning" }),
+      task("FN-VAULT", { column: "vault", status: "planning" }),
+    ]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
+        ],
+      },
+    }]);
+
+    expect(await manager(store).detectStalledCards()).toBe(0);
+  });
+
   it("does not re-emit for an unchanged card, but re-alerts once its shape changes", async () => {
     const stalled = task("FN-DEDUP", { column: "triage", status: "planning" });
     const store = storeFor([stalled]);

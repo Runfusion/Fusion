@@ -147,6 +147,7 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 | [Dashboard Theme & UI Plugin System Proposal (2026-07-01)](./proposals/2026-07-01-dashboard-theme-plugin-system.md) | Feasibility-spike proposal for a controlled dashboard theme/UI shell extension point sharing one backend source of truth |
 | [Full-loop Agent Tool-Surface Audit and Delivery Plan](./agent-tool-surface-full-loop.md) | Source-grounded audit of engine-agent and dashboard chat tool factories, gap analysis for mission hierarchy integration, and delivery plan (FN-8280) |
 | [Dashboard Modal Inventory](./dashboard-modal-inventory.md) | Canonical classification of all 45 dashboard modal surfaces (classes A–D) with file:line evidence, FloatingWindow migration targets, and the shared migration contract (FN-8605 → FN-8617) |
+| [Workflow-Owned Lifecycle Closing Verification](./workflow-owned-lifecycle-closing-verification.md) | Closing-bar verification runbook and recorded pass history for the workflow-owned lifecycle cutover programme — gate, verify:fast, E2E families, and census |
 
 ## External Resources
 

@@ -183,11 +183,29 @@ export async function runApprovalForCategory(
     status === "approved" ? "allow" : "deny";
 
   try {
-    // Reuse a prior decision for an identical call when available.
+    /*
+    FNXC:AcpApprovalConsumption 2026-07-26-12:50:
+    Approvals are execute-once-then-complete (mirrors the pi action gate's
+    resolveGateOutcome + markApprovalCompleted contract). The previous reuse
+    branch returned allow on an `approved` row WITHOUT consuming it, so one
+    human approval authorized unlimited repeats of the same tool call. Now an
+    approved row is marked completed (the engine-wired closure records the
+    requesting agent's actor snapshot and the "Tool executed after approval"
+    note) BEFORE the allow is returned; a `completed` row is not approved, so
+    the next identical call goes back through the HITL round-trip. When
+    `markApprovalCompleted` is absent the approval CANNOT be consumed, so it is
+    not reused either — the call falls through to a fresh approval round-trip
+    (or the default-deny floor) instead of granting an unconsumable allow.
+    Denied rows remain reusable: repeating a denial is the conservative outcome.
+    */
     if (typeof gate.findApprovalByDedupeKey === "function") {
       const prior = await gate.findApprovalByDedupeKey(dedupeKey);
-      if (prior && (prior.status === "approved" || prior.status === "denied")) {
-        return mapStatus(prior.status);
+      if (prior && prior.status === "denied") {
+        return "deny";
+      }
+      if (prior && prior.status === "approved" && typeof gate.markApprovalCompleted === "function") {
+        await gate.markApprovalCompleted(prior.id);
+        return "allow";
       }
     }
 

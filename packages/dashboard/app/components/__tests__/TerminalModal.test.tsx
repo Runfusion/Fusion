@@ -459,6 +459,29 @@ describe("TerminalModal", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:40:
+  FN remount-churn fix follow-up (PR #2420 review): kept-alive hosts keep isOpen=true and pass
+  active=false. The terminal must stay mounted (xterm + WS survive) while its auxiliary handlers —
+  here observable via the document Escape keydown — are suspended, then resume on reveal.
+  */
+  it("stays mounted but suspends auxiliary keydown handling while active=false, resuming on reveal", async () => {
+    const { rerender } = render(<TerminalModal isOpen={true} active={false} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    });
+
+    // Suspended: the hidden terminal must not swallow Escape or close itself.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(mockOnClose).not.toHaveBeenCalled();
+
+    // Reveal: the Escape handler re-registers and behaves exactly as before.
+    rerender(<TerminalModal isOpen={true} active={true} onClose={mockOnClose} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
   it("renders embedded mode in-flow without overlay chrome while keeping shell tabs", async () => {
     const { container } = render(
       <TerminalModal
@@ -481,6 +504,7 @@ describe("TerminalModal", () => {
     expect(screen.queryByTestId("terminal-close-btn")).toBeNull();
     expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
     expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
+    expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
     expect(screen.getByTestId("terminal-tabs")).toBeTruthy();
     expect(mockUseTerminalSessions).toHaveBeenCalledWith("proj-123", {
       storageScope: "task:FN-7813",
@@ -936,6 +960,7 @@ describe("TerminalModal", () => {
 
     const modal = await screen.findByTestId("terminal-modal");
     expect(modal).toHaveClass("terminal-modal--docked");
+    expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
     expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("terminal-popout-toggle"));
@@ -943,6 +968,7 @@ describe("TerminalModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
       expect(screen.getByTestId("terminal-modal")).not.toHaveClass("terminal-modal--docked");
+      expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
       expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
     });
 
@@ -1328,6 +1354,8 @@ describe("TerminalModal", () => {
       const modal = await screen.findByTestId("terminal-modal");
       await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
       expect(modal).toHaveClass("terminal-modal--tablet", "terminal-modal--floating");
+      expect(modal).not.toHaveClass("terminal-modal--mobile");
+      expect(screen.getByTestId("terminal-drag-grip")).toBeInTheDocument();
       // The 768px CSS fallback is full-screen only for true phones. A known
       // tablet must win that cascade with its stored floating geometry.
       const modalStyle = screen.getByTestId(`floating-window-terminal-${projectId}`).style;
@@ -1368,6 +1396,99 @@ describe("TerminalModal", () => {
     }
   });
 
+  it("gives tablet floating terminals a real touch drag grip without affecting other presentations", async () => {
+    const projectId = "tablet-terminal-drag-grip";
+    const previousInnerWidth = window.innerWidth;
+    const previousInnerHeight = window.innerHeight;
+    const previousScreen = Object.getOwnPropertyDescriptor(window, "screen");
+    const previousMaxTouchPoints = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    const setActiveTab = vi.fn();
+    const tabs = [
+      defaultTab,
+      { ...defaultTab, id: "tab-2", title: "a deliberately long second terminal tab", isActive: false },
+      { ...defaultTab, id: "tab-3", title: "a deliberately long third terminal tab", isActive: false },
+    ];
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+    Object.defineProperty(window, "screen", { configurable: true, value: { width: 1024, height: 768 } });
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    window.localStorage.setItem(`fusion:terminal-display-mode-${projectId}`, "floating");
+    mockUseTerminalSessions.mockReturnValue({ ...defaultSessionState, tabs, activeTab: tabs[0], setActiveTab });
+
+    try {
+      const { unmount } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+      const modal = await screen.findByTestId("terminal-modal");
+      const panel = screen.getByTestId(`floating-window-terminal-${projectId}`) as HTMLElement & {
+        setPointerCapture: (pointerId: number) => void;
+        releasePointerCapture: (pointerId: number) => void;
+      };
+      const grip = screen.getByTestId("terminal-drag-grip");
+      panel.setPointerCapture = vi.fn();
+      panel.releasePointerCapture = vi.fn();
+
+      expect(modal).toHaveClass("terminal-modal--tablet", "terminal-modal--floating");
+      expect(modal).not.toHaveClass("terminal-modal--mobile");
+      expect(grip).toHaveAttribute("aria-hidden", "true");
+      expect(grip.previousElementSibling).toBeNull();
+      expect(grip.tagName).toBe("DIV");
+
+      const initialLeft = panel.style.left;
+      const initialTop = panel.style.top;
+      fireEvent.pointerDown(grip, { pointerId: 63, pointerType: "touch", clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(grip, { pointerId: 63, pointerType: "touch", clientX: 20, clientY: 20 });
+      fireEvent.pointerUp(grip, { pointerId: 63, pointerType: "touch" });
+      await waitFor(() => {
+        expect(panel.setPointerCapture).toHaveBeenCalledWith(63);
+        expect(panel.style.left).not.toBe(initialLeft);
+        expect(panel.style.top).not.toBe(initialTop);
+        expect(JSON.parse(window.localStorage.getItem(`fusion:terminal-float-geometry-${projectId}`) ?? "{}").position).toEqual({ x: 16, y: 80 });
+      });
+
+      fireEvent.pointerDown(screen.getAllByRole("tab")[1], { pointerId: 64, pointerType: "touch" });
+      fireEvent.click(screen.getAllByRole("tab")[1]);
+      expect(setActiveTab).toHaveBeenCalledWith("tab-2");
+      expect(panel.setPointerCapture).toHaveBeenCalledTimes(1);
+      unmount();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: previousInnerHeight });
+      if (previousScreen) Object.defineProperty(window, "screen", previousScreen);
+      if (previousMaxTouchPoints) Object.defineProperty(navigator, "maxTouchPoints", previousMaxTouchPoints);
+    }
+  });
+
+  it("keeps the tablet drag grip isolated from the horizontally pannable tab strip", () => {
+    const gripSelector = ".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip";
+    const tabsSelector = ".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-tabs";
+    const gripSelectorIndex = terminalModalCss.indexOf(gripSelector);
+    const gripRuleEnd = terminalModalCss.indexOf("}", gripSelectorIndex);
+    const gripRule = terminalModalCss.slice(gripSelectorIndex, gripRuleEnd);
+    const tabsSelectorIndex = terminalModalCss.indexOf(tabsSelector);
+    const tabsRuleEnd = terminalModalCss.indexOf("}", tabsSelectorIndex);
+    const tabsRule = terminalModalCss.slice(tabsSelectorIndex, tabsRuleEnd);
+
+    expect(gripSelectorIndex).toBeGreaterThan(-1);
+    expect(gripRule).toContain("min-block-size: var(--modal-resize-touch-target);");
+    expect(gripRule).toContain("min-inline-size: var(--modal-resize-touch-target);");
+    expect(gripRule).toContain("touch-action: none;");
+    expect(tabsSelectorIndex).toBeGreaterThan(-1);
+    expect(tabsRule).toContain("touch-action: pan-x;");
+    expect(terminalModalCss).not.toContain(".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating {\n  touch-action: none;");
+    expect(terminalModalCss).not.toContain(".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header {\n  touch-action: none;");
+    expect(terminalModalCss.slice(0, gripSelectorIndex)).not.toContain("@media (min-width: 769px)");
+    expect(loadAllAppCss()).toContain(gripSelector);
+  });
+
   it("keeps the floating terminal touch-draggable with theme-controlled shadow", () => {
     const floatingWindowCss = readAppFile("components/FloatingWindow.css");
     expect(floatingWindowCss).toContain("box-shadow: var(--floating-window-shadow, var(--shadow-lg));");
@@ -1389,6 +1510,7 @@ describe("TerminalModal", () => {
       expect(modal).not.toHaveClass("terminal-modal--floating");
       expect(screen.queryByTestId("terminal-docked-resize-handle")).toBeNull();
       expect(screen.queryByTestId("terminal-popout-toggle")).toBeNull();
+      expect(screen.queryByTestId("terminal-drag-grip")).toBeNull();
       expect(screen.queryByTestId("floating-window-resize-se")).toBeNull();
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });

@@ -115,6 +115,7 @@ export {
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
+import { PlanningKeepAlive } from "./components/dashboard/PlanningKeepAlive";
 import { NATIVE_STRUCTURE_OPEN_EVENT, type NativeStructureOpenEventDetail } from "./components/nativeStructureNavigation";
 import { DashboardBanners } from "./components/dashboard/DashboardBanners";
 import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
@@ -539,14 +540,36 @@ function AppInner() {
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
   const taskSseEnabled = taskView === "board" || taskView === "list";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-03:50:
+  HOISTED above `useTasks` so its planner-activity stamp can be a role question.
+
+  The board-workflow payload is the only per-task trait source on this screen, and it depends on
+  `projectId` alone — nothing about tasks — so reading it first is safe. `useTasks` previously gated
+  that stamp on the literal `{triage, todo}` pair, which matches nothing on a renamed board, so the
+  planning border and pulsing badge never appeared while the planner was working the card.
+
+  REMOTE NODES GET NO FLAGS, deliberately: their rows belong to another store, so local
+  board-workflow metadata must never be applied to their ids — the same rule the footer index below
+  already follows. They keep the legacy fallback.
+  */
+  const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
+  const resolveTaskColumnFlagsForActivity = useCallback((task: Task) => {
+    if (isRemote || !footerBoardWorkflows) return undefined;
+    const workflowId = footerBoardWorkflows.taskWorkflowIds[task.id] ?? footerBoardWorkflows.defaultWorkflowId;
+    return footerBoardWorkflows.workflows
+      .find((workflow) => workflow.id === workflowId)
+      ?.columns.find((column) => column.id === task.column)?.flags;
+  }, [footerBoardWorkflows, isRemote]);
+
   const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
       sseEnabled: taskSseEnabled,
+      resolveColumnFlags: resolveTaskColumnFlagsForActivity,
     }
   );
-  const { boardWorkflows: footerBoardWorkflows } = useBoardWorkflows({ projectId: currentProject?.id });
   const footerTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
   const footerColumnFlagsByTaskId = useMemo(() => {
     const index = new Map<string, ExecutorColumnFlags>();
@@ -687,6 +710,25 @@ function AppInner() {
       setQuickChatEverOpenedProjectId(projectId);
     }
   }, [currentProject?.id, quickChatOpen]);
+
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:30:
+  Planning Mode mounts only after its first open for the current project, then stays mounted-but-hidden across sidebar navigation so the interview survives round-trips (FN remount-churn fix R5). This mirrors Quick Chat's quickChatEverOpenedProjectId latch above: reset on project change so one project's kept-alive interview can never leak into another; the PlanningKeepAlive key supplies the matching React identity boundary.
+  */
+  const [planningEverOpenedProjectId, setPlanningEverOpenedProjectId] = useState<string | null>(null);
+  const planningLatchProjectIdRef = useRef<string | undefined>(undefined);
+  const planningViewActive = taskView === "planning";
+  useEffect(() => {
+    const projectId = currentProject?.id;
+    if (planningLatchProjectIdRef.current !== projectId) {
+      planningLatchProjectIdRef.current = projectId;
+      setPlanningEverOpenedProjectId(planningViewActive && projectId ? projectId : null);
+      return;
+    }
+    if (planningViewActive && projectId) {
+      setPlanningEverOpenedProjectId(projectId);
+    }
+  }, [currentProject?.id, planningViewActive]);
 
   /*
   FNXC:GitHubImportChat 2026-07-30-12:00:
@@ -837,7 +879,10 @@ function AppInner() {
   }), [taskPopupsBoardListOnly, taskView]);
   /*
   FNXC:TaskPopupViewGating 2026-07-15-15:20:
-  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible; navigating away unmounts scoped FloatingWindow shells without deleting their state.
+  FN-8016 defaults popup rendering to the originating view for every dashboard surface. Entries without an origin are legacy snapshots and intentionally remain globally visible.
+
+  FNXC:TaskPopupViewGating 2026-07-22-13:15:
+  FN remount-churn fix R7: this memo no longer drives the render list (all entries render; off-view windows hide via FloatingWindow `hidden`). It remains the "currently visible" set consumed by the Escape/back-navigation shortcut handler below, which must only dismiss windows the user can actually see.
   */
   const visiblePoppedOutTaskEntries = useMemo(
     () => poppedOutTaskEntries.filter((entry) => taskPopupsVisibleOnCurrentView(entry.originTaskView)),
@@ -944,7 +989,7 @@ function AppInner() {
       handleChangeTaskView("board");
     }
     /*
-    FNXC:Navigation 2026-08-01-00:00:
+    FNXC:Navigation 2026-07-30-00:00:
     FN-8352 promotes Ideation to a default-off experimental top-level view.
     Redirect persisted and deep-linked disabled views to Board so MainContent
     never leaves users on a blank unavailable surface.
@@ -1449,8 +1494,22 @@ function AppInner() {
         moveTask,
         openAuthenticationSettings: () => openSettingsWithNav("authentication" as SectionId),
         addToast,
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+        Resolve Cancel's destination from the card's OWN workflow. Without this the banner moved to a
+        hardcoded `"todo"`, which `moves.ts` REJECTS on a board that does not declare it — the button
+        threw instead of cancelling. Wired here rather than left optional: an unsupplied parameter is
+        the inert shape this program has already found five times.
+        */
+        resolveCancelColumn: (taskId: string) => {
+          if (!footerBoardWorkflows) return undefined;
+          const workflow = footerBoardWorkflows.workflows.find(
+            (candidate) => candidate.id === (footerBoardWorkflows.taskWorkflowIds[taskId] ?? footerBoardWorkflows.defaultWorkflowId),
+          );
+          return workflow?.columns.find((column) => column.flags?.hold === true)?.id;
+        },
       }),
-    [addToast, currentProject?.id, modalManager, moveTask, retryTask],
+    [addToast, currentProject?.id, footerBoardWorkflows, modalManager, moveTask, retryTask],
   );
 
   const [shellOnboardingComplete, setShellOnboardingComplete] = useState(false);
@@ -1514,7 +1573,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1609,7 +1668,6 @@ function AppInner() {
     isRemote,
     remoteData,
     tasks,
-    bgPlanningSessions,
     workflowSteps,
     subscribePluginEvents,
     openDetailTask,
@@ -1655,8 +1713,6 @@ function AppInner() {
     ingestCreatedTasks,
     nodesEnabled,
     openWorkflowEditorWithNav,
-    handlePlanningTaskCreated,
-    handlePlanningTasksCreated,
     handleGitHubImport,
     devServerEnabled,
     mainPanelDetailTask,
@@ -1710,6 +1766,9 @@ function AppInner() {
     capacityRiskDismissed,
     capacityRiskSignal,
     handleDismissCapacityRisk,
+    // FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: reuse the footer's per-task column traits
+    // so main-content views resolve lifecycle roles instead of matching column names.
+    columnFlagsByTaskId: footerColumnFlagsByTaskId,
     AgentsView,
     ChatView,
     CommandCenter,
@@ -1910,6 +1969,25 @@ function AppInner() {
           className={`project-content${executorFooterVisible && (!isMobile || !mobileKeyboardOpen) ? " project-content--with-footer" : ""}${isMobile && mobileNavVisible && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
         >
           <MainContent {...mainContentProps} />
+          {/*
+          FNXC:PlanningKeepAlive 2026-07-22-12:30:
+          Kept-alive Planning Mode renders as a sibling of the MainContent switch inside .project-content (which is position:relative for the hidden out-of-flow overlay state). Keyed by project id + planningEntryGeneration so project switches and payload-carrying planning entry points remount with fresh-open semantics while plain navigation restores the live instance.
+          */}
+          {viewMode === "project" && currentProject && planningEverOpenedProjectId === currentProject.id && (
+            <PlanningKeepAlive
+              key={`${currentProject.id}:${modalManager.planningEntryGeneration}`}
+              active={planningViewActive}
+              projectId={currentProject.id}
+              tasks={tasks}
+              bgPlanningSessions={bgPlanningSessions}
+              modalManager={modalManager}
+              handleChangeTaskView={handleTaskViewChange}
+              handlePlanningTaskCreated={handlePlanningTaskCreated}
+              handlePlanningTasksCreated={handlePlanningTasksCreated}
+              openBoardTaskDetail={openBoardTaskDetail}
+              openWorkflowEditorWithNav={openWorkflowEditorWithNav}
+            />
+          )}
         </div>
         {rightDock.dock}
       </div>
@@ -2093,18 +2171,20 @@ function AppInner() {
       moves either overlapping surface above the other. Other utility windows retain their separate,
       higher utility band and cannot be reordered by task-popup interaction.
 
-      FNXC:TaskPopupViewGating 2026-07-15-15:20:
-      Rendering uses only the active view's scoped entries; state keeps hidden snapshots so returning remounts them with shared geometry. Each FloatingWindow key includes its origin so identical task ids never collide across views.
+      FNXC:TaskPopupViewGating 2026-07-22-13:15:
+      FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
-      {visiblePoppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
+      {poppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
         const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
         const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
+        const popupVisible = taskPopupsVisibleOnCurrentView(originTaskView);
         return (
           <FloatingWindow
             key={popupKey}
             windowKey={`task-detail-${snapshot.id}-${originTaskView ?? "global"}`}
             title={liveTask.id}
+            hidden={!popupVisible}
             onClose={close}
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
@@ -2119,6 +2199,7 @@ function AppInner() {
               initialTab={initialTab}
               projectId={currentProject?.id}
               tasks={tasks}
+              active={popupVisible}
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
               onMoveTask={moveTask}
@@ -2140,6 +2221,7 @@ function AppInner() {
       <AppModals
         projectId={currentProject?.id}
         tasks={tasks}
+        columnFlagsByTaskId={footerColumnFlagsByTaskId}
         projects={projects}
         currentProject={currentProject}
         addToast={addToast}

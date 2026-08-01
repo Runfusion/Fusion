@@ -464,6 +464,18 @@ interface TerminalModalProps {
   scopeId?: string;
   /** Whether the fixed ExecutorStatusBar footer is currently rendered; reserves space for it in below-mode. */
   footerVisible?: boolean;
+  /*
+  FNXC:TaskPopupViewGating 2026-07-23-10:25:
+  Keep-alive suspension gate (FN remount-churn fix follow-up). Kept-alive hosts (the task-detail
+  worktree Terminal tab inside a hidden popup or behind another tab) keep isOpen=true so the xterm
+  instance and terminal WebSocket survive, but pass active=false to suspend auxiliary background
+  work only: visual-viewport/keyboard/orientation listeners, window-resize listeners,
+  ResizeObservers, refit rAF loops, tabs-overflow measurement, and the zoom/Escape keydown
+  handlers. xterm init, WS bridging, disposal-on-close, and rendering stay keyed on isOpen alone.
+  On the false -> true transition the gated refit effects re-run, so the reveal gets a corrective
+  fit for free. Defaults to true so every standalone host is unaffected.
+  */
+  active?: boolean;
 }
 
 /**
@@ -481,8 +493,10 @@ interface TerminalModalProps {
  * 
  * The terminal spawns a real shell (bash/zsh/powershell based on platform).
  */
-export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false }: TerminalModalProps) {
+export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandGeneration = 0, projectId, embedded = false, defaultCwd, scopeId, footerVisible = false, active = true }: TerminalModalProps) {
   const { t } = useTranslation("app");
+  // FNXC:TaskPopupViewGating 2026-07-23-10:25: auxiliary-effect gate — see the `active` prop doc above. Never used for xterm init/cleanup or render.
+  const auxEffectsActive = isOpen && active;
   const [error, setError] = useState<string | null>(null);
   // FNXC:Terminal 2026-07-23-20:10: In-flight guard for the manual "Start terminal" action (GitHub #2121/#2307 review): rapid clicks must not create duplicate PTY sessions, and the Windows bootstrap-failure cohort this button serves must SEE createTab failures instead of a silently dead button.
   const [isStartingTerminal, setIsStartingTerminal] = useState(false);
@@ -622,7 +636,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   }, [projectId]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
     /*
     FNXC:Terminal 2026-06-21-22:58:
     Viewport changes must force the terminal back onto the mobile fullscreen path at <=768px or touch-primary short landscape, then restore the stored desktop/tablet docked/floating mode when the viewport expands.
@@ -638,7 +652,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       window.removeEventListener("resize", updateViewportMode);
       window.visualViewport?.removeEventListener("resize", updateViewportMode);
     };
-  }, [isOpen]);
+  }, [auxEffectsActive]);
 
   const checkTabsFit = useCallback(() => {
     const measuredTabs = terminalTabsMeasureRef.current;
@@ -803,7 +817,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // Track virtual keyboard overlap on mobile so the terminal entry area
   // stays visible above the keyboard. On desktop this is a no-op.
   useEffect(() => {
-    if (!isOpen || !isMobileDevice()) return;
+    if (!auxEffectsActive || !isMobileDevice()) return;
 
     const vv = window.visualViewport;
     if (!vv) return;
@@ -878,25 +892,28 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       setViewportHeight(null);
       setViewportWidth(null);
     };
-  }, [fitAndResizeForSession, isOpen]);
+  }, [fitAndResizeForSession, auxEffectsActive]);
 
   /*
   FNXC:Terminal 2026-06-21-22:07:
   Docked resize interactions change the terminal viewport without a window resize event, so refit xterm after display mode or docked height changes. FloatingWindow geometry is handled by its dedicated event listener.
   */
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
     const sessionId = typeof xtermInitializedRef.current === "string" ? xtermInitializedRef.current : undefined;
     const frame = requestAnimationFrame(() => fitAndResizeForSession(sessionId));
     return () => cancelAnimationFrame(frame);
-  }, [displayMode, dockedHeight, fitAndResizeForSession, isOpen]);
+  /* FNXC:TerminalKeepAlive 2026-07-30-23:55: `floatingSize` was in this array on the PR branch and no
+     longer exists — main removed it. Dropped rather than reconstructed: the effect body reads only
+     `auxEffectsActive` and `fitAndResizeForSession`, and the rest are layout re-run triggers. */
+  }, [displayMode, dockedHeight, fitAndResizeForSession, auxEffectsActive]);
 
   // Refit xterm whenever the user drags the modal's CSS resize grip.
   // The window/visualViewport listeners only fire on viewport changes; native
   // `resize: both` does NOT emit window resize, so we observe the modal node
   // directly and ask xterm to refit to the new pixel box.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
     const node = modalRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
 
@@ -918,7 +935,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       observer.disconnect();
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
     };
-  }, [fitAndResizeForSession, isOpen]);
+  }, [fitAndResizeForSession, auxEffectsActive]);
 
   // Use the session management hook
   const {
@@ -940,7 +957,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   });
 
   useEffect(() => {
-    if (!isOpen) {
+    if (!auxEffectsActive) {
       setTabsOverflow(false);
       return;
     }
@@ -957,7 +974,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       window.removeEventListener("resize", checkTabsFit);
       observer?.disconnect();
     };
-  }, [checkTabsFit, isOpen, tabs.length]);
+  }, [checkTabsFit, auxEffectsActive, tabs.length]);
 
   useEffect(() => {
     checkTabsFit();
@@ -988,7 +1005,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   container div). See docs/solutions/ui-bugs/mobile-terminal-blank-render-zero-geometry-container.md.
   */
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
     const node = terminalRef.current;
     if (!node || typeof ResizeObserver === "undefined") return;
 
@@ -1010,7 +1027,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       observer.disconnect();
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
     };
-  }, [fitAndResizeForSession, isOpen, activeTab?.sessionId]);
+  }, [fitAndResizeForSession, auxEffectsActive, activeTab?.sessionId]);
 
   const {
     projectName: terminalWorkspaceProjectName,
@@ -1945,8 +1962,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   }, [resolvedFontFamily, terminalPreferences, xtermReady, refitTerminal]);
 
   // Handle keyboard shortcuts (zoom)
+  // FNXC:TaskPopupViewGating 2026-07-23-10:25: gated on auxEffectsActive so a kept-alive hidden terminal never intercepts global zoom keystrokes.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -1975,11 +1993,12 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, setFontSize]);
+  }, [auxEffectsActive, setFontSize]);
 
   // Handle escape key to close the open worktree menu before closing the terminal.
+  // FNXC:TaskPopupViewGating 2026-07-23-10:25: gated on auxEffectsActive so a kept-alive hidden terminal never swallows Escape or closes itself.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!auxEffectsActive) return;
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -1994,7 +2013,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, onClose, terminalWorkspaceMenuOpen]);
+  }, [auxEffectsActive, onClose, terminalWorkspaceMenuOpen]);
 
   // Focus terminal when connected
   useEffect(() => {
@@ -2407,12 +2426,18 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     </>
   );
 
+  /*
+  FNXC:TerminalModalControls 2026-07-31-22:19:
+  The tab scroller owns tab presses and horizontal panning; floating-window drags begin only on
+  the reserved grip so a tab interaction cannot leave a captured header drag behind.
+  */
   const renderTerminalTabStrip = (measuring = false) => (
     <div
       ref={measuring || !tabsOverflow ? terminalTabsMeasureRef : undefined}
       className={`terminal-tabs${measuring ? " terminal-tabs--measuring" : ""}`}
       data-testid={measuring ? "terminal-tabs-measuring" : "terminal-tabs"}
       aria-hidden={measuring || undefined}
+      onPointerDown={measuring ? undefined : (event) => event.stopPropagation()}
     >
       {tabs.map((tab) => (
         <div
@@ -2522,6 +2547,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         {/* Header — on mobile (≤768px) use compact selector/actions;
             .terminal-title is hidden; action button labels are hidden (icons only) */}
         <div className="terminal-header">
+          {/*
+          FNXC:TerminalModalControls 2026-07-31-22:19:
+          Tablet floating terminals need a reserved, real pointer target because the flexing tab
+          strip otherwise consumes the entire delegated header handle. This plain element—not a
+          pseudo-element—is the testable drag target and remains outside the interactive-element
+          suppression filter in FloatingWindow.
+          */}
+          {isTabletTerminal && !isMobileTerminal && !embedded && isFloatingMode && (
+            <div className="terminal-header__drag-grip" data-testid="terminal-drag-grip" aria-hidden="true" />
+          )}
           {/* Tab Bar */}
           {isMobileTerminal ? renderTerminalMobileTabs() : (
             <div className="terminal-tab-region" ref={terminalTabRegionRef}>

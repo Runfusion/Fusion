@@ -135,7 +135,10 @@ describe("resolveLegacyStatusAdoption — every legacy (status) resumes owned", 
   its own crash-recovery owner; adoption must never touch them.
   */
   it("live-writer statuses are preserved — planning/queued/merge pipeline/stuck-killed (FN-8504)", () => {
-    for (const s of ["planning", "queued", "merging", "merging-pr", "merging-fix", "stuck-killed", "needs-replan"]) {
+    for (const s of ["planning", "queued", "merging", "merging-pr", "merging-fix",
+      // FNXC:LegacyAdoption 2026-08-01-00:55: reviewing/landing are the same live merge family —
+      // missing them parked a healthy landing task paused at restart (FN-8635).
+      "reviewing", "landing", "stuck-killed", "needs-replan"]) {
       expect(resolveLegacyStatusAdoption(s)?.kind, s).toBe("preserve");
     }
   });

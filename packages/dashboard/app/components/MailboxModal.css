@@ -420,7 +420,20 @@ and visited purple clash with dark themes and violate the dashboard token system
   color: var(--accent);
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  text-underline-offset: var(--space-2xs);
+  /*
+  FNXC:MailboxLinks 2026-07-30-22:10:
+  `--space-xs` (4px), not `--space-2xs`. That token does not exist — the scale is xs/sm/md/lg/xl/2xl —
+  so the declaration was INVALID and the browser dropped it, leaving the underline at its default
+  offset. An undefined custom property fails silently at the property level, which is why a
+  hand-written smaller step went unnoticed; `space-token-defined.test.ts` is what caught it.
+
+  Using `--space-xs` rather than adding the token FOLLOWS AN EXISTING DECISION, not my judgement:
+  `QuickEntryBox.css` and `ChatView.css` both record that `--space-2xs` is intentionally undefined
+  (FN-5934) and that the fix is "use the smallest defined token, --space-xs (4px), instead of
+  reintroducing --space-2xs". This site is the one that missed the memo; both of those files also
+  name this guard as what enforces it.
+  */
+  text-underline-offset: var(--space-xs);
   border-radius: var(--radius-sm);
   overflow-wrap: anywhere;
   transition: color var(--transition-fast), text-decoration-color var(--transition-fast);

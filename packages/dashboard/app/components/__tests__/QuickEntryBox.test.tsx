@@ -5562,7 +5562,7 @@ describe("QuickEntryBox", () => {
       id: "custom:waiting",
       name: "Waiting first",
       columns: [
-        { id: "waiting", name: "Waiting", flags: { hold: true } },
+        { id: "waiting", name: "Waiting", flags: { intake: true, hold: true, manualIntake: true } },
         { id: "working", name: "Working", flags: {} },
         { id: "done", name: "Done", flags: { complete: true } },
       ],
@@ -5645,13 +5645,26 @@ describe("QuickEntryBox", () => {
       expect(onMoveTask).not.toHaveBeenCalled();
     });
 
-    it("renders no Start button or shell for unrelated or malformed workflow metadata and keeps Save create-only", async () => {
-      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-plain", column: "ideas", workflowId: "custom" });
+    it.each([
+      ["desktop", mockDesktopViewport],
+      ["mobile", mockMobileViewport],
+    ])("renders no Start button or shell for Coding and malformed workflow metadata on %s", async (_label, mockViewport) => {
+      mockViewport();
+      const onCreate = vi.fn().mockResolvedValue({ ...CREATED_TASK, id: "FN-plain", column: "planning", workflowId: "builtin:coding" });
       const onMoveTask = vi.fn();
-      const { rerender } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: "custom", workflowOptions: [{ ...ideasWorkflow, id: "custom", columns: [{ id: "ideas", name: "Ideas", flags: { intake: true } }, ...ideasWorkflow.columns.slice(1)] }] });
+      const codingWorkflow = {
+        id: "builtin:coding",
+        name: "Coding",
+        columns: [
+          { id: "planning", name: "Planning", flags: { intake: true, hold: true } },
+          { id: "todo", name: "Todo", flags: {} },
+        ],
+      };
+      const { rerender } = renderQuickEntryBox({ onCreate, onMoveTask, workflowId: codingWorkflow.id, workflowOptions: [codingWorkflow] });
       enterDescription();
       expect(screen.queryByTestId("quick-entry-save-start")).toBeNull();
       expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+      expect(screen.queryByTitle("Create and start the task")).toBeNull();
       clickSave();
       await waitFor(() => expect(onCreate).toHaveBeenCalled());
       expect(onMoveTask).not.toHaveBeenCalled();

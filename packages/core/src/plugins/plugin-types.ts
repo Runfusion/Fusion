@@ -31,6 +31,18 @@ const SETUP_CHANNELS = ["stable", "beta", "nightly"] as const;
 // ── Plugin Manifest ───────────────────────────────────────────────────
 
 /**
+ * FNXC:PluginTaskStoreGate 2026-07-26-12:20:
+ * Opt-in privilege declarations. Plugins receive a gated TaskStore by default:
+ * destructive methods (deleteTask*, bypassFailedPreMergeReviewStep, archiveAllDone,
+ * cleanupArchivedTasks) throw unless the manifest declares
+ * `permissions: { destructiveTaskOps: true }`. See plugin-task-store-gate.ts.
+ */
+export interface PluginPermissions {
+  /** Allow calling destructive TaskStore methods (delete/bypass/bulk-archive). */
+  destructiveTaskOps?: boolean;
+}
+
+/**
  * Metadata and capability declaration for a plugin.
  */
 export interface PluginManifest {
@@ -66,6 +78,8 @@ export interface PluginManifest {
   promptSurfaces?: PluginPromptSurface[];
   /** Setup metadata for plugin-managed binaries/runtimes. */
   setup?: PluginSetupManifest;
+  /** Opt-in privilege declarations (see PluginPermissions). Absent = least privilege. */
+  permissions?: PluginPermissions;
 }
 
 // ── Plugin Setting Schema ──────────────────────────────────────────────

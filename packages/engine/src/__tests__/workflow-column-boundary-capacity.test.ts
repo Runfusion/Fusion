@@ -55,6 +55,75 @@ function invariantError() {
   );
 }
 
+describe("workflow column boundary — global pause suspends at every node entry", () => {
+  /*
+  FNXC:EnginePause 2026-08-01-00:30:
+  Operator regression: Stop AI Engine (globalPause) did not stop the graph — a live run started a
+  fresh Plan Review model session two minutes after pause, because no node boundary ever re-read
+  settings. These fail if the `isPaused` probe is removed from onNodeEntry.
+  */
+  it("suspends with reason 'pause' before any move or node side effect when paused", async () => {
+    const moveTask = vi.fn();
+    const onSuspend = vi.fn();
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-PAUSE1",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+      moveTask,
+      onSuspend,
+      isPaused: async () => true,
+    });
+
+    const result = await boundary.onNodeEntry(remediationNode());
+
+    expect(result).toMatchObject({
+      kind: "suspended",
+      reason: "pause",
+      nodeId: "code-review-remediation",
+      fromColumn: "in-review",
+    });
+    expect(onSuspend).toHaveBeenCalledTimes(1);
+    // Pause must be a pure park: no move was attempted, the card stays put.
+    expect(moveTask).not.toHaveBeenCalled();
+    expect(boundary.currentColumn()).toBe("in-review");
+  });
+
+  it("gates even a same-column node — each node can start a real session without moving the card", async () => {
+    const onSuspend = vi.fn();
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-PAUSE2",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+      onSuspend,
+      isPaused: () => true,
+    });
+
+    const sameColumnNode = ir().nodes.find((n) => n.id === "code-review")!;
+    const result = await boundary.onNodeEntry(sameColumnNode);
+
+    expect(result).toMatchObject({ kind: "suspended", reason: "pause", toColumn: "in-review" });
+    expect(onSuspend).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not suspend when the probe reports unpaused", async () => {
+    const moveTask = vi.fn().mockResolvedValue(undefined);
+    const boundary = createWorkflowColumnBoundary({
+      taskId: "FN-PAUSE3",
+      workflowId: "builtin:coding",
+      ir: ir(),
+      initialColumn: "in-review",
+      moveTask,
+      isPaused: () => false,
+    });
+
+    const result = await boundary.onNodeEntry(remediationNode());
+    expect(result).toMatchObject({ kind: "entered" });
+    expect(moveTask).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("workflow column boundary — capacity rejection on the remediation crossing", () => {
   it("parks (suspends) instead of failing the run when in-progress is at capacity", async () => {
     const moveTask = vi.fn().mockRejectedValue(capacityError());

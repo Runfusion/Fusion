@@ -8,6 +8,7 @@ import {
 import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
 import { getBuiltinWorkflow } from "../workflows/builtin-workflows.js";
+import { DEFAULT_MAX_POST_REVIEW_FIXES } from "../workflows/builtin-workflow-settings.js";
 import {
   BUILTIN_MOVED_WORKFLOW_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
@@ -245,7 +246,15 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
       maxParallelSteps: 2,
       buildRetryCount: 0,
       verificationFixRetries: 3,
-      maxPostReviewFixes: 3,
+      /*
+      FNXC:WorkflowOptionalStepCycle 2026-07-30-03:45:
+      Driven off the exported constant, not a literal. `DEFAULT_MAX_POST_REVIEW_FIXES`
+      (builtin-workflow-settings.ts:555) exists BECAUSE the declaration default and two inline
+      literal 3s had drifted apart once; this file is the third place that pinned the stale 3, so a
+      fourth copy would guarantee a fourth drift. This is the parity anchor — it must follow the
+      declaration by construction.
+      */
+      maxPostReviewFixes: DEFAULT_MAX_POST_REVIEW_FIXES,
       requirePrApproval: false,
       requirePlanApproval: false,
       reviewHandoffPolicy: "disabled",

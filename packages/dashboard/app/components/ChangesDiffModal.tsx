@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { isCompleteColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
 import { FloatingWindow } from "./FloatingWindow";
 import { useModalDismissPreference } from "../hooks/useOverlayDismiss";
@@ -26,6 +27,8 @@ export interface NormalizedFile {
 }
 
 interface ChangesDiffModalProps {
+  /** Resolved column flags, forwarded by TaskChangesTab. */
+  columnFlags?: Parameters<typeof isCompleteColumnRole>[0];
   isOpen: boolean;
   taskId: string;
   files: NormalizedFile[];
@@ -57,7 +60,7 @@ function getStatusLabel(
  * The left panel lists changed files with status badges (A/M/D) and +/- stats.
  * The right panel displays the syntax-highlighted diff for the selected file.
  */
-export function ChangesDiffModal({
+export function ChangesDiffModal({ columnFlags,
   isOpen,
   taskId,
   files,
@@ -117,13 +120,15 @@ export function ChangesDiffModal({
 
   const selectedFile =
     selectedIndex !== null ? files[selectedIndex] : null;
-  const isDone = column === "done";
+  /* FNXC:WorkflowResolvedColumns 2026-07-30-17:00: same COMPLETE role as its parent, forwarded —
+     the two must agree about which diff source they are showing. */
+  const isDone = isCompleteColumnRole(columnFlags, column ?? "");
 
   return (
     <FloatingWindow
       windowKey="changes-diff"
       title={t("changes.title", "Changes")}
-      ariaLabel={`${t("changes.title", "Changes")} dialog`}
+      ariaLabel={t("changes.title", "Changes")}
       onClose={onClose}
       hideHeader
       dragHandleSelector=".changes-diff-modal-header"

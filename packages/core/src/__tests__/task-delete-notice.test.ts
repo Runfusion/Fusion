@@ -14,11 +14,16 @@ case (AGENTS.md "Fix the Invariant, Not the Repro"): notify for `agent-tool` and
 stay silent for `operator-ui`, `operator-cli` (the operator did it themselves) and `engine` (triage
 split-close fires on every decomposition — confirmed unwanted traffic).
 
-Surface enumeration — all three `task:deleted` emission sites, so the behavior cannot depend on
-backend mode:
-  1. `deleteTaskImpl`        (SQLite)
-  2. `deleteTaskIfImpl`      (SQLite, conditional)
-  3. `deleteTaskBackendImpl` (PostgreSQL; `deleteTaskIfBackendImpl` delegates here)
+Surface enumeration — all three `task:deleted` ENTRY POINTS. Note (2026-07-30): these are no
+longer three BACKENDS. The SQLite arms were deleted in the PG cutover
+(FNXC:SqliteDualPathCleanup 2026-07-26), so `deleteTaskImpl` and `deleteTaskIfImpl` are now thin
+delegators to the same PostgreSQL implementation. The enumeration is still worth driving — a caller
+reaching the public entry point must get the same notice as one reaching the backend directly, and
+these paths prove the delegation preserves it — but "the behavior cannot depend on backend mode" is
+no longer the claim, because there is one backend:
+  1. `deleteTaskImpl`        (public entry point → `store.deleteTaskBackend`)
+  2. `deleteTaskIfImpl`      (conditional entry point → `store.deleteTaskIf`)
+  3. `deleteTaskBackendImpl` (the backend itself; `deleteTaskIfBackendImpl` delegates here)
 plus: no audit context at all, no mailbox registered, and a mailbox that throws.
 
 Best-effort anchor: a mailbox write that throws must never fail or roll back the delete. That is the
@@ -44,7 +49,7 @@ vi.mock("../async-mission-store-queries.js", () => ({
 }));
 
 import { deleteTaskImpl, deleteTaskIfImpl } from "../task-store/archive-lifecycle.js";
-import { deleteTaskBackendImpl } from "../task-store/archive-lifecycle-2.js";
+import { deleteTaskBackendImpl, deleteTaskIfBackendImpl } from "../task-store/archive-lifecycle-2.js";
 import { TASK_DELETE_CALLER_KINDS, type TaskDeleteCallerKind } from "../task-delete-attribution.js";
 import {
   NOTIFIED_TASK_DELETE_CALLER_KINDS,
@@ -99,38 +104,11 @@ function makeMailbox(options?: { throws?: boolean }) {
 }
 
 /** In-memory SQLite-path TaskStore fake (same shape as task-delete-caller-attribution.test.ts). */
-function makeSqliteStore(task: Task) {
-  const events = new EventEmitter();
-  const tasks = new Map<string, Task>([[task.id, { ...task, log: [] }]]);
-  return {
-    backendMode: false,
-    agentLogBuffer: [],
-    isWatching: false,
-    taskCache: new Map<string, Task>(),
-    missionStore: undefined,
-    db: { transaction: (fn: () => void) => fn(), prepare: () => ({ run: () => undefined }), bumpLastModified: vi.fn() },
-    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
-    flushAgentLogBuffer: vi.fn(),
-    readTaskFromDb: vi.fn((id: string) => tasks.get(id) ?? null),
-    findLiveDependents: vi.fn(() => [] as string[]),
-    findLiveLineageChildren: vi.fn(async () => [] as string[]),
-    cleanupBranchForTask: vi.fn(async () => [] as string[]),
-    rewriteDependentsForRemoval: vi.fn(() => []),
-    rewriteBlockedByResidueDependentsForRemoval: vi.fn(() => []),
-    rewriteLineageChildrenForRemoval: vi.fn(() => []),
-    recordRunAuditEvent: vi.fn(async () => undefined),
-    makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
-    clearLinkedAgentTaskIds: vi.fn(),
-    clearNearDuplicateReferencesToFailSoft: vi.fn(async () => undefined),
-    emit: vi.fn((event: string, ...args: unknown[]) => events.emit(event, ...args)),
-    on: events.on.bind(events),
-  };
-}
 
 /** In-memory PostgreSQL-path TaskStore fake for `deleteTaskBackendImpl`. */
 function makePgStore(task: Task) {
   pgRow = task;
-  return {
+  const store = {
     backendMode: true,
     asyncLayer: {
       db: {},
@@ -142,7 +120,26 @@ function makePgStore(task: Task) {
     recordRunAuditEventBackend: vi.fn(async () => undefined),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
     emit: vi.fn(),
-  };
+    /* `deleteTaskIf` wraps the conditional delete in the per-task lock; the fake runs
+       the body inline so the predicate/short-circuit paths are exercised for real. */
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
+  } as Record<string, unknown>;
+  /*
+  FNXC:TaskDeleteNotice 2026-07-30-06:10 (PG cutover fallout):
+  `deleteTaskImpl` / `deleteTaskIfImpl` are now THIN DELEGATORS — the SQLite arms were
+  deleted (FNXC:SqliteDualPathCleanup 2026-07-26) and both forward to these store
+  methods. The fake has to provide them or the public entry points throw
+  "store.deleteTaskBackend is not a function" before reaching any notice logic, which is
+  exactly what left 21 cases in this file red.
+
+  Wired to the REAL impls rather than stubbed, so these paths still prove the
+  delegation preserves the notice decision instead of asserting against a mock.
+  */
+  store.deleteTaskBackend = (id: string, options?: unknown) =>
+    deleteTaskBackendImpl(store as never, id, options as never);
+  store.deleteTaskIf = (id: string, predicate: unknown, options?: unknown) =>
+    deleteTaskIfBackendImpl(store as never, id, predicate as never, options as never);
+  return store;
 }
 
 /*
@@ -155,18 +152,18 @@ const DELETE_PATHS: ReadonlyArray<{
   run: (task: Task, auditContext: unknown) => Promise<{ store: object }>;
 }> = [
   {
-    name: "deleteTaskImpl (SQLite)",
+    name: "deleteTaskImpl (public entry point → backend)",
     run: async (task, auditContext) => {
-      const store = makeSqliteStore(task);
+      const store = makePgStore(task);
       registerMailboxFor(store);
       await deleteTaskImpl(store as never, task.id, { auditContext: auditContext as never });
       return { store };
     },
   },
   {
-    name: "deleteTaskIfImpl (SQLite, conditional)",
+    name: "deleteTaskIfImpl (conditional entry point → backend)",
     run: async (task, auditContext) => {
-      const store = makeSqliteStore(task);
+      const store = makePgStore(task);
       registerMailboxFor(store);
       await deleteTaskIfImpl(store as never, task.id, () => true, { auditContext: auditContext as never });
       return { store };
@@ -246,7 +243,9 @@ describe("operator mailbox notice for non-operator deletes", () => {
     it(`${path.name}: completes the delete when no mailbox is registered`, async () => {
       const task = makeTask("FN-9004");
       const noop = { sendMessageOnce: vi.fn() };
-      const store = path.name.startsWith("deleteTaskBackendImpl") ? makePgStore(task) : makeSqliteStore(task);
+      /* One backend now (PG cutover): every path builds the PG fake, whose
+         deleteTaskBackend/deleteTaskIf methods are the real impls. */
+      const store = makePgStore(task);
       // deliberately register against a DIFFERENT store object: this store has no mailbox.
       registerTaskDeleteNoticeMailbox({} as never, noop);
       const options = { auditContext: { agentId: "a", runId: "r", callerKind: "agent-tool" } } as never;
@@ -333,7 +332,7 @@ describe("operator mailbox notice for non-operator deletes", () => {
   */
   it("keeps prose out of the notice metadata", async () => {
     const task = makeTask("FN-9008");
-    const store = makeSqliteStore(task);
+    const store = makePgStore(task);
     registerMailboxFor(store);
     await deleteTaskImpl(store as never, task.id, {
       auditContext: { agentId: "pi-extension", runId: "r", taskId: "FN-CALLER", callerKind: "agent-tool" },
@@ -356,7 +355,7 @@ describe("operator mailbox notice for non-operator deletes", () => {
   /* An idempotent re-delete of an already soft-deleted task must not re-notify. */
   it("stays silent when the delete short-circuits on an already-deleted task", async () => {
     const task = { ...makeTask("FN-9009"), deletedAt: "2026-07-26T10:00:00.000Z" } as Task;
-    const store = makeSqliteStore(task);
+    const store = makePgStore(task);
     registerMailboxFor(store);
     await deleteTaskImpl(store as never, task.id, {
       auditContext: { agentId: "a", runId: "r", callerKind: "agent-tool" },
@@ -367,7 +366,7 @@ describe("operator mailbox notice for non-operator deletes", () => {
   /* A declined conditional delete deleted nothing, so it must not claim a deletion happened. */
   it("stays silent when deleteTaskIf's predicate declines the delete", async () => {
     const task = makeTask("FN-9010");
-    const store = makeSqliteStore(task);
+    const store = makePgStore(task);
     registerMailboxFor(store);
     await deleteTaskIfImpl(store as never, task.id, () => false, {
       auditContext: { agentId: "a", runId: "r", callerKind: "agent-tool" },

@@ -1385,7 +1385,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     <FloatingWindow
       windowKey="git-manager"
       title={t("git.modalTitle", "Git Manager")}
-      ariaLabel={`${t("git.modalTitle", "Git Manager")} dialog`}
+      ariaLabel={t("git.modalTitle", "Git Manager")}
       onClose={handleClose}
       hideHeader
       dragHandleSelector=".modal-header"

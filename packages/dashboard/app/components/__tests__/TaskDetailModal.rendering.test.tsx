@@ -12,7 +12,7 @@ query ambiguous once the trigger stopped being a mobile-only affordance.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 
 // FNXC:Markdown 2026-06-23-03:30: Mock the heavy `mermaid` library so the shared
 // markdown pipeline's MermaidDiagram resolves without loading the real renderer.
@@ -89,7 +89,7 @@ describe("TaskDetailModal", () => {
       expect(badge).toHaveTextContent("Docs");
       expect(badge.closest(".detail-timestamps")).toBeTruthy();
       expect(badge.closest(".detail-title-row")).toBeNull();
-      expect(container.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
+      expect(document.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
       expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
       expect(screen.getByText("FN-101")).toBeInTheDocument();
       expect(screen.getByText("Todo")).toBeInTheDocument();
@@ -179,7 +179,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1));
       expect(screen.queryByTestId("task-detail-workflow-badge")).toBeNull();
-      expect(container.querySelector(".detail-workflow-badge")).toBeNull();
+      expect(document.querySelector(".detail-workflow-badge")).toBeNull();
     });
 
     it("renders the canonical badge beside the Updated timestamp in the mobile back-header variant", async () => {
@@ -200,14 +200,14 @@ describe("TaskDetailModal", () => {
       );
 
       const badge = await screen.findByTestId("task-detail-workflow-badge");
-      const timestamps = container.querySelector(".detail-timestamps");
+      const timestamps = document.querySelector(".detail-timestamps");
       const updatedLabel = screen.getByText("Updated").closest(".detail-timestamp-item");
       expect(badge).toHaveTextContent("Docs");
       expect(badge.parentElement).toBe(timestamps);
       expect(updatedLabel?.nextElementSibling).toBe(badge);
       expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
       expect(screen.queryByTestId("task-detail-workflow-badge-mobile")).toBeNull();
-      expect(container.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
+      expect(document.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
       expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
     });
   });
@@ -281,7 +281,7 @@ describe("TaskDetailModal", () => {
     );
 
     // Raw <details>/<summary> renders as a real disclosure element.
-    const details = container.querySelector(".markdown-body details");
+    const details = document.querySelector(".markdown-body details");
     expect(details).not.toBeNull();
     expect(details?.querySelector("summary")?.textContent).toBe("Disclosure title");
     expect(details?.textContent).toContain("Hidden detail body.");
@@ -290,7 +290,7 @@ describe("TaskDetailModal", () => {
     expect(container.textContent).not.toContain("secret comment");
 
     // <script> is stripped by sanitize: not rendered and never executed.
-    expect(container.querySelector("script")).toBeNull();
+    expect(document.querySelector("script")).toBeNull();
     expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
 
     // ```mermaid fence renders the diagram container (lazy MermaidDiagram).
@@ -391,7 +391,7 @@ describe("TaskDetailModal", () => {
       expect(provenance).toHaveTextContent("Created via GitHub Import");
       expect(provenance?.textContent).not.toMatch(/[()]/);
       expect(provenance?.querySelectorAll("a")).toHaveLength(1);
-      expect(container.querySelector(".detail-provenance-context")).toBeNull();
+      expect(document.querySelector(".detail-provenance-context")).toBeNull();
 
       expect(issueLink).toHaveAttribute("href", "https://github.com/owner/repo/issues/42");
       expect(issueLink).toHaveAttribute("target", "_blank");
@@ -442,7 +442,7 @@ describe("TaskDetailModal", () => {
         const provenance = screen.getByText("Created via GitHub Import").closest(".detail-provenance");
         expect(provenance?.textContent).toBe("Created via GitHub Import");
         expect(provenance?.querySelector("a")).toBeNull();
-        expect(container.querySelector(".detail-provenance-context")).toBeNull();
+        expect(document.querySelector(".detail-provenance-context")).toBeNull();
       };
 
       assertPlainFallback();
@@ -658,7 +658,7 @@ describe("TaskDetailModal", () => {
           />,
         );
 
-        expect(container.querySelector(".detail-undo-task-row")).toBeNull();
+        expect(document.querySelector(".detail-undo-task-row")).toBeNull();
       });
 
       it("picks the most recently created open undo task when multiple exist", async () => {
@@ -700,7 +700,7 @@ describe("TaskDetailModal", () => {
       );
 
       const provenance = screen.getByText("Created via Dashboard").closest(".detail-provenance");
-      const timestamps = container.querySelector(".detail-timestamps");
+      const timestamps = document.querySelector(".detail-timestamps");
 
       expect(provenance).toBeTruthy();
       expect(timestamps).toBeTruthy();
@@ -721,10 +721,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const meta = container.querySelector(".detail-meta");
-      const controls = container.querySelector(".detail-meta-inline-controls");
+      const meta = document.querySelector(".detail-meta");
+      const controls = document.querySelector(".detail-meta-inline-controls");
       const provenance = screen.getByText(/Created via Refinement/).closest(".detail-provenance");
-      const timestamps = container.querySelector(".detail-timestamps");
+      const timestamps = document.querySelector(".detail-timestamps");
 
       expect(meta).toBeTruthy();
       expect(controls?.parentElement).toBe(meta);
@@ -749,11 +749,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      const meta = container.querySelector(".detail-meta");
-      const controls = container.querySelector(".detail-meta-inline-controls");
+      const meta = document.querySelector(".detail-meta");
+      const controls = document.querySelector(".detail-meta-inline-controls");
       const provenance = screen.getByText("Created via Dashboard").closest(".detail-provenance");
-      const prRow = container.querySelector(".detail-pr-link-row");
-      const timestamps = container.querySelector(".detail-timestamps");
+      const prRow = document.querySelector(".detail-pr-link-row");
+      const timestamps = document.querySelector(".detail-timestamps");
 
       expect(meta).toBeTruthy();
       expect(controls?.parentElement).toBe(meta);
@@ -1021,6 +1021,42 @@ describe("TaskDetailModal", () => {
     expect(screen.getByText("File scope overlap blocker: FN-OVER (stale)")).toBeInTheDocument();
   });
 
+  it("counts the overlap blockedBy summary using the board's OWN lane names", () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-23:35:
+    The case below renamed and nothing else. Without resolved traits the count is taken against the
+    literal `todo`, which no card is in, so this line read "blocking 0 todo task(s)" while two cards
+    were in fact blocked. The dependent LIST stayed correct throughout (core builds it without
+    consulting lanes), which is what made the wrong number easy to miss.
+    */
+    const tasks = [
+      makeTask({ id: "FN-B", column: "building" }),
+      makeTask({ id: "FN-1", column: "drafting", blockedBy: "FN-B" }),
+      makeTask({ id: "FN-2", column: "drafting", blockedBy: "FN-B" }),
+    ];
+    const columnFlagsByTaskId = new Map(tasks.map((task) => [
+      task.id,
+      task.column === "building" ? { countsTowardWip: true } : { hold: true },
+    ]));
+
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ id: "FN-B", column: "building" })}
+        tasks={tasks}
+        columnFlagsByTaskId={columnFlagsByTaskId}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("FN-B is blocking 2 todo task(s) via blockedBy overlap")).toBeInTheDocument();
+  });
+
   it("shows overlap blockedBy summary in Blocking section", () => {
     render(
       <TaskDetailModal
@@ -1057,8 +1093,20 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(container.querySelector(".modal-overlay.open")).toBeTruthy();
-    expect(container.querySelector(".modal.modal-lg.task-detail-modal")).toBeTruthy();
+    /*
+    FNXC:TaskDetailModal 2026-07-30-22:50 (#2895 review — greptile, "obsolete modal overlay selector"):
+    THE SHELL IS `FloatingWindow`, NOT A `.modal-overlay`.
+
+    `TaskDetailModal` renders `<FloatingWindow modal>`, whose overlay class is
+    `floating-window-overlay--modal`. The only `.modal-overlay` left in this component is the refine
+    SUB-overlay at ~line 6801, which this case does not open — so the assertion was querying a class
+    that is never in the tree for the default render and failed outright.
+
+    Asserting the modal-ness (`--modal`), not just the overlay: a non-modal FloatingWindow renders the
+    same base class, so the bare selector would keep passing if the `modal` prop were dropped.
+    */
+    expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
+    expect(document.querySelector(".modal.modal-lg.task-detail-modal")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Back to task list" })).toBeNull();
   });
@@ -1095,7 +1143,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(container.querySelector(".task-detail-content--embedded")).toBeTruthy();
+    expect(document.querySelector(".task-detail-content--embedded")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
     expect(screen.getByRole("button", { name: "Plan" })).toBeInTheDocument();
   });
@@ -1128,9 +1176,9 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByText(/isn't currently attached to a fusion branch/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Reattached branch/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reattach branch/i })).not.toBeInTheDocument();
-    expect(container.querySelector(".rebind-banner")).toBeNull();
-    expect(container.querySelector(".rebind-banner-actions")).toBeNull();
-    expect(container.querySelector(".rebind-banner-result")).toBeNull();
+    expect(document.querySelector(".rebind-banner")).toBeNull();
+    expect(document.querySelector(".rebind-banner-actions")).toBeNull();
+    expect(document.querySelector(".rebind-banner-result")).toBeNull();
   }
 
   function renderTaskDetail(task: ReturnType<typeof makeTask>, mobileHeaderMode?: "back") {
@@ -1237,7 +1285,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    const markdownDiv = container.querySelector(".markdown-body");
+    const markdownDiv = document.querySelector(".markdown-body");
     expect(markdownDiv).toBeTruthy();
     expect(markdownDiv!.classList.contains("detail-prompt")).toBe(false);
   });
@@ -1257,8 +1305,8 @@ describe("TaskDetailModal", () => {
     );
 
     // The leading # heading should be stripped (modal has its own header)
-    expect(container.querySelector(".markdown-body h1")).toBeNull();
-    expect(container.querySelector("strong")?.textContent).toBe("bold");
+    expect(document.querySelector(".markdown-body h1")).toBeNull();
+    expect(document.querySelector("strong")?.textContent).toBe("bold");
   });
 
   it("renders (no prompt) with detail-prompt class when prompt is absent", () => {
@@ -1825,7 +1873,7 @@ describe("TaskDetailModal", () => {
 
       const moveBtn = screen.getByRole("button", { name: "Move to Todo" });
       expect(moveBtn).toBeTruthy();
-      const chevronZone = container.querySelector(".detail-move-btn__arrow");
+      const chevronZone = document.querySelector(".detail-move-btn__arrow");
       expect(chevronZone).toBeTruthy();
 
       fireEvent.keyDown(moveBtn, { key: "ArrowDown" });
@@ -1883,7 +1931,7 @@ describe("TaskDetailModal", () => {
 
       const moveBtn = screen.getByRole("button", { name: "Move to In Review" });
       expect(moveBtn).toBeTruthy();
-      const chevronZone = container.querySelector(".detail-move-btn__arrow");
+      const chevronZone = document.querySelector(".detail-move-btn__arrow");
       expect(chevronZone).toBeTruthy();
 
       await act(async () => {
@@ -1972,14 +2020,14 @@ describe("TaskDetailModal", () => {
     );
 
     // The heading "FN-099" should be stripped from the markdown
-    const markdownBody = container.querySelector(".markdown-body");
+    const markdownBody = document.querySelector(".markdown-body");
     expect(markdownBody?.innerHTML).not.toContain("FN-099");
     // Description appears in the markdown body
     expect(markdownBody?.textContent).toContain("Fix the login bug");
     // The detail header shows the ID (not duplicated as markdown heading)
-    expect(container.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
     // The h2 title shows description, not the task ID
-    const h2 = container.querySelector("h2.detail-title");
+    const h2 = document.querySelector("h2.detail-title");
     expect(h2?.textContent).toBe("Fix the login bug");
   });
 
@@ -2000,7 +2048,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    const h2 = container.querySelector("h2.detail-title");
+    const h2 = document.querySelector("h2.detail-title");
     expect(h2?.textContent).toBe("Implement dark mode");
   });
 
@@ -2065,7 +2113,7 @@ describe("TaskDetailModal", () => {
         description: "Triage planning context",
       });
 
-      const h2 = container.querySelector("h2.detail-title");
+      const h2 = document.querySelector("h2.detail-title");
       expect(h2?.textContent).toBe(longTitle);
       expect(h2).toHaveClass("detail-title--collapsed");
       const toggle = await screen.findByRole("button", { name: "Show more" });
@@ -2073,8 +2121,8 @@ describe("TaskDetailModal", () => {
 
       await userEvent.click(toggle);
 
-      expect(container.querySelector("h2.detail-title")?.textContent).toBe(longTitle);
-      expect(container.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe(longTitle);
+      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
       expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
     });
 
@@ -2086,36 +2134,44 @@ describe("TaskDetailModal", () => {
         description: longDescription,
       });
 
-      const h2 = container.querySelector("h2.detail-title");
+      const h2 = document.querySelector("h2.detail-title");
       expect(h2?.textContent).toBe(longDescription);
       expect(h2).toHaveClass("detail-title--collapsed");
       expect(await screen.findByRole("button", { name: "Show more" })).toHaveClass("detail-description-toggle");
     });
 
     it("uses the title, description, and id fallback chain for the clamped heading", async () => {
-      const { container: withTitle } = renderDetail({
-        title: "Title wins",
-        description: "Description loses",
-      });
-      expect(withTitle.querySelector("h2.detail-title")?.textContent).toBe("Title wins");
-      expect(withTitle.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
+      /*
+      FNXC:TaskDetailModal 2026-07-30-23:20 (#2895 review — the portal defect, at the sites the reported
+      one did not cover):
+
+      CLEANUP BETWEEN RENDERS, NOT A WIDER SELECTOR.
+
+      These queried the render `container`, and the modal PORTALS out of it, so every one returned
+      null. The obvious repair — swap to `document.querySelector` — is wrong here and I watched it
+      fail: this case renders the modal THREE times, the portals accumulate on `document.body`, and a
+      document-wide query returns the FIRST one. The failure moved from "Title wins" to
+      "Description fallback" rather than going away.
+
+      Unmounting between renders makes the document unambiguous, so each assertion reads the render it
+      belongs to. That also matches what the case is actually testing — three independent fallback
+      inputs, not three coexisting modals.
+      */
+      renderDetail({ title: "Title wins", description: "Description loses" });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Title wins");
+      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
       expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
+      cleanup();
 
       setTitleLayout({ scrollHeight: 40, clientHeight: 40 });
-      const { container: withDescription } = renderDetail({
-        title: undefined,
-        description: "Description fallback",
-      });
-      expect(withDescription.querySelector("h2.detail-title")?.textContent).toBe("Description fallback");
-      expect(withDescription.querySelector(".detail-description-toggle")).toBeNull();
+      renderDetail({ title: undefined, description: "Description fallback" });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("Description fallback");
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
+      cleanup();
 
-      const { container: withId } = renderDetail({
-        id: "FN-FALLBACK",
-        title: undefined,
-        description: undefined,
-      });
-      expect(withId.querySelector("h2.detail-title")?.textContent).toBe("FN-FALLBACK");
-      expect(withId.querySelector(".detail-description-toggle")).toBeNull();
+      renderDetail({ id: "FN-FALLBACK", title: undefined, description: undefined });
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe("FN-FALLBACK");
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
     });
 
     it.each(["todo", "in-progress", "in-review", "done", "archived"] as const)(
@@ -2127,7 +2183,7 @@ describe("TaskDetailModal", () => {
           title: longTitle,
         });
 
-        const h2 = container.querySelector("h2.detail-title");
+        const h2 = document.querySelector("h2.detail-title");
         expect(h2?.textContent).toBe(longTitle);
         expect(h2).toHaveClass("detail-title--collapsed");
         expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
@@ -2141,10 +2197,10 @@ describe("TaskDetailModal", () => {
         description: "This is a longer description that is not shown as the heading while title is present",
       });
 
-      const h2 = container.querySelector("h2.detail-title");
+      const h2 = document.querySelector("h2.detail-title");
       expect(h2?.textContent).toBe("Short title");
       expect(h2).toHaveClass("detail-title--collapsed");
-      expect(container.querySelector(".detail-description-toggle")).toBeNull();
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
     });
 
     it("collapses again when Show less is clicked", async () => {
@@ -2156,12 +2212,12 @@ describe("TaskDetailModal", () => {
 
       const toggle = await screen.findByRole("button", { name: "Show more" });
       await userEvent.click(toggle);
-      expect(container.querySelector("h2.detail-title")?.textContent).toBe(longDescription);
-      expect(container.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
+      expect(document.querySelector("h2.detail-title")?.textContent).toBe(longDescription);
+      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
 
       await userEvent.click(screen.getByRole("button", { name: "Show less" }));
 
-      const h2 = container.querySelector("h2.detail-title");
+      const h2 = document.querySelector("h2.detail-title");
       expect(h2?.textContent).toBe(longDescription);
       expect(h2).toHaveClass("detail-title--collapsed");
       expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
@@ -2189,7 +2245,7 @@ describe("TaskDetailModal", () => {
       );
 
       await userEvent.click(await screen.findByRole("button", { name: "Show more" }));
-      expect(container.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
+      expect(document.querySelector("h2.detail-title")).not.toHaveClass("detail-title--collapsed");
 
       rerender(
         <TaskDetailModal
@@ -2210,9 +2266,9 @@ describe("TaskDetailModal", () => {
       );
 
       await waitFor(() => {
-        expect(container.querySelector("h2.detail-title")?.textContent).toBe(triageDescription);
+        expect(document.querySelector("h2.detail-title")?.textContent).toBe(triageDescription);
       });
-      expect(container.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
+      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
       expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
     });
 
@@ -2227,8 +2283,8 @@ describe("TaskDetailModal", () => {
       expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Edit task" }));
 
-      expect(container.querySelector("h2.detail-title")).toBeNull();
-      expect(container.querySelector(".detail-description-toggle")).toBeNull();
+      expect(document.querySelector("h2.detail-title")).toBeNull();
+      expect(document.querySelector(".detail-description-toggle")).toBeNull();
       expect(screen.getByLabelText("Title")).toHaveValue(longTitle);
     });
 
@@ -2239,7 +2295,7 @@ describe("TaskDetailModal", () => {
         description: "Description available for summarization",
       });
 
-      expect(container.querySelector(".detail-heading-row h2.detail-title--collapsed")).toBeInTheDocument();
+      expect(document.querySelector(".detail-heading-row h2.detail-title--collapsed")).toBeInTheDocument();
       expect(screen.getByTestId("summarize-title-btn")).toBeInTheDocument();
       expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
     });
@@ -2263,8 +2319,8 @@ describe("TaskDetailModal", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Expand activity to full modal" }));
 
-      expect(container.querySelector(".task-detail-content--chat-expanded")).toBeInTheDocument();
-      expect(container.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
+      expect(document.querySelector(".task-detail-content--chat-expanded")).toBeInTheDocument();
+      expect(document.querySelector("h2.detail-title")).toHaveClass("detail-title--collapsed");
       expect(await screen.findByRole("button", { name: "Show more" })).toBeInTheDocument();
     });
 
@@ -2280,7 +2336,7 @@ describe("TaskDetailModal", () => {
 
   it("always shows task.id in the detail-id badge regardless of title", () => {
     // With title
-    const { container: withTitle } = render(
+    render(
       <TaskDetailModal
         initialTab="definition"
         task={makeTask({ title: "Some title" })}
@@ -2292,10 +2348,12 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    /* Portaled, and rendered twice — see the cleanup note on the clamped-heading case. */
+    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    cleanup();
 
     // Without title
-    const { container: withoutTitle } = render(
+    render(
       <TaskDetailModal
         initialTab="definition"
         task={makeTask({ title: undefined, description: "A description" })}
@@ -2307,7 +2365,7 @@ describe("TaskDetailModal", () => {
         addToast={noop}
       />,
     );
-    expect(withoutTitle.querySelector(".detail-id")?.textContent).toBe("FN-099");
+    expect(document.querySelector(".detail-id")?.textContent).toBe("FN-099");
   });
 
   describe("optimistic opening with Task", () => {
@@ -2356,8 +2414,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Modal renders immediately without crashing
-      expect(container.querySelector(".modal-overlay")).toBeTruthy();
+      /* Same obsolete selector as the wrapper case: the shell is FloatingWindow, not `.modal-overlay`. */
+      expect(document.querySelector(".floating-window-overlay--modal")).toBeTruthy();
       expect(screen.getByText("FN-200")).toBeDefined();
     });
 
@@ -2558,7 +2616,7 @@ describe("TaskDetailModal", () => {
 
       // After fetch resolves, spec content appears
       await waitFor(() => {
-        const markdownBody = container.querySelector(".markdown-body");
+        const markdownBody = document.querySelector(".markdown-body");
         expect(markdownBody).toBeTruthy();
       }, { timeout: 3000 });
 
@@ -2580,8 +2638,8 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((210).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((1860).toLocaleString())).toBeInTheDocument();
-      const firstUsed = container.querySelector('time[datetime="2026-04-24T09:00:00.000Z"]');
-      const lastUsed = container.querySelector('time[datetime="2026-04-24T10:15:00.000Z"]');
+      const firstUsed = document.querySelector('time[datetime="2026-04-24T09:00:00.000Z"]');
+      const lastUsed = document.querySelector('time[datetime="2026-04-24T10:15:00.000Z"]');
       expect(firstUsed).toBeTruthy();
       expect(lastUsed).toBeTruthy();
     });
@@ -2630,15 +2688,15 @@ describe("TaskDetailModal", () => {
 
       // Wait for fetchTaskDetail to resolve.
       await waitFor(() => {
-        expect(container.querySelector(".markdown-body")).toBeTruthy();
+        expect(document.querySelector(".markdown-body")).toBeTruthy();
       }, { timeout: 3000 });
 
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       fireEvent.click(screen.getByRole("menuitem", { name: "Feed" }));
 
-      const activityList = container.querySelector(".detail-activity-list");
+      const activityList = document.querySelector(".detail-activity-list");
       expect(activityList).toBeTruthy();
-      const logEntries = container.querySelectorAll(".detail-log-entry");
+      const logEntries = document.querySelectorAll(".detail-log-entry");
       expect(logEntries).toHaveLength(2);
       expect(logEntries[0].textContent).toContain("Started executor");
       expect(logEntries[1].textContent).toContain("Created task");

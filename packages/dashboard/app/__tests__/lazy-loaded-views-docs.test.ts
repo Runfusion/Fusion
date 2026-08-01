@@ -134,7 +134,14 @@ const EXPECTED_CURATED_LAZY_SOURCES = [
 ] as const;
 
 function extractLazyLoadedSection(agentsDoc: string): string {
-  const match = agentsDoc.match(/### Lazy-Loaded Heavy Views[\s\S]*?(?=\n### |\n---|$)/);
+  /*
+  FNXC:LazyViewDocs 2026-07-31-21:40:
+  Stop at ANY next heading, not only H3. The section after the inventory is the H2 `## FNXC_LOG
+  comments:`, so a lookahead of only `\n### ` ran the parse window into it — and when that section
+  gained a bullet with backticked tokens (`date -u`, `pnpm lint`, ...), this test reported six
+  phantom "views" and went red on every shard while the inventory itself was perfectly in sync.
+  */
+  const match = agentsDoc.match(/### Lazy-Loaded Heavy Views[\s\S]*?(?=\n#{1,6} |\n---|$)/);
   if (!match) {
     throw new Error("Lazy-Loaded Heavy Views section not found in AGENTS.md");
   }

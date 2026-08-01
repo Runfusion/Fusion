@@ -14,7 +14,7 @@ vi.mock("../../../api/legacy", () => ({
     projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   fetchOrgTree: vi.fn().mockResolvedValue([]),
   fetchExecutorStats: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, maxConcurrent: 2 }),
-  fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 1, maxWorktrees: 5 }),
+  fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 5 }),
   fetchConfig: vi.fn().mockResolvedValue({ maxConcurrent: 2, rootDir: "/" }),
   updateSettings: vi.fn().mockResolvedValue({}),
 }));
@@ -368,6 +368,20 @@ async function openChartTab(tab: string) {
 
 describe("CommandCenter mobile scroll regression (FN-6595)", () => {
   beforeEach(() => {
+  /*
+  FNXC:CommandCenter 2026-07-30-22:10:
+  CLEAR THE PERSISTED SUB-TAB — cases in this file are no longer independent without it.
+
+  #2420 made `activeTab` initialise from per-project persisted state
+  (`getCommandCenterState(projectId)?.activeTab`) instead of always `"overview"`, because Command
+  Center unmounts on navigation by design and has to restore its sub-tab on remount. These cases
+  click through to other tabs, so the FIRST case now leaves `mission-control` persisted and every
+  later case renders `command-center-panel-mission-control` — the `command-center-panel-overview`
+  lookups then fail with no hint that the cause is a previous test.
+
+  Confirmed as ordering, not breakage: each failing case passes when run alone with `-t`.
+  */
+  localStorage.clear();
     apiMock.mockReset();
     mockOverviewApi();
     injectCommandCenterCss();

@@ -53,14 +53,14 @@ import {
   resolveValidatorSettingsModel,
   resolveMergerFallbackModel,
   resolveReboundTarget,
-  resolveLifecycleColumns,
+  resolveTerminalColumns,
   resolveWorkflowIrForTask,
   type MergeDetails,
   type MergeResult,
   type MergeTargetResolution,
   type Settings,
   type Task,
-  type TaskStore,
+  type TaskStore, resolveReviewColumns
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -88,7 +88,7 @@ import {
 } from "../merger.js";
 import { resolveBranchGroupMergeRouting, type BranchGroupMergeRouting, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { DEFAULT_COMMIT_AUTHOR_EMAIL, DEFAULT_COMMIT_AUTHOR_NAME } from "../worktree/worktree-hooks.js";
-import { installWorktreeDependencies } from "./merge-dependency-sync.js";
+import { installWorktreeDependencies, LOCKFILE_CANDIDATES} from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
 /*
@@ -763,6 +763,14 @@ export interface LandRepoContext {
   off, preserving the documented hard-fail for the single-repo land path.
   */
   nonFatalDependencySync?: boolean;
+  /*
+  FNXC:MergeNoCommits 2026-07-17-12:00:
+  When true, the task is expected to produce no code changes (audit, documentation, decision-only).
+  The clean-room dependency sync is skipped entirely because there are no source changes to install
+  or build. Avoiding the dep-sync prevents "pnpm: command not found" failures when pnpm is not
+  resolvable in the engine process environment, and avoids unnecessary work.
+  */
+  noCommitsExpected?: boolean;
   store: TaskStore;
 }
 
@@ -883,6 +891,65 @@ export async function landOneRepo(
        * FNXC:AIMerge 2026-06-13-20:32:
        * The detached AI-merge clean room is rebuilt from the integration tip and starts without workspace dependencies. Hard-fail configured or inferred install failures so verification cannot silently run against an uninstalled checkout; aborts propagate before merge agents run.
        */
+      /*
+      FNXC:MergeNoCommits 2026-07-17-12:00:
+      No-commits tasks (audit, documentation, decision-only) have no code changes to install or
+      build. Skip the entire dependency-sync step in the clean-room worktree to avoid "pnpm: command
+      not found" when pnpm is not resolvable in the engine process environment. The merge/review
+      agents still run (they may verify documentation or produce merge metadata); only the
+      dependency install is skipped.
+      */
+      /*
+      FNXC:MergeNoCommits 2026-07-30-19:20 (PR #2501 review — greptile P1, and the flag alone is not
+      safe to trust here):
+      THE BRANCH IS KNOWN TO HAVE COMMITS AT THIS POINT. The `rev-list --count` short-circuit above
+      returns `outcome: "empty"` when the branch is zero commits ahead, so control only reaches this
+      line when it is AHEAD. `noCommitsExpected` is a task-level EXPECTATION set before execution,
+      and nothing revalidates it against what actually landed on the branch — the two empty-lane
+      guards below (#2259 already-landed proof, FN-8141 executor veto) both explicitly carve out
+      `noCommitsExpected` tasks, so they cannot catch the inverse case either.
+
+      So skipping on the flag alone means: a task marked no-commits whose executor did commit a
+      manifest or lockfile change gets its dependency install AND its frozen-lockfile validation
+      skipped, and the change lands unvalidated. That is the review finding, and it is reachable
+      rather than hypothetical.
+
+      Gate on the DIFF instead. The flag still expresses intent — it is what makes us look — but the
+      skip now requires that the branch genuinely touches no dependency-relevant file. A branch that
+      does touch one falls through to the normal sync, which is the behaviour that existed before
+      this option and the one the lockfile guard depends on.
+
+      Fail-safe on an unreadable diff: `git` errors yield "", which contains no manifest path, so we
+      would skip. Treat a FAILED diff as "cannot prove it is safe" and sync, matching the hard-fail
+      contract documented directly above.
+      */
+      let noCommitsDepsSkipAllowed = ctx.noCommitsExpected === true;
+      if (noCommitsDepsSkipAllowed) {
+        const changedRaw = await git(["diff", "--name-only", `${integrationBranch}...${branch}`], repoRootDir)
+          .catch(() => null);
+        if (changedRaw === null) {
+          noCommitsDepsSkipAllowed = false;
+          await log(`AI merge: no-commits task, but the branch diff could not be read — running dependency sync rather than assuming it is safe to skip`);
+        } else {
+          const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
+          const dependencyFiles = changedFiles.filter((file) => {
+            const name = file.split("/").pop() ?? file;
+            return name === "package.json" || LOCKFILE_CANDIDATES.includes(name);
+          });
+          if (dependencyFiles.length > 0) {
+            noCommitsDepsSkipAllowed = false;
+            await log(`AI merge: task is marked no-commits but its branch changes ${dependencyFiles.length} dependency file(s) (${dependencyFiles.slice(0, 3).join(", ")}) — running dependency sync so the lockfile is still validated`);
+            await audit.git({
+              type: "merge:ai-deps-sync",
+              target: integrationBranch,
+              metadata: { taskId, tipSha, mergeRoot: canonicalMergeRoot, noCommitsExpected: true, dependencyFileCount: dependencyFiles.length, skipOverridden: true },
+            });
+          }
+        }
+      }
+      if (noCommitsDepsSkipAllowed) {
+        await log(`AI merge: skipping dependency sync — no-commits task (no code changes expected)`);
+      } else {
       const depsSyncStartedAt = Date.now();
       let depsSyncResult: Awaited<ReturnType<typeof installWorktreeDependencies>> | null = null;
       try {
@@ -937,6 +1004,7 @@ export async function landOneRepo(
         });
       }
       await log(`[timing] AI merge dependency sync completed in ${Date.now() - depsSyncStartedAt}ms${depsSyncResult ? (depsSyncResult.installCommand ? ` (${depsSyncResult.skipped ? "skipped" : "ran"}: ${depsSyncResult.installCommand})` : " (no command)") : " (failed — non-fatal, deps unavailable)"}`);
+      }
 
       // 2 + 3. Merge + review loop (corrective passes).
       const reviewResult = await mergeAndReview({
@@ -1036,26 +1104,15 @@ export async function resolveFinalizeReboundColumn(store: TaskStore, taskId: str
 async function isAlreadyFinalizedColumn(store: TaskStore, task: Task): Promise<boolean> {
   let terminal: readonly string[] = LEGACY_TERMINAL_COLUMNS;
   try {
-    const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, task.id));
-    if (lifecycle) {
-      /*
-      FNXC:WorkflowLifecycleColumns 2026-07-28-02:10 (PR #2471 review, P1):
-      The fallback is PER-ROLE, not per-set. The first cut replaced the whole
-      legacy pair whenever ANY terminal role resolved, so a workflow declaring
-      `complete` but no `archived` collapsed to a one-element set and silently
-      lost the archived short-circuit — an archived card then fell through to
-      `getTaskMergeBlocker` and threw "must be in 'in-review'".
-
-      Resolving each role against its OWN legacy id keeps both halves of the
-      guard for a partially-declared workflow. The two roles are independent:
-      a per-set rule passes for whichever role happens to be declared and fails
-      for the other, which is why both directions are tested.
-      */
-      terminal = [
-        lifecycle.complete ?? LEGACY_COMPLETE_COLUMN,
-        lifecycle.archived ?? LEGACY_ARCHIVED_COLUMN,
-      ];
-    }
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
+    Delegated to core's `resolveTerminalColumns`. The per-role fallback below was
+    the ONLY copy of that rule, and executor's equivalent guard was still a raw
+    literal pair that would have re-made the same P1 on conversion. Same values,
+    one owner. Behaviour-preserving: proven by workflow-already-finalized-live-e2e,
+    whose per-set mutation still fails.
+    */
+    terminal = resolveTerminalColumns(await resolveWorkflowIrForTask(store, task.id));
   } catch {
     terminal = LEGACY_TERMINAL_COLUMNS;
   }
@@ -1181,7 +1238,22 @@ export async function runAiMerge(
   if (await isAlreadyFinalizedColumn(store, task)) {
     return noOpResult(task, branch, "already-finalized");
   }
-  const blocker = getTaskMergeBlocker(task, { manual: options.manual === true });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:10 (MERGING WAS BROKEN ON A RENAMED BOARD):
+  `getTaskMergeBlocker`'s identity check RETURNS A BLOCKER when the column is not a review lane, so
+  calling it without `reviewColumns` on a board whose review lane is renamed produced
+  `Cannot merge FN-x: task is in 'signoff', must be in 'in-review'` — and the merge threw. Not a
+  degraded message: no task could be merged at all.
+
+  The helper's own comment records this exact defect being fixed in `moves.ts`; these two merge
+  entry points were missed. Resolve the task's own review lanes and pass them.
+  */
+  const aiReviewColumns = new Set<string>(["in-review"]);
+  try {
+    const aiIr = await resolveWorkflowIrForTask(store, taskId);
+    if (aiIr) for (const id of resolveReviewColumns(aiIr)) aiReviewColumns.add(id);
+  } catch { /* degraded: the legacy id above still answers */ }
+  const blocker = getTaskMergeBlocker(task, { manual: options.manual === true, reviewColumns: aiReviewColumns });
   if (blocker) throw new Error(`Cannot merge ${taskId}: ${blocker}`);
 
   const settings = await store.getSettings();
@@ -1292,6 +1364,8 @@ export async function runAiMerge(
     mergeAgent, reviewAgent, stashResolveAgent,
     includeTaskId, trailers, taskTitle, signal: options.signal,
     allowDirtyLocalCheckoutSync,
+    // FNXC:MergeNoCommits 2026-07-17-12:00: no-commits tasks skip dependency sync in the clean room
+    noCommitsExpected: task.noCommitsExpected === true,
     store,
   });
 
@@ -1888,6 +1962,8 @@ export async function landWorkspaceTask(
         // FNXC:Workspace 2026-06-24-23:50: one sub-repo's dependency-sync failure must not block
         // landing the others — degrade verification for that repo, still land the git squash.
         nonFatalDependencySync: true,
+        // FNXC:MergeNoCommits 2026-07-17-12:00: no-commits tasks skip dependency sync in the clean room
+        noCommitsExpected: task.noCommitsExpected === true,
         store,
       });
       if (landResult.outcome === "landed") {

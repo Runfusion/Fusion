@@ -102,6 +102,17 @@ export interface WorkflowColumnBoundaryDeps {
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
   /** Persist a durable continuation before control returns to the scheduler. */
   onSuspend?: (suspension: Extract<WorkflowColumnBoundaryEntryResult, { kind: "suspended" }>) => void | Promise<void>;
+  /*
+  FNXC:EnginePause 2026-08-01-00:20 (Stop AI Engine did not stop the graph):
+  Operator-observed regression: with `globalPause: true` the graph runner kept crossing node
+  boundaries — a live run started a NEW Plan Review step (fresh model session) two minutes after
+  Stop AI Engine, and the plan-review→replan loop kept cycling "attempt N/unbounded". The legacy
+  executor loop re-read settings between steps; the graph interpreter never did, and the
+  event-driven abort listeners cannot be the only line of defense (they depend on
+  `settings:updated` reaching this store instance). This probe is polled at EVERY node entry, so
+  a pause takes effect at the next boundary even if no event ever fires.
+  */
+  isPaused?: () => boolean | Promise<boolean>;
 }
 
 /** The seam the graph executor consumes. */
@@ -119,7 +130,7 @@ export type WorkflowColumnBoundaryEntryResult =
   | { kind: "entered" }
   | {
       kind: "suspended";
-      reason: "capacity";
+      reason: "capacity" | "pause";
       nodeId: string;
       fromColumn: string;
       toColumn: string;
@@ -277,6 +288,36 @@ export function createWorkflowColumnBoundary(
 
     async onNodeEntry(node: WorkflowIrNode): Promise<WorkflowColumnBoundaryEntryResult> {
       const toColumn = node.column;
+
+      /*
+      FNXC:EnginePause 2026-08-01-00:20:
+      Pause gates EVERY node entry — columnless and same-column nodes included, because each node
+      can start a real AI session regardless of whether the card moves. Suspend with the same
+      durable-continuation mechanism capacity uses, so unpause resumes at exactly this node; the
+      drain refuses to dispatch continuations while paused, which closes the resume loop.
+      */
+      if (await deps.isPaused?.()) {
+        const pauseSuspension = {
+          kind: "suspended",
+          reason: "pause",
+          nodeId: node.id,
+          fromColumn: column,
+          toColumn: toColumn ?? column,
+          irHash: computeWorkflowIrPin(deps.ir, node.id).irHash,
+        } as const;
+        await deps.onSuspend?.(pauseSuspension);
+        emitWorkflowLifecycleEvent({
+          type: "RunSuspended",
+          taskId: deps.taskId,
+          at: new Date().toISOString(),
+          workflowId: deps.workflowId,
+          nodeId: node.id,
+          reason: "pause",
+          fromColumn: column,
+          toColumn: toColumn ?? column,
+        });
+        return pauseSuspension;
+      }
 
       /*
       FNXC:WorkflowEvents 2026-07-27-15:20 (U3 / R5, PR #2467 review):

@@ -58,6 +58,8 @@ export interface OverflowViewFeatureState {
 
 export interface OverflowViewRenderProps {
   projectId?: string;
+  /** Per-task resolved column traits, threaded from App via useRightDockController. */
+  columnFlagsByTaskId?: ReadonlyMap<string, { complete?: boolean; archived?: boolean; countsTowardWip?: boolean; mergeBlocker?: boolean; humanReview?: boolean; intake?: boolean; hold?: boolean }>;
   /*
   FNXC:RightDockFiles 2026-06-22-15:00:
   `surface` tells a registry render function which host it is mounting into so it can pick a deterministic layout instead of relying on a fragile CSS container query.
@@ -156,6 +158,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     render: (props) => wrapOverflowView(
       <DockTaskList
         tasks={props.tasks ?? []}
+        columnFlagsByTaskId={props.columnFlagsByTaskId}
         projectId={props.projectId}
         onOpenTask={props.onOpenTaskInDock}
         onDeleteTask={props.onDeleteTask}
@@ -246,7 +249,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     icon: Monitor,
     testId: "right-dock-tab-devserver",
     isVisible: (options) => options.experimentalFeatures?.devServerView === true,
-    render: (props) => wrapOverflowView(<DevServerView tasks={props.tasks} addToast={props.addToast} projectId={props.projectId} />),
+    render: (props) => wrapOverflowView(<DevServerView tasks={props.tasks} addToast={props.addToast} projectId={props.projectId} columnFlagsByTaskId={props.columnFlagsByTaskId} />),
   },
   {
     key: "secrets",

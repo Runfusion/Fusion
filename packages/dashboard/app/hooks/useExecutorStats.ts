@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isReviewColumnRole } from "../utils/columnRoles";
 import type { Task, TraitFlags } from "@fusion/core";
 import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask, isWaitingAgentTask } from "../../../core/src/agents/live-agent-count";
 import { fetchExecutorStats } from "../api";
@@ -85,11 +86,32 @@ export function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number,
     const enriched = enrichRunningAgentTaskShapeFromFlags(task, columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column));
     if (isRunningAgentTask(enriched)) {
       runningTaskCount++;
-      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs)) stuckTaskCount++;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-00:20 (PR #2772 review):
+      Per-task WIP flags, same precedence as line ~86. `isTaskStuck` gained this parameter and
+      TaskCard supplies it, so the repo-wide seam gate was satisfied by that ONE caller — this path
+      was still passing three arguments and counting zero stuck tasks on a renamed board.
+
+      That is the gate's documented limit made concrete: it proves SOME caller supplies the
+      parameter, never that ALL do. Worth knowing before trusting it as coverage.
+      */
+      if (isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs,
+        columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column))) stuckTaskCount++;
     }
     if (isWaitingAgentTask(enriched)) queuedTaskCount++;
     // Kept in the API shape for compatibility; the footer no longer renders it.
-    if (task.column === "in-review") inReviewCount++;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-dashboard-app):
+    Review-lane count, resolved. Kept in the API shape for compatibility (the footer no longer
+    renders it), but a counter that silently reads 0 on a renamed board is worse than one that is
+    absent — a future consumer would take it at face value.
+    */
+    /* Per-TASK flags first, exactly as line ~86 does: `columnFlagsById` is keyed by column id and
+       is a cross-workflow union, so two workflows reusing an id would answer for each other. */
+    if (isReviewColumnRole(
+      columnFlagsByTaskId?.get(task.id) ?? columnFlagsById?.get(task.column),
+      task.column,
+    )) inReviewCount++;
     if (hasActionableBlockedBy(task.blockedBy)) {
       blockedTaskCount++;
     }

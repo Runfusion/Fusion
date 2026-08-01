@@ -94,6 +94,18 @@ export const LEGACY_STATUS_ADOPTION: Readonly<Record<string, LegacyAdoptionActio
   "merging": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
   "merging-pr": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
   "merging-fix": { kind: "preserve", note: "live merge-active status — self-healing owns stale-merge recovery" },
+  /*
+  FNXC:LegacyAdoption 2026-08-01-00:55 (live incident — FN-8635 paused mid-landing):
+  `reviewing` and `landing` are the OTHER TWO members of the live active-merge family
+  (active-merge-status.ts: AI merge holds task.status at reviewing/landing for most of the merge
+  window). The table adopted merging/-pr/-fix in the FN-8504 fix and missed these siblings, so a
+  restart during an AI merge parked the task `paused: legacy-adoption-unmappable: landing` — the
+  engine auto-pausing a HEALTHY merge, which the operator rightly flagged ("engine shouldn't pause
+  automatically"). Same recovery owner as the merging trio: self-healing's interrupted/stale-merge
+  sweeps. If the family grows again, grow this table with it — the census cannot see this map.
+  */
+  "reviewing": { kind: "preserve", note: "live merge-active status (AI merge review window) — self-healing owns stale-merge recovery" },
+  "landing": { kind: "preserve", note: "live merge-active status (AI merge landing window) — self-healing owns stale-merge recovery" },
   // ── Live human / terminal gates — do NOT disturb ──────────────────────────
   "awaiting-approval": { kind: "preserve", note: "manual plan approval gate" },
   "awaiting-user-input": { kind: "preserve", note: "awaiting operator input" },

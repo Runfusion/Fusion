@@ -86,14 +86,14 @@ export class ProjectEngineManager {
   private externalEngines = new Set<string>();
   private stopped = false;
 
-  /**
-   * Shared global semaphore — ONE instance across ALL project engines.
-   * Enforces the cross-project globalMaxConcurrent limit. Without this,
-   * each engine creates its own semaphore and the global limit is not shared.
-   */
-  private globalSemaphore: AgentSemaphore;
-  private currentGlobalLimit = 4;
-  private concurrencyListener?: (...args: unknown[]) => void;
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The shared cross-project semaphore, its mutable limit and the
+  `concurrency:changed` subscription are DELETED. Capacity is two numbers per
+  project; a machine-wide cap was a third limiter with its own separate authority
+  (a central-DB singleton row), and reconciling it against the per-project gates is
+  exactly the multi-limiter arbitration this simplification removes.
+  */
 
   /** Reconciliation state for background project startup. */
   private reconciliationInterval: ReturnType<typeof setInterval> | null = null;
@@ -103,32 +103,6 @@ export class ProjectEngineManager {
     private centralCore: CentralCore,
     private options: EngineManagerOptions = {},
   ) {
-    // Dynamic getter so live changes to globalMaxConcurrent take effect immediately
-    this.globalSemaphore = new AgentSemaphore(() => this.currentGlobalLimit);
-
-    // Listen for concurrency changes from CentralCore
-    if (typeof centralCore.on === "function") {
-      this.concurrencyListener = (state: unknown) => {
-        const s = state as { globalMaxConcurrent?: number };
-        if (typeof s.globalMaxConcurrent === "number") {
-          this.currentGlobalLimit = s.globalMaxConcurrent;
-          runtimeLog.log(`Global concurrency limit updated to ${this.currentGlobalLimit}`);
-        }
-      };
-      centralCore.on("concurrency:changed", this.concurrencyListener);
-    }
-
-    // Read initial limit from CentralCore (async — updates the mutable limit)
-    this.refreshGlobalLimit();
-  }
-
-  private async refreshGlobalLimit(): Promise<void> {
-    try {
-      const state = await this.centralCore.getGlobalConcurrencyState();
-      this.currentGlobalLimit = state.globalMaxConcurrent;
-    } catch {
-      // Keep default of 4
-    }
   }
 
   // ── Public accessors ──
@@ -292,12 +266,6 @@ export class ProjectEngineManager {
     if (this.reconciliationInterval !== null) {
       clearInterval(this.reconciliationInterval);
       this.reconciliationInterval = null;
-    }
-
-    // Remove concurrency change listener
-    if (this.concurrencyListener && typeof this.centralCore.off === "function") {
-      this.centralCore.off("concurrency:changed", this.concurrencyListener);
-      this.concurrencyListener = undefined;
     }
 
     /*
@@ -554,8 +522,6 @@ export class ProjectEngineManager {
         "in-process",
       maxConcurrent: (settings?.maxConcurrent as number) ?? 4,
       maxWorktrees: (settings?.maxWorktrees as number) ?? 10,
-      // Shared global semaphore — all engines share one concurrency pool
-      globalSemaphore: this.globalSemaphore,
       onMigrationProgress: this.options.onMigrationProgress,
     };
   }

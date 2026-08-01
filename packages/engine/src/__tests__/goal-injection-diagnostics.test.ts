@@ -5,7 +5,7 @@ const { warnSpy } = vi.hoisted(() => ({
 }));
 
 vi.mock("../logger.js", () => ({
-  createLogger: () => ({ warn: warnSpy, log: vi.fn(), error: vi.fn() }),
+  createLogger: () => ({ warn: warnSpy, log: vi.fn(), debug: vi.fn(), error: vi.fn() }),
 }));
 
 import {

@@ -21,7 +21,39 @@ the self-delete guard, yet never persisted, so the CALLING agent's task was lost
 
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import type { Task as TaskRowShape } from "../types.js";
+
+/*
+FNXC:TaskDeleteAttribution 2026-07-30-18:30 (PG cutover fallout):
+`deleteTaskImpl` / `deleteTaskIfImpl` are now THIN DELEGATORS onto `store.deleteTaskBackend` /
+`store.deleteTaskIf` — the SQLite arms this fake modelled were deleted
+(FNXC:SqliteDualPathCleanup 2026-07-26). Every case here threw
+"store.deleteTaskBackend is not a function" before reaching any attribution logic, which is what
+left 13 cases red on main.
+
+The persistence layer is mocked at the same three seams `task-delete-notice.test.ts` already uses,
+so the DECISION and the AUDIT ROW are exercised for real while no SQL runs. The audit assertions
+move to `recordRunAuditEventBackend`, which is the emitter the PG backend actually calls.
+*/
+let pgRow: TaskRowShape | null = null;
+
+vi.mock("../task-store/async-persistence.js", () => ({
+  readTaskRow: vi.fn(async () => pgRow),
+  softDeleteTaskRowInTransaction: vi.fn(async () => undefined),
+}));
+vi.mock("../task-store/async-lifecycle.js", () => ({
+  findLiveLineageChildren: vi.fn(async () => [] as string[]),
+  projectPartition: vi.fn(() => undefined),
+  removeLineageReferences: vi.fn(async () => undefined),
+}));
+vi.mock("../async-mission-store-queries.js", () => ({
+  getFeatureByTaskId: vi.fn(async () => null),
+  unlinkFeatureFromTaskId: vi.fn(async () => undefined),
+  recordGeneratedFixOperatorStop: vi.fn(async () => undefined),
+}));
+
 import { deleteTaskImpl, deleteTaskIfImpl } from "../task-store/archive-lifecycle.js";
+import { deleteTaskBackendImpl, deleteTaskIfBackendImpl } from "../task-store/archive-lifecycle-2.js";
 import {
   FUSION_CLIENT_HEADER,
   FUSION_DASHBOARD_UI_CLIENT,
@@ -60,39 +92,39 @@ type AuditRow = { mutationType: string; agentId?: string; metadata?: Record<stri
  */
 function makeDeleteStore(task: Task) {
   const events = new EventEmitter();
-  const tasks = new Map<string, Task>([[task.id, { ...task, log: [] }]]);
   const auditEvents: AuditRow[] = [];
+  const live = { ...task, log: [] } as Task;
+  pgRow = live as never;
 
-  return {
-    backendMode: false,
-    agentLogBuffer: [],
-    isWatching: false,
-    taskCache: new Map<string, Task>(),
-    missionStore: undefined,
-    db: {
-      transaction: (fn: () => void) => fn(),
-      prepare: () => ({ run: () => undefined }),
-      bumpLastModified: vi.fn(),
+  const store = {
+    backendMode: true,
+    asyncLayer: {
+      db: {},
+      projectId: "project-1",
+      transactionImmediate: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})),
     },
-    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
-    flushAgentLogBuffer: vi.fn(),
-    readTaskFromDb: vi.fn((id: string) => tasks.get(id) ?? null),
-    findLiveDependents: vi.fn(() => [] as string[]),
-    findLiveLineageChildren: vi.fn(async () => [] as string[]),
-    cleanupBranchForTask: vi.fn(async () => [] as string[]),
-    rewriteDependentsForRemoval: vi.fn(() => []),
-    rewriteBlockedByResidueDependentsForRemoval: vi.fn(() => []),
-    rewriteLineageChildrenForRemoval: vi.fn(() => []),
-    recordRunAuditEvent: vi.fn(async (event: AuditRow) => {
+    rowToTask: vi.fn((row: unknown) => row as Task),
+    pgRowToTaskRow: vi.fn((row: unknown) => row),
+    /* The PG backend emits through `recordRunAuditEventBackend`; the SQLite-path
+       `recordRunAuditEvent` this fake used to collect on is never called now. */
+    recordRunAuditEventBackend: vi.fn(async (_tx: unknown, event: AuditRow) => {
+      // Signature is (tx, event) — the transaction handle comes FIRST.
       auditEvents.push(event);
     }),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
-    clearLinkedAgentTaskIds: vi.fn(),
-    clearNearDuplicateReferencesToFailSoft: vi.fn(async () => undefined),
+    withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
     emit: vi.fn((event: string, ...args: unknown[]) => events.emit(event, ...args)),
     on: events.on.bind(events),
     deletedAuditRow: () => auditEvents.find((event) => event.mutationType === "task:deleted"),
-  };
+  } as Record<string, unknown>;
+
+  /* Wired to the REAL backend impls, not stubbed, so the delegation is what carries the
+     attribution rather than a mock asserting against itself. */
+  store.deleteTaskBackend = (id: string, options?: unknown) =>
+    deleteTaskBackendImpl(store as never, id, options as never);
+  store.deleteTaskIf = (id: string, predicate: unknown, options?: unknown) =>
+    deleteTaskIfBackendImpl(store as never, id, predicate as never, options as never);
+  return store as typeof store & { deletedAuditRow: () => AuditRow | undefined };
 }
 
 /*

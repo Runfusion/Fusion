@@ -83,7 +83,8 @@ describe("FN-4296: self-healing agent link drift", () => {
     const agents = [makeAgent("agent-backend", "FN-7001", "running")];
     const queuedTask = {
       id: "FN-7001",
-      column: "triage",
+      // FNXC:WorkflowResolvedColumns 2026-07-30-17:40: the intake column post-U11 is `todo`.
+      column: "todo",
       status: "queued",
       overlapBlockedBy: "FN-6827",
     } as Task;
@@ -197,6 +198,108 @@ describe("FN-4296: self-healing agent link drift", () => {
     expect(durable.taskId).toBeUndefined();
     expect(ephemeral.taskId).toBe("FN-2");
     expect((agentStore as any).syncExecutionTaskLink).toHaveBeenCalledTimes(1);
+    manager.stop();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-19:20:
+  #3078 converted this sweep's terminal check to the role pair and merged before any test covered it.
+  Measured then: with the conversion reverted, all 204 self-healing tests still passed — every case in
+  this file uses `done`/`archived`, where the literal is correct, so none of them could see it.
+
+  What the literal cost on a renamed board: a durable agent stayed LINKED to a finished task forever.
+  The agent is not free to pick up new work while it is linked, so the drift this sweep exists to
+  clear is exactly the drift it stopped clearing.
+  */
+  const RENAMED_IR = {
+    version: "v2", id: "custom:renamed", nodes: [], edges: [],
+    columns: [
+      /*  carries HOLD so a card can be pre-wip on this board — the preservation branch
+         below is only reachable for a parked card, and without this the case is vacuous. */
+      { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+      { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+    ],
+  };
+
+  function buildRenamedManager(agents: Agent[], tasks: Record<string, Task | null>) {
+    const store = {
+      getTask: vi.fn(async (taskId: string) => tasks[taskId] ?? null),
+      recordRunAuditEvent: vi.fn(async () => {}),
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
+      /* `isPreWipColumn` resolves the card's OWN workflow, so the per-task selection readers are
+         required — with only the project list it resolves the default IR, the preservation branch is
+         never entered, and a case asserting on that branch passes for the wrong reason. */
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+    } as any;
+    const agentStore = {
+      listAgents: vi.fn(async (filter?: { includeEphemeral?: boolean }) =>
+        filter?.includeEphemeral === false ? agents.filter((a) => !isEphemeralAgent(a)) : agents),
+      getActiveHeartbeatRun: vi.fn(async () => null),
+      updateAgentState: vi.fn(async (agentId: string, state: Agent["state"]) => {
+        const agent = agents.find((candidate) => candidate.id === agentId);
+        if (agent) agent.state = state;
+      }),
+      syncExecutionTaskLink: vi.fn(async (agentId: string, taskId?: string) => {
+        const agent = agents.find((candidate) => candidate.id === agentId);
+        if (agent) agent.taskId = taskId;
+      }),
+    } as unknown as AgentStore;
+    return new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+  }
+
+  it("clears a durable agent linked to a task in a RENAMED complete lane", async () => {
+    const agents = [makeAgent("agent-1", "FN-9")];
+    const manager = buildRenamedManager(agents, { "FN-9": { id: "FN-9", column: "shipped" } as Task });
+
+    await manager.recoverDriftedAgentTaskLinks();
+
+    expect(agents[0].taskId).toBeUndefined();
+    manager.stop();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
+  THE PRESERVATION BRANCH WAS DECIDED ON LEGACY IDS while its GATE was already resolved.
+
+  `recoverDriftedAgentTaskLinks` enters this branch via `isPreWipColumn` (resolved) and then called
+  `evaluateParkedAgentTaskLink` WITHOUT `parkedColumns`, so parked-ness fell back to todo/triage. On a
+  renamed board the card is pre-wip, `isParkedTaskColumn` says no, `shouldPreserveParkedLink` is
+  false, and a live agent WITH a fresh heartbeat run has its task link cleared.
+
+  The sibling sweep passes the resolved set; this call site did not. One wired, one not — the missed
+  pair this whole effort keeps finding, and `task-agent-sync.ts` predicted it in writing when the
+  parameter was introduced.
+  */
+  it("preserves a live agent's link on a card parked in a RENAMED hold lane", async () => {
+    const agents = [makeAgent("agent-live", "FN-PARKED")];
+    const manager = buildRenamedManager(agents, {
+      "FN-PARKED": { id: "FN-PARKED", column: "drafting" } as Task,
+    });
+    /* A FRESH run is live execution proof: the link must survive precisely because of it. */
+    const agentStore = (manager as unknown as { options: { agentStore: { getActiveHeartbeatRun: unknown } } }).options.agentStore;
+    (agentStore as { getActiveHeartbeatRun: unknown }).getActiveHeartbeatRun = vi.fn(async () => ({
+      id: "run-live",
+      agentId: "agent-live",
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    }));
+
+    await manager.recoverDriftedAgentTaskLinks();
+
+    expect(agents[0].taskId).toBe("FN-PARKED");
+    manager.stop();
+  });
+
+  it("leaves a durable agent linked to a task still in a RENAMED wip lane", async () => {
+    /* The sweep must narrow, not widen: an agent on live work keeps its link. */
+    const agents = [makeAgent("agent-1", "FN-8")];
+    const manager = buildRenamedManager(agents, { "FN-8": { id: "FN-8", column: "building" } as Task });
+
+    await manager.recoverDriftedAgentTaskLinks();
+
+    expect(agents[0].taskId).toBe("FN-8");
     manager.stop();
   });
 });

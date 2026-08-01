@@ -177,6 +177,8 @@ export interface WorkflowColumnBoundaryHooks {
   clearPin?: () => void | Promise<void>;
   onWarn?: (message: string, detail: Record<string, unknown>) => void;
   onSuspend?: WorkflowColumnBoundaryDeps["onSuspend"];
+  /** FNXC:EnginePause 2026-08-01-00:20: polled at every node entry (see boundary deps). */
+  isPaused?: WorkflowColumnBoundaryDeps["isPaused"];
 }
 
 /**
@@ -282,6 +284,7 @@ export class WorkflowGraphTaskRunner {
         clearPin: hooks.clearPin,
         onWarn: hooks.onWarn,
         onSuspend: hooks.onSuspend,
+        isPaused: hooks.isPaused,
       });
     }
 

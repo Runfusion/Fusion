@@ -5,9 +5,10 @@ import { NotificationService } from "../notification/notification-service.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
 import { DEFAULT_NTFY_EVENTS } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
+import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 vi.mock("../logger.js", () => ({
-  schedulerLog: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  schedulerLog: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 type Listener = (...args: any[]) => void | Promise<void>;
 
@@ -110,7 +111,103 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
-    await Promise.resolve();
+    await flushAsyncHandlers();
+
+    expect(sendNotification).toHaveBeenCalledWith(
+      "in-review",
+      expect.objectContaining({ taskId: "FN-1", event: "in-review" }),
+    );
+  });
+
+  it("notifies for a review lane that carries ONLY the merge trait", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (PR #2722 review — greptile, the MIRROR of the case
+    below):
+    My union was `mergeBlocker` + `humanReview`, which excluded a lane carrying only `mergeOrchestration`
+    — the same silent miss this method was added to fix, pointed the other way. A card moved to that
+    lane arrived with no operator notification, no error and nothing in the log.
+
+    Both directions now go through core's `resolveReviewColumns`, so the pair below and this case cannot
+    drift apart again.
+    */
+    const MERGE_ONLY_IR = {
+      version: "v2", id: "wf-merge-only", name: "Merge only",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "gate", name: "Gate", traits: [{ trait: "merge" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "backlog" }], edges: [],
+    };
+
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-merge-only" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-merge-only" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-merge-only", ir: MERGE_ONLY_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification } as never);
+    await service.start();
+
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:moved", {
+      task: task(), from: "building", to: "gate",
+    });
+    await flushAsyncHandlers();
+
+    expect(sendNotification).toHaveBeenCalledWith(
+      "in-review",
+      expect.objectContaining({ taskId: "FN-1", event: "in-review" }),
+    );
+  });
+
+  it("notifies for a review lane that carries human-review WITHOUT the merge trait", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-03:20 (PR #2722 review — greptile):
+    `resolveLifecycleColumns().review` reads the `mergeOrchestration` flag ONLY, so a lane carrying
+    `human-review` and not the merge trait resolved to nothing and the guard fell back to the literal
+    `in-review`. On a renamed board the operator's "ready for review" notification never fired — no
+    error, no log, the card just arrives unannounced, which is the failure mode an operator cannot
+    even report because nothing happened.
+
+    REVERT CHECK: restore `data.to === (movedLifecycle?.review ?? "in-review")` and this fails while
+    the default-board case above still passes — which is exactly how the gap survived the conversion.
+    */
+    const HUMAN_REVIEW_IR = {
+      version: "v2",
+      id: "wf-signoff",
+      name: "Sign-off Flow",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "intake" }, { trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "backlog" }],
+      edges: [],
+    };
+
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-signoff" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-signoff" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-signoff", ir: HUMAN_REVIEW_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({
+      getProviderId: () => "mock",
+      isEventSupported: () => true,
+      sendNotification,
+    } as NotificationProvider);
+    await service.start();
+
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:moved", {
+      task: task(),
+      from: "building",
+      to: "signoff",
+    });
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledWith(
       "in-review",
@@ -165,7 +262,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:created", task({ id: "FN-202", sourceAgentId: undefined }));
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -178,7 +275,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:created", task({ id: "FN-203", sourceAgentId: "agent-1", sourceType: "agent_heartbeat" as any }));
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -219,7 +316,7 @@ describe("NotificationService", () => {
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledTimes(2);
   });
@@ -249,7 +346,7 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input, key] = sendMessageOnce.mock.calls[0];
@@ -313,7 +410,7 @@ describe("NotificationService", () => {
       "task:updated",
       task({ status: "awaiting-approval", awaitingApprovalReason: "plan-review-replan-cap" }),
     );
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input] = sendMessageOnce.mock.calls[0];
@@ -350,7 +447,7 @@ describe("NotificationService", () => {
     await service.start();
 
     store.emit("task:updated", task({ status: "awaiting-approval" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     const [input, key] = sendMessageOnce.mock.calls[0];
@@ -370,8 +467,8 @@ describe("NotificationService", () => {
 
     expect(() => store.emit("task:updated", task({ status: "awaiting-approval" }))).not.toThrow();
     // Allow the fire-and-forget mailbox write (and its catch) to settle.
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushAsyncHandlers();
+    await flushAsyncHandlers();
 
     expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     expect(schedulerLog.log).toHaveBeenCalledWith(
@@ -394,7 +491,7 @@ describe("NotificationService", () => {
     await service.stop();
 
     store.emit("task:moved", { task: task(), from: "todo", to: "in-review" });
-    await Promise.resolve();
+    await flushAsyncHandlers();
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
@@ -492,11 +589,21 @@ describe("NotificationService", () => {
       );
     });
 
+    /*
+    FNXC:NotificationLogging 2026-07-29-15:05:
+    This message is emitted at DEBUG level (notification-service.ts:580), not log.
+    The secrecy assertion is checked against BOTH channels on purpose: moving the
+    positive assertion to `debug` while leaving the negative on `log` alone would
+    let a token leak through the very channel the message now uses, and the test
+    would still pass.
+    */
     await vi.waitFor(() => {
-      expect(schedulerLog.log).toHaveBeenCalledWith("NotificationService ntfy access token updated");
+      expect(schedulerLog.debug).toHaveBeenCalledWith("NotificationService ntfy access token updated");
     });
-    expect(schedulerLog.log).not.toHaveBeenCalledWith(expect.stringContaining("new-token"));
-    expect(schedulerLog.log).not.toHaveBeenCalledWith(expect.stringContaining("old-token"));
+    for (const channel of [schedulerLog.log, schedulerLog.debug, schedulerLog.warn, schedulerLog.error]) {
+      expect(channel).not.toHaveBeenCalledWith(expect.stringContaining("new-token"));
+      expect(channel).not.toHaveBeenCalledWith(expect.stringContaining("old-token"));
+    }
     initSpy.mockRestore();
   });
 
@@ -653,7 +760,7 @@ describe("NotificationService", () => {
 
     chatStore.emit("chat:room:message:added", createRoomMessage({ role: "user" }));
     chatStore.emit("chat:room:message:added", createRoomMessage({ id: "rmsg-2", senderAgentId: null }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -748,7 +855,7 @@ describe("NotificationService", () => {
     await service.start();
 
     messageStore.emit("message:sent", createMessage({ type: "user-to-agent", fromType: "user", toType: "agent" }));
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -784,7 +891,7 @@ describe("NotificationService", () => {
         expect.objectContaining({ event: "message:agent-to-user" }),
       );
     });
-    expect(schedulerLog.log).toHaveBeenCalledWith(
+    expect(schedulerLog.debug).toHaveBeenCalledWith(
       expect.stringContaining("NotificationService refreshed notification state reason=message:sent enabled=true"),
     );
   });
@@ -803,7 +910,7 @@ describe("NotificationService", () => {
     await service.start();
 
     messageStore.emit("message:sent", createMessage());
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).not.toHaveBeenCalled();
   });
@@ -827,7 +934,7 @@ describe("NotificationService", () => {
     expect(messageStore.listenerCount("message:sent")).toBe(0);
 
     messageStore.emit("message:sent", createMessage());
-    await Promise.resolve();
+    await flushAsyncHandlers();
     expect(sendNotification).not.toHaveBeenCalled();
   });
 
@@ -855,7 +962,7 @@ describe("NotificationService", () => {
       worktreeRemoved: true,
       branchDeleted: true,
     });
-    await Promise.resolve();
+    await flushAsyncHandlers();
 
     expect(sendNotification).toHaveBeenCalledTimes(2);
 
@@ -918,7 +1025,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:moved", { task: task({ id: "FN-302", column: "done" }), from: "in-review", to: "done" });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalledWith("merged", expect.anything());
     });
@@ -987,7 +1094,7 @@ describe("NotificationService", () => {
         from: "in-review",
         to: "done",
       });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1073,7 +1180,7 @@ describe("NotificationService", () => {
         worktreeRemoved: true,
         branchDeleted: false,
       });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1097,7 +1204,7 @@ describe("NotificationService", () => {
           expect.objectContaining({ taskId: "FN-104", event: "merged" }),
         );
       });
-      expect(schedulerLog.log).toHaveBeenCalledWith(
+      expect(schedulerLog.debug).toHaveBeenCalledWith(
         expect.stringContaining("NotificationService refreshed notification state reason=task:moved:done enabled=true"),
       );
     });
@@ -1130,7 +1237,7 @@ describe("NotificationService", () => {
       await service.start();
 
       store.emit("task:moved", { task: task({ id: "FN-106" }), from: "todo", to: "in-progress" });
-      await Promise.resolve();
+      await flushAsyncHandlers();
 
       expect(sendNotification).not.toHaveBeenCalled();
     });
@@ -1252,8 +1359,8 @@ describe("NotificationService", () => {
     const failed = task({ id: "FN-5627", status: "failed", column: "in-review", error: "spawn git ENOENT" });
     store.setTask(failed);
     store.emit("task:updated", failed);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushAsyncHandlers();
+    await flushAsyncHandlers();
 
     expect(claimTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
     expect(sendNotification).not.toHaveBeenCalledWith("task-wedged", expect.anything());
@@ -1275,6 +1382,49 @@ describe("NotificationService", () => {
 
     await vi.advanceTimersByTimeAsync(60);
     expect(sendNotification).not.toHaveBeenCalledWith("failed", expect.anything());
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("treats a RENAMED human-review lane as terminal, so the failure is not deferred forever", async () => {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-06:40 (PR #2722 review — the SECOND site in this file):
+    Under a deferred failure mode, `isTerminal` decided whether a failure notification fires now or
+    waits. It read `.review`, which is `mergeOrchestration`-only, so a task failing in a lane carrying
+    `human-review` alone was never terminal and its notification was deferred indefinitely.
+
+    I fixed the moved-to-review guard in the first pass and shipped this one — the Surface Enumeration
+    failure I had been flagging in other people's PRs the same day. Both reads in the file now go
+    through the same set, and this pins the second.
+    */
+    vi.useFakeTimers();
+    const HUMAN_REVIEW_IR = {
+      version: "v2", id: "wf-hr", name: "Human review",
+      columns: [
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Sign-off", traits: [{ trait: "human-review" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "building" }], edges: [],
+    };
+    /* `terminal-only` is the mode `isTerminal` actually gates — my first version used `sticky-only`,
+       where the flag is not consulted, so the case passed with the bug still in place. */
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic", failureNotificationMode: "terminal-only", failureNotificationDelayMs: 50 }) as Record<string, unknown>;
+    store.getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "wf-hr" }));
+    store.getTaskWorkflowSelectionAsync = vi.fn(async () => ({ workflowId: "wf-hr" }));
+    store.getWorkflowDefinition = vi.fn(async () => ({ id: "wf-hr", ir: HUMAN_REVIEW_IR }));
+
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const service = new NotificationService(store as never);
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification } as never);
+    await service.start();
+
+    const failed = task({ id: "FN-1", status: "failed", column: "signoff" });
+    (store as { setTask: (t: unknown) => void }).setTask(failed);
+    (store as { emit: (e: string, d: unknown) => void }).emit("task:updated", failed);
+
+    await vi.advanceTimersByTimeAsync(120);
+    expect(sendNotification).toHaveBeenCalledWith("failed", expect.anything());
     await service.stop();
     vi.useRealTimers();
   });

@@ -502,3 +502,35 @@ export function getCurrentRepo(cwd?: string): { owner: string; repo: string } | 
     return null;
   }
 }
+
+/*
+FNXC:ForkAwarePrHead 2026-07-26-07:18:
+Resolve the repository that receives pushes for a remote via
+`git remote get-url --push`. Fork workflows commonly keep origin's fetch URL on
+upstream while configuring a distinct push URL for the contributor fork. Callers
+that open PRs must compare this owner to the upstream fetch owner and, when they
+differ, qualify head as `push-owner:branch` so GitHub does not search upstream
+for a branch that only exists on the fork. Returns null when the remote URL is
+missing or unparseable; callers then keep an unqualified head (same-repo default).
+*/
+/**
+ * Get the GitHub repository that receives pushes for a remote.
+ *
+ * A fork workflow commonly keeps `origin`'s fetch URL pointed at upstream while
+ * configuring a distinct push URL for the contributor fork. PR creation must
+ * qualify the head branch with that fork owner or GitHub looks for the branch
+ * in the upstream repository and rejects the request.
+ */
+export function getPushRepo(cwd?: string, remote = "origin"): { owner: string; repo: string } | null {
+  try {
+    const remoteUrl = execFileSync("git", ["remote", "get-url", "--push", remote], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    }).trim();
+
+    return parseRepoFromRemote(remoteUrl);
+  } catch {
+    return null;
+  }
+}

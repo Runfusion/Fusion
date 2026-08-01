@@ -75,11 +75,41 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
 
   router.post("/worktrunk/install-request", async (req, res) => {
     try {
-      const body = (req.body ?? {}) as { actor?: ApprovalRequestActorSnapshot };
-      if (body.actor && (!body.actor.actorId || !body.actor.actorType || !body.actor.actorName)) {
-        throw badRequest("actor must include actorId, actorType, and actorName");
+      /*
+      FNXC:ApprovalDecisionAuthority 2026-07-26-16:40:
+      The worktrunk-install approval requester is derived SERVER-SIDE. Previously
+      `req.body.actor` became the requester snapshot verbatim, letting any HTTP caller
+      forge the identity that later shows as "who asked for this install". The bearer
+      token is a single shared operator secret, so the honest requester is the synthetic
+      dashboard operator; a body actor is at most advisory display metadata — its
+      actorName is carried only when its actorType is "user", and a non-user actorType is
+      rejected 403 (agents must use their own engine-side approval path, not this route).
+      This also keeps the requester actorId aligned with the /worktrunk/status
+      pending-lookup, which queries by DEFAULT_ACTOR.actorId.
+      */
+      const body = (req.body ?? {}) as { actor?: { actorId?: unknown; actorType?: unknown; actorName?: unknown } | null };
+      let advisoryActorName: string | undefined;
+      if (body.actor !== undefined && body.actor !== null) {
+        if (
+          typeof body.actor !== "object"
+          || typeof body.actor.actorId !== "string" || body.actor.actorId.length === 0
+          || typeof body.actor.actorType !== "string" || body.actor.actorType.length === 0
+          || typeof body.actor.actorName !== "string" || body.actor.actorName.length === 0
+        ) {
+          throw badRequest("actor must include actorId, actorType, and actorName");
+        }
+        if (body.actor.actorType !== "user") {
+          throw new ApiError(403, "Worktrunk install requests over HTTP are operator-only; a non-user actor cannot request an install");
+        }
+        if (body.actor.actorName.trim().length > 0) {
+          advisoryActorName = body.actor.actorName;
+        }
       }
-      const actor = body.actor ?? DEFAULT_ACTOR;
+      const actor: ApprovalRequestActorSnapshot = {
+        actorId: DEFAULT_ACTOR.actorId,
+        actorType: DEFAULT_ACTOR.actorType,
+        actorName: advisoryActorName ?? DEFAULT_ACTOR.actorName,
+      };
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const worktrunkSettings = settings.worktrunk ?? {};

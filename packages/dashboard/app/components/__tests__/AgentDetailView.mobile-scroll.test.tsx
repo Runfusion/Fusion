@@ -215,7 +215,30 @@ describe("AgentDetailView mobile scroll regression (FN-4231)", () => {
       expect(metaStyle.flexWrap).toBe("wrap");
       expect(metaStyle.rowGap).toBe("var(--space-lg)");
       expect(metaStyle.columnGap).toBe("var(--space-sm)");
-      expect(cardStyle.padding).toBe("var(--space-md)");
+      /*
+      FNXC:AgentDetailMobile 2026-07-31-19:15:
+      DECLARED, NOT COMPUTED — jsdom cannot answer this one at all.
+
+      This read `getComputedStyle(card).padding` and expected the raw token text. jsdom does not
+      substitute `var()`, and what it does INSTEAD changed at the 27 -> 29 bump (4819c2634): a
+      directly-declared LONGHAND still echoes its raw text, but a SHORTHAND fails to parse and
+      computes to the initial value. Hence `expected '0' to be 'var(--space-md)'` with the CSS
+      untouched. Same cause as the TaskCard failures fixed in #2782.
+
+      The asymmetry is visible three lines up: `rowGap` and `columnGap` are declared as longhands and
+      still pass against the same kind of token. `paddingTop` does NOT rescue it — measured — because
+      jsdom cannot derive a longhand from a shorthand it failed to parse.
+
+      So the declared rule is asserted instead, which is what this file already does for the desktop
+      counterpart above (`expect(loadAllAppCssBaseOnly()).toContain("padding: ...")`). The full sheet
+      is needed rather than the base-only one: this padding is a MOBILE override inside
+      `@media (max-width: 480px)` (AgentDetailView.css:2129-2131), and `loadAllAppCssBaseOnly` strips
+      at-rules by design.
+      */
+      expect(loadAllAppCss()).toContain("@media (max-width: 480px)");
+      expect(loadAllAppCss()).toMatch(
+        /@media \(max-width: 480px\)[\s\S]*?\.dashboard-summary-card\s*\{[^}]*padding:\s*var\(--space-md\);/,
+      );
       expect(healthStyle.overflowWrap).toBe("anywhere");
       expect(screen.getAllByText(/Paused: heartbeat-model-unavailable/).length).toBeGreaterThanOrEqual(1);
       if (metadata.skills.length > 0) {

@@ -27,10 +27,17 @@ function visibleColumns(workflow: ValidatedQuickAddWorkflow) {
   return workflow.columns.filter((column) => !column.flags.archived && !column.flags.hiddenFromBoard);
 }
 
+/*
+ * FNXC:QuickAddStart 2026-07-31-23:51:
+ * Start is reserved for a workflow's first visible manual/waiting intake lane. `hold` alone is
+ * insufficient because the canonical merged Planning column carries both `intake` and `hold` while
+ * auto-triaging. Mirror TaskCard.showStartAction's server-derived `manualIntake` fact so absent
+ * older payload metadata fails closed without exposing an unusable Quick Add action.
+ */
 export function workflowSupportsQuickAddStart(workflow: ValidatedQuickAddWorkflow | null): boolean {
   if (!workflow) return false;
   if (workflow.id === "builtin:coding-ideas") return true;
-  return visibleColumns(workflow)[0]?.flags.hold === true;
+  return visibleColumns(workflow)[0]?.flags.manualIntake === true;
 }
 
 /**
@@ -60,7 +67,22 @@ export function resolveQuickAddStartTargetColumn(workflow: ValidatedQuickAddWork
 export function resolveQuickAddStartInitialColumn(workflow: ValidatedQuickAddWorkflow): string | null {
   if (workflow.id !== "builtin:coding-ideas") return null;
   const columns = visibleColumns(workflow);
+  /*
+  DELIBERATE-LITERAL — these are ONE NAMED BUILTIN's own declared ids, not a lifecycle guard.
+
+  Census false positive. The function returns null two lines above for any workflow other than
+  `builtin:coding-ideas`, so `ideas` and `todo` here are that workflow's OWN column ids, read from
+  its captured definition — there is no other board whose vocabulary could differ. A custom workflow
+  never reaches this line.
+
+  The lifecycle question this function does ask IS already trait-resolved: the destination is
+  rejected below unless `!todo.flags.intake && !todo.flags.complete`. Replacing the id lookups with
+  role resolution would not make it more correct — it would make it match a DIFFERENT column in the
+  one workflow this is scoped to.
+  */
   const ideasIndex = columns.findIndex((column) => column.id === "ideas");
+  /* DELIBERATE-LITERAL — see the note above: this is `builtin:coding-ideas`'s OWN `todo` id, and the
+     function has already returned null for every other workflow. */
   const todoIndex = columns.findIndex((column) => column.id === "todo");
   if (ideasIndex < 0 || todoIndex <= ideasIndex) return null;
 

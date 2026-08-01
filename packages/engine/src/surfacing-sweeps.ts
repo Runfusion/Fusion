@@ -34,7 +34,8 @@ import {
   type ResolvedRecoveryPolicy,
 } from "./recovery-reconciler.js";
 import {
-  resolveLifecycleColumns,
+  columnsWithFlag,
+  resolveReviewColumns,
   resolveWorkflowIrForTask,
   type Settings,
   type Task,
@@ -86,10 +87,11 @@ export interface SurfacingSpec {
     thresholdMs: number,
     cycleStartMs: number,
     activation: { engineActiveSinceMs?: number; engineActivationGraceMs?: number },
-    /* The RESOLVED role column. Signals take it so their own column check stays
-       real — passing `task.column` would make that check tautological and quietly
-       delete it. */
-    roleColumn: string,
+    /* The RESOLVED role column SET. Signals take it so their own column check
+       stays real — passing `task.column` would make that check tautological and
+       quietly delete it. A SET rather than one id because a role is a trait many
+       columns may carry; see `resolveRoleColumns`. */
+    roleColumns: ReadonlySet<string>,
   ): SurfacingSignal | undefined;
   /** The operator-facing sentence following `logPrefix [code]: `. */
   describe(task: Task, signal: SurfacingSignal, thresholdMs: number): string;
@@ -128,21 +130,42 @@ export interface SurfacingRunnerDeps {
  * Returns `undefined` when neither supplies an actionable threshold — including
  * when the operator set a non-positive value, which means DISABLED.
  */
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-21:45 (surfacing family watched only the FIRST role column):
+A lifecycle role is a TRAIT, and any number of a board's columns may carry it — a workflow with a
+merge lane beside a human-review lane has two review columns. `resolveLifecycleColumns()[role]`
+answers with the FIRST one only, so the role gate below (`task.column !== roleColumn`) dropped every
+card resting in any other column carrying the same role: no stale-paused-review, no in-review-stalled,
+no stale-paused-todo diagnostic for those cards, silently and with no error.
+
+Membership, not first-match. `review` is the union of the three review roles (the same answer
+`resolveReviewColumns` gives every other converted reader) so a board splitting merge orchestration
+from human review is covered by both.
+*/
+function resolveRoleColumns(ir: WorkflowIr, role: SurfacingSpec["role"]): string[] {
+  return role === "review" ? resolveReviewColumns(ir) : columnsWithFlag(ir, "hold");
+}
+
 async function resolveTaskThreshold(
   store: TaskStore,
   task: Task,
   spec: SurfacingSpec,
   inheritedThresholdMs: number,
   irCache: Map<string, WorkflowIr>,
-): Promise<{ policy: ResolvedRecoveryPolicy; roleColumn: string } | undefined> {
+): Promise<{ policy: ResolvedRecoveryPolicy; roleColumns: ReadonlySet<string> } | undefined> {
   let declared;
-  let roleColumn: string | undefined;
+  let roleColumns: string[] = [];
   try {
     const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
-    const lifecycle = resolveLifecycleColumns(ir);
-    roleColumn = lifecycle?.[spec.role];
-    if (roleColumn && ir.version === "v2") {
-      declared = ir.columns.find((c) => c.id === roleColumn)?.recovery;
+    roleColumns = resolveRoleColumns(ir, spec.role);
+    if (roleColumns.length > 0 && ir.version === "v2") {
+      /*
+      The card's OWN column declares its recovery policy when it carries the role. Reading the
+      first role column's policy instead would apply the merge lane's threshold to a card sitting
+      in the human-review lane — a second first-match bug hiding inside the fix for the first.
+      */
+      const policyColumn = roleColumns.includes(task.column) ? task.column : roleColumns[0];
+      declared = ir.columns.find((c) => c.id === policyColumn)?.recovery;
     }
   } catch {
     // Unresolvable workflow: fall through to the inherited setting.
@@ -156,11 +179,14 @@ async function resolveTaskThreshold(
   /*
   A workflow that cannot resolve the role (v1 / no column vocabulary) keeps the
   LEGACY id, so an unresolvable workflow behaves exactly as before this migration
-  rather than losing the sweep entirely. Never `undefined`, so the role gate in
-  the runner is ALWAYS active — leaving it optional made the gate silently absent
-  for exactly the workflows whose role failed to resolve.
+  rather than losing the sweep entirely. Never empty, so the role gate in the
+  runner is ALWAYS active — leaving it optional made the gate silently absent for
+  exactly the workflows whose role failed to resolve.
   */
-  return { policy, roleColumn: roleColumn ?? LEGACY_ROLE_COLUMN[spec.role] };
+  return {
+    policy,
+    roleColumns: new Set(roleColumns.length > 0 ? roleColumns : [LEGACY_ROLE_COLUMN[spec.role]]),
+  };
 }
 
 /**
@@ -200,12 +226,12 @@ export async function runSurfacingSweep(spec: SurfacingSpec, deps: SurfacingRunn
       if (!resolved) continue;
       const thresholdMs = resolved.policy.stalenessMs;
 
-      /* The role gate: only cards resting in THIS task's own role column. */
-      if (task.column !== resolved.roleColumn) continue;
+      /* The role gate: only cards resting in one of THIS task's own role columns. */
+      if (!resolved.roleColumns.has(task.column)) continue;
 
       if (spec.isEligibleAsync && !(await spec.isEligibleAsync(task))) continue;
 
-      const signal = spec.evaluate(task, thresholdMs, deps.cycleStartMs, deps.activation, resolved.roleColumn);
+      const signal = spec.evaluate(task, thresholdMs, deps.cycleStartMs, deps.activation, resolved.roleColumns);
       if (!signal) continue;
 
       /* A row written during this cycle is re-read next pass, so reporting it

@@ -4,7 +4,24 @@ import { NotificationService } from "../notification-service.js";
 import { describeSelfHealingNoActionWedge, describeTaskWedge } from "../task-wedge-notification.js";
 
 type Listener = (task: Task) => void;
-function fixture() {
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-21:35:
+A board whose lanes carry no legacy id: hold `drafting`, wip `building`, review `checking`,
+complete `shipped`. Supplied through `listWorkflowDefinitions`, the only store read
+`resolveProjectColumnsForRoles` makes and one that is answerable under PostgreSQL.
+*/
+const RENAMED_IR = {
+  version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+  columns: [
+    { id: "drafting", name: "Drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+    { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+    { id: "checking", name: "Checking", traits: [{ trait: "merge" }] },
+    { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+  ],
+};
+
+function fixture(workflowIr?: unknown) {
   const listeners = new Set<Listener>();
   let wedge: Task["wedgeNotification"];
   const store = {
@@ -21,6 +38,8 @@ function fixture() {
       wedge = { reasonKey, episodeId: `${taskId}-${reasonKey}-${Date.now()}`, status: "active", transitionedAt: new Date().toISOString() };
       return { claimed: true, episodeId: wedge.episodeId };
     },
+    /* Absent → the helper keeps the legacy ids, which is every pre-existing case in this file. */
+    ...(workflowIr ? { listWorkflowDefinitions: async () => [{ ir: workflowIr }] } : {}),
   };
   const sendMessageOnce = vi.fn(async (_input: unknown, _key: string) => ({ message: {} as any, inserted: true }));
   const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any, failedNotificationGraceMs: 60_000 });
@@ -44,6 +63,53 @@ describe("task wedge notifications", () => {
     expect(firstMessage?.content).toContain("Recommended action");
     store.emit(task({ status: "queued", error: undefined, column: "todo", updatedAt: "2026-07-22T12:02:00.000Z" }));
     store.emit(task({ updatedAt: "2026-07-22T12:03:00.000Z" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    await service.stop();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-18:50 (fleet):
+  Clearing a wedge episode asks "has the card moved on?", which was four column literals. On a renamed
+  board none matched, so a RECOVERED card never cleared its episode and the operator kept an alert for
+  work that had already progressed — and, because the stale episode stays active, the NEXT genuine wedge
+  is refused its claim and never announced at all.
+
+  The board below recovers into `backlog` (hold). The assertion is the second message: with the literals
+  it never arrives, because the first episode was never resolved.
+  */
+  it("clears a wedge episode when the card recovers into a RENAMED hold lane", async () => {
+    const RENAMED_IR = {
+      version: "v2",
+      name: "renamed-notify",
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+        { id: "signoff", name: "Signoff", traits: [{ trait: "merge" }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [],
+      edges: [],
+    };
+    const { store, service, sendMessageOnce, task } = fixture();
+    /* `resolveProjectColumnsForRoles` unions lanes across the PROJECT's workflows, so the fake needs
+       `listWorkflowDefinitions` — the per-task selection readers alone leave it resolving nothing. */
+    Object.assign(store, {
+      getTaskWorkflowSelection: () => ({ workflowId: "custom:renamed", stepIds: [] }),
+      getTaskWorkflowSelectionAsync: async () => ({ workflowId: "custom:renamed", stepIds: [] }),
+      getWorkflowDefinition: async () => ({ ir: RENAMED_IR }),
+      listWorkflowDefinitions: async () => [{ id: "custom:renamed", ir: RENAMED_IR }],
+    });
+
+    await service.start();
+    store.emit(task({ column: "signoff" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+
+    // Recovered into the board's own hold lane — the episode must close.
+    /* status stays "failed" ON PURPOSE: the status disjunct (`status !== "failed"`) would otherwise
+       satisfy hasProgressed on its own and the column term would never decide anything. */
+    store.emit(task({ status: "failed", error: undefined, column: "backlog", updatedAt: "2026-07-22T12:02:00.000Z" }));
+    // Wedged again: only claimable if the previous episode actually cleared.
+    store.emit(task({ column: "signoff", updatedAt: "2026-07-22T12:03:00.000Z" }));
     await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
     await service.stop();
   });
@@ -129,6 +195,63 @@ describe("task wedge notifications", () => {
     store.emit(task({ error: "Tool failure retries exhausted", updatedAt: "2026-07-22T12:01:00.000Z", column: "in-progress" }));
     await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
     expect(sendMessageOnce.mock.calls.map((call) => call[1])).not.toContain(expect.stringContaining("details"));
+    await service.stop();
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-21:35:
+  A RECOVERED CARD ON A RENAMED BOARD MUST CLOSE ITS WEDGE EPISODE.
+
+  The resolve branch tested "has this card moved on" by comparing against `todo`/`in-progress`/
+  `done`/`archived`. On a board using none of those ids nothing matched, so the episode stayed
+  `active` after the card visibly recovered — the operator kept an open "needs operator action"
+  alert for work that had moved on, and (because an active episode suppresses re-claim) the NEXT
+  genuine wedge on that task was never delivered either.
+
+  The observable is the second delivery, not the episode record: an episode that resolves but
+  delivers nothing new would be a silent regression of the same alert.
+  */
+  it("resolves an episode when the card recovers into a RENAMED lane, and re-delivers on re-wedge", async () => {
+    const { store, service, sendMessageOnce, task } = fixture(RENAMED_IR);
+    await service.start();
+
+    const wedged = (updatedAt: string) => task({ column: "checking" as never, updatedAt });
+    store.emit(wedged("2026-07-22T12:00:00.000Z"));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+
+    /*
+    THE RECOVERY CARRIES NO STATUS, and that is what makes this test about the column at all.
+    `hasProgressed` is an OR whose other arm is "status is a non-failed string" — my first version
+    recovered with `status: "queued"`, that arm answered true, and the case passed against the
+    literals. Measured: the mutation did not fail it. With `status` and `error` both cleared, the
+    column membership is the ONLY thing that can resolve this episode.
+    */
+    store.emit(task({ status: undefined, error: undefined, column: "building" as never, updatedAt: "2026-07-22T12:02:00.000Z" }));
+    store.emit(wedged("2026-07-22T12:03:00.000Z"));
+
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    await service.stop();
+  });
+
+  /*
+  The paired negative. The conversion widens membership over four roles, so it must not treat the
+  REVIEW lane as progress — a wedged card sitting in review has not moved on, and resolving there
+  would clear every episode on the next incidental update and re-alert forever.
+  */
+  it("does NOT resolve on a status-less update while the card sits in the renamed REVIEW lane", async () => {
+    const { store, service, sendMessageOnce, task } = fixture(RENAMED_IR);
+    await service.start();
+
+    store.emit(task({ column: "checking" as never, updatedAt: "2026-07-22T12:00:00.000Z" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+
+    /* Same shape as the positive — no status, no error — so only the lane differs. Review is not
+       progress: resolving here would clear the episode on any incidental update and re-alert. */
+    store.emit(task({ status: undefined, error: undefined, column: "checking" as never, updatedAt: "2026-07-22T12:01:00.000Z" }));
+    store.emit(task({ column: "checking" as never, updatedAt: "2026-07-22T12:02:00.000Z" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
     await service.stop();
   });
 });

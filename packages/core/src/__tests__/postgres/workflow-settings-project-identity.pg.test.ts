@@ -208,7 +208,18 @@ describe("getWorkflowSettingsProjectIdImpl resolution order (unit)", () => {
         },
       },
     } as unknown as TaskStore;
-    expect(getWorkflowSettingsProjectIdImpl(store)).toBe("legacy_identity_id");
+    /*
+    FNXC:CentralProjectIdentity 2026-07-30-13:00:
+    rootDir, NOT the legacy identity — and the store double above is the reason this case used to
+    expect otherwise. It supplies a `db.getProjectIdentity()` that RETURNS a value, which the real
+    accessor can never do: `dbImpl` throws unconditionally and ignores its store argument entirely
+    (`task-id-integrity.ts:58`), so there is no mode in which `store.db` yields a usable SQLite
+    handle. The legacy-identity branch is unreachable BY CONSTRUCTION, not merely unused.
+
+    So this was asserting behaviour for a store shape that cannot exist, and the resolver's doc block
+    promising a three-step order was stale in the same way — corrected alongside this.
+    */
+    expect(getWorkflowSettingsProjectIdImpl(store)).toBe("/tmp/root");
   });
 
   it("falls back to rootDir when the SQLite stub throws and no layer is bound (old backend behavior)", () => {
@@ -234,6 +245,7 @@ describe("getWorkflowSettingsProjectIdImpl resolution order (unit)", () => {
         },
       },
     } as unknown as TaskStore;
-    expect(getWorkflowSettingsProjectIdImpl(store)).toBe("legacy_identity_id");
+    // Same reason as above: an unbound layer falls through to rootDir, never to a SQLite identity.
+    expect(getWorkflowSettingsProjectIdImpl(store)).toBe("/tmp/root");
   });
 });

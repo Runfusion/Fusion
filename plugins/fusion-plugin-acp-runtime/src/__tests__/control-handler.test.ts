@@ -271,18 +271,88 @@ describe("resolvePermission — the security floor", () => {
       expect(selectedId(res)).toBe("reject_once_id");
     });
 
-    it("reuses a prior approved decision via the dedupe key (no new request)", async () => {
+    /*
+    FNXC:AcpApprovalConsumption 2026-07-26-12:50:
+    Approvals are execute-once-then-complete. Reusing an approved row must
+    CONSUME it via markApprovalCompleted; a completed row no longer authorizes,
+    so an identical second request goes back through the HITL round-trip.
+    */
+    it("reuses a prior approved decision once, consuming it via markApprovalCompleted (no new request)", async () => {
       const createApprovalRequest = vi.fn(async () => ({ id: "appr-x" }));
+      const markApprovalCompleted = vi.fn(async () => {});
       const gate: PermissionGate = gateWithRules(
         { ...UNRESTRICTED, command_execution: "require-approval" },
         {
           createApprovalRequest,
+          markApprovalCompleted,
           findApprovalByDedupeKey: vi.fn(async () => ({ id: "prior", status: "approved" as const })),
         },
       );
       const res = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
       expect(selectedId(res)).toBe("allow_once_id");
       expect(createApprovalRequest).not.toHaveBeenCalled();
+      // The single-use grant is finalized before the allow is returned.
+      expect(markApprovalCompleted).toHaveBeenCalledOnce();
+      expect(markApprovalCompleted).toHaveBeenCalledWith("prior");
+    });
+
+    it("does NOT auto-allow a second identical request after the approval is consumed", async () => {
+      // In-memory approval store: one approved row that flips to completed on
+      // markApprovalCompleted, mirroring the engine's approval lifecycle.
+      const row = { id: "prior", status: "approved" as "approved" | "completed" };
+      const createApprovalRequest = vi.fn(async () => ({ id: "appr-2" }));
+      const gate: PermissionGate = gateWithRules(
+        { ...UNRESTRICTED, command_execution: "require-approval" },
+        {
+          createApprovalRequest,
+          markApprovalCompleted: vi.fn(async () => {
+            row.status = "completed";
+          }),
+          findApprovalByDedupeKey: vi.fn(async () => ({ id: row.id, status: row.status })),
+          // Pause never resolves a decision → the second call must NOT allow.
+          pauseForApproval: vi.fn(async () => {}),
+        },
+      );
+
+      const first = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
+      expect(selectedId(first)).toBe("allow_once_id");
+      expect(row.status).toBe("completed");
+
+      const second = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
+      // Completed is not approved: the second identical call re-enters the HITL
+      // flow (a new request is registered) and, with no human grant, denies.
+      expect(selectedId(second)).toBe("reject_once_id");
+      expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not reuse an approved row when it cannot be consumed (no markApprovalCompleted)", async () => {
+      const createApprovalRequest = vi.fn(async () => ({ id: "appr-x" }));
+      const gate: PermissionGate = gateWithRules(
+        { ...UNRESTRICTED, command_execution: "require-approval" },
+        {
+          createApprovalRequest,
+          findApprovalByDedupeKey: vi.fn(async () => ({ id: "prior", status: "approved" as const })),
+          // No markApprovalCompleted and no pauseForApproval → the fresh
+          // round-trip cannot complete → default-deny, never an unconsumable allow.
+        },
+      );
+      const res = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
+      expect(selectedId(res)).toBe("reject_once_id");
+    });
+
+    it("still reuses a prior denied decision without consuming anything", async () => {
+      const markApprovalCompleted = vi.fn(async () => {});
+      const gate: PermissionGate = gateWithRules(
+        { ...UNRESTRICTED, command_execution: "require-approval" },
+        {
+          createApprovalRequest: vi.fn(async () => ({ id: "appr-x" })),
+          markApprovalCompleted,
+          findApprovalByDedupeKey: vi.fn(async () => ({ id: "prior", status: "denied" as const })),
+        },
+      );
+      const res = await resolvePermission(toolCall("execute"), ALL_OPTIONS, gate);
+      expect(selectedId(res)).toBe("reject_once_id");
+      expect(markApprovalCompleted).not.toHaveBeenCalled();
     });
 
     it("require-approval with NO closures → default-deny, no throw", async () => {

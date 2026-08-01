@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Database } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
+import { resolveProjectColumnsForRoles, type ProjectLaneVocabularyStore } from "../project-lane-vocabulary.js";
 
 /**
  * FNXC:CommandCenterGitLab 2026-07-02-00:00:
@@ -148,9 +149,24 @@ function addProject(
 export async function aggregateGitlabIssueAnalytics(
   dbOrLayer: Database | AsyncDataLayer,
   query: GitlabIssueAnalyticsQuery = {},
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-20:10:
+  The store, used ONLY to resolve which columns carry the `complete` trait.
+
+  The resolved-issue query filtered on `"column" = 'done'`, an id inside a SQL string that the
+  lifecycle census cannot see. On a renamed board it matches nothing, so the gitlab panel reports
+  zero issues resolved and an empty resolved-issue list while the team closes issues all week — and
+  the close-rate figure derived from it reads 0%.
+
+  Resolved per PROJECT: this aggregates a whole project, so the union of the complete columns across
+  its workflows is the right set and a bound IN list is enough.
+
+  Omitted, the legacy id answers, so an unconverted caller is byte-identical.
+  */
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<GitlabIssueAnalytics> {
   if ("ping" in dbOrLayer) {
-    return aggregateGitlabIssueAnalyticsAsync(dbOrLayer, query);
+    return aggregateGitlabIssueAnalyticsAsync(dbOrLayer, query, laneStore);
   }
   const db = dbOrLayer as Database;
 
@@ -193,7 +209,14 @@ export async function aggregateGitlabIssueAnalytics(
 async function aggregateGitlabIssueAnalyticsAsync(
   layer: AsyncDataLayer,
   query: GitlabIssueAnalyticsQuery,
+  laneStore?: ProjectLaneVocabularyStore,
 ): Promise<GitlabIssueAnalytics> {
+  const completeLanes = laneStore
+    ? [...await resolveProjectColumnsForRoles(laneStore, ["complete"])]
+    : ["done"];
+  /* An IN list of bound parameters, not `= ANY(${array})`: drizzle expands a JS array in a template
+     into a tuple, which PostgreSQL rejects for ANY. Each id stays a parameter. */
+  const completeIn = sql.join(completeLanes.map((lane) => sql`${lane}`), sql`, `);
   const filedRaw = (await layer.db.execute(
     sql`SELECT gitlab_tracking AS "gitlabTracking" FROM project.tasks
         WHERE gitlab_tracking IS NOT NULL AND gitlab_tracking::text <> '{}'`,
@@ -214,7 +237,7 @@ async function aggregateGitlabIssueAnalyticsAsync(
           source_issue_closed_at  AS "sourceIssueClosedAt",
           updated_at              AS "updatedAt"
         FROM project.tasks
-        WHERE source_issue_provider = 'gitlab' AND "column" = 'done'`,
+        WHERE source_issue_provider = 'gitlab' AND "column" IN (${completeIn})`,
   )) as Array<Record<string, unknown>>;
   const fixedRows: FixedIssueRow[] = fixedRaw.map((r) => ({
     id: String(r.id),

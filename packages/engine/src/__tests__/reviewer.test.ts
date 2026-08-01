@@ -2,6 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
+  /*
+  FNXC:TestInfrastructure 2026-07-29-10:15 (U9):
+  `wrapCustomToolsForPluginRuntime` (agent-session-helpers.ts) calls this as the
+  outermost tool wrapper, so its absence here threw
+  "No wrapToolsWithOutputBudget export is defined on the ../pi.js mock" and made
+  BOTH test-mode-forcing cases below permanently red — a dead guard on the
+  invariant that testMode never issues real AI calls. Identity stub: the real
+  function returns tools byte-identical for a null budget, and these cases assert
+  model/provider resolution, not output budgeting.
+
+  Not caught by `pnpm check:mock-completeness` — that gate only inspects the
+  @fusion/engine and @fusion/dashboard BARRELS in cli/dashboard test dirs, never a
+  relative intra-package mock like this one.
+  */
+  wrapToolsWithOutputBudget: vi.fn((tools: unknown[]) => tools),
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
   formatModelMarkerDetails: vi.fn((model: string, thinking?: string | null, annotations: string[] = []) => {
     const suffixes = [thinking ? `thinking effort: ${thinking}` : "", ...annotations].filter(Boolean);

@@ -1,4 +1,5 @@
 import type { ActivityLogEntry, RunAuditEvent } from "@fusion/core";
+import { resolveProjectColumnsForRoles, REVIEW_ROLES } from "@fusion/core";
 
 /**
  * Discovery notes (FN-4360):
@@ -61,6 +62,21 @@ function incrementDayCount(counts: Record<string, number>, day: string): void {
   counts[day] = (counts[day] ?? 0) + 1;
 }
 
+/*
+FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values, not live columns.
+These ids come from `metadataColumn(entry, ...)` — the `from`/`to` recorded ON A PAST MOVE EVENT in
+the activity log. They are not a question about a task's current column, so there is no workflow to
+resolve them against: the event was written under whatever the board looked like at the time, and a
+column renamed since leaves every older entry carrying the OLD id forever.
+
+Converting these to a trait read would ask "what role does the column named X play TODAY?" about a
+record written months ago, possibly under a different workflow — which is a different question with
+a different answer, and it would silently drop history from the metric rather than improve it.
+
+The correct fix for renamed boards is at the WRITER (record a role alongside the id when the event is
+emitted), not at this reader. Until events carry that, matching the recorded literal is the only
+answer that keeps old data in the series.
+*/
 export function tasksEnteredInReviewPerDay(activity: ActivityLogEntry[], startMs: number, endMs: number): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const entry of collectTaskMovedEvents(activity, startMs, endMs)) {
@@ -71,6 +87,9 @@ export function tasksEnteredInReviewPerDay(activity: ActivityLogEntry[], startMs
   return counts;
 }
 
+/* FNXC:ReliabilityMetrics 2026-07-30-03:10 DELIBERATE-LITERAL: historical log values — `from`/`to`
+   as RECORDED on a past move event, matched as recorded. Full reasoning above
+   `tasksEnteredInReviewPerDay`. */
 export function tasksBouncedToInProgressPerDay(activity: ActivityLogEntry[], startMs: number, endMs: number): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const entry of collectTaskMovedEvents(activity, startMs, endMs)) {
@@ -101,7 +120,29 @@ function percentile(sortedValues: number[], p: number): number {
   return sortedValues[Math.min(sortedValues.length - 1, Math.max(0, index))] ?? 0;
 }
 
-export function inReviewDurationMetrics(activity: ActivityLogEntry[], startMs: number, endMs: number): InReviewDurationMetric {
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:55 (#2875 review — greptile P1, "resolved lanes discarded
+downstream"): THE PRODUCER WAS CONVERTED AND THIS CONSUMER THREW THE ANSWER AWAY.
+
+`getInReviewDurationEvents` now fetches moves using the project's RESOLVED review lanes, and this
+function then matched `to === "in-review"` and `to === "done"` against them. On a renamed board every
+fetched event was discarded, the sample count stayed under three, and the Reliability panel reported
+`insufficient-samples` forever — a metric that is silently absent rather than visibly wrong, which is
+why nothing surfaced it.
+
+The lane sets are OPTIONAL and the production caller supplies them: `server.ts` already resolves
+`reviewLanes` for `countEntriesInto`/`countBouncesOut` two statements above this call, so wiring costs
+no extra read. Omitted, the legacy ids answer — the documented degraded path for the pure function's
+own tests, not a floor anything in production takes.
+*/
+export function inReviewDurationMetrics(
+  activity: ActivityLogEntry[],
+  startMs: number,
+  endMs: number,
+  lanes?: { review?: ReadonlySet<string>; complete?: ReadonlySet<string> },
+): InReviewDurationMetric {
+  const reviewLanes = lanes?.review ?? new Set(["in-review"]);
+  const completeLanes = lanes?.complete ?? new Set(["done"]);
   const moved = activity
     .filter((entry) => entry.type === "task:moved")
     .map((entry) => ({ entry, ms: new Date(entry.timestamp).getTime() }))
@@ -120,12 +161,30 @@ export function inReviewDurationMetrics(activity: ActivityLogEntry[], startMs: n
     const from = metadataColumn(entry, "from");
     const to = metadataColumn(entry, "to");
 
-    if (to === "in-review") {
-      latestInReviewEntryByTask.set(taskId, ms);
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:30 (#2875 review — greptile P1, "internal review moves
+    reset duration"): ENTERING REVIEW IS A CROSSING, NOT AN ARRIVAL.
+
+    A board may declare several review-role lanes — merge orchestration beside a human sign-off lane —
+    and a card moving BETWEEN them has not re-entered review. Overwriting the timestamp on every move
+    whose destination is a review lane made the metric measure only the LAST lane, so the number shrank
+    exactly on the boards that review most carefully. It read plausible, which is why it needed the
+    review to find.
+
+    The start is therefore recorded only when the card was NOT already in a review lane. An unknown
+    `from` (absent metadata) still records, because a first observation with no prior lane is an entry
+    as far as this data can tell — dropping it would lose the sample entirely, which is worse than
+    dating it slightly late.
+    */
+    if (to !== undefined && reviewLanes.has(to)) {
+      const alreadyInReview = from !== undefined && reviewLanes.has(from);
+      if (!alreadyInReview) latestInReviewEntryByTask.set(taskId, ms);
       continue;
     }
 
-    if (from === "in-review" && to === "done" && ms >= startMs && ms <= endMs) {
+    if (from !== undefined && to !== undefined
+      && reviewLanes.has(from) && completeLanes.has(to)
+      && ms >= startMs && ms <= endMs) {
       const start = latestInReviewEntryByTask.get(taskId);
       if (typeof start === "number" && ms >= start) {
         durations.push(ms - start);
@@ -215,4 +274,130 @@ export function inReviewFailureRate7d(enteredByDay: Record<string, number>, boun
   }
 
   return { value: bounced / entered };
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:05:
+Per-day move counts across a SET of lanes, because `getTaskMovedCountsByDay` takes one column a side.
+
+The Reliability headline was built from two queries naming `in-review` and `in-progress`. On a board
+that renamed either, both return `{}` — so `tasksEnteredInReview` and `tasksBouncedToInProgress` are
+zero for every day and `inReviewFailureRate7d` divides one zero by another and reports healthy. That
+is the worst shape this class takes: it produces a NUMBER, not an error, and the number is reassuring.
+
+WHY A UNION IS RIGHT HERE AND NOT A COMPROMISE. These read MOVE HISTORY, and a past move recorded the
+column name as it was at the time — the same reasoning that keeps `tasksEnteredInReviewPerDay` above
+matching recorded values verbatim. A board renamed last month therefore has old rows under the old id
+and new rows under the new one, so the correct query covers BOTH. `resolveProjectColumnsForRoles`
+always unions the legacy id in, which is exactly that set. Asking for either name alone is what is
+broken today.
+
+Summing across pairs cannot double-count: a move event has exactly one (from, to) pair, so the
+queries partition the events rather than overlapping. On the built-in board this issues the same two
+queries as before.
+*/
+export interface MovedCountsStore {
+  getTaskMovedCountsByDay(options: { since: string; until: string; fromColumn?: string; toColumn?: string }): Promise<Record<string, number>>;
+}
+
+function mergeDayCounts(into: Record<string, number>, from: Record<string, number>): Record<string, number> {
+  for (const [day, count] of Object.entries(from)) into[day] = (into[day] ?? 0) + count;
+  return into;
+}
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-18:20 (#2861 review — greptile P1 and P2, both right):
+ENTRIES INTO THE SET, not moves into its members; and the reads run concurrently.
+
+P1, and it is a defect the single-lane version could not have: a board with two review-role lanes
+(`signoff` and `waiting`, say) has moves BETWEEN them, and counting only by destination scores
+`signoff -> waiting` as another entry into review. That inflates the denominator while the bounce
+count is unchanged, so the headline UNDERSTATES the review-failure rate — a metric that is wrong in
+the reassuring direction, which is the same failure this whole change set is about. Generalising a
+one-lane query to a set introduced a question one lane never had to answer.
+
+The subtraction is skipped when there is only one lane, because a move requires the column to change
+so there are no intra-set moves to remove. That keeps the built-in board at exactly the queries it
+had before rather than paying for a case it cannot have.
+
+P2: the per-pair reads are independent, so they run under `Promise.all` rather than sequentially.
+Latency is now one round trip deep instead of N + NxM.
+*/
+
+/** Moves into any of `toColumns`, summed per day. */
+export async function countMovesInto(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  toColumns: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const results = await Promise.all(
+    [...toColumns].map((toColumn) => store.getTaskMovedCountsByDay({ ...window, toColumn })),
+  );
+  return results.reduce<Record<string, number>>((acc, counts) => mergeDayCounts(acc, counts), {});
+}
+
+/**
+ * Moves into the lane SET from outside it — the "entered review" shape.
+ *
+ * Subtracts moves BETWEEN members, which are not entries. No-op for a single-lane set.
+ */
+export async function countEntriesInto(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  lanes: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const [into, within] = await Promise.all([
+    countMovesInto(store, window, lanes),
+    lanes.size > 1 ? countBouncesOut(store, window, lanes, lanes) : Promise.resolve<Record<string, number>>({}),
+  ]);
+  for (const [day, count] of Object.entries(within)) {
+    const remaining = (into[day] ?? 0) - count;
+    if (remaining > 0) into[day] = remaining;
+    else delete into[day];
+  }
+  return into;
+}
+
+/** Moves OUT of any `fromColumns` into any `toColumns` — the review-bounce shape — summed per day. */
+export async function countBouncesOut(
+  store: MovedCountsStore,
+  window: { since: string; until: string },
+  fromColumns: ReadonlySet<string>,
+  toColumns: ReadonlySet<string>,
+): Promise<Record<string, number>> {
+  const pairs = [...fromColumns].flatMap((fromColumn) => [...toColumns].map((toColumn) => ({ fromColumn, toColumn })));
+  const results = await Promise.all(
+    pairs.map((pair) => store.getTaskMovedCountsByDay({ ...window, ...pair })),
+  );
+  return results.reduce<Record<string, number>>((acc, counts) => mergeDayCounts(acc, counts), {});
+}
+
+/**
+ * FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
+ * The Reliability endpoint's three lane reads, behind one seam.
+ *
+ * WHY THIS EXISTS. These resolves lived inline in the `/api/health/reliability` route closure, which
+ * has no route-level test — the only way in was booting `createServer` behind a mock-the-world
+ * shell, which the slow-test rule forbids. So all three were UNCOVERED and unpinnable: blinding any
+ * of them left the whole dashboard suite green. `reliability-metrics.test.ts` looks like it covers
+ * them and does not — it exercises the collaborators (`countEntriesInto` and friends) with lane sets
+ * passed in by hand, which can never fail when the CALLER's resolve is blinded.
+ *
+ * This function is that missing caller-side seam: it resolves, so a test of it fails when a resolve
+ * is blinded.
+ *
+ * WHAT THE LANES MEAN. `review` and `wip` are the two sides of the entered/bounced counts;
+ * `complete` is the other half of the review -> done transition the duration metric measures.
+ * Keyed on literals, a renamed board returned {} from every query, so the headline divided one zero
+ * by another and reported a healthy rate — a NUMBER, not an error, saying everything is fine.
+ */
+export async function resolveReliabilityLanes(
+  store: Parameters<typeof resolveProjectColumnsForRoles>[0],
+): Promise<{ review: ReadonlySet<string>; wip: ReadonlySet<string>; complete: ReadonlySet<string> }> {
+  const [review, wip, complete] = await Promise.all([
+    resolveProjectColumnsForRoles(store, REVIEW_ROLES),
+    resolveProjectColumnsForRoles(store, ["countsTowardWip"]),
+    resolveProjectColumnsForRoles(store, ["complete"]),
+  ]);
+  return { review, wip, complete };
 }

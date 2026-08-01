@@ -1,4 +1,5 @@
 import { isActiveMergeStatus } from "../merge/active-merge-status.js";
+import { isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "../types.js";
 import type { ProjectSettings, Task, TaskPriority } from "../types.js";
@@ -104,6 +105,9 @@ export interface BuildUnblockWeightMapOptions {
   /** The workflow's terminal columns (complete + archived). Defaults to the
    *  built-in `{done, archived}` so existing callers are unchanged (R11). */
   terminalColumns?: ReadonlySet<string>;
+  /** The workflow's review lane, forwarded to the fan-out's staleness classification.
+   *  Defaults to the built-in `{in-review}` so existing callers are unchanged. */
+  reviewColumns?: ReadonlySet<string>;
 }
 
 function countUnmetDependencies(
@@ -132,7 +136,12 @@ export function buildUnblockWeightMap(
 ): Map<string, number> {
   const taskList = [...tasks];
   const terminalColumns = options.terminalColumns ?? DEFAULT_TERMINAL_COLUMNS;
-  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, { terminalColumns });
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-10:00: forward the review lane too — this is the one
+     production caller, so an option it does not pass is an option that never fires. */
+  const fanout = computeBlockerFanoutMap(taskList, options.maxAutoMergeRetries ?? 0, {
+    terminalColumns,
+    ...(options.reviewColumns ? { reviewColumns: options.reviewColumns } : {}),
+  });
   const taskById = new Map(taskList.map((task) => [task.id, task]));
   const weights = new Map<string, number>();
 
@@ -210,13 +219,33 @@ function isMergeActiveStatus(status: string | null | undefined): boolean {
 /**
  * Column-aware default ordering shared by board and list surfaces.
  */
-export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(tasks: readonly T[], column: string): T[] {
-  if (column === "todo") {
+export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
+  tasks: readonly T[],
+  column: string,
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
+  The column's RESOLVED trait flags. Omitted, core's role helpers fall back to the legacy ids, so an
+  unconverted caller is byte-identical — that degraded mode lives in `column-roles.ts` and is covered
+  by its own tests, which is why this takes flags rather than another bespoke set.
+
+  Each of the three branches is a different visible defect on a renamed board, and none of them
+  errors:
+    - the hold lane loses priority ordering, so urgent work stops floating to the top of the backlog;
+    - the complete lane loses recency ordering, so the most recently finished cards are not at the
+      top of Done;
+    - the review lane stops floating actively-merging cards, so the card the operator is waiting on
+      sits wherever priority puts it.
+  Wrong order is the least likely defect for anyone to file a bug about, which is how three of them
+  survived in one function.
+  */
+  columnFlags?: ColumnRoleTraitFlags,
+): T[] {
+  if (isHoldColumnRole(columnFlags, column)) {
     return sortTasksByPriorityThenAgeAndId(tasks);
   }
 
   return [...tasks].sort((a, b) => {
-    if (column === "done") {
+    if (isCompleteColumnRole(columnFlags, column)) {
       const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
       if (timestampCmp !== 0) {
         return timestampCmp;
@@ -224,7 +253,7 @@ export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(tasks: r
       return compareTaskIdNumeric(a.id, b.id);
     }
 
-    if (column === "in-review") {
+    if (isReviewColumnRole(columnFlags, column)) {
       const aIsMerging = isMergeActiveStatus(a.status);
       const bIsMerging = isMergeActiveStatus(b.status);
       if (aIsMerging !== bIsMerging) {

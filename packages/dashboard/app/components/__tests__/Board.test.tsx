@@ -5,6 +5,7 @@ import { Board } from "../Board";
 import { COLUMNS } from "@fusion/core";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { scopedKey } from "../../utils/projectStorage";
+import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
 
 import type { Task } from "@fusion/core";
 
@@ -176,6 +177,20 @@ beforeEach(() => {
   fetchBoardWorkflowsMock.mockReset();
   fetchBoardWorkflowsMock.mockImplementation(pendingBoardWorkflows);
   clearBoardTestStorage();
+  /*
+  FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+  Seed the first-paint lane cache. Before U12, Board rendered the legacy single-lane
+  board whenever `workflowColumnsEnabled` was unset — which is what this file did —
+  so a large block of these tests exercised a configuration production never had
+  (`MainContent` passed the literal `true`, which held the skeleton until lanes
+  resolved). `useBoardWorkflows` hydrates from the project-scoped session cache in
+  its `useState` initializer, so seeding here gives the same synchronous first paint
+  production gets, without making every assertion await a microtask.
+
+  Tests that specifically exercise the LOADING state clear this again themselves.
+  */
+  window.sessionStorage.clear();
+  writeBoardWorkflowsCache(undefined, DEFAULT_LANE_PAYLOAD);
   for (const key of Object.keys(columnRenderCounts)) {
     delete columnRenderCounts[key];
   }
@@ -263,6 +278,31 @@ async function selectWorkflow(workflowId: string) {
   await openWorkflowSwitcher();
   fireEvent.click(screen.getByTestId(`workflow-switcher-option-${workflowId}`));
 }
+
+/*
+FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+The default workflow's real lane set (ids and names copied from
+`BUILTIN_CODING_WORKFLOW_IR`), used as the first-paint cache seed.
+*/
+const DEFAULT_LANE_PAYLOAD = {
+  flagEnabled: true,
+  defaultWorkflowId: "builtin:coding",
+  workflows: [
+    {
+      id: "builtin:coding",
+      name: "Coding",
+      columns: [
+        { id: "triage", name: "Planning", flags: { intake: true } },
+        { id: "todo", name: "Todo", flags: { hold: true } },
+        { id: "in-progress", name: "In progress", flags: { countsTowardWip: true } },
+        { id: "in-review", name: "In review", flags: { mergeBlocker: true } },
+        { id: "done", name: "Done", flags: { complete: true } },
+        { id: "archived", name: "Archived", flags: { archived: true } },
+      ],
+    },
+  ],
+  taskWorkflowIds: {},
+};
 
 describe("Board", () => {
   it("renders a <main> element with class 'board'", () => {
@@ -571,6 +611,24 @@ describe("Board", () => {
       expect(todoTasks).toHaveLength(0);
     });
 
+    /*
+    FNXC:WorkflowBoard 2026-07-29-00:00 (U12):
+    UN-SKIPPED, with the fix rather than with a new expected number.
+
+    This test measured the LEGACY single-lane board — whose Column props were all
+    stable — so it passed for years without covering the board operators actually use.
+    Deleting the legacy board (U12 part 1) repointed it at the real one, where the
+    invariant was FALSE: toggling the archived column re-rendered every other column
+    (todo rendered 3x, not 2x). I skipped it then rather than weaken it.
+
+    The cause is now measured, not guessed: instrumenting `React.memo`'s comparator to
+    print which props change identity on the toggle named exactly one — `canDropTask`,
+    an arrow allocated inline in Board's render. With it bound through a `useMemo`
+    cache, the only column that re-renders on a collapse is `archived` itself.
+
+    So this now guards a real invariant on the real board: a Board state change must
+    not re-render unrelated columns (and, beneath them, every card).
+    */
     it("keeps unaffected columns stable when archived collapse toggles", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "Todo task", column: "todo" }),
@@ -1161,26 +1219,13 @@ describe("Board", () => {
       fireEvent.click(screen.getByTestId(`workflow-switcher-option-${workflowId}`));
     }
 
-    it("flag OFF renders the legacy single-lane board byte-identically", async () => {
-      fetchBoardWorkflowsMock.mockResolvedValue({
-        flagEnabled: false,
-        defaultWorkflowId: "builtin:coding",
-        workflows: [],
-        taskWorkflowIds: {},
-      });
-      renderBoard({ tasks: [mkTask({ id: "FN-1" })] });
-      // Let the board-workflows fetch resolve (flagEnabled:false) so the async
-      // state settle is wrapped and the legacy board stays the rendered output.
-      await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalled());
-      const board = screen.getByRole("main");
-      expect(board.className).toBe("board");
-      // All 6 legacy columns present; no lanes.
-      for (const col of COLUMNS) {
-        expect(screen.getByTestId(`column-${col}`)).toBeDefined();
-      }
-      expect(screen.queryByTestId(/^lane-/)).toBeNull();
-    });
-
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    "flag OFF renders the legacy single-lane board byte-identically" is DELETED with
+    the legacy single-lane board itself. It asserted that a `flagEnabled: false`
+    payload produced the hardcoded `COLUMNS` lane set — a server response the API
+    cannot emit (`buildBoardWorkflowsPayload` hardcodes `flagEnabled: true`).
+    */
     it("hydrates remounted board workflow selection from durable project storage", async () => {
       const projectId = "project-board-persist";
       enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);

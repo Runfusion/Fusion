@@ -1,4 +1,5 @@
 import { createLogger } from "@fusion/core";
+import { landedColumnsForTask } from "../task-lifecycle-lanes.js";
 
 const severityAuditLog = createLogger("dashboard-register-session-diff-routes");
 import { access } from "node:fs/promises";
@@ -26,6 +27,8 @@ export interface SessionDiffRouteDeps {
  * task's "files changed" list. Returns true when no validation is possible
  * (e.g. task.branch was never set) so we don't break tests/legacy tasks.
  */
+
+
 async function worktreeStillBelongsToTask(
   worktree: string,
   expectedBranch: string | undefined | null,
@@ -991,7 +994,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         return;
       }
 
-      if (task.column === "done") {
+      if ((await landedColumnsForTask(scopedStore, task.id)).has(task.column)) {
         const mergeShaForBaseBoundary = await resolveDoneTaskMergeSha(task, scopedStore, { includeBaseCommitSha: true });
         const resolvedMergeSha = await resolveDoneTaskMergeSha(task, scopedStore);
         if (mergeShaForBaseBoundary && task.baseCommitSha) {
@@ -1218,7 +1221,7 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         return;
       }
 
-      if (task.column === "done") {
+      if ((await landedColumnsForTask(scopedStore, task.id)).has(task.column)) {
         const mergeShaForBaseBoundary = await resolveDoneTaskMergeSha(task, scopedStore, { includeBaseCommitSha: true });
         const resolvedMergeSha = await resolveDoneTaskMergeSha(task, scopedStore);
         if (mergeShaForBaseBoundary && task.baseCommitSha) {

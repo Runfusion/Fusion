@@ -88,12 +88,7 @@ vi.mock("../../api", async (importOriginal) => {
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
     fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
-    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
-      flagEnabled: false,
-      defaultWorkflowId: "builtin:coding",
-      workflows: [],
-      taskWorkflowIds: {},
-    })),
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve(DEFAULT_BOARD_WORKFLOWS)),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -644,6 +639,8 @@ vi.mock("../../hooks/useMobileKeyboard", () => ({
 // Mock useViewportMode so tests can simulate mobile viewport without
 // depending on window.matchMedia in jsdom.
 const mockUseViewportMode = vi.fn(() => "desktop");
+/* `(max-height: 480px)` in production — independent of the width-driven mode. See the note below. */
+const mockIsShortViewport = vi.fn(() => false);
 vi.mock("../../hooks/useViewportMode", () => ({
   MOBILE_MEDIA_QUERY: "(max-width: 768px), (max-height: 480px)",
   isTabletTouchViewport: (mode?: string) => mode === "tablet",
@@ -651,6 +648,30 @@ vi.mock("../../hooks/useViewportMode", () => ({
   getViewportMode: () => mockUseViewportMode(),
   isMobileViewport: () => mockUseViewportMode() === "mobile",
   isFullScreenSheetViewport: () => mockUseViewportMode() === "mobile",
+  /*
+  FNXC:TestViewportMock 2026-07-30-11:20:
+  An INCOMPLETE module mock does not fail where the export is missing — it throws inside whichever
+  component imports it, and the nearest ErrorBoundary swallows that into "This section encountered an
+  error". NewTaskModal adopted `isShortViewport`, this mock did not, and the test failed on a MISSING
+  HEADING with a healthy-looking DOM.
+
+  FNXC:TestViewportMock 2026-07-30-19:50 (#2846 review — greptile P2, "viewport predicates are conflated"):
+  SHORT-VIEWPORT IS ITS OWN CONTROL, because in production it is its own MEDIA QUERY.
+
+  The first version keyed it to `mode === "mobile"`, matching how the siblings above are stubbed. The
+  siblings are width predicates and the mode IS their answer; this one is not. `isShortViewport()`
+  reads `(max-height: 480px)` alone, while the mobile mode is the OR of width and height — so an
+  ordinary PORTRAIT PHONE (narrow, tall) is mobile and NOT short, and the mock claimed it was both.
+
+  What that silently mis-tested: `FloatingWindow` suspends geometry PERSISTENCE on a short viewport,
+  and `PlanningModeModal` picks its compact interview layout and hides the session list from it. Every
+  mobile test here took those branches, so the ordinary phone case — the most common real viewport —
+  was never actually exercised, and a regression in the non-short mobile path would have passed.
+
+  Defaults to FALSE rather than to the mode: a test that means "short" now has to say so, which is the
+  only spelling that can distinguish the two.
+  */
+  isShortViewport: () => mockIsShortViewport(),
 }));
 
 // Mock isIOS so FN-3290 keyboard-open behavior is testable in jsdom
@@ -668,6 +689,9 @@ import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, f
 import { __resetShellHostContextForTests } from "../../shell-host";
 import { __test_clearDashboardViewsCache } from "../../hooks/usePluginDashboardViews";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
+import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
+
+
 
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
@@ -700,12 +724,7 @@ beforeEach(() => {
     },
     taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
   });
-  vi.mocked(fetchBoardWorkflows).mockResolvedValue({
-    flagEnabled: false,
-    defaultWorkflowId: "builtin:coding",
-    workflows: [],
-    taskWorkflowIds: {},
-  });
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue(DEFAULT_BOARD_WORKFLOWS);
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReset();
   vi.mocked(apiNodeModule.useRemoteNodeData).mockReturnValue({
     projects: [],
@@ -831,6 +850,9 @@ beforeEach(() => {
   });
   mockUseViewportMode.mockReset();
   mockUseViewportMode.mockReturnValue("desktop");
+  /* Reset alongside the mode: it is a SEPARATE predicate, so a suite that sets it must not leak. */
+  mockIsShortViewport.mockReset();
+  mockIsShortViewport.mockReturnValue(false);
   mockAgentStats.todoTaskCount = 0;
   mockAgentStats.idleNonEphemeralCount = 1;
 });
@@ -2458,7 +2480,7 @@ describe("App view switching", () => {
 
     // List view should be rendered (it has a different structure)
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Cleanup
@@ -2479,7 +2501,7 @@ describe("App view switching", () => {
     // Switch to list view
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // Switch back to board view
@@ -2505,7 +2527,7 @@ describe("App view switching", () => {
     fireEvent.click(screen.getByTestId("sidebar-nav-list"));
 
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     fireEvent.click(screen.getByText("+ New Task"));
@@ -2554,7 +2576,7 @@ describe("App view switching", () => {
 
     // Wait for the app to render
     await waitFor(() => {
-      expect(document.querySelector(".list-view")).toBeTruthy();
+      expect(screen.queryByTestId("list-view-body")).toBeTruthy();
     });
 
     // List view should be active
@@ -2756,7 +2778,7 @@ describe("App view switching", () => {
 
     // Should NOT show board or list view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
   });
 
   it("persists agents view preference to localStorage", async () => {
@@ -2823,7 +2845,7 @@ describe("App view switching", () => {
 
     // Should NOT show board, list, or agents view
     expect(document.querySelector(".board")).toBeNull();
-    expect(document.querySelector(".list-view")).toBeNull();
+    expect(screen.queryByTestId("list-view-body")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
   });
 
@@ -3167,10 +3189,108 @@ describe("App Planning Mode", () => {
 
     fireEvent.click(screen.getByLabelText("Close"));
 
+    /*
+    FNXC:PlanningKeepAlive 2026-07-22-12:40:
+    Closing the embedded Planning view returns to Board, but the planning subtree now stays mounted-but-hidden (keep-alive) instead of unmounting — the assertion moved from "not in DOM" to "hidden and inert" (aria-hidden wrapper) so the setting's intent (planning is not visible/interactive on other views) still holds.
+    */
     await waitFor(() => {
-      expect(screen.queryByText("Transform your idea into a detailed task")).toBeNull();
+      expect(screen.getByTestId("planning-keep-alive")).toHaveAttribute("aria-hidden", "true");
       expect(screen.getByTestId("sidebar-nav-board").getAttribute("aria-current")).toBe("page");
     });
+  });
+
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:40:
+  FN remount-churn fix R5: Planning mounts lazily on first open, then survives sidebar navigation mounted-but-hidden; returning reveals the same subtree instead of remounting it.
+  */
+  it("keeps Planning Mode mounted-but-hidden across navigation round-trips", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    vi.mocked(fetchSettings).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: true },
+    });
+    render(<App />);
+
+    // First-mount laziness: before Planning is ever opened, no kept-alive planning subtree exists.
+    await screen.findByTestId("sidebar-nav-planning");
+    expect(screen.queryByTestId("planning-keep-alive")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-view")).toBeTruthy();
+    });
+    expect(screen.getByTestId("planning-keep-alive")).not.toHaveAttribute("aria-hidden");
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-board"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    });
+    // Mounted-but-hidden: the planning subtree is still in the DOM while Board is active.
+    expect(screen.getByTestId("planning-view")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).not.toHaveAttribute("aria-hidden");
+    });
+    expect(screen.getByTestId("planning-view")).toBeTruthy();
+  });
+
+  /*
+  FNXC:ProjectSwitchModalReset 2026-07-30-23:45:
+  A PROJECT SWITCH MUST NOT LEAVE THE PREVIOUS PROJECT'S PLANNING SUBTREE MOUNTED.
+
+  Relocated from `MainContent.planning-project-remount.test.tsx`. FN-8619 moved Planning out of
+  MainContent into `PlanningKeepAlive`, mounted by App — so the old file could only fail, and the
+  invariant it guarded had no assertion anywhere. The product was already correct; only the coverage
+  was left behind.
+
+  What is at stake is a cross-project leak, not layout: before the project-keyed host, Planning kept a
+  running plan's stream, selected session and sidebar list from the PREVIOUS project, and persisted
+  its session under the NEW project's storage key.
+
+  WHY THE ASSERTION IS "gone OR a different node", and why single-guard mutations do NOT break it.
+  App defends this twice, independently:
+
+    1. the `planningEverOpenedProjectId === currentProject.id` gate (App.tsx), which unmounts the
+       host for a project that never opened Planning; and
+    2. the project id inside the host's `key`, which forces a remount rather than reconciling the
+       live instance under the new project.
+
+  Either alone upholds the invariant, so breaking one leaves this green — correctly. MEASURED:
+  breaking BOTH fails it. An earlier draft of mine asserted the subtree must be ABSENT, which is
+  wrong: `planningViewActive` stays true across the switch, so the latch re-arms and a fresh host is
+  expected. Both outcomes satisfy "project A's instance is not reused", which is the actual contract.
+  */
+  it("never leaves the previous project's Planning subtree mounted after a switch", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    const projectA = { ...DEFAULT_PROJECT, id: "proj_switch_a", name: "Project A" };
+    const projectB = { ...DEFAULT_PROJECT, id: "proj_switch_b", name: "Project B" };
+    mockCurrentProjectState.currentProject = projectA;
+    vi.mocked(fetchSettings).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: { ...defaultSettings.experimentalFeatures, leftSidebarNav: true },
+    });
+
+    const { rerender } = render(<App />);
+
+    await screen.findByTestId("sidebar-nav-planning");
+    fireEvent.click(screen.getByTestId("sidebar-nav-planning"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planning-keep-alive")).toBeTruthy();
+    });
+
+    /* Control: capture A's live subtree, so "not this node" below is a real statement. */
+    const subtreeForA = screen.getByTestId("planning-keep-alive");
+
+    mockCurrentProjectState.currentProject = projectB;
+    rerender(<App />);
+
+    await waitFor(() => {
+      const current = screen.queryByTestId("planning-keep-alive");
+      expect(current === null || current !== subtreeForA).toBe(true);
+    });
+    /* The load-bearing half: A's instance is off the page either way. */
+    expect(subtreeForA.isConnected).toBe(false);
   });
 
   it("renders planning embedded view with correct initial state", async () => {
@@ -3551,7 +3671,9 @@ describe("App footer-safe project layout", () => {
     await waitFor(() => {
       const wrapper = document.querySelector(".project-content--with-footer");
       expect(wrapper).toBeTruthy();
-      expect(wrapper?.querySelector(".list-view")).toBeTruthy();
+      /* Containment is the point here, so this stays a scoped query — but on the body marker, not
+         the `.list-view` class the workflow skeleton also carries. */
+      expect(wrapper?.querySelector('[data-testid="list-view-body"]')).toBeTruthy();
     });
   });
 

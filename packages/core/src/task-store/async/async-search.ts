@@ -69,7 +69,21 @@ export function sanitizeSearchTokens(query: string): string[] {
  * @param includeArchived Whether to include archived tasks in the results.
  * @returns The composed SQL predicate.
  */
-export function liveSearchPredicate(includeArchived: boolean, projectId?: string): SQL {
+export function liveSearchPredicate(
+  includeArchived: boolean,
+  projectId?: string,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  The board's own archive lanes, resolved by the caller. Omitted → the `archived` literal, which is
+  the documented degraded answer and what every unwired caller keeps.
+
+  This is a LANE question, not the archive STATE marker: "exclude cards the board considers archived
+  from live search". The parity test's triage classifies all eight Drizzle sites; the two STATE ones
+  (`cleanupArchivedTasksImpl`, `listSoftDeletedColumnDriftCandidates`) are marked at their sites and
+  must NOT be resolved — this one must.
+  */
+  archivedColumns?: ReadonlySet<string>,
+): SQL {
   // FNXC:MultiProjectIsolation 2026-07-10:
   // Fold the per-project partition key into the shared search predicate so BOTH
   // full-text (tsvector) and LIKE search paths are scoped to the bound project.
@@ -77,9 +91,14 @@ export function liveSearchPredicate(includeArchived: boolean, projectId?: string
   // scopedStore.searchTasks(): without it a task in project B is rejected as a
   // duplicate of a same-titled task in project A on the shared embedded-PG table.
   const projectScope = projectId ? eq(schema.project.tasks.projectId, projectId) : undefined;
+  /* One `ne` per archive lane: the resolved set is legacy-seeded, so an unconverted board still
+     produces exactly the single `ne(column, "archived")` this replaces. */
+  const archivedExclusions = archivedColumns && archivedColumns.size > 0
+    ? [...archivedColumns].map((lane) => ne(schema.project.tasks.column, lane))
+    : [ne(schema.project.tasks.column, "archived")];
   const base = includeArchived
     ? ACTIVE_TASK_FILTER
-    : and(ACTIVE_TASK_FILTER, ne(schema.project.tasks.column, "archived"));
+    : and(ACTIVE_TASK_FILTER, ...archivedExclusions);
   return (projectScope ? and(base, projectScope) : base) as SQL;
 }
 
@@ -146,7 +165,7 @@ export function buildLikeSearchPredicate(tokens: readonly string[]): SQL | undef
 export async function searchTasksLike(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string },
+  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<Record<string, unknown>[]> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return [];
@@ -155,7 +174,7 @@ export async function searchTasksLike(
   const textPredicate = buildLikeSearchPredicate(tokens);
   if (!textPredicate) return [];
 
-  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId)];
+  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns)];
 
   const baseQuery = db
     .select()
@@ -177,7 +196,7 @@ export async function searchTasksLike(
 export async function countSearchTasksLike(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { includeArchived?: boolean; projectId?: string },
+  options?: { includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<number> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return 0;
@@ -186,7 +205,7 @@ export async function countSearchTasksLike(
   const textPredicate = buildLikeSearchPredicate(tokens);
   if (!textPredicate) return 0;
 
-  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId)];
+  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns)];
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(schema.project.tasks)
@@ -332,7 +351,7 @@ export function buildTsqueryFragment(query: string): SQL | undefined {
 export async function searchTasksTsvector(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string },
+  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<Record<string, unknown>[]> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return [];
@@ -347,7 +366,7 @@ export async function searchTasksTsvector(
   const includeArchived = options?.includeArchived ?? true;
   const conditions = [
     sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
-    liveSearchPredicate(includeArchived, options?.projectId),
+    liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns),
   ];
 
   const baseQuery = db
@@ -373,7 +392,7 @@ export async function searchTasksTsvector(
 export async function countSearchTasksTsvector(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { includeArchived?: boolean; projectId?: string },
+  options?: { includeArchived?: boolean; projectId?: string; archivedColumns?: ReadonlySet<string> },
 ): Promise<number> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return 0;
@@ -385,7 +404,7 @@ export async function countSearchTasksTsvector(
   const includeArchived = options?.includeArchived ?? true;
   const conditions = [
     sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
-    liveSearchPredicate(includeArchived, options?.projectId),
+    liveSearchPredicate(includeArchived, options?.projectId, options?.archivedColumns),
   ];
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })

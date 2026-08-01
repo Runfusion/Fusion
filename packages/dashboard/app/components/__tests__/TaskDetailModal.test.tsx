@@ -20,6 +20,19 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailContent, TaskDetailModal } from "../TaskDetailModal";
 
+/*
+FNXC:FloatingWindow 2026-07-30-08:30:
+Queries run against `document`, not the `container` `render()` returns. `TaskDetailModal` renders
+inside `FloatingWindow`, which uses `createPortal`, so its DOM lands on document.body and `container`
+is EMPTY — every `container.querySelector` returned null. The symptom was misleading: assertions
+failed with "received value must be an HTMLElement" / "Received has value: null" on the ELEMENT,
+while `screen.getByTestId` in the same test kept working (screen queries document).
+
+`document` is correct for both shapes here — `container` is itself inside `document` — so tests that
+render a child component directly are unaffected. Same cause and fix as
+TaskDetailModal.inline-editing-and-integrations.test.tsx.
+*/
+
 vi.mock("../BranchGroupCard", () => ({
   BranchGroupCard: ({ groupId, taskId, onBranchGroupReset }: { groupId: string; taskId?: string; onBranchGroupReset?: () => void }) => {
     const [expanded, setExpanded] = React.useState(false);
@@ -160,7 +173,12 @@ describe("TaskDetailModal planner Chat tab", () => {
     await user.click(screen.getByRole("button", { name: "Activity" }));
 
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
+    /*
+    FNXC:TaskDetailTabKeepAlive 2026-07-22-13:05:
+    The planner chat body is now kept alive across tab switches (FN remount-churn fix R6): the assertion moved from "not in DOM" to "hidden and inert" so the tab's intent (planner chat is not visible/interactive on Activity) still holds.
+    */
+    expect(screen.getByTestId("planner-chat-keep-alive")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
   });
 
   it("preserves Summary as the default for done tasks while keeping Chat then Activity order", () => {
@@ -187,7 +205,7 @@ describe("TaskDetailModal planner Chat tab", () => {
   it("defaults planner Chat to collapsed mode and lets the in-view control expand it", async () => {
     const user = userEvent.setup();
     const { container } = renderTask("todo");
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     const toggle = screen.getByTestId("task-planner-chat-expand-toggle");
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
@@ -216,7 +234,7 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
     expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
@@ -240,12 +258,12 @@ describe("TaskDetailModal planner Chat tab", () => {
   it("keeps Activity expansion independent from planner Chat expansion", async () => {
     const user = userEvent.setup();
     const { container } = renderTask("todo", "chat");
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     await user.click(screen.getByTestId("task-chat-expand-toggle"));
     expect(detail).toHaveClass("task-detail-content--chat-expanded");
 
-    const chatTab = container.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab")[0];
+    const chatTab = document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab")[0];
     expect(chatTab?.textContent?.trim()).toBe("Chat");
     fireEvent.click(chatTab!);
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
@@ -271,25 +289,25 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
 
     expect(detail).toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Planner failed hard")).not.toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeNull();
+    expect(document.querySelector(".detail-error-alert")).toBeNull();
 
     await user.click(screen.getByTestId("task-planner-chat-expand-toggle"));
 
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Planner failed hard")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
   });
 
   it("keeps failed-task banner visible while Activity is expanded", async () => {
@@ -307,7 +325,7 @@ describe("TaskDetailModal planner Chat tab", () => {
         addToast={noop}
       />,
     );
-    const detail = container.querySelector(".task-detail-content");
+    const detail = document.querySelector(".task-detail-content");
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
@@ -318,7 +336,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     expect(detail).not.toHaveClass("task-detail-content--planner-chat-expanded");
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("Activity failure stays visible")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeInTheDocument();
+    expect(document.querySelector(".detail-error-alert")).toBeInTheDocument();
   });
 
   it("renders an actionable generic failed-task alert without an empty message shell", async () => {
@@ -340,7 +358,7 @@ describe("TaskDetailModal planner Chat tab", () => {
 
     expect(screen.getByText("Task Failed")).toBeInTheDocument();
     expect(screen.getByText("The task failed before it could complete.")).toBeInTheDocument();
-    expect(container.querySelector(".detail-error-message")?.textContent).not.toBe("");
+    expect(document.querySelector(".detail-error-message")?.textContent).not.toBe("");
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
     expect(onRetryTask).toHaveBeenCalledWith("FN-099");
 
@@ -359,7 +377,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     );
 
     expect(screen.queryByText("Task Failed")).not.toBeInTheDocument();
-    expect(container.querySelector(".detail-error-alert")).toBeNull();
+    expect(document.querySelector(".detail-error-alert")).toBeNull();
   });
 
   it("surfaces the latest tool error detail and stages a model override before retrying", async () => {
@@ -697,7 +715,7 @@ describe("TaskDetailModal Activity feed loading", () => {
     const { container } = renderActivityFeedModal(makeSlimTask());
 
     await screen.findByText("newer entry");
-    const actions = Array.from(container.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
+    const actions = Array.from(document.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
     expect(actions).toEqual(["newer entry", "older entry"]);
     expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
   });

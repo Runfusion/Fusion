@@ -372,13 +372,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const validatedStartWorkflow = useMemo(() => validateQuickAddStartWorkflow(selectedQuickEntryWorkflow), [selectedQuickEntryWorkflow]);
   const startInitialColumn = validatedStartWorkflow ? resolveQuickAddStartInitialColumn(validatedStartWorkflow) : null;
   /*
-  FNXC:QuickAddStart 2026-07-24-11:20:
+  FNXC:QuickAddStart 2026-07-31-23:51:
   Start is a VISIBLE button in the quick-add action row for eligible workflows only, replacing the hidden
-  long-press/right-click Save menu that operators could not discover. Eligibility is unchanged
-  (`workflowSupportsQuickAddStart`: Coding (Ideas), or any workflow whose first visible lane is a hold/"waiting"
-  column) and a provable target is still required (`startInitialColumn` for the create-time column override, or
-  `onMoveTask` for the follow-up move). Workflows without a waiting lane render no Start button at all — Save
-  stays the single create affordance there.
+  long-press/right-click Save menu that operators could not discover. Eligibility is `workflowSupportsQuickAddStart`:
+  Coding (Ideas), or any workflow whose first visible lane is a server-derived manual-intake/"waiting" column.
+  A provable target is still required (`startInitialColumn` for the create-time column override, or `onMoveTask`
+  for the follow-up move). Workflows without a waiting lane render no Start button at all — Save stays the single
+  create affordance there.
   */
   const canQuickAddStart = Boolean(validatedStartWorkflow && workflowSupportsQuickAddStart(validatedStartWorkflow) && (startInitialColumn || onMoveTask));
   const canQuickAddStartNow = canQuickAddStart && Boolean(description.trim()) && !isSubmitting;
@@ -502,7 +502,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setAgents([]);
     setAgentsProjectId(undefined);
     /*
-    FNXC:QuickAddAttachments 2026-08-03-00:00:
+    FNXC:QuickAddAttachments 2026-07-23-00:00:
     Pending files belong to the project where they were selected. Clear them on a project switch so
     an attachment cannot be uploaded into the next project's newly created task, and release image URLs.
     */
@@ -729,7 +729,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   }, []);
 
   /*
-  FNXC:QuickAddAttachments 2026-08-03-00:00:
+  FNXC:QuickAddAttachments 2026-07-23-00:00:
   Quick Add must accept exactly the task-store attachment MIME set through picker, paste, and drop.
   Only images receive object URLs and preview controls; all other accepted files remain uploadable file chips.
   */
@@ -2154,12 +2154,13 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
             )}
 
             {/*
-            FNXC:QuickAddStart 2026-07-24-11:20:
+            FNXC:QuickAddStart 2026-07-31-23:51:
             Start renders as the last chip in the options group so it wraps onto the same line as Models/Agent and
             reads as an alternate create action beside Save (which stays right-aligned in the primary group). It is
-            present ONLY for hold-first/"waiting"-column workflows — most workflows show no Start chip. With an
-            empty description it stays visible but DISABLED (matching Save) so the affordance does not appear and
-            vanish as the operator types; the whole action row still unmounts while a create is in flight.
+            present ONLY for manual-intake/"waiting"-first workflows — `hold` alone is not eligibility because the
+            merged auto-triaging Planning lane also holds cards. With an empty description it stays visible but
+            DISABLED (matching Save) so the affordance does not appear and vanish as the operator types; the whole
+            action row still unmounts while a create is in flight.
             */}
             {canQuickAddStart && (
               <button

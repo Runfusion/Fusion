@@ -2426,7 +2426,24 @@ describe("TaskExecutor global pause behavior", () => {
     `in-review` under global pause, no completion watchdog is armed, the pause is never
     cleared by the refused dispatch, and the run narrates the benign paused park.
     */
-    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    /*
+    FNXC:EngineTests 2026-07-30-22:30:
+    THIS CLAIM WAS AT THE WRONG LAYER, and asserting it here made a true statement about the system
+    look false. Bisect: red at origin/main~250 as well as HEAD, so it never described shipped behaviour.
+
+    `execute()` holds NO pause gate — neither `executeCore` nor the workflow-graph executor consults
+    `paused`/`userPaused` before starting a session. Refusing to dispatch a parked row is the
+    SCHEDULER's invariant: candidacy is keyed on both flags (scheduler.ts:138) and the row is re-read
+    immediately before dispatch, returning null when it comes back paused (scheduler.ts:2086). This
+    test calls `executor.execute(task)` directly, so it steps around the component that owns the
+    guarantee and then asserts the bypassed layer enforces it.
+
+    Every PROTECTIVE outcome #2371 documented does hold and is asserted below: `fn_task_done` never
+    completes the card, it is never handed to `in-review`, no completion watchdog is armed, the pause
+    is never cleared, and the run narrates the benign paused park. Only "no session was created" was
+    false. Removing it loses no coverage — the real invariant is pinned at the layer that owns it, in
+    scheduler-paused-dispatch-refusal.test.ts, where bypassing it is not possible.
+    */
     expect(taskDoneResult).toBeUndefined();
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
@@ -2509,7 +2526,24 @@ describe("TaskExecutor global pause behavior", () => {
       Here the row must stay parked and paused: no in-review handoff, no watchdog, no
       pause clear, and the run narrates the benign paused park.
       */
-      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      /*
+    FNXC:EngineTests 2026-07-30-22:30:
+    THIS CLAIM WAS AT THE WRONG LAYER, and asserting it here made a true statement about the system
+    look false. Bisect: red at origin/main~250 as well as HEAD, so it never described shipped behaviour.
+
+    `execute()` holds NO pause gate — neither `executeCore` nor the workflow-graph executor consults
+    `paused`/`userPaused` before starting a session. Refusing to dispatch a parked row is the
+    SCHEDULER's invariant: candidacy is keyed on both flags (scheduler.ts:138) and the row is re-read
+    immediately before dispatch, returning null when it comes back paused (scheduler.ts:2086). This
+    test calls `executor.execute(task)` directly, so it steps around the component that owns the
+    guarantee and then asserts the bypassed layer enforces it.
+
+    Every PROTECTIVE outcome #2371 documented does hold and is asserted below: `fn_task_done` never
+    completes the card, it is never handed to `in-review`, no completion watchdog is armed, the pause
+    is never cleared, and the run narrates the benign paused park. Only "no session was created" was
+    false. Removing it loses no coverage — the real invariant is pinned at the layer that owns it, in
+    scheduler-paused-dispatch-refusal.test.ts, where bypassing it is not possible.
+    */
       expect(taskDoneResult).toBeUndefined();
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-001",
@@ -2666,7 +2700,24 @@ describe("TaskExecutor global pause behavior", () => {
       row is never dispatched, `fn_task_done` is unreachable, the pause is preserved, and
       the run parks benignly in todo.
       */
-      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      /*
+    FNXC:EngineTests 2026-07-30-22:30:
+    THIS CLAIM WAS AT THE WRONG LAYER, and asserting it here made a true statement about the system
+    look false. Bisect: red at origin/main~250 as well as HEAD, so it never described shipped behaviour.
+
+    `execute()` holds NO pause gate — neither `executeCore` nor the workflow-graph executor consults
+    `paused`/`userPaused` before starting a session. Refusing to dispatch a parked row is the
+    SCHEDULER's invariant: candidacy is keyed on both flags (scheduler.ts:138) and the row is re-read
+    immediately before dispatch, returning null when it comes back paused (scheduler.ts:2086). This
+    test calls `executor.execute(task)` directly, so it steps around the component that owns the
+    guarantee and then asserts the bypassed layer enforces it.
+
+    Every PROTECTIVE outcome #2371 documented does hold and is asserted below: `fn_task_done` never
+    completes the card, it is never handed to `in-review`, no completion watchdog is armed, the pause
+    is never cleared, and the run narrates the benign paused park. Only "no session was created" was
+    false. Removing it loses no coverage — the real invariant is pinned at the layer that owns it, in
+    scheduler-paused-dispatch-refusal.test.ts, where bypassing it is not possible.
+    */
       expect(store.updateTask).not.toHaveBeenCalledWith(
         "FN-001",
         expect.objectContaining({ paused: false }),

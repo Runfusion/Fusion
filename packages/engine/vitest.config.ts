@@ -7,6 +7,15 @@ const maxWorkers = computeMaxWorkers();
 export default defineConfig({
   resolve: {
     alias: {
+      /*
+      FNXC:VitestAliases 2026-07-30-13:10:
+      Must precede the broader `@fusion/core` alias: Vite string aliases match by PREFIX, so that key
+      rewrites this subpath to `index.ts/task-delete-attribution` and resolution fails. Reached here
+      transitively — this project aliases `@fusion/dashboard`, and `app/api/client.ts` imports the
+      browser-safe delete-attribution leaf.
+      */
+      "@fusion/core/column-roles": resolve(__dirname, "../core/src/column-roles.ts"),
+      "@fusion/core/task-delete-attribution": resolve(__dirname, "../core/src/task-delete-attribution.ts"),
       "@fusion/core": resolve(__dirname, "../core/src/index.ts"),
       "@fusion/test-utils": resolve(__dirname, "../core/src/__test-utils__/workspace.ts"),
       "@fusion/engine": resolve(__dirname, "./src/index.ts"),
@@ -177,11 +186,69 @@ export default defineConfig({
           Removed merger-post-merge.test.ts — retired by FN-7039 (graph is sole post-merge owner); it matched zero files. Graph post-merge is covered by workflow-graph-post-merge.test.ts in engine-default; no gate replacement needed.
           */
           include: [
+            /*
+            FNXC:EngineTests 2026-07-31-00:40 (PR #2557 review — greptile):
+            THE CENSUS RATCHET MUST BE IN THE BLOCKING GATE, or it cannot do the one
+            thing it exists for. Outside the gate a PR can add a legacy column
+            comparison and every blocking check stays green while the count rises —
+            the ratchet notices hours later in a non-blocking run, which is exactly
+            the window this program kept losing work in.
+
+            Admission evidence: it is pure computation over `git ls-files` plus file
+            reads — no store, no network, no timers, no subprocess beyond one
+            `ls-files`. Measured ~0.3s. Deterministic by construction: same tree,
+            same number.
+            */
+            "src/__tests__/legacy-column-literal-census.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-31-23:59:
+            THE MOVE-TARGET RATCHET BELONGS HERE FOR THE SAME REASON THE CENSUS RATCHET ABOVE DOES,
+            and the argument is stronger for this one.
+
+            The census counts COMPARISONS; a move target is an ARGUMENT, so nothing above sees it. And
+            the failure mode is harder than a stale guard's: `moveTaskInternal` REJECTS a target the
+            workflow does not declare (`TransitionRejectionError: unknown-column`), so a regression
+            here THROWS on a renamed board instead of degrading — in recovery paths, which are the
+            ones that run when something has already gone wrong.
+
+            Outside the gate this repeats the pattern this program keeps paying for: a correct signal
+            that fires in a non-blocking run while the PR merges anyway. That happened to my own
+            #3114 this week — `check-inert-sync-lanes` flagged it correctly and it landed regardless.
+
+            Admission evidence, on the same terms as the entries around it: pure computation over one
+            `git ls-files` plus file reads. No store, no network, no timers, no subprocess beyond that
+            one call. Deterministic by construction — same tree, same counts. Measured 509ms / 508ms
+            across runs, 12 tests, after memoising the corpus scan (it was 800ms when each case
+            re-read every file).
+            */
+            "src/__tests__/no-legacy-move-targets.test.ts",
             "src/__tests__/merger-merge-lifecycle.test.ts",
             "src/__tests__/merger-conflict-resolution.test.ts",
             "src/__tests__/merger-diff-scope.test.ts",
             "src/__tests__/merger-landed-files-capture.test.ts",
             "src/__tests__/branch-attribution.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-28-20:10:
+            Gate admission evidence (U9 safeguard baseline). This one file proves FIVE of the merge lane's safeguards: user pause on merge admission, autoMerge:false, capacity single-flight, the pre-enqueue merge-proof consult, and at-most-once enqueue. A U9 mutation audit found NONE of them defended by blocking CI — and two (user pause, single-flight) had no test at all until this change. Merge is where irreversible work happens and U9 is about to move it behind graph nodes, so these must fail the gate, not a non-blocking run hours after the merge. Deterministic: the store, runtime, merger, and notifier are all mocked; no real git, no network. Measured 5.02s standalone / 103 tests.
+            */
+            "src/__tests__/project-engine.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-28-21:05 (#2520 review — greptile P1):
+            Capacity single-flight IS covered — by this purpose-built file, not by anything in project-engine.test.ts. It was outside blocking CI, which is the real gap. Removing `if (this.mergeRunning) return;` fails "refuses a second concurrent drain while one merge is in flight" here and nowhere else. Deterministic, 3.69s / 3 tests.
+            */
+            "src/__tests__/merge-single-flight-invariant.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-29-12:40 (U9 review lane):
+            The merge half of U9's safeguards fires in blocking CI; this is the review half, which did not. `workflow-step-verdict-parsing.test.ts` holds the leniency guard: a prose REJECTION must never be promoted to APPROVE. Removing the REVISE/RETHINK/negated-approval disqualifiers in `proseSignalsClearApproval` fails 11 of its cases — a fail-OPEN defect on the path to an irreversible merge, so it belongs in the gate rather than a non-blocking run hours later. Deterministic, pure parser assertions, no mocks/git/network.
+
+            NOT admitted: `reviewer.test.ts`, which holds the sibling "a provider outage is not a review verdict" family. It is green in engine-default but fails 72 cases under engine-core, because that project resolves @fusion/core through the REDUCED `index.gate.ts` barrel/bundle and the suite reaches exports it does not carry (`__vite_ssr_import_0__.has…` TypeError). Admitting it needs the gate barrel widened, which trades away the bundle's whole reason for existing; left outside deliberately rather than papered over.
+            */
+            "src/__tests__/workflow-step-verdict-parsing.test.ts",
+            /*
+            FNXC:EngineTests 2026-07-28-10:20:
+            Gate admission evidence (U9): this pins which authority actually decides merge-region policy — the built-in IR declares `merge-retry.maxAttempts` / `manual-merge-hold.release` that no handler reads, while the live budgets sit in `settings.maxAutoMergeRetries` and `ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES`. Merge is where irreversible work happens, and the drift it guards is SILENT: a handler-only edit can quietly make the dead IR config live (or move the live budget) with no other test failing. Outside the gate the ratchet cannot fire on the defect it exists for. Deterministic and pure — no git subprocesses, no timers, no network, no store; 3 ms of assertions.
+            */
+            "src/__tests__/u9-merge-region-node-config-authority.test.ts",
             /*
             FNXC:EngineTests 2026-06-23-10:48:
             Workflow columns and workflow graph execution are now the default runtime. Retire the legacy direct-dispatch executor/scheduler gate files and gate the new hold-release plus graph interpreter seams instead.

@@ -358,6 +358,45 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(activeSessionRegistry.isPathActive(leasePath)).toBe(false);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-22:10:
+  `leaseOwnerCompleteColumns` was UNCOVERED on the #3115 map. The case above proves the terminal-owner
+  reclaim using `column: "done"` — the id — so blinding the resolver leaves it green.
+
+  That set is what `isWorkspaceOwnerLive` consults. Keyed on the id, an owner resting in a renamed
+  completion lane reads as LIVE, so its land lease is never reclaimed: the workspace repo stays
+  leased by a task that finished, and every later land against that repo waits behind a phantom.
+  */
+  it("reclaims a land lease whose owner rests in a RENAMED complete lane", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const leasePath = fx.repoPath("repo-a");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-22T00:00:00.000Z"));
+    activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
+
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "shipped" });
+    const store = createStore([task]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      id: "custom:renamed",
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+        ],
+      },
+    }]);
+    const manager = makeManager(store, fx.rootDir);
+
+    vi.setSystemTime(new Date("2026-06-22T00:10:00.000Z"));
+
+    expect(await manager.reclaimPhantomWorkspaceLandLeases()).toBe(1);
+    expect(activeSessionRegistry.isPathActive(leasePath)).toBe(false);
+  });
+
   it("does NOT reclaim a land lease owned by a live merging task", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
     const leasePath = fx.repoPath("repo-a");

@@ -214,12 +214,16 @@ describe("TaskDetailModal", () => {
       const expandedPlannerSectionBlock = getExactCssRuleBlock(css, ".task-detail-content--planner-chat-expanded .detail-section--planner-chat");
       const mobileBodyBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBodyBlock, ".detail-body");
+      const detailBodyContentBlock = getExactCssRuleBlock(css, ".detail-body-content");
+      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBodyBlock, ".detail-body-content");
       const mobilePlannerBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-body--chat");
       const mobilePlannerBodyBlock = getStandaloneCssRuleBlock(mobilePlannerBlock, ".detail-body--planner-chat");
       const mobileExpandedPlannerBodyBlock = getExactCssRuleBlock(mobilePlannerBlock, ".task-detail-content--planner-chat-expanded .detail-body--planner-chat");
 
-      expect(detailBodyBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
-      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(detailBodyBlock).toContain("padding: 0;");
+      expect(detailBodyContentBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
+      expect(mobileDetailBodyBlock).toContain("padding: 0;");
+      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expectNoSpacingOverrides(activityBodyBlock, "desktop Activity body modifier");
       expectNoSpacingOverrides(plannerBodyBlock, "desktop planner body modifier");
       expect(expandedPlannerBodyBlock).toContain("flex: 1;");
@@ -748,6 +752,7 @@ describe("TaskDetailModal", () => {
       This contract covers modal, pop-out, embedded, and mobile task-detail surfaces.
       */
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
+      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBlock, ".detail-body-content");
       const baseInterventionsBlock = getExactCssRuleBlock(css, ".detail-activity--interventions");
       const mobilePrBlock = getExactCssRuleBlock(
         getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-pr-tab"),
@@ -759,7 +764,8 @@ describe("TaskDetailModal", () => {
       );
       const allMobileCss = getCssAtRuleBlocks(css, "@media (max-width: 768px)").join("\n");
 
-      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(mobileDetailBodyBlock).toContain("padding: 0;");
+      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
       expect(baseInterventionsBlock).toContain("padding-inline-end: 0;");
       expect(mobileBlock).toContain(".detail-activity:not(.detail-activity--interventions) > h4,");
@@ -797,6 +803,7 @@ describe("TaskDetailModal", () => {
       const baseScrollbarBlock = getExactCssRuleBlock(css, ".detail-body::-webkit-scrollbar");
       const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
       const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
+      const mobileDetailBodyContentBlock = getExactCssRuleBlock(mobileBlock, ".detail-body-content");
       const mobileScrollbarBlock = getExactCssRuleBlock(mobileBlock, ".detail-body::-webkit-scrollbar");
       const mobileActivityBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity");
       const mobileInterventionsBlock = getExactCssRuleBlock(mobileBlock, ".detail-activity--interventions");
@@ -813,7 +820,8 @@ describe("TaskDetailModal", () => {
 
       expect(baseDetailBodyBlock).toContain("scrollbar-width: thin;");
       expect(baseScrollbarBlock).toContain("width: 6px;");
-      expect(mobileDetailBodyBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
+      expect(mobileDetailBodyBlock).toContain("padding: 0;");
+      expect(mobileDetailBodyContentBlock).toContain("padding: calc(var(--space-md) + var(--space-xs) / 2);");
       expect(mobileDetailBodyBlock).toContain("overflow-x: hidden;");
       expect(mobileDetailBodyBlock).toContain("overflow-y: auto;");
       expect(mobileDetailBodyBlock).toContain("scrollbar-width: none;");

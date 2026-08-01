@@ -7,13 +7,13 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {MergeQueueTaskNotFoundError, MergeQueueInvalidColumnError} from "./errors.js";
-import type {Task, Column, MergeResult, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
+import type {Task, Column, MergeResult, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
 import type {MergeQueueRow} from "../task-store/row-types.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 
 export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeRequestState, to: MergeRequestState): boolean {
     if (from === to) return true;
@@ -29,79 +29,15 @@ export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeR
     return allowed[from].has(to);
   }
 
-export function enqueueMergeQueueSyncInternalImpl(store: TaskStore, taskId: string, opts: MergeQueueEnqueueOptions): MergeQueueEntry {
-    let invalidColumn: Column | null = null;
-    const entry = store.db.transactionImmediate(() => {
-      const existing = store.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
-      const taskRow = store.db.prepare("SELECT priority, column FROM tasks WHERE id = ?").get(taskId) as { priority: string | null; column: Column } | undefined;
-      if (!taskRow) {
-        throw new MergeQueueTaskNotFoundError(taskId);
-      }
-      if (taskRow.column !== "in-review") {
-        invalidColumn = taskRow.column;
-        return null;
-      }
-
-      const now = opts.now ?? new Date().toISOString();
-      const priority = opts.priority ?? normalizeTaskPriority(taskRow.priority);
-
-      let nextEntry: MergeQueueEntry;
-      let alreadyEnqueued = true;
-      if (existing) {
-        nextEntry = store.rowToMergeQueueEntry(existing);
-      } else {
-        store.db.prepare(`
-          INSERT INTO mergeQueue (taskId, enqueuedAt, priority, attemptCount)
-          VALUES (?, ?, ?, 0)
-          ON CONFLICT(taskId) DO NOTHING
-        `).run(taskId, now, priority);
-        const inserted = store.db.prepare("SELECT * FROM mergeQueue WHERE taskId = ?").get(taskId) as MergeQueueRow | undefined;
-        if (!inserted) {
-          throw new Error(`Failed to read merge queue entry for ${taskId} after enqueue`);
-        }
-        nextEntry = store.rowToMergeQueueEntry(inserted);
-        alreadyEnqueued = false;
-      }
-
-      store.insertRunAuditEventRow({
-        taskId,
-        domain: "database",
-        mutationType: "mergeQueue:enqueue",
-        target: taskId,
-        metadata: {
-          taskId,
-          priority: nextEntry.priority,
-          enqueuedAt: nextEntry.enqueuedAt,
-          alreadyEnqueued,
-        },
-      });
-
-      return nextEntry;
-    });
-
-    if (invalidColumn) {
-      store.db.transactionImmediate(() => {
-        store.insertRunAuditEventRow({
-          taskId,
-          domain: "database",
-          mutationType: "mergeQueue:enqueue-rejected",
-          target: taskId,
-          metadata: {
-            taskId,
-            column: invalidColumn,
-            reason: "not-in-review",
-          },
-        });
-      });
-      throw new MergeQueueInvalidColumnError(taskId, invalidColumn);
-    }
-
-    if (!entry) {
-      throw new Error(`Failed to enqueue merge queue entry for ${taskId}`);
-    }
-    return entry;
-  }
-
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-10:00 (u12 — DELETED, not converted):
+`enqueueMergeQueueSyncInternalImpl` and its `store.enqueueMergeQueueSyncInternal` entry point are gone.
+Merge-queue enqueue is PostgreSQL-only via `enqueueMergeQueueAsync` (task-artifacts-ops.ts); the sync
+SQLite arm had ZERO callers — every remaining mention was a comment. Its `column !== "in-review"` guard
+was carried in the census as deferred debt "needing a store-architecture change to convert". It needed
+no conversion: the code it guarded was unreachable on the shipped backend. Removing dead code is why the
+count drops here, so do not read this file's 0 as a converted seam.
+*/
 export async function releaseMergeQueueLeaseImpl(store: TaskStore, taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): Promise<void> {
         const layer = store.asyncLayer!;
     return releaseMergeQueueLeaseAsync(layer, taskId, workerId, outcome);
@@ -170,9 +106,47 @@ export async function collectMergeDetailsImpl(store: TaskStore, _id: string, _br
     };
   }
 
-export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" }> {
+export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: string, ctx?: { agentId?: string; runId?: string },): Promise<{ moved: boolean; skipped?: "already-done" | "not-merged" | "wrong-column" | "paused" | "no-complete-column" }> {
     const task = await store.getTask(taskId);
-    if (task.column === "done") {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-10:20 (fleet: the PR-merged transition):
+    ONE SNAPSHOT for the whole transition — the pre-check, the RE-READ check, and the MOVE TARGET. This
+    function reads the row twice on purpose (a merge can land between the checks), and each read was
+    compared against the default lineage's ids while the move went to the literal `done`.
+
+    On a renamed board every one of those answered wrong in the same direction: `column === "done"` never
+    matched, so an already-complete card was not skipped as `already-done`; `column !== "in-review"` always
+    matched, so the transition bailed with `wrong-column` for a card sitting in review. The net effect is
+    that a PR merged on GitHub never advanced the card — the visible symptom is a merged PR whose Fusion
+    task stays in review forever, which reads as a webhook problem rather than a column problem.
+
+    The move target comes from the same snapshot: converting the guards alone would admit the card and then
+    move it to a column the board does not declare, which is the half-conversion this program keeps paying
+    for. A board with no complete column refuses the transition instead of inventing one.
+    */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-14:10 (PR #2733 review — greptile P1, and my COMMENT contradicted
+    my CODE):
+    A WORKFLOW THAT DECLARES COLUMNS BUT NO COMPLETE LANE REFUSES, it does not fall back to `done`. My first
+    version wrote `?? "done"` while the comment above it claimed the transition refuses rather than inventing
+    a column — the reviewer read the code, not the prose, and was right. `moveTask` would have rejected the
+    undeclared `done` and left the merged card in review, which is the exact failure this conversion exists to
+    prevent, reintroduced by a two-character default.
+
+    The distinction is `PlannerLanes`' contract, and it is the one the whole program keeps re-learning:
+      - NO LANE INFORMATION AT ALL (v1 IR, unresolvable store) -> the legacy ids ARE the answer; nothing has
+        told us otherwise and today's behaviour is correct.
+      - LANES RESOLVED, complete ABSENT -> the board genuinely has no completion column. Substituting one
+        invents a destination; refusing is the honest outcome and is visible in the return value.
+    */
+    const prMergedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
+    const reviewColumn = prMergedLifecycle?.review ?? "in-review";
+    const completeColumn = prMergedLifecycle ? prMergedLifecycle.complete : "done";
+    if (completeColumn === undefined) {
+      storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: workflow declares no complete column`);
+      return { moved: false, skipped: "no-complete-column" };
+    }
+    if (task.column === completeColumn) {
       return { moved: false, skipped: "already-done" };
     }
     if (task.paused) {
@@ -181,13 +155,13 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     if (task.prInfo?.status !== "merged") {
       return { moved: false, skipped: "not-merged" };
     }
-    if (task.column !== "in-review") {
+    if (task.column !== reviewColumn) {
       storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${task.column}`);
       return { moved: false, skipped: "wrong-column" };
     }
 
     const freshTask = await store.getTask(taskId);
-    if (freshTask.column === "done") {
+    if (freshTask.column === completeColumn) {
       return { moved: false, skipped: "already-done" };
     }
     if (freshTask.paused) {
@@ -196,12 +170,24 @@ export async function applyPrMergedTransitionImpl(store: TaskStore, taskId: stri
     if (freshTask.prInfo?.status !== "merged") {
       return { moved: false, skipped: "not-merged" };
     }
-    if (freshTask.column !== "in-review") {
+    if (freshTask.column !== reviewColumn) {
       storeLog.warn(`[store] applyPrMergedTransition skipped for ${taskId}: column=${freshTask.column}`);
       return { moved: false, skipped: "wrong-column" };
     }
 
-    const movedTask = await store.moveTask(taskId, "done", {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-08-02-14:20 (PR #2733 review — greptile P1, the resolve/move race):
+    THE RACE IS REAL AND `moveTask` IS THE BACKSTOP. If the task's workflow selection changes between the
+    resolution above and this call, `completeColumn` describes the old board while `moveTask` validates against
+    the new one — and it REJECTS an unknown column rather than writing it. So the failure mode is a thrown
+    move and `moved: false`, not a card in a column that does not exist.
+
+    Narrowing the window further (resolve inside the move, or take a workflow lock) is a store-level change:
+    every converted move in this program has the same shape, and moveTask's validation is what makes them all
+    safe. Named here rather than left implicit, because "resolved then moved" reads racy and the reason it is
+    acceptable lives in a different file.
+    */
+    const movedTask = await store.moveTask(taskId, completeColumn as Column, {
       moveSource: "engine",
       preserveProgress: true,
       preserveWorktree: true,

@@ -241,7 +241,14 @@ describe("agent lifecycle tools", () => {
     vi.mocked(agentStore.getAgent).mockResolvedValue(manager);
     vi.mocked(agentStore.createAgent).mockResolvedValue(created);
 
-    const tool = createAgentCreateTool(agentStore, "manager-1");
+    /*
+    FNXC:AgentProvisioningGate 2026-07-26-13:30:
+    The no-options factory call no longer synthesizes approvalMode "never"; this test now
+    passes the explicit operator opt-out so it keeps exercising the direct-report create path.
+    */
+    const tool = createAgentCreateTool(agentStore, "manager-1", {
+      settingsProvider: async () => ({ agentProvisioning: { approvalMode: "never" } }) as never,
+    });
     const result = await tool.execute("session", { name: "Report", role: "executor" }, undefined as never, undefined as never, undefined as never);
 
     expect((result.content[0] as { text: string }).text).toContain("Created agent Report (report-1)");

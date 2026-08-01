@@ -128,7 +128,6 @@ function renderBoard(tasks: Task[]) {
       onToggleAutoMerge={vi.fn()}
       planAutoApproveEnabled={false}
       onTogglePlanAutoApprove={vi.fn()}
-      workflowColumnsEnabled
       settingsLoaded
     />,
   );
@@ -149,7 +148,6 @@ function renderList(tasks: Task[]) {
       addToast={vi.fn()}
       globalPaused={false}
       onNewTask={vi.fn()}
-      workflowColumnsEnabled
       settingsLoaded
     />,
   );
@@ -442,6 +440,122 @@ describe("U10 — surfaces render workflow-resolved columns", () => {
         "Move to Backlog",
         "Move to Building",
       ]);
+    });
+
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (U12 — R8):
+    The "Back to X" label must follow the workflow's TRAITS, not the hardcoded ids
+    `in-review`/`in-progress`. This workflow renames both lanes — `signoff` carries
+    `mergeBlocker`, `building` carries `countsTowardWip` — so leaving review backwards
+    into the work lane must read "Back to Building" and name the column the operator
+    actually sees.
+
+    REVERT CHECK: restore `column === "in-progress" && task.column === "in-review"` and
+    this fails twice over — the ids never match, so the label falls through to "Move to
+    Building"; and the old hardcoded string would have said "Back to In Progress", a
+    column name absent from this board entirely.
+    */
+    it("labels a backwards move using the workflow's own review/work traits and label", () => {
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-15", column: "signoff" as Task["column"] }),
+        t,
+        columnLabel,
+        renamedMoveColumns,
+      );
+      const building = transitions.find((transition) => transition.column === "building");
+      expect(building).toBeDefined();
+      expect(building!.label).toBe("Back to Building");
+      // The forward move keeps "Move to", so the rule stays a distinction and not a
+      // blanket relabel.
+      const shipped = transitions.find((transition) => transition.column === "shipped");
+      expect(shipped?.label).toBe("Move to Shipped");
+    });
+
+    /*
+    FNXC:TaskContextMenu 2026-07-29-00:00 (PR #2521 review — greptile):
+    A workflow may place a `countsTowardWip` lane AFTER its `mergeBlocker` one (rework
+    or hotfix downstream of review). The traits alone would label that FORWARD move
+    "Back to"; direction has to be part of the predicate.
+
+    REVERT CHECK: drop the order comparison and this fails — `hotfix` is labelled
+    "Back to Hotfix" despite sitting after `signoff` in the declared order.
+    */
+    it("does not call a forward move backwards when a WIP lane follows review", () => {
+      // Placed immediately AFTER signoff so it is a neighbour (and therefore offered),
+      // while still sitting later in the declared order.
+      const signoffIndex = renamedMoveColumns.findIndex((column) => column.id === "signoff");
+      const downstreamWip: TaskContextMenuColumnMetadata[] = [
+        ...renamedMoveColumns.slice(0, signoffIndex + 1),
+        { id: "hotfix" as ColumnId, label: "Hotfix", flags: { countsTowardWip: true } },
+        ...renamedMoveColumns.slice(signoffIndex + 1),
+      ];
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-18", column: "signoff" as Task["column"] }),
+        t,
+        columnLabel,
+        downstreamWip,
+      );
+      const hotfix = transitions.find((transition) => transition.column === "hotfix");
+      expect(hotfix).toBeDefined();
+      expect(hotfix!.label).toBe("Move to Hotfix");
+      // The genuinely-backwards move keeps its label, so the fix narrows rather than
+      // disables the rule.
+      const building = transitions.find((transition) => transition.column === "building");
+      expect(building?.label).toBe("Back to Building");
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8):
+    When the payload carries `moveTargets`, the menu uses the workflow's REAL graph
+    adjacency instead of approximating from neighbouring columns. This fixture makes
+    the two disagree on purpose: `staging` sits between `backlog` and `building`, so
+    the neighbour approximation yields exactly those two — while the declared
+    adjacency also allows a jump to `shipped` and forbids going back to `backlog`.
+
+    REVERT CHECK: drop the `declaredTargets` branch and this fails — the neighbour
+    fallback returns ["backlog","building"], missing the legal `shipped` jump and
+    offering `backlog`, which the workflow's graph does not allow. That is precisely
+    the class of defect the old neighbour approximation shipped for every custom
+    workflow: menu entries the store would reject, and legal moves it never offered.
+    */
+    it("uses the workflow's declared adjacency, not neighbouring columns", () => {
+      const withAdjacency: TaskContextMenuColumnMetadata[] = renamedMoveColumns.map((column) =>
+        column.id === "staging"
+          ? { ...column, moveTargets: ["building", "shipped"] }
+          : column,
+      );
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-16", column: "staging" as Task["column"] }),
+        t,
+        columnLabel,
+        withAdjacency,
+      );
+      expect(transitions.map((transition) => transition.column)).toEqual(["building", "shipped"]);
+    });
+
+    it("drops an adjacency edge into a column this board cannot show", () => {
+      /*
+      Two distinct exclusions, because they fail differently (PR #2525 review —
+      CodeRabbit): `hidden` is a DECLARED column carrying `hiddenFromBoard`, which only
+      the visibility filter removes, and `nowhere` is an id the workflow does not
+      declare at all. Testing only the unknown id would let the hidden-column filtering
+      be deleted with the case still green.
+      */
+      const withHidden: TaskContextMenuColumnMetadata[] = [
+        ...renamedMoveColumns.map((column) =>
+          column.id === "staging"
+            ? { ...column, moveTargets: ["building", "hidden", "nowhere"] }
+            : column,
+        ),
+        { id: "hidden" as ColumnId, label: "Hidden", flags: { hiddenFromBoard: true } },
+      ];
+      const transitions = getTaskMoveTransitions(
+        mkTask({ id: "FN-17", column: "staging" as Task["column"] }),
+        t,
+        columnLabel,
+        withHidden,
+      );
+      expect(transitions.map((transition) => transition.column)).toEqual(["building"]);
     });
 
     it("never offers a column the workflow does not declare", () => {

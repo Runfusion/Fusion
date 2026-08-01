@@ -100,4 +100,41 @@ pgDescribe("TaskStore durable symbol locks", () => {
     ));
     expect((await store.reconcileStaleSymbolLocks()).reconciled).toContain("pkg/terminal.ts#a");
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-16:20 (batch-core):
+
+  A FINISHED OWNER ON A RENAMED BOARD MUST RELEASE ITS SYMBOL LOCK.
+
+  The reclaim asked `owner.column === "done" || owner.column === "archived"`. On a board that renames
+  either lane a finished owner never read as terminal, so its lock was held until expiry — and every
+  other task needing that symbol waited behind a task that had already completed. The case above
+  covers the DEFAULT board and cannot see this.
+
+  Driven through the real store and a real workflow definition, so the assertion is on OBSERVED
+  reclaim rather than on my own belief about what the resolver returns for a renamed lineage.
+  */
+  it("reconciles an owner finished in a RENAMED complete lane", async () => {
+    const store = h.store(); const layer = h.layer(); const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+    const definition = await store.createWorkflowDefinition({
+      name: "renamed-terminal",
+      ir: {
+        version: "v2",
+        name: "renamed-terminal",
+        columns: [
+          { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+          { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+        ],
+        nodes: [{ id: "start", kind: "start", column: "building" }, { id: "end", kind: "end", column: "shipped" }],
+        edges: [{ from: "start", to: "end" }],
+      },
+    } as never);
+    const owner = await store.createTask({ description: "renamed terminal owner", workflowId: definition.id } as never);
+    await store.acquireSymbolLocks(["pkg/renamed.ts#A"], { ownerTaskId: owner.id }, 60_000);
+    await layer.db.update(schema.project.tasks).set({ column: "shipped" }).where(and(
+      eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, owner.id),
+    ));
+
+    expect((await store.reconcileStaleSymbolLocks()).reconciled).toContain("pkg/renamed.ts#a");
+  });
 });

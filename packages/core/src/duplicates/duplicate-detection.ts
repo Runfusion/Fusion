@@ -29,7 +29,10 @@ export interface ContentFingerprintInput {
 
 const DEFAULT_THRESHOLD = 0.45;
 const DEFAULT_LIMIT = 5;
-const DEFAULT_EXCLUDE_COLUMNS: Column[] = ["done", "archived"];
+/* DELIBERATE-LITERAL — the default for a caller that does not supply resolved terminal columns,
+   reviewed 2026-07-31-04:20. Callers that CAN resolve should pass `excludeColumns`; this pair is the
+   degraded mode, not the rule. */
+const DEFAULT_EXCLUDE_COLUMNS: readonly string[] = ["done", "archived"];
 export const STOPWORDS = new Set([
   "a",
   "an",
@@ -128,7 +131,15 @@ export function findDuplicateMatches(
   opts?: {
     threshold?: number;
     limit?: number;
-    excludeColumns?: Column[];
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-04:20 (batch-core feed):
+    `readonly string[]`, not the legacy `Column[]` enum. A renamed board's terminal column is a
+    perfectly valid id that the enum cannot express, so the enum made this parameter unusable by
+    exactly the callers that need it — the type was the guard's real limit, not the logic.
+
+    Widening only; every existing caller passes legacy ids, which remain assignable.
+    */
+    excludeColumns?: readonly string[];
   },
 ): DuplicateMatch[] {
   const description = input.description.trim();
@@ -138,7 +149,7 @@ export function findDuplicateMatches(
 
   const threshold = opts?.threshold ?? DEFAULT_THRESHOLD;
   const limit = opts?.limit ?? DEFAULT_LIMIT;
-  const excludedColumns = new Set<ColumnId>(opts?.excludeColumns ?? DEFAULT_EXCLUDE_COLUMNS);
+  const excludedColumns = new Set<string>(opts?.excludeColumns ?? DEFAULT_EXCLUDE_COLUMNS);
   const sourceText = `${input.title ?? ""} ${description}`.trim();
   const sourceTokens = new Set(tokenize(sourceText));
   const sourceTitle = input.title ?? "";

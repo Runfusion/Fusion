@@ -1,3 +1,12 @@
+/*
+FNXC:WorkflowColumns 2026-07-29-12:15 (post-#2515 audit):
+Fixtures use the MERGED planning column ("todo"), not the deleted "triage". #2515
+collapsed the default lineage's two pre-implementation columns into one with id
+"todo" carrying `intake` + `hold`, so a default-workflow card is never in "triage"
+again. A fixture left there exercised a state the product can no longer produce —
+and, because the converted sweeps resolve intake by ROLE, would have quietly
+asserted that the sweeps do nothing.
+*/
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock node modules
@@ -1940,6 +1949,55 @@ describe("SelfHealingManager", () => {
       expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("agent-keep", "active");
       managerWithAgents.stop();
     });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:55:
+    `agentLinkTerminalColumns` was UNCOVERED on the #3115 map. The case above uses `todo` and
+    `in-progress`, so the terminal skip is never the deciding branch.
+
+    An earlier attempt of mine put the card in a renamed WIP lane and stayed green when blinded —
+    correctly, because that card is caught by the wip∪review set first and the terminal resolver never
+    decides anything. The card has to rest in a renamed COMPLETE lane for this guard to be the one
+    that matters.
+
+    What the literal costs: a finished task's agent is not skipped, so the sweep unlinks an agent from
+    a task that completed normally — churn on a row that needed no repair, and a lost link if the
+    agent was about to be reused.
+    */
+    it("skips an agent whose task rests in a RENAMED complete lane", async () => {
+      const now = Date.now();
+      const agents: Agent[] = [
+        { id: "agent-done", state: "running", taskId: "FN-SHIPPED", updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+      ];
+      const getTask = vi.fn(async () => ({ id: "FN-SHIPPED", column: "shipped" } as Task));
+      const agentStore = {
+        listAgents: vi.fn(async () => agents),
+        getActiveHeartbeatRun: vi.fn(async () => null),
+        updateAgentState: vi.fn(async () => undefined),
+        syncExecutionTaskLink: vi.fn(async () => undefined),
+      } as unknown as AgentStore;
+      const store = createMockStore({ getTask });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        id: "custom:renamed",
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      const managerWithAgents = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      await managerWithAgents.recoverAgentsRunningOnInactiveTasks();
+
+      /* The unlink is the action this guard prevents; asserting it is what discriminates. */
+      expect(agentStore.syncExecutionTaskLink).not.toHaveBeenCalled();
+      managerWithAgents.stop();
+    });
   });
 
   describe("recoverStaleHeartbeatRuns", () => {
@@ -2301,6 +2359,53 @@ describe("SelfHealingManager", () => {
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-002");
     });
 
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
+    #3047 converted this sweep's two lane guards to the COMPLETE and TERMINAL roles and merged with no
+    case that could see the difference — measured: reverting that commit leaves all 825 self-healing
+    tests passing, because every fixture above uses the id `done`, where the literal is correct.
+
+    What the literal cost on a renamed board: the dependent scan treated EVERY task as active (nothing
+    matched `done`/`archived`), so every candidate looked like it had active dependents and the sweep
+    archived nothing. A silent no-op — the board just quietly stops auto-archiving.
+    */
+    it("archives a stale card in a RENAMED complete lane, and skips one whose dependent is still live", async () => {
+      vi.setSystemTime(new Date("2026-01-04T00:00:00.000Z"));
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoArchiveDoneTasksEnabled: true,
+        autoArchiveDoneAfterMs: 24 * 60 * 60 * 1000,
+        doneAutoArchiveDays: 0,
+      } as unknown as Settings);
+      (store.listWorkflowDefinitions as ReturnType<typeof vi.fn> | undefined)?.mockResolvedValue?.([]);
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+            { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { id: "FN-OLD", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        { id: "FN-BLOCKED", column: "shipped", columnMovedAt: "2026-01-02T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" },
+        /* A LIVE dependent in the renamed wip lane must still protect its blocker from archiving. */
+        { id: "FN-LIVE", column: "building", dependencies: ["FN-BLOCKED"], updatedAt: "2026-01-03T00:00:00.000Z" },
+        /* Already in the renamed archive lane: terminal, so neither a candidate nor an active dependent. */
+        { id: "FN-FILED", column: "vault", dependencies: ["FN-OLD"], updatedAt: "2026-01-03T00:00:00.000Z" },
+      ]);
+
+      const result = await manager.archiveStaleDoneTasks();
+
+      expect(result).toBe(1);
+      expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-OLD");
+      expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-BLOCKED");
+    });
+
     it("uses doneAutoArchiveDays threshold and logs task age", async () => {
       vi.setSystemTime(new Date("2026-03-01T00:00:00.000Z"));
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2328,7 +2433,8 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(store.archiveTaskAndCleanup).toHaveBeenCalledWith("FN-030");
       expect(store.archiveTaskAndCleanup).not.toHaveBeenCalledWith("FN-031");
-      expect(getSelfHealingLogger().log).toHaveBeenCalledWith(
+      // self-healing.ts:2747 emits this at DEBUG level, not log.
+      expect(getSelfHealingLogger().debug).toHaveBeenCalledWith(
         "auto-archive: archived FN-030 (age 31d, threshold 30d)",
       );
     });
@@ -4029,6 +4135,142 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(0);
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-recover-worktree-metadata-skipped-active" }));
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-21:30:
+    THE FN-5256 GUARD HAD NO RENAMED-BOARD CASE, which is why blinding this sweep's wip resolver back
+    to `["in-progress"]` leaves all 825 self-healing tests green: the guard test directly above uses
+    that literal, so it cannot tell the conversion from the id it replaced.
+
+    What that costs on a renamed board: the guard matches nothing, `scopeOverrideMergeActiveSafe`
+    becomes true for a card an executor is actively running, and this sweep nulls its
+    `worktree`/`branch`/`sessionFile` — yanking the checkout out from under a live shell. FN-5256 is
+    the incident that guard exists to prevent.
+    */
+    it("does NOT clear worktree metadata for a scopeOverride task live in a RENAMED wip lane (FN-5256)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-RENAMED-LIVE",
+          column: "building",
+          paused: false,
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-renamed-live",
+          branch: "fusion/FN-RENAMED-LIVE",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-renamed-live.json",
+          steps: [{ status: "in-progress" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      expect(result).toBe(0);
+      /* The live checkout survives: nothing nulled the worktree out from under the executor. */
+      expect(store.updateTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-13:40:
+    The other two resolvers in this sweep, both UNCOVERED on the #3115 map. Each is blinded and
+    measured separately, because this sweep's own dependency test proved a single case can pin one
+    resolver and leave its sibling green.
+    */
+    it("SKIPS a card resting in a RENAMED terminal lane", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-TERMINAL",
+          column: "shipped",
+          paused: false,
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-terminal",
+          branch: "fusion/FN-TERMINAL",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-terminal.json",
+          steps: [{ status: "done" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      /* A finished card is not this sweep's business; keyed on the id it was reconciled every pass. */
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("does NOT clear metadata for a merge-active card in a RENAMED review lane (FN-5256)", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      mockedExistsSync.mockReturnValue(false);
+      mockedGetRegisteredWorktreeBranchMap.mockResolvedValue(new Map<string, string>());
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-REVIEW-LIVE",
+          column: "checking",
+          paused: false,
+          /* Not a merge-active status, so the review half of the guard must hold the card. */
+          status: null,
+          scopeOverride: true,
+          worktree: "/tmp/project/.worktrees/fn-review-live",
+          branch: "fusion/FN-REVIEW-LIVE",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-review-live.json",
+          steps: [{ status: "in-progress" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.reconcileTaskWorktreeMetadata();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
 
@@ -8264,7 +8506,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-100",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8300,7 +8542,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-101",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [{ action: "Spec review: APPROVE" }],
@@ -8331,7 +8573,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-102",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8427,7 +8669,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-200",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8464,10 +8706,10 @@ describe("SelfHealingManager", () => {
     it.each([
       { column: "in-progress", status: null, worktree: "/tmp/claimed" },
       { column: "todo", status: null, worktree: undefined, steps: [{ id: "planned" }] },
-      { column: "triage", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
+      { column: "in-progress", status: "planning", worktree: "/tmp/claimed", firstExecutionAt: "2026-01-01T00:01:00.000Z" },
     ])("does not clear a stale candidate advanced to $column", async (live) => {
       const candidate = {
-        id: "FN-8361", column: "triage", status: "planning", paused: false,
+        id: "FN-8361", column: "todo", status: "planning", paused: false,
         log: [], updatedAt: "2026-01-01T00:00:00.000Z",
       };
       const updateTaskAtomic = vi.fn(async (_id: string, updater: (row: any) => any) => updater({ ...candidate, ...live }));
@@ -8493,7 +8735,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-201",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -8522,7 +8764,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-202",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [
@@ -8554,7 +8796,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-203",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: true,
           log: [],
@@ -8583,7 +8825,7 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
           id: "FN-204",
-          column: "triage",
+          column: "todo",
           status: "planning",
           paused: false,
           log: [],
@@ -9408,7 +9650,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9449,7 +9691,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-100",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: APPROVE" }],
@@ -9484,7 +9726,7 @@ describe("stale triage processing eviction before recovery", () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
         id: "FN-101",
-        column: "triage",
+        column: "todo",
         status: "planning",
         paused: false,
         log: [{ action: "Spec review: REVISE" }],
@@ -9515,9 +9757,9 @@ describe("stale triage processing eviction before recovery", () => {
 
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-approved-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-orphan-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-refinement-live", column: "triage", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
+      { id: "FN-approved-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-orphan-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-refinement-live", column: "todo", status: "planning", paused: false, priority: "normal", sourceType: "task_refine", createdAt: old, updatedAt: old },
       { id: "FN-peer-1", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:01:00.000Z" },
       { id: "FN-peer-2", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:02:00.000Z" },
       { id: "FN-peer-3", column: "todo", sourceType: "dashboard_ui", createdAt: old, updatedAt: "2026-01-01T00:03:00.000Z" },
@@ -9550,9 +9792,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ]);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
 
@@ -9575,9 +9817,9 @@ describe("stale triage processing eviction before recovery", () => {
     });
     const old = "2026-01-01T00:00:00.000Z";
     const planningTasks = [
-      { id: "FN-live", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-hung", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
-      { id: "FN-stuck-aborted", column: "triage", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-live", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-hung", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
+      { id: "FN-stuck-aborted", column: "todo", status: "planning", paused: false, priority: "normal", createdAt: old, updatedAt: old },
     ];
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue(planningTasks);
     vi.setSystemTime(new Date("2026-01-01T01:00:00.000Z"));
@@ -10853,6 +11095,24 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     mockedIsUsableTaskWorktree.mockResolvedValue(true);
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (#2879 review — greptile, "multi-role tasks run
+  recovery twice"): THE FIX IS IN `self-healing.ts`; NO TEST HERE, AND THE ABSENCE IS DELIBERATE.
+
+  `readBucket` dedupes by id inside ONE role's read, so a custom column carrying two queried traits —
+  `hold` plus `countsTowardWip`, or a review role beside either — is returned by two reads and the
+  concatenation handed the recovery loop the same STALE SNAPSHOT twice.
+
+  I wrote a case here and removed it: it reported 0 recoveries, because the card it built reaches the
+  BRANCH-LEVEL scan (subsumed branch, no worktree) rather than the candidates loop the dedupe lives
+  in. Reaching that loop needs `branch` AND `worktree` set plus matching git state, i.e. the git
+  fixture this suite deliberately avoids. A test that passes without exercising the loop would have
+  been worse than none — that is the vacuous shape this program keeps finding.
+
+  So the dedupe ships uncovered and stated. What would cover it: a candidates-loop fixture with a live
+  branch/worktree pair, asserting the recovery COUNT (a double-processed card reports 2 for one card's
+  work) rather than a call count.
+  */
   it("reclaims subsumed fusion task branch with no worktree", async () => {
     (store.listTasks as any).mockResolvedValueOnce([
       { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null, lineageId: "lin-1" },
@@ -10876,6 +11136,45 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
       mutationType: "branch:stale-active-reclaim",
       target: "fusion/fn-1001",
     }));
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:10:
+  `reclaimArchivedColumns` was UNCOVERED on the #3115 map: blinding it back to the id `archived` leaves
+  all 825 self-healing tests green, because no fixture here puts a card in a renamed archive lane.
+
+  This guard SKIPS archived cards — their branches belong to archive cleanup, not to branch reclaim.
+  Keyed on the id, a card filed in a renamed archive lane fails the skip and this sweep DELETES its
+  branch (`git branch -D`), which is not recoverable from the task row.
+  */
+  it("does not reclaim the branch of a card filed in a RENAMED archive lane", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "vault", checkedOutBy: null, userPaused: false, worktree: null, branch: null },
+    ]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "vault", name: "vault", traits: [{ trait: "archived" }] },
+        ],
+      },
+    }]);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("0\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    /* The branch survives: deleting it is not recoverable from the task row. */
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D"), expect.anything());
   });
 
   it("does not delete branch with unique commits", async () => {
@@ -11379,6 +11678,46 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ mutationType: "task:auto-rebound-scope-decay-no-action" }));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-15:40:
+  `scopeDecayWipColumns` was UNCOVERED on the #3115 map. The case above uses `in-progress`, where the
+  literal is correct, so blinding the resolver leaves it green.
+
+  The audit event is the observable: reaching a no-action record proves the holder was SELECTED by
+  the sweep's lane filter. Blinded, a paused holder in a renamed wip lane is not selected at all —
+  the loop never runs, no event is recorded, and its file scope decays with nothing to rebound it.
+  */
+  it("selects a paused holder resting in a RENAMED wip lane", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, pausedScopeDecayMs: 1_000 } as any),
+      listTasks: vi.fn().mockResolvedValue([
+        { id: "FN-HOLDER", column: "building", paused: true, pausedReason: "waiting", blockedBy: null, worktree: "/tmp/wt-holder", updatedAt: new Date(Date.now() - 60_000).toISOString(), log: [] },
+        { id: "FN-FOLLOW", column: "drafting", paused: false, blockedBy: "FN-HOLDER" },
+      ]),
+    });
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        ],
+      },
+    }]);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    mockedClassifyTaskWorktree.mockResolvedValue({ ok: true } as any);
+
+    await manager.autoReboundPausedScopeDecay();
+
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "FN-HOLDER",
+    }));
+    manager.stop();
+  });
+
   it("emits reclaim-pr-conflict no-action when triple proof fails", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({ autoMerge: true, globalPause: false, enginePaused: false, taskStuckTimeoutMs: 1_000 } as any),
@@ -11543,6 +11882,79 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
       vi.clearAllMocks();
       await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(0);
       expect(store.moveTask).not.toHaveBeenCalled();
+      manager.stop();
+    });
+
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-22:15:
+    Both of this sweep's resolvers were UNCOVERED on the #3115 coverage map: blinding either
+    `leaseWipColumns` or `leaseHoldColumns` back to its legacy id leaves all 825 self-healing tests
+    green, because every fixture above uses `in-progress` / `todo`, where the literals are correct.
+
+    What that costs on a renamed board: the holder scan matches no card and the dependency scan
+    matches no card, so a stale file-scope lease blocking a real dependency is never rebounded. The
+    dependent stays `overlapBlockedBy` forever behind a holder that is not coming back — a deadlock
+    the sweep exists to break, silently not broken.
+    */
+    it("rebounds a stale lease when holder and dependency rest in RENAMED wip and hold lanes", async () => {
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H", column: "building", dependencies: ["FN-D"], worktree: "/tmp/wt-h" }),
+        makeTask({ id: "FN-D", column: "drafting", status: "queued", overlapBlockedBy: "FN-H" }),
+      ], {
+        "FN-H": ["packages/engine/src/scheduler.ts"],
+        "FN-D": ["packages/engine/src/scheduler.ts"],
+      });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          ],
+        },
+      }]);
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test" });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      /* The dependent is released rather than left blocked behind a holder that is not coming back. */
+      expect(store.updateTask).toHaveBeenCalledWith("FN-D", { overlapBlockedBy: null, status: null });
+      manager.stop();
+    });
+
+    it("rebounds an overlapping RENAMED-hold dependency with no stale-blocker marker", async () => {
+      /*
+      The hold half. The case above sets `overlapBlockedBy`, which short-circuits at the
+      stale-overlap-blocker branch BEFORE the hold membership is consulted — measured: blinding
+      `leaseHoldColumns` leaves it green. Without the marker the sweep must fall through to
+      "is this dependency waiting in a hold lane and overlapping my scope?", which is the guard
+      `leaseHoldColumns` actually feeds.
+      */
+      const { store, manager } = setup([
+        makeTask({ id: "FN-H2", column: "building", dependencies: ["FN-D2"], worktree: "/tmp/wt-h2" }),
+        makeTask({ id: "FN-D2", column: "drafting", status: "queued" }),
+      ], {
+        "FN-H2": ["packages/engine/src/scheduler.ts"],
+        "FN-D2": ["packages/engine/src/scheduler.ts"],
+      });
+      (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "drafting", name: "drafting", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          ],
+        },
+      }]);
+      vi.spyOn(manager as any, "evaluateBackwardMoveTripleProof").mockResolvedValue({ ok: true, stalenessMs: 10_000, reason: "test" });
+
+      await expect(manager.reconcileDependencyBlockingLeases()).resolves.toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-H2", expect.anything(), expect.objectContaining({ recoveryRehome: true }));
       manager.stop();
     });
 
@@ -11712,7 +12124,7 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
         makeTask({ id: "FN-6770", column: "in-progress" }),
         makeTask({ id: "FN-6771", column: "todo" }),
         makeTask({ id: "FN-6780", column: "todo", status: "queued" }),
-        makeTask({ id: "FN-TRIAGE", column: "triage" }),
+        makeTask({ id: "FN-TRIAGE", column: "todo" }),
         makeTask({ id: "FN-DONE", column: "done" }),
       ]);
 

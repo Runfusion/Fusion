@@ -221,7 +221,30 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     expect(result.daily).toEqual([
       expect.objectContaining({ day: "2026-07-13", messages: 2, activeNodes: 3, activeAgents: 2, agentRuns: 2 }),
     ]);
-    expect(result.funnel.stages.find(({ stage }) => stage === "todo")?.entered).toBe(2);
+    /*
+    FNXC:SdlcFunnel 2026-07-30-23:10:
+    ASSERT THAT THE MOVE IS COUNTED, not which stage currently owns it.
+
+    This asserted `stage === "todo"` and now reads 0. The move is not lost — post-U11 the default
+    Planning column is ONE column carrying ["intake","hold","reset-on-entry"], and `stageForTraits`
+    prefers the earliest stage in flow order, so `intake` wins and a move to `todo` is attributed to
+    the `triage` stage. Nothing in analytics broke; the column vocabulary underneath it merged.
+
+    Which stage the merged Planning column SHOULD report is an open product question, flagged on
+    PR #2669: as it stands the funnel shows a phantom 100% drop between Triage and Todo on every
+    default board. Re-pointing the test at "triage" would quietly bless that, and re-pointing the
+    MAPPING would retroactively change how historical analytics read — not a reversible call.
+
+    So this asserts the part that is true under either resolution: both task moves are counted
+    exactly once, in the single pre-implementation stage the Planning column resolves to. It fails
+    if a move is dropped, double-counted, or split across stages, and it does not have to be
+    rewritten when #2669 is decided.
+    */
+    const preImplementation = result.funnel.stages.filter(
+      ({ stage }) => stage === "triage" || stage === "todo",
+    );
+    expect(preImplementation.reduce((sum, { entered }) => sum + entered, 0)).toBe(2);
+    expect(preImplementation.filter(({ entered }) => entered > 0)).toHaveLength(1);
 
     const boundResult = await aggregateActivityAnalytics({ ...layer, projectId: "__legacy_unscoped__" }, range);
     expect(boundResult).toMatchObject({ sessions: 1, messages: 1, activeNodes: 2, activeAgents: 1 });
@@ -229,7 +252,11 @@ pgTest("agent-log buffer + monitor metrics (PostgreSQL backend mode)", () => {
     expect(boundResult.daily).toEqual([
       expect.objectContaining({ day: "2026-07-13", messages: 1, activeNodes: 2, activeAgents: 1, agentRuns: 1 }),
     ]);
-    expect(boundResult.funnel.stages.find(({ stage }) => stage === "todo")?.entered).toBe(1);
+    /* Same reasoning as above; the project-scoped read sees exactly one of the two moves. */
+    const boundPreImplementation = boundResult.funnel.stages.filter(
+      ({ stage }) => stage === "triage" || stage === "todo",
+    );
+    expect(boundPreImplementation.reduce((sum, { entered }) => sum + entered, 0)).toBe(1);
   });
 
   /**

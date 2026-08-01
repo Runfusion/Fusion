@@ -104,3 +104,65 @@ test("apply reconciles done task and emits exactly one note", async () => {
   assert.equal(task.recoveryRetryCount, undefined);
   assert.equal(task.nextRecoveryAt, undefined);
 });
+
+/*
+FNXC:OperatorScriptLaneAssumptions 2026-07-31-02:10:
+THE INVARIANT: both consistency checks ask the task's OWN lanes, and they failed in OPPOSITE directions.
+
+Keyed on the literals, `hasDoneTransient` (`column === "done"`) NEVER fires on a renamed board, so a
+finished card still holding a worktree and `status:"failed"` goes unreported and unnormalized. Meanwhile
+`failed-status-outside-in-review` (`column !== "in-review"`) fires for EVERY failed card, because no
+column equals the literal — a report listing the whole board, which looks like the tool working.
+
+Reverted, the first case returns [] (the miss) and the second returns the spurious flag (the flood).
+*/
+test("reports stale transient state in a RENAMED complete lane", () => {
+  /* No `status:"failed"` here on purpose: it would ALSO trip the second check (a failed card outside
+     the review lane is genuinely flagged), which would blur which of the two this case is pinning. */
+  const task = { id: "FN-R1", column: "shipped", worktree: "/tmp/wt" };
+
+  assert.deepEqual(
+    findTaskStateInconsistencies(task, { complete: "shipped", review: "checking" }),
+    ["done-task-has-transient-failure-state"],
+  );
+});
+
+test("does NOT flag a failed card that is sitting in the board's own review lane", () => {
+  const task = { id: "FN-R2", column: "checking", status: "failed" };
+
+  assert.deepEqual(findTaskStateInconsistencies(task, { complete: "shipped", review: "checking" }), []);
+});
+
+test("still flags a failed card outside the resolved review lane", () => {
+  const task = { id: "FN-R3", column: "building", status: "failed" };
+
+  assert.deepEqual(
+    findTaskStateInconsistencies(task, { complete: "shipped", review: "checking" }),
+    ["failed-status-outside-in-review"],
+  );
+});
+
+test("unresolved lanes keep exactly the legacy behaviour", () => {
+  assert.deepEqual(
+    findTaskStateInconsistencies({ id: "FN-L", column: "done", status: "failed" }),
+    ["done-task-has-transient-failure-state", "failed-status-outside-in-review"],
+  );
+});
+
+test("runReconciliation normalizes a renamed complete lane by moving the card to its OWN column", async () => {
+  const moves = [];
+  const store = {
+    async listTasks() { return [{ id: "FN-R4", column: "shipped", status: "failed", worktree: "/tmp/w" }]; },
+    async moveTask(id, toColumn) { moves.push([id, toColumn]); return { id }; },
+    async logEntry() { return { id: "FN-R4" }; },
+  };
+
+  const result = await runReconciliation({
+    store,
+    dryRun: false,
+    resolveLanes: async () => ({ complete: "shipped", review: "checking" }),
+  });
+
+  assert.deepEqual(moves, [["FN-R4", "shipped"]]);
+  assert.equal(result.actions[0].action, "reconciled");
+});

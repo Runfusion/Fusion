@@ -58,7 +58,7 @@ import { applySchemaBaseline, MIGRATION_BOOKKEEPING_TABLE } from "./schema-appli
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createAsyncDataLayer, type AsyncDataLayer } from "./data-layer.js";
 import {
-  invalidateEmbeddedRuntimeUrl,
+  EmbeddedRuntimeStoppingError,
   registerEmbeddedRuntimeUrl,
   releaseEmbeddedRuntimeLease,
   type EmbeddedRuntimeLease,
@@ -226,8 +226,8 @@ interface SchemaBackendBootResult {
 
 /**
  * FNXC:PostgresBackup 2026-07-16-12:40:
- * stop() only stops a postmaster owned by this lifecycle. Consequently owner
- * teardown burns the URL generation for every joiner, while joiner teardown
+ * stop() only stops a postmaster owned by this lifecycle. The runtime registry
+ * defers that owner stop until joined leases release, while joiner teardown
  * releases only its opaque lease. This keeps synchronous backup resolution
  * aligned with physical cluster liveness without logging the credential URL.
  */
@@ -237,16 +237,20 @@ async function stopEmbeddedRuntime(
   runtimeUrl: string | null,
   ownsProcess: boolean,
 ): Promise<void> {
+  if (!lease || !runtimeUrl) {
+    await lifecycle?.stop();
+    return;
+  }
+  if (ownsProcess) {
+    await releaseEmbeddedRuntimeLease(lease, {
+      stopOwner: async () => { await lifecycle?.stop(); },
+    });
+    return;
+  }
   try {
     await lifecycle?.stop();
   } finally {
-    if (lease && runtimeUrl) {
-      if (ownsProcess) {
-        invalidateEmbeddedRuntimeUrl(runtimeUrl, lease);
-      } else {
-        releaseEmbeddedRuntimeLease(lease);
-      }
-    }
+    await releaseEmbeddedRuntimeLease(lease);
   }
 }
 
@@ -382,6 +386,14 @@ async function bootSchemaBackend(
     try {
       return await bootSchemaBackendOnce(options, bypassProjectIsolation);
     } catch (error) {
+      if (error instanceof EmbeddedRuntimeStoppingError) {
+        /*
+        FNXC:PostgresLifecycle 2026-07-29-17:43:
+        A replacement backend waits for the shared registry's actual owner-stop completion. Fixed backoff budgets can expire during a valid slow shutdown and turn orderly handoff into startup failure.
+        */
+        await error.completion;
+        continue;
+      }
       if (
         error instanceof JoinedInstanceUnreachableError &&
         joinedRetryAttempt < JOINED_INSTANCE_RETRY_DELAYS_MS.length
@@ -470,6 +482,7 @@ async function bootSchemaBackendOnce(
       }
     } catch (error) {
       await embeddedLifecycle.stop().catch(() => undefined);
+      if (error instanceof EmbeddedRuntimeStoppingError) throw error;
       throw new Error(
         `startup-factory: failed to start embedded PostgreSQL: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -1371,7 +1384,7 @@ export async function createTaskStoreForBackend(
       if (shutdownEmbedded) {
         try {
           (shutdownEmbedded as unknown as { detachWithoutStop?: () => void }).detachWithoutStop?.();
-          if (embeddedRuntimeLease) releaseEmbeddedRuntimeLease(embeddedRuntimeLease);
+          if (embeddedRuntimeLease) await releaseEmbeddedRuntimeLease(embeddedRuntimeLease);
         } catch (err) {
           log.warn(`startup-factory: embedded PostgreSQL detach failed: ${
             err instanceof Error ? err.message : String(err)

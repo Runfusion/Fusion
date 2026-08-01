@@ -3,7 +3,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import type { Task, TaskStore } from "@fusion/core";
+import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 
 import { toTaskToken } from "../merger.js";
 
@@ -118,11 +119,36 @@ export async function evaluateScopeAutoWiden(params: EvaluateScopeAutoWidenParam
   const allTasks = typeof store.listTasks === "function"
     ? await store.listTasks({ slim: true, includeArchived: false })
     : [];
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:55 (batch-engine tail):
+  "Still active" is the COMPLETE and ARCHIVED roles, not the two ids. On a renamed board every FINISHED
+  card counted as an active other, so auto-widen refused to widen into files whose only other claimant
+  had already shipped — a merge blocked by a task that no longer exists in any meaningful sense.
+
+  NOT the query-filter class: this query passes no `column`, so the predicate is the only lane gate here.
+
+  Resolved per OTHER TASK (each may run its own workflow), one IR cache for the pass, unioned with the
+  legacy pair because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing —
+  without the union a degraded board would treat every finished card as active, which is this bug.
+  */
+  const irCache = new Map<string, WorkflowIr>();
+  const terminalByTaskId = new Map<string, ReadonlySet<string>>();
+  for (const other of allTasks) {
+    const columns = new Set<string>(["done", "archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store as TaskStore, other.id, irCache);
+      if (ir) {
+        for (const flag of ["complete", "archived"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) columns.add(id);
+        }
+      }
+    } catch { /* degraded: legacy pair only */ }
+    terminalByTaskId.set(other.id, columns);
+  }
   const activeOtherTasks = allTasks.filter((other) => (
     other.id !== taskId &&
     other.deletedAt == null &&
-    other.column !== "done" &&
-    other.column !== "archived"
+    terminalByTaskId.get(other.id)?.has(other.column) !== true
   ));
 
   for (const file of candidateFiles) {

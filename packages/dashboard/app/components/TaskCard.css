@@ -1350,13 +1350,17 @@ so the icon needs no rule of its own.
   line-height: 1.2;
 }
 
-/* Steps toggle and list */
+/*
+FNXC:TaskCardLayout 2026-07-31-20:57:
+FN-8631 requires the steps toggle to be content-sized: a fixed minimum height made its unused
+vertical space look like a dead band at the bottom of cards with progress. Token padding preserves
+the established compact mobile interaction rhythm while the card remains the primary touch target.
+*/
 .card-steps-toggle {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
   margin-top: 6px;
-  min-height: calc(var(--space-xl) + var(--space-md));
   padding: var(--space-xs) 0;
   background: none;
   border: none;

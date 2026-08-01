@@ -14,10 +14,33 @@ interface MockTaskStoreEvents {
   "settings:updated": [{ settings: Settings; previous: Settings }];
 }
 
+/*
+FNXC:EngineTests 2026-07-30-18:40:
+DRAIN the fire-and-forget notification work, do not just yield once.
+
+This was `vi.waitFor(() => expect(true).toBe(true))` — a condition that is true on the first tick, so
+`waitFor` returned immediately. It never waited for anything; it happened to work only while
+`handleTaskMovedAsync` finished within a single turn.
+
+`notification-service` now resolves the task's workflow IR before deciding (lifecycle columns, then
+the review-lane set), so the handler needs several more turns after `store.emit(...)` returns. One
+yield stopped being enough and 32 cases across notifier.test / notifier.runtime.test failed with
+"expected 1 call, got 0" — pointing at the notifier rather than at the harness.
+
+Drains microtasks AND a macrotask turn, repeatedly, so an await chain of any realistic depth settles.
+Tests asserting a specific outcome should still prefer `vi.waitFor(() => expect(...))` on that
+outcome; this helper exists for the "let the fire-and-forget handler finish" case, and now actually
+does it.
+*/
 export async function flushAsyncWork(): Promise<void> {
-  await vi.waitFor(() => {
-    expect(true).toBe(true);
-  });
+  /*
+  MICROTASKS ONLY, deliberately. A `setTimeout(0)` drain also works but costs real wall-clock at every
+  call site and STALLS under the fake timers several cases in notifier.test install — measured: the
+  two files went from ~2s to over 2 minutes and four fake-timer cases hung. The awaits being drained
+  are promise-based (workflow-IR resolution), so microtask turns are the right currency and cost
+  nothing. See AGENTS.md "Do Not Add Slow Tests".
+  */
+  for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
 }
 
 export class MockTaskStore extends EventEmitter<MockTaskStoreEvents> {

@@ -27,6 +27,7 @@ import type { TaskStore } from "@fusion/core";
 import {
   resolveTaskMergeTarget,
   getCurrentRepo,
+  getPushRepo,
   isBranchGroupMemberLanded,
   resolveEffectiveSettings,
   isWorkspaceTask,
@@ -34,6 +35,35 @@ import {
   WorkspaceTaskMergeError,
 } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo, MergeResult, BranchGroup, BranchGroupPrState, Task } from "@fusion/core";
+import { resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn } from "@fusion/core";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-20:10 (census-invisible moveTask destinations):
+Resolve THIS task's complete lane, falling back to the legacy id.
+
+Both merge-completion paths below passed a hardcoded `"done"` to `moveTask`. The destination is a call
+ARGUMENT, so the lifecycle-column census — an AST scan for comparisons — never pointed at either. Since
+U12 hoisted the `workflowHasColumn` rejection out of its dead flag-gated branch, a board that does not
+declare `done` REJECTS the move.
+
+That matters here because both callers run `updateTask({ status: null, mergeRetries: 0 })` FIRST: on a
+rejection the merge has already landed and the bookkeeping is already cleared, but the card never
+reaches its complete lane — so the operator sees a merged branch and a card still sitting in review,
+with the retry counter reset.
+
+Unioned with the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+throwing.
+*/
+export async function resolveCompleteTargetForTask(store: TaskStore, taskId: string): Promise<string> {
+  try {
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    if (ir) {
+      const complete = resolveCompleteColumn(ir);
+      if (complete) return complete;
+    }
+  } catch { /* degraded: legacy id */ }
+  return "done";
+}
 import { activeSessionRegistry, resolveIntegrationBranch } from "@fusion/engine";
 import type {
   CreateGroupPrFn,
@@ -103,6 +133,26 @@ export function getMergeStrategy(settings: Pick<Settings, "mergeStrategy">): Non
  */
 export function getTaskBranchName(taskId: string): string {
   return `fusion/${taskId.toLowerCase()}`;
+}
+
+/*
+FNXC:ForkAwarePrHead 2026-07-26-07:18:
+When origin's push URL targets a contributor fork while fetch points at upstream,
+GitHub PR create requires head as `fork-owner:branch`. Same-repository workflows
+keep the unqualified branch name. Centralize the rule so every createPr surface
+(pr-create node, group PR callback, shared-branch and per-task processPullRequest
+paths) qualifies the head the same way and cannot open against the wrong repo.
+*/
+function qualifyForkAwarePrHead(
+  cwd: string,
+  upstreamOwner: string | undefined,
+  headBranch: string,
+): string {
+  const pushRepo = getPushRepo(cwd);
+  if (pushRepo?.owner && upstreamOwner && pushRepo.owner !== upstreamOwner) {
+    return `${pushRepo.owner}:${headBranch}`;
+  }
+  return headBranch;
 }
 
 /**
@@ -284,12 +334,14 @@ export function createGroupPrCallback(
       title: member.title,
       branchName: getTaskBranchName(member.id),
     }));
+    // FNXC:ForkAwarePrHead 2026-07-26-07:18: group/shared-branch PRs also push via
+    // origin and must qualify head with the fork owner when push ≠ fetch repo.
     const created = await github.createPr({
       owner: repo.owner,
       repo: repo.repo,
       title: buildGroupPullRequestTitle(group, members),
       body: buildGroupPullRequestBody(group, membersWithBranch),
-      head: headBranch,
+      head: qualifyForkAwarePrHead(cwd, repo.owner, headBranch),
       base: baseBranch,
     });
     return { prNumber: created.number, prUrl: created.url, prState: toBranchGroupPrState(created) };
@@ -464,12 +516,14 @@ export function createPrNodeGithubOps(
       const headBranch = entity.headBranch || getTaskBranchName(task.id);
       await pushTaskBranchToOrigin(cwd, headBranch);
       const { owner, name } = splitRepoSlug(entity.repo);
+      // FNXC:ForkAwarePrHead 2026-07-26-07:18: qualify head as owner:branch when
+      // origin pushes to a fork while the PR targets upstream.
       const created = await github.createPr({
         owner,
         repo: name,
         title: task.title ?? `Task ${task.id}`,
         body: task.description ?? "",
-        head: headBranch,
+        head: qualifyForkAwarePrHead(cwd, owner, headBranch),
         base: entity.baseBranch,
       });
       const headOid = await resolveBranchHeadOid(cwd, headBranch);
@@ -658,7 +712,7 @@ async function finalizePullRequestMerge(
 ): Promise<void> {
   await cleanupMergedTaskArtifacts(cwd, task, { pool });
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  const movedTask = await store.moveTask(task.id, "done");
+  const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
   await store.logEntry(task.id, message, `PR #${prInfo.number}: ${prInfo.url}`);
   const settings = await store.getSettings();
@@ -696,7 +750,7 @@ async function finalizeNoOpMergeTask(
   const branch = task.branch ?? getTaskBranchName(task.id);
   await cleanupMergedTaskArtifacts(cwd, task, { pool });
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
-  const movedTask = await store.moveTask(task.id, "done");
+  const movedTask = await store.moveTask(task.id, await resolveCompleteTargetForTask(store, task.id));
   const mergedTask = movedTask ?? (await store.getTask(task.id));
   await store.logEntry(task.id, reason, `Branch ${branch} has no commits relative to the base branch; nothing to merge.`);
   store.emit("task:merged", {
@@ -724,7 +778,10 @@ export type ProcessPullRequestResult = "waiting" | "merged" | "skipped";
  * Type for the task merge blocker function from @fusion/core.
  * Accepts a task object and returns a reason string if blocked, or undefined if not blocked.
  */
-type TaskMergeBlockerFn = (task: TaskDetail) => string | undefined;
+type TaskMergeBlockerFn = (
+  task: TaskDetail,
+  options?: { reviewColumns?: ReadonlySet<string> },
+) => string | undefined;
 
 /**
  * Process a single task through the PR merge workflow.
@@ -755,7 +812,33 @@ export async function processPullRequestMergeTask(
   pool?: WorktreePool,
 ): Promise<ProcessPullRequestResult> {
   const task = await store.getTask(taskId);
-  if (getTaskMergeBlocker(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
+  Hand the merge blocker THIS task's merge lane, or PR merges never run on a renamed board.
+
+  `getTaskMergeBlocker` was called with the task alone, so its `options.reviewColumns` was undefined
+  and its identity check fell back to `task.column === "in-review"`. On a board whose merge lane is
+  named anything else it returned `task is in 'checking', must be in 'in-review'` — truthy — and this
+  function returned "skipped". Silently, forever: nothing logs, nothing fails, the PR simply never
+  merges. The same class as #2963/#2964, on a third entry point (`daemon.ts`, `serve.ts` and
+  `dashboard.ts` all drain PR merges through here).
+
+  NARROW resolution, not `resolveReviewColumns`. That helper is the BROAD set and its own note says a
+  caller that admits on it and then MOVES the card will act on cards the engine does not consider in
+  review — and this function merges and moves to the complete lane. `resolveMergeOrchestrationColumn`
+  is the single lane the engine acts on, matching how `moves.ts` wires the same call.
+
+  `resolveWorkflowIrForTask` substitutes the default IR rather than throwing, so on a default board
+  this resolves `in-review` and behaviour is byte-identical; an unresolvable lane passes no option at
+  all and keeps the documented legacy literal.
+  */
+  const mergeLane = resolveMergeOrchestrationColumn(await resolveWorkflowIrForTask(store, taskId));
+  /* The option is always PASSED and conditionally VALUED, rather than the whole argument being
+     conditional: `getTaskMergeBlocker` treats an undefined `reviewColumns` exactly as it treats
+     absent options, so the two are identical at runtime — but only this shape is visible to
+     `scripts/lib/lane-wiring-census.mjs`, which matches an object-literal argument and cannot see a
+     ternary. Wiring the gate cannot check is how this defect survived in the first place. */
+  if (getTaskMergeBlocker(task, { reviewColumns: mergeLane ? new Set([mergeLane]) : undefined })) {
     return "skipped";
   }
 
@@ -839,12 +922,14 @@ export async function processPullRequestMergeTask(
       if (!groupPrInfo) {
         await pushTaskBranchToOrigin(cwd, branchGroup.branchName);
         try {
+          // FNXC:ForkAwarePrHead 2026-07-26-07:18: shared-branch processPullRequest
+          // path must qualify head for fork push URLs (same as createGroupPrCallback).
           groupPrInfo = await github.createPr({
             owner: prRepo.owner,
             repo: prRepo.repo,
             title: buildGroupPullRequestTitle(branchGroup, members),
             body: buildGroupPullRequestBody(branchGroup, membersWithCommits),
-            head: branchGroup.branchName,
+            head: qualifyForkAwarePrHead(cwd, prRepo.owner, branchGroup.branchName),
             base: projectDefaultBranch,
           });
         } catch (err: unknown) {
@@ -945,12 +1030,14 @@ export async function processPullRequestMergeTask(
       await pushTaskBranchToOrigin(cwd, branch);
     }
     try {
+      // FNXC:ForkAwarePrHead 2026-07-26-07:18: per-task processPullRequest path
+      // must qualify head for fork push URLs (same as createPrNodeGithubOps).
       prInfo = existingPr ?? await github.createPr({
         owner: prRepo.owner,
         repo: prRepo.repo,
         title: buildPullRequestTitle(task),
         body: buildPullRequestBody(task),
-        head: branch,
+        head: qualifyForkAwarePrHead(cwd, prRepo.owner, branch),
         base: mergeTarget.branch,
       });
     } catch (err: unknown) {

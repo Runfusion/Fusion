@@ -62,6 +62,64 @@ mutating git state:
   semantics and the shared-branch member integration exception.
 - Run-audit correlation for git operations and recovery facts.
 
+## Measured Wiring State (2026-07-28, U9 pre-flight)
+
+The S02–S08 substrate is further along than the slice docs claim, but a large part
+of it is **built and not driven**. Measured against `main` at `46f35323c`. Recorded
+here because "the code exists and its tests pass" reads as landed, and for four of
+these that is not the same as running.
+
+| Capability | Implementation | Production callers | Reality |
+|---|---|---|---|
+| S1 work-item schema + store API | `0031_workflow_task_continuations.sql`, `store.ts` | live | **Wired.** Drives the plan-review continuation path. |
+| S02 merge-request projection | `projectMergeRequestToWorkflowWorkItem` | **none** | Built, never invoked. |
+| S03 generic scheduler claim | `claimDueWorkflowWorkItem` (`workflow-work-scheduler.ts`) | only the S05 processor, which is itself unwired | Built, never invoked. |
+| S04 built-in IR merge regions | `merge-gate`, `merge-retry`, `manual-merge-hold`, `merge-attempt`, `recovery-router` in the coding IR | n/a — declarations | **Landed.** Node *config* is unread; see `u9-merge-region-node-config-authority.test.ts`. |
+| S05 runtime work-item driver | `WorkflowTaskRuntime.runWorkItem`, `processDueWorkflowWorkItem` | **none** (exported from `index.ts` only) | Built, never invoked. |
+| S06 git/merge capabilities | — | — | Not started. Merge runs through `merger.ts`. |
+| S07 completion handoff creates merge work | — | — | Not started. |
+| S08 workflow-owned merge processing | — | — | Not started. `ProjectEngine.mergeQueue` is the live pump. |
+
+**The consequence that matters for U9.** `WorkflowWorkItemKind` is
+`task | merge | retry | manual-hold | recovery`. The only live pump is
+`InProcessRuntime.drainWorkflowContinuations`, and it filters `kinds: ["task"]`.
+The generic processor that would claim the other four kinds
+(`processDueWorkflowWorkItem`) has no production caller.
+
+**Non-`task` work items are already being written, and nothing claims them.**
+`createCompletionHandoffWorkflowWork` (`workflow-workitems-ops.ts:68`) writes
+`kind: "merge"` when auto-merge is on and `kind: "manual-hold"` when it is off. It
+is called from the LIVE handoff-to-review path (`moves.ts:438` and `:1150`), inside
+the move transaction. The kind is computed into a variable
+(`autoMerge ? "merge" : "manual-hold"`), which is why a literal grep for
+`kind: "merge"` finds nothing — an earlier revision of this section wrongly
+concluded there were zero writers on exactly that basis.
+
+So the current state is:
+
+| | State |
+|---|---|
+| Writers of `merge` / `manual-hold` | **Live** — every task that reaches review writes one |
+| Claimers | **None** — the only pump filters `kinds: ["task"]` |
+| Reconcilers | **None** — self-healing's continuation check also filters `kinds: ["task"]` (`self-healing.ts:6575`) |
+| Only terminalization | The NEXT `createCompletionHandoffWorkflowWork` for the same task cancels prior ones as `superseded-by-completion-handoff` |
+
+These rows therefore **accumulate in a non-terminal state** (`runnable` /
+`manual-required`), one per task that reaches review, cleared only if that same task
+hands off again.
+
+**This does not stall any merge.** The actual merge is enqueued by
+`enqueueMergeQueueInTransaction` in the same transaction, and the legacy
+`ProjectEngine.mergeQueue` pump still drives it. The work items are parallel
+bookkeeping that nothing consumes yet — accumulating dead rows, not stuck cards.
+
+**What this means for S07.** S07 does not introduce the writer; the writer is
+already here. What S07 changes is making those items *authoritative* for the merge
+lane. Until the generic pump (S03/S05) is actually driven, promoting these rows from
+bookkeeping to authority converts a benign row leak into cards that reach the merge
+boundary and stop. **S07 must not land before S03/S05 are driven** — and the
+pre-existing unclaimed rows need a reconcile/backfill decision as part of that work.
+
 ## Deletion Gates
 
 - No production caller may start checkout, branch integration, squash, or finalize

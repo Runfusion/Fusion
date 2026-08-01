@@ -19,6 +19,7 @@ import type {
   TaskDetail,
   ThemeMode,
   WorkflowStep,
+  TraitFlags,
 } from "@fusion/core";
 import type {
   AiSessionSummary,
@@ -62,6 +63,17 @@ import { TodoView } from "../TodoView";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
 
 export interface MainContentProps {
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-12:15: board-workflow column traits per task id, the
+  same map the footer's live-agent predicate uses. Optional: absent for remote rows and for
+  columns not on the current board, where the consumer degrades to the documented legacy names
+  rather than guessing.
+  */
+  /* FNXC:WorkflowLifecycleColumns 2026-07-31-15:30: widened to the flags the map REALLY carries. It is
+     built from `workflow.columns.find(...).flags` (App.tsx `footerColumnFlagsByTaskId`), so the four-flag
+     declaration was a narrower view than the value — and `countsTowardWip`, which the wip predicates
+     need, was invisible to any consumer typed through here. */
+  columnFlagsByTaskId?: ReadonlyMap<string, Partial<TraitFlags>>;
   showBackendConnectionErrorPage: boolean;
   projectsError: string | null;
   t: TFunction;
@@ -102,7 +114,6 @@ export interface MainContentProps {
   remoteData: UseRemoteNodeDataResult;
   tasks: Task[];
   /** Active planning sessions loaded by App before the Planning view mounts. */
-  bgPlanningSessions: AiSessionSummary[];
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (
     pluginId: string,
@@ -156,8 +167,6 @@ export interface MainContentProps {
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
   openWorkflowEditorWithNav: (workflowId?: string) => void;
-  handlePlanningTaskCreated: (task: Task) => void;
-  handlePlanningTasksCreated: (tasks: Task[]) => void;
   handleGitHubImport: (task: Task) => void;
   devServerEnabled: boolean;
   mainPanelDetailTask: Task | TaskDetail | null;

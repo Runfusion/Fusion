@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isHoldColumnRole } from "../utils/columnRoles";
 import { useTranslation } from "react-i18next";
 import { GitPullRequest, ExternalLink, RefreshCw, Plus, MessageSquare, CircleDot, XCircle, GitMerge, ChevronDown, ChevronUp } from "lucide-react";
 import { getErrorMessage, type DirectMergeCommitStrategy, type StructuredGhError } from "@fusion/core";
@@ -17,6 +18,8 @@ interface PrPanelProps {
   prInfos?: PrInfo[];
   automationStatus?: string | null;
   taskColumn?: string;
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  taskColumnFlags?: Parameters<typeof isHoldColumnRole>[0];
   autoMerge?: boolean;
   isManualPrFlow?: boolean;
   prAuthAvailable: boolean;
@@ -69,6 +72,7 @@ function PrCard({
   prInfo,
   automationStatus,
   taskColumn,
+  taskColumnFlags,
   onPrUpdated,
   onPrUnlinked,
   onPrsRefreshed,
@@ -80,6 +84,8 @@ function PrCard({
   prInfo: PrInfo;
   automationStatus?: string | null;
   taskColumn?: string;
+  /** Resolved column flags for this task, from TaskDetailModal. */
+  taskColumnFlags?: Parameters<typeof isHoldColumnRole>[0];
   onPrUpdated: (prInfo: PrInfo) => void;
   onPrUnlinked?: (prNumber: number) => void;
   onPrsRefreshed?: (prInfos: PrInfo[]) => void;
@@ -300,7 +306,15 @@ function PrCard({
         </div>
       ) : null}
 
-      {reviewDecision === "CHANGES_REQUESTED" && taskColumn === "todo" && <div className="pr-hint pr-hint--warning">{t("git.autoMovedToTodo", "Auto-moved to Todo — reviewer feedback ready")}</div>}
+      {/*
+        FNXC:WorkflowResolvedColumns 2026-07-30-18:30 (batch-dashboard-app):
+        HOLD role, resolved. This hint tells the operator WHY the card moved back after a reviewer
+        asked for changes. Keyed on the literal it never appeared on a renamed board, so the card
+        moved backwards with no explanation — the one moment the operator most needs one.
+        `taskColumn` is optional, and `taskColumn === "todo"` was false for undefined, so `?? ""`
+        reproduces that exactly.
+      */}
+      {reviewDecision === "CHANGES_REQUESTED" && isHoldColumnRole(taskColumnFlags, taskColumn ?? "") && <div className="pr-hint pr-hint--warning">{t("git.autoMovedToTodo", "Auto-moved to Todo — reviewer feedback ready")}</div>}
       {automationStatus === "merging-pr" && <div className="pr-hint pr-hint--info">{t("git.fnMergingPr", "fn is merging this pull request automatically.")}</div>}
       {automationStatus === "awaiting-pr-checks" && <div className="pr-hint pr-hint--info">{blockingReasons.length > 0 ? t("git.waitingFor", "Waiting for: {{reasons}}", { reasons: blockingReasons.join("; ") }) : t("git.awaitingPrChecks", "Waiting for required checks or review feedback before auto-merge.")}</div>}
       {prInfo.status === "merged" && <div className="pr-hint pr-hint--success">{t("git.mergedTaskDone", "Merged — task moved to Done")}</div>}
@@ -310,7 +324,7 @@ function PrCard({
   );
 }
 
-export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, taskColumn, autoMerge = false, isManualPrFlow = false, prAuthAvailable, onPrUpdated, onPrUnlinked, onPrsRefreshed, onRequestCreatePr, directMergeCommitStrategy = "auto", addToast }: PrPanelProps) {
+export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, taskColumn, taskColumnFlags, autoMerge = false, isManualPrFlow = false, prAuthAvailable, onPrUpdated, onPrUnlinked, onPrsRefreshed, onRequestCreatePr, directMergeCommitStrategy = "auto", addToast }: PrPanelProps) {
   const { t } = useTranslation("app");
   const prList = prInfos ?? (prInfo ? [prInfo] : []);
 
@@ -338,6 +352,7 @@ export function PrPanel({ taskId, projectId, prInfo, prInfos, automationStatus, 
             prInfo={prEntry}
             automationStatus={automationStatus}
             taskColumn={taskColumn}
+            taskColumnFlags={taskColumnFlags}
             onPrUpdated={onPrUpdated}
             onPrUnlinked={onPrUnlinked}
             onPrsRefreshed={onPrsRefreshed}

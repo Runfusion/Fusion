@@ -1,4 +1,6 @@
 import type { PrInfo, Task } from "@fusion/core";
+import type { ColumnRoleFlags } from "./columnRoles";
+import { isReviewColumnRole, isWipColumnRole } from "./columnRoles";
 
 export function getTaskPrimaryPrInfo(task: Pick<Task, "prInfo" | "prInfos">): PrInfo | undefined {
   return task.prInfos?.[0] ?? task.prInfo;
@@ -17,6 +19,19 @@ export function hasActionablePrFeedback(task: Pick<Task, "prInfo" | "prInfos">):
   return (prInfo.commentCount ?? 0) > 0 || prInfo.lastReviewDecision === "CHANGES_REQUESTED";
 }
 
-export function canStartPrFeedbackAddressing(task: Pick<Task, "column" | "prInfo" | "prInfos">): boolean {
-  return (task.column === "in-review" || task.column === "in-progress") && hasActionablePrFeedback(task);
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-11:10 (#2744 review — greptile P1, a half-conversion I shipped):
+The lane pair here is the SAME question TaskReviewTab and TaskCard ask, and converting only the callers
+left this rejecting custom column ids. Measured consequence: on a renamed review or WIP lane a task with
+actionable PR feedback but no loaded display items had the Address-PR-Feedback action stay hidden, because
+the caller's role check passed and this returned false.
+
+Optional flags, legacy ids as the documented fallback — so any caller without resolved flags is unchanged.
+*/
+export function canStartPrFeedbackAddressing(
+  task: Pick<Task, "column" | "prInfo" | "prInfos">,
+  columnFlags?: ColumnRoleFlags,
+): boolean {
+  return (isReviewColumnRole(columnFlags, task.column) || isWipColumnRole(columnFlags, task.column))
+    && hasActionablePrFeedback(task);
 }

@@ -43,7 +43,7 @@ vi.mock("../pi.js", () => {
 
 vi.mock("../logger.js", () => ({
   createLogger: vi.fn((_name: string) => ({
-    log: vi.fn(),
+    log: vi.fn(), debug: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   })),

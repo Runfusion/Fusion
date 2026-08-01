@@ -20,7 +20,39 @@ vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
   batchUpdateTaskModels: vi.fn(),
   fetchNodes: vi.fn(() => new Promise(() => {})),
-  fetchBoardWorkflows: vi.fn(() => new Promise(() => {})),
+  /*
+  FNXC:ListViewWindowing 2026-07-30-20:10:
+  A RESOLVED LANE IS A PRECONDITION FOR RENDERING ANY ROW — this mock used to hang forever.
+
+  It was `vi.fn(() => new Promise(() => {}))`, which was harmless when written: List view still had
+  `LEGACY_LIST_COLUMNS` to fall back on. U12/R9 DELETED that fallback, so `ListView` now returns its
+  skeleton unless `useBoardWorkflows` resolves a lane — and a never-settling promise means it never
+  does. All eight cases then asserted against an empty document ("expected [] to have a length of
+  50"), which reads as a broken render window rather than an unmet precondition.
+
+  Resolved with a real column set, mirroring the payload other board tests use, so the windowing
+  invariants below are exercised against actual rows. `flagEnabled: true` matters: the workflow arm
+  is the only one left.
+  */
+  fetchBoardWorkflows: vi.fn().mockResolvedValue({
+    flagEnabled: true,
+    defaultWorkflowId: "builtin:coding",
+    workflows: [
+      {
+        id: "builtin:coding",
+        name: "Coding",
+        columns: [
+          { id: "todo", name: "Todo", flags: { intake: true, hold: true } },
+          { id: "in-progress", name: "In Progress", flags: { countsTowardWip: true } },
+          { id: "in-review", name: "In Review", flags: { mergeBlocker: true, humanReview: true } },
+          { id: "done", name: "Done", flags: { complete: true } },
+          { id: "archived", name: "Archived", flags: { archived: true } },
+        ],
+      },
+    ],
+    taskWorkflowIds: {},
+  }),
+  fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
   rebuildTaskSpec: vi.fn().mockResolvedValue({}),
   refreshPrStatus: vi.fn().mockResolvedValue({}),
   updateTask: vi.fn(),
@@ -79,8 +111,14 @@ function makeTask(index: number): Task {
 const TASKS: Task[] = Array.from({ length: TOTAL_TASKS }, (_, i) => makeTask(i + 1));
 const FAR_TASK_ID = "FN-190";
 
-function renderList(props: Partial<React.ComponentProps<typeof ListView>> = {}) {
-  return render(
+/*
+FNXC:ListViewWindowing 2026-07-30-20:15:
+ASYNC because the lane now resolves through a promise. `useBoardWorkflows` settles a microtask after
+mount, and `ListView` renders its skeleton until it does — so a synchronous `render()` observes zero
+rows no matter what the window logic does. Flushed here, once, rather than in each case.
+*/
+async function renderList(props: Partial<React.ComponentProps<typeof ListView>> = {}) {
+  const result = render(
     <ListView
       tasks={TASKS}
       onMoveTask={vi.fn(async () => TASKS[0])}
@@ -93,6 +131,8 @@ function renderList(props: Partial<React.ComponentProps<typeof ListView>> = {}) 
       {...props}
     />,
   );
+  await act(async () => { await Promise.resolve(); });
+  return result;
 }
 
 function renderedTaskIds(): string[] {
@@ -110,8 +150,8 @@ beforeEach(() => {
 });
 
 describe("ListView render windowing", () => {
-  it("renders only the initial window of a large section, not every task", () => {
-    renderList();
+  it("renders only the initial window of a large section, not every task", async () => {
+    await renderList();
 
     expect(renderedTaskIds()).toHaveLength(INITIAL_WINDOW);
     // The section header still reports the FULL group size — grouping is preserved.
@@ -119,8 +159,8 @@ describe("ListView render windowing", () => {
     expect(screen.getByRole("button", { name: /Load 25 more/i })).toBeTruthy();
   });
 
-  it("reveals the next increment when Load more is clicked", () => {
-    renderList();
+  it("reveals the next increment when Load more is clicked", async () => {
+    await renderList();
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: /Load 25 more/i }));
@@ -133,8 +173,8 @@ describe("ListView render windowing", () => {
     expect(renderedTaskIds()).toHaveLength(INITIAL_WINDOW + INCREMENT * 2);
   });
 
-  it("filters against the full set, so a match beyond the window is still found", () => {
-    renderList({ searchQuery: "Needle" });
+  it("filters against the full set, so a match beyond the window is still found", async () => {
+    await renderList({ searchQuery: "Needle" });
 
     const ids = renderedTaskIds();
     expect(ids).toEqual([FAR_TASK_ID]);
@@ -142,14 +182,14 @@ describe("ListView render windowing", () => {
     expect(screen.queryByRole("button", { name: /Load \d+ more/i })).toBeNull();
   });
 
-  it("keeps a selected task outside the window selected and visible", () => {
+  it("keeps a selected task outside the window selected and visible", async () => {
     localStorage.setItem(scopedKey("kb-dashboard-list-selected-task", PROJECT_ID), FAR_TASK_ID);
     localStorage.setItem(
       scopedKey("kb-dashboard-selected-tasks", PROJECT_ID),
       JSON.stringify([FAR_TASK_ID]),
     );
 
-    renderList();
+    await renderList();
 
     // Selection state is id-based and untouched by the window.
     expect(
@@ -182,8 +222,8 @@ describe("ListView select-all under render windowing", () => {
     });
   }
 
-  it("selects only the rendered window, not the whole filtered set", () => {
-    renderList();
+  it("selects only the rendered window, not the whole filtered set", async () => {
+    await renderList();
     enterBulkEdit();
 
     const rendered = renderedTaskIds();
@@ -200,7 +240,7 @@ describe("ListView select-all under render windowing", () => {
   });
 
   it("confirms a bulk delete against the rendered rows only", async () => {
-    renderList();
+    await renderList();
     enterBulkEdit();
     selectAll();
 
@@ -214,8 +254,8 @@ describe("ListView select-all under render windowing", () => {
     expect(message).not.toContain(String(TOTAL_TASKS));
   });
 
-  it("grows the select-all target as the window is expanded", () => {
-    renderList();
+  it("grows the select-all target as the window is expanded", async () => {
+    await renderList();
     enterBulkEdit();
 
     act(() => {
@@ -230,8 +270,8 @@ describe("ListView select-all under render windowing", () => {
     expect(persisted.sort()).toEqual([...renderedTaskIds()].sort());
   });
 
-  it("reports checked, not indeterminate, once the rendered window is fully selected", () => {
-    renderList();
+  it("reports checked, not indeterminate, once the rendered window is fully selected", async () => {
+    await renderList();
     enterBulkEdit();
     selectAll();
 

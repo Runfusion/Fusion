@@ -8,7 +8,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const loggerMock = {
-  log: vi.fn(),
+  log: vi.fn(), debug: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 };

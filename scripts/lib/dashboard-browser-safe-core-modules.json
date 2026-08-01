@@ -61,6 +61,11 @@
       "verifiedAt": "2026-07-26"
     },
     {
+      "module": "column-roles",
+      "reason": "2026-07-31: Column role predicates depend only on erased trait types and provide browser-safe flags-first lifecycle classification.",
+      "verifiedAt": "2026-07-31"
+    },
+    {
       "module": "live-agent-count",
       "reason": "2026-07-21: FN-8453 shares pure workflow-trait-based Running and Waiting predicates with dashboard capacity indicators; its dependency graph has no Node-only modules.",
       "verifiedAt": "2026-07-21"

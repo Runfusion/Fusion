@@ -20,7 +20,7 @@ import {
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
   isWorkspaceTask,
   resolveColumnFlags,
-  BUILTIN_CODING_WORKFLOW_IR,
+  resolveDefaultWorkflowIr,
   mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
   parseWorkflowIr,
@@ -34,7 +34,37 @@ import {
   FUSION_NON_RETRYABLE_EXIT_CODE,
   isPostgresUniqueError,
   ProjectPartitionRekeyError,
+  resolveTaskLifecycleColumns,
+  type WorkflowIr,
 } from "@fusion/core";
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-08:50 (fleet: CLI dashboard/serve stats):
+"ACTIVE" IS THE BOARD'S WIP AND REVIEW LANES, counted once for a whole task list.
+
+The same aggregation appears FOUR times in this file (the TUI stats refresh, the serve summary, the status
+line and the agent-stats pass), each comparing the default lineage's two ids. On a renamed board every one of
+them reported `active=0` while the board was plainly busy — and this number is the operator's first read of a
+new project, so it is the surface most likely to be believed.
+
+ONE resolution per WORKFLOW, not per task: the shared IR cache means a 500-card board costs one read per
+distinct workflow. Extracted rather than inlined four times, because four copies of a lifecycle decision is
+how copies drift — these four were identical by accident, not by construction.
+*/
+export async function countActiveTasks(
+  store: unknown,
+  tasks: Array<{ id: string; column: string }>,
+): Promise<number> {
+  const irCache = new Map<string, WorkflowIr>();
+  let active = 0;
+  for (const task of tasks) {
+    const lifecycle = await resolveTaskLifecycleColumns(store as never, task.id, irCache);
+    if (task.column === (lifecycle?.wip ?? "in-progress") || task.column === (lifecycle?.review ?? "in-review")) {
+      active += 1;
+    }
+  }
+  return active;
+}
 import {
   createServer,
   refreshAllCustomProviderModels,
@@ -805,9 +835,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           for (const task of tasks) {
             counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
           }
-          const active = tasks.filter((task) =>
-            task.column === "in-progress" || task.column === "in-review"
-          ).length;
+          const active = await countActiveTasks(store, tasks);
           const agents = await agentStore.listAgents();
           const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
           for (const agent of agents) {
@@ -1099,7 +1127,26 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         const def = workflowId
           ? await projectStore.getWorkflowDefinition(workflowId)
           : undefined;
-        const ir = def?.ir ?? BUILTIN_CODING_WORKFLOW_IR;
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+        THE NO-SELECTION FALLBACK IS THE CURRENT DEFAULT, NOT THE LEGACY CONSTANT.
+
+        `BUILTIN_CODING_WORKFLOW_IR` is the legacy monolithic IR (`builtin:legacy-coding`);
+        `resolveDefaultWorkflowIr()` is the catalog's actual default. Post-U11 they DIFFER:
+
+            default  todo, in-progress, in-review, done, archived        (planning merged into todo)
+            legacy   triage, todo, in-progress, in-review, done, archived
+
+        So a task with no selection row rendered a `triage` column the real default no longer
+        declares — the TUI board showed a lane the board does not have.
+
+        This is the same drift `builtin-workflows.ts` records as already fixed for the move-path
+        resolvers: `prepareWorkflowMovePolicyPreflightImpl` resolved through the catalog while
+        `resolveTaskWorkflowIrForMove` used the raw constant, and a no-selection task produced two
+        different workflow signatures ("workflow move policy preflight is stale"). Both were routed
+        through the shared helper so the default could not drift again; this surface was missed.
+        */
+        const ir = def?.ir ?? resolveDefaultWorkflowIr();
         columns = ir.version === "v2" ? ir.columns : [];
         workflowIrCache.set(workflowId, columns);
       }
@@ -1136,9 +1183,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(taskStore, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {
@@ -1326,9 +1371,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       taskSummary = `tasks=${tasks.length} active=${active} columns=${Array.from(counts.entries())
         .map(([column, count]) => `${column}:${count}`)
         .join(",")}`;
@@ -2917,9 +2960,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
       }
-      const active = tasks.filter((task) =>
-        task.column === "in-progress" || task.column === "in-review"
-      ).length;
+      const active = await countActiveTasks(store, tasks);
       const agents = await agentStore.listAgents();
       const agentStats = { idle: 0, active: 0, running: 0, error: 0 };
       for (const agent of agents) {
@@ -3284,9 +3325,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                     const def = selection?.workflowId
                       ? await projectStore.getWorkflowDefinition(selection.workflowId)
                       : undefined;
+                    /* Same no-selection fallback as the column resolution above: the catalog default,
+                       not the legacy constant. Here it decides which `fields` render as card chips,
+                       so the legacy IR showed a different chip set for unselected tasks. */
                     const ir = def
                       ? (typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir)
-                      : BUILTIN_CODING_WORKFLOW_IR;
+                      : resolveDefaultWorkflowIr();
                     const fields = ir.version === "v2" ? (ir.fields ?? []) : [];
                     const chips: Array<{ label: string; value: string }> = [];
                     for (const field of fields) {

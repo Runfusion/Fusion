@@ -176,11 +176,18 @@ export class ProjectAdmissionCoordinator {
         */
         const releaseAttempt = () => {
           if (!hasReservableHostSlot) return;
+          /*
+          FNXC:CapacityModel 2026-07-29-13:20: the host-slot release is now
+          UNCONDITIONAL across both branches. The pre-held branch used to release the
+          caller's semaphore through dropPreHeldExecutorSlot's second parameter;
+          with that parameter deleted it would otherwise unwind the registration and
+          the reservation while LEAKING the host slot this attempt acquired.
+          */
           if (hasPreHeldExecutorSlot(winner.taskId)) {
-            dropPreHeldExecutorSlot(winner.taskId, params.semaphore);
-            return;
+            dropPreHeldExecutorSlot(winner.taskId);
+          } else {
+            this.releaseReservation(winner.taskId);
           }
-          this.releaseReservation(winner.taskId);
           params.semaphore?.release();
         };
         try {
@@ -295,14 +302,40 @@ export function takePreHeldExecutorSlot(taskId: string): boolean {
   return taken;
 }
 
-/** Drop a pre-held slot without transferring ownership (failed reserve / cancelled dispatch). Optionally releases the semaphore. */
-export function dropPreHeldExecutorSlot(taskId: string, semaphore?: { release(): void }): void {
-  if (!preHeldExecutorSlots.delete(taskId)) return;
-  // FNXC:ConcurrencyAdmission 2026-08-06-12:00: every rejection path funnels
-  // through this helper, so releasing the matching coordinator marker here
-  // prevents early scheduler/triage returns from permanently consuming a slot.
+/*
+FNXC:CapacityModel 2026-07-29-13:20 (drop the cross-project cap — pre-held slots):
+Drop a pre-held slot without transferring ownership (failed reserve / cancelled
+dispatch).
+
+The `semaphore` parameter is GONE. These slots are DUAL-PURPOSE — a cross-project
+semaphore slot AND the FN-8453 per-project coordinator reservation — and only the
+first half is deleted. All 16 production call sites passed `this.options.semaphore`,
+which nothing wires any more, so the release was a no-op on an always-undefined
+value: an optional parameter that reads as if it does something.
+
+The coordinator reservation is the half that MATTERS and stays: every rejection path
+funnels through this helper so an early scheduler/triage return cannot permanently
+consume a project slot (FNXC:ConcurrencyAdmission 2026-08-06-12:00).
+
+Sites that still hold a semaphore reference release it EXPLICITLY next to their
+drop, so behaviour is unchanged for any caller that supplies one.
+*/
+export function dropPreHeldExecutorSlot(taskId: string): boolean {
+  /*
+  FNXC:CapacityModel 2026-07-29-17:10 (PR #2574 review — greptile P1, double release):
+  RETURNS whether a registration was actually dropped, because callers that own a
+  semaphore reference must release it ONLY when this did something.
+
+  The original two-argument form released the semaphore INSIDE this guard, so a call
+  after a successful `takePreHeldExecutorSlot` was "intentionally a no-op" — the
+  transferred slot belongs to the lane, which releases it via `semaphore.run`.
+  Hoisting the release to the call site unconditionally broke that: it released a
+  slot this call never held, INFLATING capacity — the opposite of the leak the
+  cleanup was guarding against.
+  */
+  if (!preHeldExecutorSlots.delete(taskId)) return false;
   projectAdmissionCoordinator.releaseReservation(taskId);
-  semaphore?.release();
+  return true;
 }
 
 /** Test/helper: whether a task currently has an unclaimed pre-held executor slot. */
@@ -419,6 +452,28 @@ export function recoverIdleSemaphoreLeakCandidate(params: {
 
   if (!semaphore) return { candidateSinceMs: null };
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-14:30 (FLAGGED, NOT FIXED — the last raw caller of the running-agent predicate):
+  `persistedTopLevelAgentSlots` takes RAW tasks, so `live-agent-count.ts`'s trait fields are undefined here
+  and its predicates fall back to the legacy ids (`in-progress` for wip, `done`/`archived` for terminal).
+
+  Traced every caller of that predicate before writing this: the live ADMISSION paths
+  (`executor.ts` fn_spawn_agent, `project-engine.ts`) both use
+  `computeTopLevelConcurrencyClaimedFromStore`, which enriches, and
+  `workflow-agent-count-live-e2e.pg.test.ts` pins that number end to end. `computeTopLevelConcurrencyClaimed`
+  (raw) has no production caller at all. THIS is the one live path left that does not enrich.
+
+  CONSEQUENCE on a renamed board: cards in a renamed wip lane are not counted, so `persistedActive` and
+  therefore `bound` are too low, and the continuous-excess timer below can see phantom excess and reclaim a
+  semaphore slot that is legitimately held. That is the same class of harm the FN-7017 note directly below
+  guards against for nested helper agents, arriving through the vocabulary door instead.
+
+  NOT FIXED HERE, deliberately. `persistedTopLevelAgentSlotsFromStore` is the enriching variant and it is
+  ASYNC; this is a synchronous leak-RECOVERY path, so adopting it changes the signature of a capacity repair
+  routine whose failure mode is reclaiming live work. That is a behaviour change in the capacity subsystem,
+  not a vocabulary conversion, and it wants an owner who can decide whether recovery should be able to await
+  a store read at all — the alternative being to pass pre-enriched tasks in from the caller.
+  */
   const persistedActive = persistedTopLevelAgentSlots(tasks);
   const bound = persistedActive + Math.max(0, Math.floor(inFlightCount));
   /*

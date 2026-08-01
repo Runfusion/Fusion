@@ -1145,11 +1145,13 @@ describe("TaskChangesTab — compact spacing class", () => {
 
     const { container } = render(
       <div className="detail-body" data-testid="mobile-detail-body" style={{ maxInlineSize: "430px", overflowX: "hidden" }}>
-        <TaskChangesTab
-          taskId="FN-6997"
-          worktree="/path/to/worktree"
-          column="in-progress"
-        />
+        <div className="detail-body-content">
+          <TaskChangesTab
+            taskId="FN-6997"
+            worktree="/path/to/worktree"
+            column="in-progress"
+          />
+        </div>
       </div>,
     );
 
@@ -1158,7 +1160,7 @@ describe("TaskChangesTab — compact spacing class", () => {
     });
 
     const mobileDetailBody = screen.getByTestId("mobile-detail-body");
-    const taskTab = container.querySelector(".detail-body > .task-changes-tab");
+    const taskTab = container.querySelector(".detail-body > .detail-body-content > .task-changes-tab");
     const fileList = taskTab?.querySelector(".changes-file-list.task-changes-file-list--compact");
     const diffPatch = fileList?.querySelector(".changes-diff-patch.changes-diff-patch--wrap");
 
@@ -1194,18 +1196,21 @@ describe("TaskChangesTab — compact spacing class", () => {
     expect(rule).toContain("max-width: calc(100% + (calc(var(--space-md) + var(--space-xs) / 2) * 2));");
   });
 
-  it("keeps mobile widening equal and opposite to detail-body padding while preserving overflow containment", () => {
+  it("keeps mobile widening equal and opposite to detail-body content padding while preserving overflow containment", () => {
     const css = loadAllAppCss();
-    const detailBodyMobileRuleMatch = css.match(/\.detail-body\s*\{\s*padding:\s*calc\(var\(--space-md\) \+ var\(--space-xs\) \/ 2\);([\s\S]*?)\}/);
+    const detailBodyMobileRuleMatch = css.match(/\.detail-body\s*\{\s*padding:\s*0;([\s\S]*?)\}/);
+    const detailBodyContentMobileRuleMatch = css.match(/\.detail-body-content\s*\{\s*padding:\s*calc\(var\(--space-md\) \+ var\(--space-xs\) \/ 2\);([\s\S]*?)\}/);
     const compactListMobileRuleMatch = css.match(/@media\s*\(max-width:\s*768px\)\s*\{\s*\.task-changes-tab\s+\.changes-file-list\.task-changes-file-list--compact\s*\{([\s\S]*?)\}/);
 
     expect(detailBodyMobileRuleMatch).toBeTruthy();
+    expect(detailBodyContentMobileRuleMatch).toBeTruthy();
     expect(compactListMobileRuleMatch).toBeTruthy();
 
     const mobilePadding = "calc(var(--space-md) + var(--space-xs) / 2)";
     expect(css).toContain("@media (max-width: 768px)");
-    expect(detailBodyMobileRuleMatch![0]).toContain(`padding: ${mobilePadding};`);
+    expect(detailBodyMobileRuleMatch![0]).toContain("padding: 0;");
     expect(detailBodyMobileRuleMatch![1]).toContain("overflow-x: hidden;");
+    expect(detailBodyContentMobileRuleMatch![0]).toContain(`padding: ${mobilePadding};`);
     expect(compactListMobileRuleMatch![1]).toContain(`margin-left: calc(-1 * ${mobilePadding});`);
     expect(compactListMobileRuleMatch![1]).toContain(`margin-right: calc(-1 * ${mobilePadding});`);
     expect(compactListMobileRuleMatch![1]).toContain(`max-width: calc(100% + (${mobilePadding} * 2));`);

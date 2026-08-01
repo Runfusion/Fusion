@@ -1176,7 +1176,53 @@ describe("project-aware task command behavior", () => {
     await runTaskMove("FN-123", "done", "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done");
+    // FNXC:TaskMovement 2026-07-26-12:35: `fn task move` is a human board action and
+    // must carry the user move source so user-move semantics (hard cancel) apply.
+    expect(mockMoveTask).toHaveBeenCalledWith("FN-123", "done", { moveSource: "user" });
+  });
+
+  it("runTaskMove passes the user source through to the task-move disposer seam (hard cancel)", async () => {
+    /*
+    FNXC:TaskMovement 2026-07-26-12:35:
+    Regression coverage for the moveSource hard-cancel gap: only user-source
+    in-progress → todo moves run disposeTaskBeforeMove. The fake store forwards
+    the CLI-provided moveSource into the REAL core disposer seam (the from/todo
+    columns are pinned by the harness because this file's @fusion/core mock
+    replaces COLUMNS with a fixture list that has no "todo"), so this fails if
+    runTaskMove ever drops `moveSource: "user"` again — the disposer would not
+    fire and the agent session would keep running behind a Todo card.
+    */
+    const { disposeTaskBeforeMove, registerTaskMoveDisposer } = await import("@fusion/core");
+    const disposer = vi.fn().mockResolvedValue(undefined);
+    const fakeStore = {
+      moveTask: vi.fn(
+        async (id: string, column: string, options?: { moveSource?: "user" | "engine" | "scheduler" }) => {
+          const task = makeTask({ id, column: "in-progress" });
+          await disposeTaskBeforeMove(fakeStore as unknown as TaskStore, {
+            task: task as never,
+            from: "in-progress",
+            to: "todo",
+            // Mirrors moves.ts: an absent moveSource defaults to "engine".
+            source: options?.moveSource ?? "engine",
+          });
+          return makeTask({ id, column });
+        },
+      ),
+    };
+    registerTaskMoveDisposer(fakeStore as unknown as TaskStore, disposer);
+
+    vi.mocked(resolveProject).mockResolvedValue({
+      projectId: "proj_test",
+      projectPath: "/test",
+      projectName: "demo-project",
+      isRegistered: true,
+      store: fakeStore as unknown as TaskStore,
+    });
+
+    await runTaskMove("FN-123", "in-progress", "demo-project");
+
+    expect(disposer).toHaveBeenCalledOnce();
+    expect(disposer).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-123" }));
   });
 
   it("runTaskAttach uses resolved project store when project name is provided", async () => {
@@ -1217,7 +1263,7 @@ describe("project-aware task command behavior", () => {
     await runTaskPause("FN-123", "demo-project");
     await runTaskUnpause("FN-123", "demo-project");
 
-    expect(pauseTask).toHaveBeenNthCalledWith(1, "FN-123", true);
+    expect(pauseTask).toHaveBeenNthCalledWith(1, "FN-123", true, undefined, { userPaused: true });
     expect(pauseTask).toHaveBeenNthCalledWith(2, "FN-123", false);
   });
 
@@ -1688,7 +1734,16 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "First Issue",
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-02:10:
+      NO `column` HERE — the import deliberately stopped choosing one. #2603 (U11) removed the
+      hardcoded `column: "triage"` from the GitHub/GitLab import writes so `createTaskImpl`
+      resolves the WORKFLOW'S intake column instead; passing `column` would override that
+      resolution and, post-U11, name a lane the default workflow no longer declares. This
+      assertion still required the removed literal, so a correct product change read as five CLI
+      failures. The mock RETURN values elsewhere in this file keep their column: what a created
+      task comes back as is a different question from what the import asks for.
+      */
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -1702,7 +1757,6 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Third Issue",
       description: "Description 3\n\nSource: https://github.com/owner/repo/issues/3",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -1821,7 +1875,6 @@ describe("runTaskImportGitHubInteractive", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Second Issue",
       description: "Description 2\n\nSource: https://github.com/owner/repo/issues/2",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2077,7 +2130,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "First Issue",
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2199,7 +2251,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "No Body Issue",
       description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -2221,7 +2272,6 @@ describe("runTaskImportFromGitHub", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "A".repeat(200),
       description: expect.stringContaining("Body"),
-      column: "triage",
       dependencies: [],
       sourceIssue: {
         provider: "github",
@@ -3329,6 +3379,56 @@ describe("runTaskPrCreate", () => {
   afterEach(() => {
     process.env = originalEnv;
     vi.restoreAllMocks();
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-22:05 (#2775 review — "legacy review lane rejected"):
+
+  A V1 WORKFLOW MUST STILL BE ABLE TO OPEN A PR FROM ITS `in-review` COLUMN.
+
+  `synthesizeDefaultColumns` (workflow-ir.ts:158-159) upgrades a v1 graph by emitting every default
+  column id with `traits: []`. So a v1-upgraded workflow resolves to an EMPTY review set while its
+  `in-review` column plainly exists and is where its cards live. A guard that reads empty as "this
+  board declares no review lane" refuses `fn pr create` on every pre-v2 project.
+
+  This is the ratchet for that: the store resolves a real v1-shaped workflow, and the command must get
+  past the review guard rather than refusing. No v2 fixture can catch this — a v2 board expresses its
+  traits, so its set is never empty.
+  */
+  it("does NOT refuse a v1-upgraded workflow whose synthesized columns carry no traits", async () => {
+    const v1UpgradedIr = {
+      version: "v2",
+      id: "wf-v1-upgraded",
+      name: "legacy",
+      nodes: [],
+      edges: [],
+      // Exactly what synthesizeDefaultColumns emits: every column, NO traits.
+      columns: ["todo", "in-progress", "in-review", "done", "archived"].map((id) => ({ id, name: id, traits: [] })),
+    };
+    const selection = { workflowId: "wf-v1-upgraded", stepIds: [] };
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      updatePrInfo: mockUpdatePrInfo,
+      ensurePrEntityForSource: vi.fn(() => ({ id: "pr-entity-1" })),
+      updatePrEntity: vi.fn(),
+      logEntry: mockLogEntry,
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-v1-upgraded", ir: v1UpgradedIr }),
+    }));
+
+    const task = makeInReviewTask();
+    mockGetTask.mockResolvedValueOnce(task);
+    mockCreatePr.mockResolvedValueOnce(makePrInfo({ number: 77, url: "https://github.com/owner/repo/pull/77" }));
+
+    await runTaskPrCreate("FN-001", {});
+
+    /*
+    The witness is that the command reached PR creation at all. Asserting on the absence of an error
+    message would also pass if the guard refused for some other reason and exited quietly.
+    */
+    expect(mockCreatePr).toHaveBeenCalled();
   });
 
   it("creates PR successfully with all options", async () => {

@@ -109,6 +109,8 @@ import {
   resolveReboundTarget,
   resolveCompleteColumn,
   resolveMergeOrchestrationColumn,
+  resolveTaskLifecycleColumns,
+  type WorkflowIr, resolveReviewColumns
 } from "@fusion/core";
 import { evaluateAutoMergeFactProviders } from "./merge/auto-merge-fact-providers.js";
 import { resolveMergePolicy } from "./merge/merge-trait.js";
@@ -116,6 +118,18 @@ import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
 import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_COMPLETE_LANES: readonly string[] = ["done"];
+
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
 import { classifyTaskWorktree, getRegisteredWorktreeBranches, isRepoRootPath, RemovalReason, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
@@ -1894,7 +1908,25 @@ async function sweepAutostashOrphans(
         live.push(orphan);
         continue;
       }
-      if (!sourceTask || (sourceTask.column !== "done" && sourceTask.column !== "archived")) {
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-10:50 (fleet: merger.ts terminal guards):
+      "IS THE SOURCE TASK FINISHED?" from its own workflow, unioned with the legacy pair — a row can outlive
+      the column it is stored in, and this guard decides whether an orphaned stash is still LIVE. Being too
+      strict here keeps a stash alive forever (harmless clutter); being too loose discards a stash whose task
+      is still running (lost work), so over-inclusion of terminal ids is the safe direction, exactly as in
+      `resolveTerminalColumnsFor`.
+
+      With the literal pair, a renamed board answered "not finished" for every completed task, so every
+      orphaned stash stayed classified as live and was never cleaned up.
+      */
+      const sourceLifecycle = await resolveTaskLifecycleColumns(store, sourceTaskId);
+      const sourceTerminal = new Set([
+        sourceLifecycle?.complete ?? "done",
+        sourceLifecycle?.archived ?? "archived",
+        "done",
+        "archived",
+      ]);
+      if (!sourceTask || !sourceTerminal.has(sourceTask.column)) {
         live.push(orphan);
         continue;
       }
@@ -4911,9 +4943,22 @@ export async function findWorktreeUser(
   excludeTaskId: string,
 ): Promise<string | null> {
   const tasks = await store.listTasks({ slim: true, includeArchived: false });
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-02-10:55 (fleet: merger.ts):
+  The worktree-conflict scan asks "is another UNFINISHED task holding this worktree?". Resolved per task, but
+  ONLY for rows that actually share the worktree path — the path test is free and eliminates all but a
+  handful, so the lane resolution never runs over the whole board. (The naive order — resolve, then filter —
+  is what made the github-tracking reconciler scan proportional to task history; PR #2714 review.)
+  */
+  const conflictIrCache = new Map<string, WorkflowIr>();
   for (const t of tasks) {
     if (t.id === excludeTaskId) continue;
-    if (t.worktree === worktreePath && t.column !== "done") {
+    if (t.worktree !== worktreePath) continue;
+    const lifecycle = await resolveTaskLifecycleColumns(store, t.id, conflictIrCache);
+    /* Resolved complete lane UNION the legacy id: the guard already accepted either, and a set
+       states that once instead of two comparisons that must be kept in step. */
+    const completeLanes = new Set<string>([lifecycle?.complete, ...LEGACY_COMPLETE_LANES].filter((c): c is string => c !== undefined));
+    if (!completeLanes.has(t.column)) {
       return t.id;
     }
   }
@@ -6582,7 +6627,14 @@ export async function aiMergeTask(
   // reachable via direct unit tests/importers, so enforce the workspace merge-boundary
   // here too (throws the named WorkspaceTaskMergeError) before any git work.
   assertNotWorkspaceTaskMerge(task);
-  if (task.column === "done" || task.column === "archived") {
+  const finalizedLifecycle = await resolveTaskLifecycleColumns(store, taskId);
+  const finalizedColumns = new Set([
+    finalizedLifecycle?.complete ?? "done",
+    finalizedLifecycle?.archived ?? "archived",
+    "done",
+    "archived",
+  ]);
+  if (finalizedColumns.has(task.column)) {
     const message = `merger: skipping squash for ${taskId} — task already finalized (column=${task.column})`;
     mergerLog.log(message);
     await (store as any).recordRunAuditEvent?.({
@@ -6605,7 +6657,22 @@ export async function aiMergeTask(
       branchDeleted: false,
     };
   }
-  const mergeBlocker = getTaskMergeBlocker(task, { manual: options.manual === true });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-17:10 (MERGING WAS BROKEN ON A RENAMED BOARD):
+  `getTaskMergeBlocker`'s identity check RETURNS A BLOCKER when the column is not a review lane, so
+  calling it without `reviewColumns` on a board whose review lane is renamed produced
+  `Cannot merge FN-x: task is in 'signoff', must be in 'in-review'` — and the merge threw. Not a
+  degraded message: no task could be merged at all.
+
+  The helper's own comment records this exact defect being fixed in `moves.ts`; these two merge
+  entry points were missed. Resolve the task's own review lanes and pass them.
+  */
+  const mergeReviewColumns = new Set<string>(["in-review"]);
+  try {
+    const mergeIr = await resolveWorkflowIrForTask(store, taskId);
+    if (mergeIr) for (const id of resolveReviewColumns(mergeIr)) mergeReviewColumns.add(id);
+  } catch { /* degraded: the legacy id above still answers */ }
+  const mergeBlocker = getTaskMergeBlocker(task, { manual: options.manual === true, reviewColumns: mergeReviewColumns });
   if (mergeBlocker) {
     throw new Error(`Cannot merge ${taskId}: ${mergeBlocker}`);
   }

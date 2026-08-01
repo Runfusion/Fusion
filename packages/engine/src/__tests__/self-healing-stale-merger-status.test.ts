@@ -8,7 +8,7 @@ const { execMock } = vi.hoisted(() => ({
 vi.mock("node:child_process", () => ({ exec: execMock, execSync: vi.fn(), execFile: vi.fn() }));
 
 const { logger } = vi.hoisted(() => ({
-  logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../logger.js", () => ({ createLogger: vi.fn(() => logger) }));
 

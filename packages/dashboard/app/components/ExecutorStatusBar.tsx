@@ -150,7 +150,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
   const showTerminalLauncher = !isMobile && Boolean(onToggleTerminal);
   const columnFlagsByTaskId = suppliedColumnFlagsByTaskId;
   /*
-  FNXC:ConcurrencyIndicators 2026-08-03-12:00:
+  FNXC:ConcurrencyIndicators 2026-07-21-12:00:
   FN-8453 receives a task-scoped board trait index from App before the shared
   live-agent predicate runs. Literal column ids are only a loading/legacy fallback.
   */
@@ -222,6 +222,13 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
     const fanoutMap = computeBlockerFanoutMap(tasks, {
       staleHighFanoutAgeThresholdMs:
         staleHighFanoutBlockerAgeThresholdMs ?? STALE_HIGH_FANOUT_BLOCKER_AGE_THRESHOLD_MS,
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-30-23:55:
+      The same per-task trait index this bar already takes for its stuck/running counts. Without it
+      the fan-out classified against `todo`/`in-review`/`done`, so on a renamed board the overlap
+      bottleneck this segment exists to surface was never detected at all.
+      */
+      columnFlagsByTaskId,
     });
     const candidates = Array.from(fanoutMap.entries())
       .map(([blockerId, entry]) => ({ blockerId, entry }))
@@ -235,7 +242,7 @@ export function ExecutorStatusBar({ tasks, projectId, columnFlagsByTaskId: suppl
       });
 
     return candidates[0] ?? null;
-  }, [tasks, staleHighFanoutBlockerAgeThresholdMs]);
+  }, [tasks, staleHighFanoutBlockerAgeThresholdMs, columnFlagsByTaskId]);
 
   const StateIcon = stateDisplay.icon;
 

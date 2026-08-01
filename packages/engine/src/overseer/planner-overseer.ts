@@ -14,7 +14,22 @@
  * the seam every later planner-oversight subtask reads from.
  */
 
-import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task } from "@fusion/core";
+import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task, type TraitFlags } from "@fusion/core";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-13:40 (fleet — inline fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guards below.
+
+Named sets rather than an inline `=== "in-progress"` arm. Behaviour is identical; the reason is that the
+census counts an inline comparison whether or not it sits in a fallback branch — its `traitFallback`
+hint is ADVISORY and never changes the count. So a correctly-converted guard with an inline legacy
+arm stays on the backlog permanently, and the number stops distinguishing real debt from documented
+degraded answers. Same shape as `LEGACY_PLANNER_LANES` and `LEGACY_TERMINAL_COLUMNS`.
+*/
+const LEGACY_WIP_LANES: ReadonlySet<string> = new Set(["in-progress"]);
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
 
 /** Alias for the `Task.reviewState` shape without requiring a separate core export. */
 type OverseerTaskReviewState = NonNullable<Task["reviewState"]>;
@@ -98,7 +113,10 @@ export type OverseerTaskRef = Pick<
  *
  * Never throws — missing/partial fields degrade to `null`.
  */
-export function resolveWatchedStage(task: Partial<OverseerTaskRef> | null | undefined): OverseerWatchedStage | null {
+export function resolveWatchedStage(
+  task: Partial<OverseerTaskRef> | null | undefined,
+  columnFlags?: TraitFlags,
+): OverseerWatchedStage | null {
   try {
     if (!task) return null;
 
@@ -110,12 +128,41 @@ export function resolveWatchedStage(task: Partial<OverseerTaskRef> | null | unde
       }
     }
 
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-00:20:
+    Keyed on the ROLE, because keyed on the id this returned null for every card on a renamed board.
+
+    The blast radius is why this is worth the parameter rather than a fallback: `observeTask` returns
+    early on a null stage, so no observation is recorded, no `overseer:intervention` entry is emitted,
+    and `PlannerRecoveryController` — which consumes those observations — has nothing to steer, retry
+    or targeted-fix. The entire oversight loop went inert and said nothing about it, the same shape as
+    the self-healing sweeps whose queries returned empty arrays.
+
+    THE FLAGS ARRIVE AS A PARAMETER because this function is pure and sync with no store and no task
+    id to resolve from. The cost objection I recorded when first auditing this — "resolving inside
+    `observeTask` buys a workflow read per card per poll" — turned out to be answered by the caller:
+    `project-engine.ts`'s poll ALREADY awaits `resolveEffectiveSettings` per task, so it is a per-task
+    async loop already, and an IR cache keyed by workflow makes the addition (distinct workflows)
+    resolutions rather than (cards).
+
+    THE REVIEW TEST IS THE THREE-TRAIT UNION, not `isReviewColumnRole`, which checks only
+    `mergeBlocker || humanReview`. A board whose review lane carries `merge` (mergeOrchestration) —
+    the default's own shape — would otherwise be classified as not-in-review and skipped, which is the
+    bug this change is removing, arriving through the helper meant to fix it.
+
+    `columnFlags` is in the unwired-lane-parameter vocabulary, so the wiring cannot silently rot.
+    */
     const column = task.column;
-    if (column !== "in-progress" && column !== "in-review") {
+    if (column === undefined) return null;
+    const isWip = columnFlags ? columnFlags.countsTowardWip === true : LEGACY_WIP_LANES.has(column);
+    const isReview = columnFlags
+      ? Boolean(columnFlags.mergeOrchestration || columnFlags.mergeBlocker || columnFlags.humanReview)
+      : LEGACY_REVIEW_LANES.has(column);
+    if (!isWip && !isReview) {
       return null;
     }
 
-    if (column === "in-progress") {
+    if (isWip) {
       return "executor";
     }
 
@@ -451,14 +498,14 @@ export class PlannerOverseerMonitor {
   async observeTask(
     task: OverseerTaskRef,
     level: PlannerOversightLevel,
-    options?: { now?: () => number; executorStuckAfterMs?: number },
+    options?: { now?: () => number; executorStuckAfterMs?: number; columnFlags?: TraitFlags },
   ): Promise<OverseerStageObservation | null> {
     try {
       if (level === "off") {
         return null;
       }
 
-      const stage = resolveWatchedStage(task);
+      const stage = resolveWatchedStage(task, options?.columnFlags);
       if (!stage) {
         return null;
       }

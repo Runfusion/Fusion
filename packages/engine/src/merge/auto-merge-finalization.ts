@@ -1,4 +1,15 @@
-import { getTaskHardMergeBlocker, resolveWorkflowIrForTask, resolveCompleteColumn, resolveMergeOrchestrationColumn, columnHasFlag, type MergeResult, type Task, type TaskStore } from "@fusion/core";
+import {
+  getTaskHardMergeBlocker,
+  resolveWorkflowIrForTask,
+  resolveCompleteColumn,
+  resolveMergeOrchestrationColumn,
+  columnHasFlag,
+  REVIEW_ELIGIBLE_SENTINEL_COLUMN,
+  clearMergeConfirmedTransientStatus,
+  type MergeResult,
+  type Task,
+  type TaskStore,
+} from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
 
 /*
@@ -22,9 +33,19 @@ async function resolveFinalizationColumns(
       isCompleteColumn: (columnId: string) => columnHasFlag(ir, columnId, "complete"),
     };
   } catch {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:51 (DELIBERATE-LITERAL — the FAIL-SOFT arm of an
+    already-converted resolver): the resolved path is the `try` above. This block runs only when the
+    workflow IR cannot be read at all, and its whole job is to answer with the built-in vocabulary so
+    finalization keeps working rather than throwing. Resolving here is impossible by construction —
+    the resolver is what just failed — so this is not pending conversion work and is marked instead of
+    being left to re-offer itself as available on every census.
+    */
     return {
       completeColumn: "done",
       mergeColumn: "in-review",
+      /* DELIBERATE-LITERAL — the degraded fallback arm; the live arm above calls `columnHasFlag`.
+         Reached only when IR resolution throws, where the legacy id is the only answer left. */
       isCompleteColumn: (columnId: string) => columnId === "done",
     };
   }
@@ -78,10 +99,42 @@ function hasIncompleteWorkflowSteps(task: Task): boolean {
 
 export async function validateWorkflowDoneMergeProof(
   task: Task,
-  options: { result?: MergeResult; checkWorkflowSteps?: boolean } = {},
+  options: {
+    result?: MergeResult;
+    checkWorkflowSteps?: boolean;
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-23:20:
+    The RESOLVED complete test, supplied by the caller. Omitted → the `done` literal, i.e. today's
+    behaviour, which is the same default-to-legacy contract the lane-parameter vocabulary uses
+    elsewhere. `resolveFinalizationColumns` in this file already builds exactly this predicate for
+    its own guard; the two callers below now hand it down instead of re-asking with an id.
+    */
+    isCompleteColumn?: (columnId: string) => boolean;
+  } = {},
 ): Promise<WorkflowDoneMergeProofVerdict> {
   const hasProof = hasDurableMergeProof(task, options.result);
-  if (!hasProof) return { ok: false, reason: task.column === "done" ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:25 (the deferral is now paid — see the note above):
+  This literal selects which REASON STRING is reported, not which branch runs. Both arms return
+  `{ ok: false }`, so on a renamed board a card sitting in the complete lane was refused with the
+  generic `missing-merge-confirmation` instead of the specific `done-without-merge-confirmation`.
+
+  The earlier note recorded this as "REAL but DIAGNOSTIC-ONLY" and declined it on the grounds that
+  widening a signature to improve an error string is a poor trade. That undersold the consequence:
+  this reason is not a log line. It is asserted as run-audit metadata alongside `previousColumn`
+  (`merger-merge-lifecycle.test.ts`), so the audit trail — the record an operator reads to find out
+  why a merge was refused — carried the wrong classification for every renamed board.
+
+  The trade is also cheaper than it looked. This function is ALREADY async and ALREADY takes an
+  options bag, and `resolveFinalizationColumns` two functions up ALREADY builds this exact predicate
+  for its own guard. Nothing new is resolved; the answer that existed is handed down instead of
+  being re-asked with an id — which is the half-conversion shape this program keeps finding, here
+  within one file.
+  */
+  /* DELIBERATE-LITERAL: the fallback arm of the conversion described directly above — reached only
+     when a caller passes no resolved predicate. The resolved path is `options.isCompleteColumn`. */
+  const isCompleteLane = options.isCompleteColumn ? options.isCompleteColumn(task.column) : task.column === "done";
+  if (!hasProof) return { ok: false, reason: isCompleteLane ? "done-without-merge-confirmation" : "missing-merge-confirmation" };
   if (options.checkWorkflowSteps !== false && hasIncompleteWorkflowSteps(task)) {
     return { ok: false, reason: "incomplete-workflow-steps" };
   }
@@ -195,7 +248,7 @@ export async function finalizeProvenAutoMergeTask({
    * Workflow-owned completion requires current merge proof, not just a stale `mergeConfirmed` flag. A task cannot reach or remain accepted as `done` when workflow steps are still pending or a no-op claims landed files. Branch-only residue is ignored because squash landing validates the task patch, not branch-history cleanliness.
    */
   if (isCompleteColumn(latest.column)) {
-    const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails: validationMergeDetails } as Task, { result });
+    const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails: validationMergeDetails } as Task, { result, isCompleteColumn });
     if (!proofVerdict.ok) {
       await recordFinalizationAudit({
         store,
@@ -239,9 +292,9 @@ export async function finalizeProvenAutoMergeTask({
     NOT re-keyed to the merge-orchestration column so custom workflows evaluate the
     same review-eligible blocker set as builtin.
     */
-    column: "in-review",
+    column: REVIEW_ELIGIBLE_SENTINEL_COLUMN,
     paused: false,
-    status: latest.status === "merging" || latest.status === "merging-pr" || latest.status === "queued" ? undefined : latest.status,
+    status: clearMergeConfirmedTransientStatus(latest.status),
     error: undefined,
   });
   if (hardBlocker) {
@@ -264,6 +317,7 @@ export async function finalizeProvenAutoMergeTask({
   const proofVerdict = await validateWorkflowDoneMergeProof({ ...latest, mergeDetails } as Task, {
     result,
     checkWorkflowSteps: false,
+    isCompleteColumn,
   });
   if (!proofVerdict.ok) {
     await recordFinalizationAudit({

@@ -309,30 +309,21 @@ describe("ProjectManager", () => {
     });
   });
 
-  describe("global slots", () => {
-    it("should acquire global slot", async () => {
-      const acquired = await manager.acquireGlobalSlot("proj_test123");
+  /*
 
-      expect(acquired).toBe(true);
-      expect(mockCentralCore.acquireGlobalSlot).toHaveBeenCalledWith("proj_test123");
-    });
+  FNXC:CapacityModel 2026-07-28-20:40 (drop the cross-project cap):
 
-    it("should release global slot", async () => {
-      await manager.releaseGlobalSlot("proj_test123");
+  The "global slots" block is DELETED with the acquireGlobalSlot/releaseGlobalSlot
 
-      expect(mockCentralCore.releaseGlobalSlot).toHaveBeenCalledWith("proj_test123");
-    });
+  methods it covered. Measured before removing them: those methods had NO production
 
-    it("should handle acquire failure gracefully", async () => {
-      (mockCentralCore.acquireGlobalSlot as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("Slot unavailable")
-      );
+  callers — only these tests — so the central-DB `currentlyActive` counter they
 
-      const acquired = await manager.acquireGlobalSlot("proj_test123");
+  maintained was never incremented by real work. Keeping the tests would have
 
-      expect(acquired).toBe(false);
-    });
-  });
+  pinned a passthrough that nothing calls.
+
+  */
 
   describe("event forwarding", () => {
     const testConfig: ProjectRuntimeConfig = {

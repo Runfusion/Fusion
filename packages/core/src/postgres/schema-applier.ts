@@ -42,16 +42,20 @@ SCHEMA_BASELINE_VERSION advances to 0031 for durable, single-owner task
 continuations at workflow column boundaries.
 
 FNXC:LegacyAdoption 2026-07-21-17:30:
-SCHEMA_BASELINE_VERSION advances to 0036 for normalized Direct conversation tags; it previously advanced to 0032 for fusion_runtime SELECT +
+SCHEMA_BASELINE_VERSION advances to 0037 for dropping the cross-project concurrency table; it previously advanced to 0036 for normalized Direct conversation tags; it previously advanced to 0032 for fusion_runtime SELECT +
 SECURITY DEFINER write access to the legacy-adoption drained marker.
 
-FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+FNXC:TaskWedgeNotifications 2026-07-23-00:00:
 Advance the PostgreSQL schema ceiling for the durable wedge episode column. The
 forward migration must run before TaskStore writes the new field on fresh and
 upgraded databases.
+
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+SCHEMA_BASELINE_VERSION advances to 0038 for optional per-mission task_prefix — 0037 is the
+capacity-model table drop that landed while this PR was open.
 */
-export const SCHEMA_BASELINE_VERSION = "0036";
-/** FNXC:SymbolLock 2026-07-31-10:00: upgrades need durable task declarations before admission resolves symbols. */
+export const SCHEMA_BASELINE_VERSION = "0038";
+/** FNXC:SymbolLock 2026-07-20-10:00: upgrades need durable task declarations before admission resolves symbols. */
 export const TASK_DECLARED_SYMBOLS_VERSION = "0028";
 const INITIAL_SCHEMA_VERSION = "0000";
 const AUTOMATION_ISOLATION_SCHEMA_VERSION = "0001";
@@ -137,21 +141,38 @@ export const TASK_VERIFICATION_REQUEST_VERSION = "0024";
 export const SYMBOL_LOCKS_SCHEMA_VERSION = "0025";
 /** FNXC:PostgresBigintCounters 2026-07-18-21:45: widen overflow-prone counters to bigint before SQLite migration. */
 export const BIGINT_COUNTERS_VERSION = "0026";
-/** FNXC:TaskTiming 2026-08-01-10:00: existing clusters need planning-session timing columns. */
+/** FNXC:TaskTiming 2026-07-20-10:00: existing clusters need planning-session timing columns. */
 export const PLANNING_ACTIVE_TIMING_VERSION = "0029";
 /** Dashboard health needs project-scoped, read-only runtime access to the SQLite cutover ledger. */
 export const SQLITE_MIGRATION_RUNTIME_READ_VERSION = "0030";
 export const WORKFLOW_TASK_CONTINUATIONS_VERSION = "0031";
 /** FNXC:LegacyAdoption 2026-07-21-17:30: runtime role needs drained-marker read + restricted write. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_RUNTIME_GRANTS_VERSION = "0032";
-/** FNXC:TaskWedgeNotifications 2026-10-19-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
+/** FNXC:TaskWedgeNotifications 2026-07-23-00:00: manually register the durable wedge episode migration for PostgreSQL upgrades. */
 export const TASK_WEDGE_NOTIFICATION_VERSION = "0033";
 /** FNXC:MissionValidation 2026-07-23-14:30: provenance-safe milestone criteria require an explicit upgrade. */
 export const MILESTONE_ASSERTION_PROVENANCE_VERSION = "0034";
 /** FNXC:MissionLineageBudget 2026-07-22-12:00: migration is explicit because upgraded clusters need durable root stop tombstones. */
 export const MISSION_LINEAGE_STOP_VERSION = "0035";
-/** FNXC:ChatTags 2026-08-05-10:55: existing clusters need normalized project-scoped Direct conversation tags. */
+/** FNXC:ChatTags 2026-07-25-10:55: existing clusters need normalized project-scoped Direct conversation tags. */
 export const CHAT_SESSION_TAGS_VERSION = "0036";
+/*
+FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+Drops `central.global_concurrency`. Registered EXPLICITLY, per this file's own
+warning that migrations are not auto-discovered and an unwired .sql silently never
+runs — which is exactly what happened on the first attempt here: the file existed,
+the model was updated, and the table was still present in a fresh database.
+*/
+export const DROP_GLOBAL_CONCURRENCY_VERSION = "0037";
+/*
+FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main — RENUMBERED 0037 -> 0038):
+Upgraded projects need the optional mission prefix before mission reads and triage task creation use
+it. This shipped as 0037 when the PR was written; main has since taken 0037 for the capacity-model
+table drop, and two migrations cannot share a number — the runner keys bookkeeping on it, so the
+second would read as already-applied and silently never run. Renumbered rather than reordered: 0037
+is landed on real databases and its identity is immutable, per the MONITOR_APPROVAL note above.
+*/
+export const MISSION_TASK_PREFIX_VERSION = "0038";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
 export const LEGACY_ADOPTION_DRAINED_MARKER_FUNCTION = "fusion_mark_legacy_adoption_drained";
@@ -362,6 +383,8 @@ const MILESTONE_ASSERTION_PROVENANCE_MIGRATION_PATH = join(
 );
 const MISSION_LINEAGE_STOP_MIGRATION_PATH = join(MIGRATIONS_DIR, "0035_fn_8543_mission_lineage_stop.sql");
 const CHAT_SESSION_TAGS_MIGRATION_PATH = join(MIGRATIONS_DIR, "0036_chat_session_tags.sql");
+const DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH = join(MIGRATIONS_DIR, "0037_drop_global_concurrency.sql");
+const MISSION_TASK_PREFIX_MIGRATION_PATH = join(MIGRATIONS_DIR, "0038_mission_task_prefix.sql");
 
 /**
  * Ensure the migration bookkeeping table exists. Lives in the public schema so
@@ -468,6 +491,8 @@ export async function applySchemaBaseline(
     const milestoneAssertionProvenanceAlreadyApplied = applied.includes(MILESTONE_ASSERTION_PROVENANCE_VERSION);
     const missionLineageStopAlreadyApplied = applied.includes(MISSION_LINEAGE_STOP_VERSION);
     const chatSessionTagsAlreadyApplied = applied.includes(CHAT_SESSION_TAGS_VERSION);
+    const dropGlobalConcurrencyAlreadyApplied = applied.includes(DROP_GLOBAL_CONCURRENCY_VERSION);
+    const missionTaskPrefixAlreadyApplied = applied.includes(MISSION_TASK_PREFIX_VERSION);
     assertBinaryNotOlderThanDatabase(applied);
     let schemaChanged = false;
 
@@ -940,7 +965,7 @@ export async function applySchemaBaseline(
     }
 
     /*
-    FNXC:TaskWedgeNotifications 2026-10-19-00:00:
+    FNXC:TaskWedgeNotifications 2026-07-23-00:00:
     PostgreSQL migrations are explicitly registered rather than discovered.
     Apply the wedge episode column before persistence writes it, including on
     databases that already recorded the prior schema ceiling.
@@ -981,11 +1006,39 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
-    /* FNXC:ChatTags 2026-08-05-10:55: migrations are explicitly registered; this must run after the baseline on both fresh and upgrade databases. */
+    /* FNXC:ChatTags 2026-07-25-10:55: migrations are explicitly registered; this must run after the baseline on both fresh and upgrade databases. */
     if (!chatSessionTagsAlreadyApplied) {
       const migrationSql = await readFile(CHAT_SESSION_TAGS_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));
       await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${CHAT_SESSION_TAGS_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+    Runs after the baseline on BOTH fresh and upgrade databases. A fresh database
+    still CREATEs the table from 0000_initial (the historical baseline is left
+    untouched, as every prior migration does) and then drops it here, so both paths
+    converge on the same shape without rewriting history.
+    */
+    if (!dropGlobalConcurrencyAlreadyApplied) {
+      const migrationSql = await readFile(DROP_GLOBAL_CONCURRENCY_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${DROP_GLOBAL_CONCURRENCY_VERSION}) ON CONFLICT (version) DO NOTHING`);
+      schemaChanged = true;
+    }
+
+    /*
+    FNXC:MissionTaskPrefix 2026-07-30-21:10 (rebase onto migrated main):
+    Apply missions.task_prefix independently so databases that already recorded an earlier version
+    gain the optional mission namespace before mission reads or task minting. Sequenced AFTER the
+    capacity-model drop rather than merged with it: the two are unrelated, and a shared guard would
+    make either one's bookkeeping row suppress the other's SQL.
+    */
+    if (!missionTaskPrefixAlreadyApplied) {
+      const migrationSql = await readFile(MISSION_TASK_PREFIX_MIGRATION_PATH, "utf8");
+      await tx.execute(sql.raw(migrationSql));
+      await tx.execute(sql`INSERT INTO public.${sql.identifier(MIGRATION_BOOKKEEPING_TABLE)} (version) VALUES (${MISSION_TASK_PREFIX_VERSION}) ON CONFLICT (version) DO NOTHING`);
       schemaChanged = true;
     }
 

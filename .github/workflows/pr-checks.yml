@@ -50,6 +50,32 @@ jobs:
       - name: Dashboard route modularity
         run: pnpm check:routes-modular
 
+      # The lifecycle-column ratchet was advisory until now: the census existed only as
+      # `pnpm census:lifecycle-columns` (no --strict) and nothing ran it, so three PRs
+      # lowered counts without re-recording and left allowances the deleted guards could
+      # return through while this gate stayed green. ~2s over ~1950 files.
+      - name: Lifecycle-column ratchet
+        run: pnpm check:lifecycle-columns
+      - name: SQL-column ratchet
+        run: pnpm check:sql-column-literals
+      - name: Move-target ratchet
+        run: pnpm check:move-target-literals
+      - name: Inert lane/flag seams
+        run: pnpm check:inert-flag-seams
+      - name: FNXC stamp dates
+        run: pnpm check:fnxc-future-dates
+      - name: Lane-wiring ratchet
+        run: pnpm check:lane-wiring
+      - name: Plugin interop declarations match the dashboard API
+        run: pnpm check:plugin-interop-drift
+      # AGENTS.md states the deletion ratchet as policy — "A quarantined test is DELETED after 14
+      # days (quarantinedAt + 2 weeks) unless rescued" — and nothing enforced it. Same shape as the
+      # lifecycle-column note above: the script supports `--strict`, the package script omitted it,
+      # and no workflow ran it, so it could not fail however long an entry sat there. It fires 5 days
+      # BEFORE the deadline so the choice is still delete-or-rescue rather than an overdue entry.
+      - name: Quarantine deletion ratchet
+        run: pnpm check:quarantine-ledger
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

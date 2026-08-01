@@ -35,10 +35,11 @@ vi.mock("@fusion/core", async () => {
   return {
     ...actual,
     getCurrentRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
+    getPushRepo: vi.fn(() => ({ owner: "owner", repo: "repo" })),
   };
 });
 
-import { getCurrentRepo } from "@fusion/core";
+import { getCurrentRepo, getPushRepo } from "@fusion/core";
 import { activeSessionRegistry } from "@fusion/engine";
 import {
   cleanupMergedTaskArtifacts,
@@ -158,6 +159,8 @@ describe("processPullRequestMergeTask", () => {
     execMock.mockReset();
     execFileCalls.length = 0;
     vi.mocked(getCurrentRepo).mockReturnValue({ owner: "owner", repo: "repo" });
+    // Same-repo default: push owner matches fetch owner so heads stay unqualified.
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "owner", repo: "repo" });
   });
 
   describe("central-install repo threading (gh-4)", () => {
@@ -169,6 +172,7 @@ describe("processPullRequestMergeTask", () => {
     beforeEach(() => {
       vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
         cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+      vi.mocked(getPushRepo).mockReturnValue({ owner: "central-owner", repo: "central-repo" });
     });
 
     it("threads explicit owner/repo into findPrForBranch, createPr, and mergePr on the per-task path", async () => {
@@ -1839,6 +1843,7 @@ describe("createGroupPrCallback", () => {
   it("resolves the repo from the callback cwd and threads owner/repo into findPrForBranch/createPr (gh-4)", async () => {
     vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
       cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "central-owner", repo: "central-repo" });
     execMock.mockReturnValue("");
 
     const github = {
@@ -1868,6 +1873,40 @@ describe("createGroupPrCallback", () => {
     );
     expect(result.prNumber).toBe(5);
   });
+
+  it("qualifies the group PR head with the fork owner when origin pushes to a fork", async () => {
+    vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
+      cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "fork-owner", repo: "central-repo" });
+    execMock.mockReturnValue("");
+
+    const github = {
+      findPrForBranch: vi.fn(async () => null),
+      createPr: vi.fn(async () => ({
+        number: 7,
+        url: "https://github.com/central-owner/central-repo/pull/7",
+        status: "open" as const,
+      })),
+    };
+
+    const callback = createGroupPrCallback(github as never);
+    await callback({
+      cwd: "/projects/repo-a",
+      group: { id: "BG-fork", branchName: "fusion/groups/fork" } as never,
+      members: [{ id: "FN-9602", title: "m1" }] as never,
+      headBranch: "fusion/groups/fork",
+      baseBranch: "main",
+    });
+
+    expect(vi.mocked(getPushRepo)).toHaveBeenCalledWith("/projects/repo-a");
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: "central-owner",
+        repo: "central-repo",
+        head: "fork-owner:fusion/groups/fork",
+      }),
+    );
+  });
 });
 
 describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
@@ -1876,6 +1915,7 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     execFileCalls.length = 0;
     vi.mocked(getCurrentRepo).mockImplementation(((cwd?: string) =>
       cwd ? { owner: "central-owner", repo: "central-repo" } : null) as never);
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "central-owner", repo: "central-repo" });
   });
 
   const githubStub = () => ({
@@ -1940,6 +1980,23 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     expect(result.prNumber).toBe(9);
   });
 
+  it("qualifies the PR head with the fork owner when origin pushes to a fork", async () => {
+    execMock.mockReturnValue("");
+    vi.mocked(getPushRepo).mockReturnValue({ owner: "fork-owner", repo: "central-repo" });
+    const github = githubStub();
+    const ops = createPrNodeGithubOps(github as never);
+
+    await ops.createPr({
+      task: { id: "FN-9601", title: "t", description: "d", worktree: "/projects/repo-a/.worktrees/fn-9601" },
+      entity: { id: "e1", sourceId: "FN-9601", repo: "central-owner/central-repo", headBranch: "fusion/fn-9601", baseBranch: "main" },
+    } as never);
+
+    expect(vi.mocked(getPushRepo)).toHaveBeenCalledWith("/projects/repo-a/.worktrees/fn-9601");
+    expect(github.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: "central-owner", repo: "central-repo", head: "fork-owner:fusion/fn-9601" }),
+    );
+  });
+
   it("mergePr passes owner/repo parsed from entity.repo", async () => {
     const github = githubStub();
     const ops = createPrNodeGithubOps(github as never);
@@ -1952,4 +2009,3 @@ describe("createPrNodeGithubOps repo resolution (gh-4)", () => {
     );
   });
 });
-

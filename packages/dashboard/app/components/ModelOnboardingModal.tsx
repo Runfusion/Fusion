@@ -2455,7 +2455,7 @@ export function ModelOnboardingModal({
       persistGeometryKey="floating-window:model-onboarding"
       suspendGeometryPersistenceOnMobile
       suspendGeometryPersistenceOnShortViewport
-      ariaLabel={`${t("setup.titleAiSetup", "Set Up AI")} dialog`}
+      ariaLabel={t("setup.titleAiSetup", "Set Up AI")}
       ariaLabelledBy="onboarding-title"
     >
       <div className="modal model-onboarding-modal">

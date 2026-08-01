@@ -1,4 +1,6 @@
 import { createLogger } from "../process/logger.js";
+import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 
 const severityAuditLog = createLogger("core-async-mission-store");
 /**
@@ -9,7 +11,7 @@ const severityAuditLog = createLogger("core-async-mission-store");
  * events; reusable SQL and row mapping live in async-mission-store-queries.ts.
  */
 import { EventEmitter } from "node:events";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, notInArray} from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "../missions/mission-types.js";
@@ -50,6 +52,7 @@ import type { Goal } from "../goals/goal-types.js";
 import {
   deriveMilestoneAcceptanceCriteriaFromFeatures,
 } from "../missions/mission-store.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import type {
   MissionSummary,
   MissionAssertionBackfillReport,
@@ -258,6 +261,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       description: input.description,
       baseBranch: input.baseBranch,
       branchStrategy: input.branchStrategy,
+      taskPrefix: input.taskPrefix,
       autoMerge: input.autoMerge,
       status: "planning",
       interviewState: "not_started",
@@ -1073,12 +1077,35 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     return updated;
   }
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-12:50 (batch-core):
+  "Is this linked task ARCHIVED?" for the two mission guards below, resolved from the task's own
+  workflow. Keyed on the literal, a renamed board answered NO for every archived card: `deleteFeature`
+  treated an archived task as still live and refused the delete without `force`, and feature bootstrap
+  accepted an archived task as an active target.
+
+  `taskStore` is optional on this class, and a workflow that expresses no trait at all is a v1 upgrade
+  rather than a board without an archive lane — both keep the legacy id, which is the behaviour these
+  guards already had.
+  */
+  private async archivedLanesFor(taskId: string): Promise<ReadonlySet<string>> {
+    if (!this.taskStore) return new Set(["archived"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.taskStore, taskId);
+      if (!ir || !declaresAnyLifecycleTrait(ir)) return new Set(["archived"]);
+      const archived = columnsWithFlag(ir, "archived");
+      return archived.length > 0 ? new Set(archived) : new Set(["archived"]);
+    } catch {
+      return new Set(["archived"]);
+    }
+  }
+
   async deleteFeature(id: string, force = false): Promise<void> {
     const feature = await getFeature(this.db, id);
     if (!feature) throw new Error(`Feature ${id} not found`);
     if (feature.taskId) {
       const linkedTask = await getLiveTaskById(this.db, feature.taskId);
-      const linkedToLiveTask = linkedTask && linkedTask.column !== "archived";
+      const linkedToLiveTask = linkedTask && !(await this.archivedLanesFor(feature.taskId)).has(linkedTask.column);
       if (linkedToLiveTask && !force) {
         throw new Error(`Feature ${id} is linked to task ${feature.taskId}; pass force to delete anyway`);
       }
@@ -1133,7 +1160,26 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         );
       }
 
-      const evidence = await getTerminalTaskEvidence(tx, taskId);
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-07-31-05:05:
+      Resolve the board's terminal lanes and hand them down; without this the predicate is inert.
+
+      Keyed on the literals, a genuinely completed card on a renamed board fell through every branch
+      to `nonterminal`, and this method then threw `TASK_NOT_TERMINAL: ... must be in done or
+      supported archived state, not shipped`. Mission shipped-delivery repair refused valid work, and
+      the message named the real column while the check could not see it.
+
+      `this.taskStore` is optional on the class but the single production construction site supplies
+      it (`workflow-definitions.ts`). Absent, the resolver is skipped and the legacy ids answer —
+      which is what every test that constructs the store without one already relies on.
+      */
+      const terminalColumns = this.taskStore
+        ? {
+            complete: await resolveProjectColumnsForRoles(this.taskStore, ["complete"]).catch(() => undefined),
+            archived: await resolveProjectColumnsForRoles(this.taskStore, ["archived"]).catch(() => undefined),
+          }
+        : undefined;
+      const evidence = await getTerminalTaskEvidence(tx, taskId, terminalColumns);
       if (evidence.kind === "missing") {
         throw new TerminalTaskReconciliationError("TASK_NOT_FOUND", `Delivery task ${taskId} not found`);
       }
@@ -1262,7 +1308,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
         sql`${schema.project.tasks.deletedAt} is null`,
       ));
     const task = taskRows[0];
-    if (!task || task.column === "archived") {
+    if (!task || (await this.archivedLanesFor(input.taskId)).has(task.column)) {
       throw new Error(`Cannot bootstrap feature ${input.featureId}: task ${input.taskId} is not active in this project`);
     }
     if (task.missionId !== input.missionId || task.sliceId !== input.sliceId) {
@@ -1302,6 +1348,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
    * generic intake path to archive feature.taskId.
    */
   async archiveDefinedFeatureBootstrapDuplicate(input: { featureId: string; taskId: string; duplicateTaskId: string }): Promise<void> {
+    /* Resolved once, outside the transaction: both guards below ask the same question. */
+    const claimedArchivedLanes = await this.archivedLanesFor(input.taskId);
     /*
     FNXC:MissionAdmission 2026-07-23-21:10:
     Project-agnostic legacy stores remain scoped to their reserved RLS
@@ -1326,7 +1374,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.taskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          sql`${schema.project.tasks.column} <> 'archived'`,
+          notInArray(schema.project.tasks.column, [...claimedArchivedLanes]),
         ));
       if (!claimed[0]) throw new Error(`Cannot reconcile defined-feature bootstrap duplicate: claimed task ${input.taskId} is not live`);
       /*
@@ -1338,13 +1386,31 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       */
       const duplicateFeature = await getConflictingFeatureByTaskId(tx, input.duplicateTaskId, input.featureId);
       if (duplicateFeature) return;
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-10:10:
+      THE ARCHIVE TARGET IS RESOLVED, not the literal `archived`.
+
+      This writes `tasks.column` DIRECTLY rather than going through `moveTask`, so neither the
+      lifecycle census (which reads comparisons) nor the move-target census (which reads
+      `moveTask` call arguments) could see it. On a board whose archive lane is named anything
+      else, it parked the duplicate in a column that workflow does not declare — a card in a lane
+      the board cannot render.
+
+      `archivedLanesFor` already exists on this class for the guards above and returns the legacy
+      id when the task has no resolvable workflow, so an unconverted board is byte-identical.
+      A board declaring several archive lanes is arbitrated by taking the first; that is the same
+      choice `resolveLifecycleColumns` makes, and multiple archive lanes are not a shape the
+      builtin lineages produce.
+      */
+      const duplicateArchivedLanes = await this.archivedLanesFor(input.duplicateTaskId);
+      const archiveTarget = [...duplicateArchivedLanes][0] ?? "archived";
       await tx.update(schema.project.tasks)
-        .set({ column: "archived", updatedAt: new Date().toISOString() })
+        .set({ column: archiveTarget, updatedAt: new Date().toISOString() })
         .where(and(
           eq(schema.project.tasks.projectId, projectId),
           eq(schema.project.tasks.id, input.duplicateTaskId),
           sql`${schema.project.tasks.deletedAt} is null`,
-          sql`${schema.project.tasks.column} <> 'archived'`,
+          notInArray(schema.project.tasks.column, [...duplicateArchivedLanes]),
         ));
     });
   }
@@ -2255,6 +2321,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           An autoMerge:false mission stamps each newly triaged task so its shared branch produces one PR instead of per-task auto-merges. Duplicate reuse intentionally bypasses this create-only override.
           */
           ...(mission?.autoMerge === false ? { autoMerge: false } : {}),
+          // FNXC:MissionTaskPrefix 2026-07-26-12:00: thread the mission's optional taskPrefix into TaskCreateInput so the distributed allocator mints ERR-N (etc.) instead of the project prefix.
+          ...(mission?.taskPrefix ? { taskPrefix: mission.taskPrefix } : {}),
           ...(branchOptions?.workflowId !== undefined ? { workflowId: branchOptions.workflowId } : {}),
         });
         if (guard.fingerprint) {

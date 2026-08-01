@@ -38,11 +38,13 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { isAbsolute } from "node:path";
 import {
+  PluginLoader as CorePluginLoader,
   getTraitRegistry,
   getWorkflowExtensionRegistry,
   evaluatePromptConditionDetailed,
   resolveEffectivePluginSettings,
   resolveWorkflowIrForTask,
+  columnsWithFlag,
   workflowExtensionRegistryId,
 } from "@fusion/core";
 import { createLogger, executorLog } from "../logger.js";
@@ -812,9 +814,13 @@ export class PluginRunner {
       const pluginId = plugin.manifest.id;
       try {
         const settings = await this.getPluginSettings(pluginId);
+        // FNXC:PluginTaskStoreGate 2026-07-26-12:20: same gate as createToolContext.
         const context: PluginContext = {
           pluginId,
-          taskStore: this.options.taskStore,
+          taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+            pluginId,
+            permissions: plugin.manifest.permissions,
+          }),
           settings,
           logger: this.createPluginLogger(pluginId),
           emitEvent: (event: string, data: unknown) => {
@@ -1251,9 +1257,14 @@ export class PluginRunner {
    */
   private async createToolContext(plugin: FusionPlugin): Promise<PluginContext> {
     const settings = await this.getPluginSettings(plugin.manifest.id);
+    // FNXC:PluginTaskStoreGate 2026-07-26-12:20: destructive TaskStore methods are
+    // gated behind manifest permissions.destructiveTaskOps for every plugin context.
     return {
       pluginId: plugin.manifest.id,
-      taskStore: this.options.taskStore,
+      taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+        pluginId: plugin.manifest.id,
+        permissions: plugin.manifest.permissions,
+      }),
       settings,
       logger: this.createPluginLogger(plugin.manifest.id),
       emitEvent: (event: string, data: unknown) => {
@@ -1280,9 +1291,13 @@ export class PluginRunner {
     }
 
     const settings = await this.getPluginSettings(pluginId);
+    // FNXC:PluginTaskStoreGate 2026-07-26-12:20: same gate as createToolContext.
     return {
       pluginId,
-      taskStore: this.options.taskStore,
+      taskStore: CorePluginLoader.createGatedTaskStore(this.options.taskStore, {
+        pluginId,
+        permissions: plugin.manifest.permissions,
+      }),
       settings,
       logger: this.createPluginLogger(pluginId),
       emitEvent: (event: string, data: unknown) => {
@@ -1459,10 +1474,33 @@ export class PluginRunner {
     // Fire and forget - don't await
     void this.invokeHookSafe("onTaskMoved", task, from, to);
 
-    // If task completed, invoke onTaskCompleted hook
-    if (to === "done") {
-      void this.invokeHookSafe("onTaskCompleted", task);
-    }
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-30-12:30 (batch-engine tail):
+    "Completed" is the COMPLETE role, not the id `done`. Keyed on the literal, `onTaskCompleted` NEVER
+    fired on a board whose complete lane is renamed — every plugin that closes an issue, posts a
+    notification, or records a metric on completion silently stopped, with nothing logged.
+
+    Resolved ASYNCHRONOUSLY inside the existing fire-and-forget seam rather than through the sync IR
+    reader: per `sync-workflow-ir-callsite-allowlist`, `resolveTaskWorkflowIrSync` returns the DEFAULT
+    workflow for every task in production, so a sync-resolved guard here would read as converted and
+    still be wrong for every custom board. This listener is already `void`-dispatched (the line above),
+    so awaiting inside it changes no ordering the caller can observe — the same shape
+    `NotificationService` uses for its `task:moved` handler.
+
+    Unioned with the legacy id because `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather
+    than throwing; without it a degraded board resolves a complete set excluding its own complete lane
+    and the hook goes silent again.
+    */
+    void (async () => {
+      const completeColumns = new Set<string>(["done"]);
+      try {
+        const ir = await resolveWorkflowIrForTask(this.options.taskStore, task.id);
+        if (ir) for (const id of columnsWithFlag(ir, "complete")) completeColumns.add(id);
+      } catch { /* degraded: legacy id only */ }
+      if (completeColumns.has(to)) {
+        await this.invokeHookSafe("onTaskCompleted", task);
+      }
+    })();
   };
 
   /**

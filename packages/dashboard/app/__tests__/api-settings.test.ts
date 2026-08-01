@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -279,7 +280,7 @@ describe("Settings API wrappers", () => {
 
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/scopes", expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }));
       // GET is the default method, so method should not be specified
       const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -305,7 +306,7 @@ describe("Settings API wrappers", () => {
 
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/scopes?projectId=proj_123", expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }));
       // GET is the default method
       const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -499,7 +500,7 @@ describe("Settings API wrappers", () => {
 
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/global", expect.objectContaining({
-        headers: { "Content-Type": "application/json" },
+        headers: API_JSON_HEADERS,
       }));
       // GET is the default method
       const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
@@ -809,8 +810,14 @@ describe("fetchPiSettings", () => {
     const result = await fetchPiSettings();
 
     expect(result).toEqual(mockSettings);
+    /*
+    Exact headers, not a nested objectContaining (coderabbit #2652). `fetchPiSettings` goes through
+    `api()`, so it carries the `x-fusion-client` attribution header — and a loose matcher would pass
+    with that header silently dropped, which is precisely what these assertions are the only guard
+    against. My own note in test/apiRequestHeaders.ts says so; this site was inconsistent with it.
+    */
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/pi-settings", expect.objectContaining({
-      headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      headers: API_JSON_HEADERS,
     }));
   });
 
@@ -1073,7 +1080,7 @@ describe("agent onboarding API wrappers", () => {
 
     expect(result.sessionId).toBe("onb-1");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/agents/onboarding/start-streaming?projectId=proj-123", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({
         intent: "Need a docs reviewer",

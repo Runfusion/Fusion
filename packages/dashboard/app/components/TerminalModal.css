@@ -241,6 +241,67 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
   border-radius: 2px;
 }
 
+/*
+FNXC:TerminalModalControls 2026-07-31-22:41:
+The tablet classifier, rather than the legacy 769px media query, owns this grip so a known
+768px touch tablet remains a floating window instead of receiving phone-sheet chrome. Only the
+reserved grip disables browser gesture handling: applying `touch-action: none` to the panel or
+header prevents native horizontal panning in the descendant overflowing tab strip.
+*/
+.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--modal-resize-touch-target);
+  min-block-size: var(--modal-resize-touch-target);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip::before {
+  content: "";
+  inline-size: var(--space-lg);
+  block-size: var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:TerminalModalControls 2026-07-31-22:41:
+The tab strip must retain native horizontal touch panning while the sibling grip owns window
+movement. This explicit contract prevents future tablet drag rules from suppressing tab scrolling.
+*/
+.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-tabs {
+  touch-action: pan-x;
+}
+
+/*
+FNXC:TerminalModalControls 2026-07-31-22:19:
+Tablets start docked, so the footer pop-out control needs the same touch-sized reach without
+changing its established 14px icon or footer layout. Its pseudo-element only enlarges the button
+hit area; it is not a second terminal control.
+*/
+.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"] {
+  position: relative;
+}
+
+.modal.terminal-modal.terminal-modal--tablet .terminal-clear-btn.terminal-clear-btn--icon[data-testid="terminal-popout-toggle"]::before {
+  content: "";
+  position: absolute;
+  inline-size: var(--modal-resize-touch-target);
+  block-size: var(--modal-resize-touch-target);
+  inset-inline-start: 50%;
+  inset-block-start: 50%;
+  transform: translate(-50%, -50%);
+}
+
 .terminal-tab {
   display: flex;
   align-items: center;
@@ -973,10 +1034,19 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
 
 /* === PTY Terminal Styles === */
 
+/*
+FNXC:TerminalLayout 2026-08-01-00:48:
+FN-8634 fixes the operator-reported Terminal end-side excess across modal, dock, floating,
+and embedded shells. xterm injects a native viewport track inside `.terminal-xterm`; padding
+on that same element made the painted end track appear as extra whitespace. Keep the symmetric
+shell padding on this clipped container and leave xterm's overflow, fit, and reflow ownership
+unchanged so both painted-track and no-track states have equal perceived empty insets.
+*/
 .terminal-container {
   flex: 1;
   min-height: 0;
   position: relative;
+  padding: var(--space-xs);
   background: var(--terminal-bg);
   overflow: hidden;
 }
@@ -985,7 +1055,7 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: var(--space-xs);
+  padding: 0;
 }
 
 /*

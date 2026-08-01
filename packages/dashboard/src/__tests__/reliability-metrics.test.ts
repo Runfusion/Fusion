@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ActivityLogEntry, RunAuditEvent } from "@fusion/core";
 
 import {
   bucketByDay,
+  countBouncesOut,
+  countEntriesInto,
+  countMovesInto,
   dayHasSamples,
   fileScopeInvariantFailuresPerDay,
   inReviewDurationMetrics,
@@ -181,5 +184,210 @@ describe("reliability-metrics", () => {
       fileScopeInvariantFailures: 0,
       recoverAlreadyMergedReviewTasksRecoveries: 0,
     })).toBe(true);
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-17:05:
+
+THE INVARIANT: the Reliability move counts cover every lane that carries the role, old name and new.
+
+The route issued two queries naming `in-review` and `in-progress`. On a board that renamed either,
+both return `{}`, every per-day count is zero, and `inReviewFailureRate7d` divides one zero by
+another and reports a healthy rate. A metric that answers with a REASSURING NUMBER instead of an
+error is the worst shape this class takes — an operator has no reason to suspect it is blind.
+
+The union covers history as well as the present, which matters because these read MOVE RECORDS: a
+board renamed last month has old rows under the old id and new rows under the new one. Asking for
+either name alone is what is broken today, not a trade-off between them.
+
+REVERT PROOF, measured: replace the sets with the single literals and the renamed-lane cases fail
+with `expected {} to deeply equal { '2026-07-01': 2 }`.
+*/
+describe("reliability move counts span every lane carrying the role", () => {
+  const store = (rows: Record<string, Record<string, number>>) => ({
+    getTaskMovedCountsByDay: vi.fn(async (o: { fromColumn?: string; toColumn?: string }) =>
+      rows[`${o.fromColumn ?? ""}->${o.toColumn ?? ""}`] ?? {}),
+  });
+
+  const WINDOW = { since: "2026-07-01T00:00:00.000Z", until: "2026-07-08T00:00:00.000Z" };
+
+  it("sums entries across a renamed review lane and the legacy one", async () => {
+    // A board mid-rename: old move rows under `in-review`, new ones under `signoff`.
+    const counts = await countMovesInto(
+      store({ "->in-review": { "2026-07-01": 1 }, "->signoff": { "2026-07-01": 1, "2026-07-02": 3 } }) as never,
+      WINDOW,
+      new Set(["in-review", "signoff"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2, "2026-07-02": 3 });
+  });
+
+  it("sums bounces across every (review, wip) pair without double-counting", async () => {
+    // Each move event has exactly one (from, to) pair, so the queries partition rather than overlap.
+    const counts = await countBouncesOut(
+      store({
+        "in-review->in-progress": { "2026-07-01": 1 },
+        "signoff->building": { "2026-07-01": 1 },
+        "signoff->in-progress": { "2026-07-03": 5 },
+      }) as never,
+      WINDOW,
+      new Set(["in-review", "signoff"]),
+      new Set(["in-progress", "building"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2, "2026-07-03": 5 });
+  });
+
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-18:20 (#2861 review — greptile P1):
+  A MOVE BETWEEN TWO REVIEW LANES IS NOT AN ENTRY INTO REVIEW.
+
+  A defect the single-lane version could not have. A board with `signoff` and `waiting` both carrying
+  review roles has moves between them, and counting by destination alone scores `signoff -> waiting`
+  as another entry — inflating the denominator while the bounce count is unchanged, so the headline
+  UNDERSTATES the review-failure rate. Wrong in the reassuring direction, which is the failure mode
+  this whole change is about; generalising a one-lane query to a set introduced a question one lane
+  never had to answer.
+
+  REVERT PROOF, measured: drop the subtraction and this fails with
+  `expected { '2026-07-01': 3 } to deeply equal { '2026-07-01': 2 }`.
+  */
+  it("does not count a move BETWEEN two review lanes as an entry into review", async () => {
+    const counts = await countEntriesInto(
+      store({
+        "->signoff": { "2026-07-01": 2 },
+        "->waiting": { "2026-07-01": 1 },
+        /* One of those was `signoff -> waiting`: already in review, not a new entry. */
+        "signoff->waiting": { "2026-07-01": 1 },
+      }) as never,
+      WINDOW,
+      new Set(["signoff", "waiting"]),
+    );
+
+    expect(counts).toEqual({ "2026-07-01": 2 });
+  });
+
+  it("drops a day entirely when every move into the set was internal", async () => {
+    // Guards the subtraction's edge: 0 must not be reported as a day with zero entries, and a
+    // negative must never surface.
+    const counts = await countEntriesInto(
+      store({ "->waiting": { "2026-07-01": 1 }, "signoff->waiting": { "2026-07-01": 1 } }) as never,
+      WINDOW,
+      new Set(["signoff", "waiting"]),
+    );
+
+    expect(counts).toEqual({});
+  });
+
+  it("skips the intra-set subtraction for a single-lane board", async () => {
+    // A move requires the column to change, so a one-lane set has no internal moves to remove and
+    // must not pay for a query asking about them.
+    const single = store({ "->in-review": { "2026-07-01": 4 } });
+
+    expect(await countEntriesInto(single as never, WINDOW, new Set(["in-review"]))).toEqual({ "2026-07-01": 4 });
+    expect(single.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
+  });
+
+  it("issues exactly the two legacy queries on the built-in board", async () => {
+    // The common path must not get more expensive to fix the uncommon one.
+    const entered = store({ "->in-review": { "2026-07-01": 4 } });
+    const bounced = store({ "in-review->in-progress": { "2026-07-01": 1 } });
+
+    expect(await countMovesInto(entered as never, WINDOW, new Set(["in-review"]))).toEqual({ "2026-07-01": 4 });
+    expect(await countBouncesOut(bounced as never, WINDOW, new Set(["in-review"]), new Set(["in-progress"]))).toEqual({ "2026-07-01": 1 });
+    expect(entered.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
+    expect(bounced.getTaskMovedCountsByDay).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an empty map rather than throwing when no lane is supplied", async () => {
+    expect(await countMovesInto(store({}) as never, WINDOW, new Set())).toEqual({});
+  });
+});
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-00:05 (#2875 review — greptile P1):
+
+THE PRODUCER WAS CONVERTED AND THE CONSUMER DISCARDED THE ANSWER.
+
+`getInReviewDurationEvents` fetches moves using the project's RESOLVED review lanes; this function
+then matched `to === "in-review"` / `to === "done"` against them. On a renamed board every fetched
+event was thrown away, the sample count never reached three, and the panel reported
+`insufficient-samples` — silently absent rather than visibly wrong, which is why it survived.
+
+The negative matters as much: widening to "any move counts" would satisfy the renamed case and start
+measuring wip -> wip transitions as review durations.
+*/
+describe("inReviewDurationMetrics keys on the board's resolved lanes", () => {
+  const lanes = { review: new Set(["checking"]), complete: new Set(["shipped"]) };
+  const move = (taskId: string, from: string, to: string, at: string) => ({
+    type: "task:moved",
+    taskId,
+    timestamp: at,
+    metadata: { from, to },
+  }) as unknown as ActivityLogEntry;
+
+  /* Three samples: the metric requires at least that many before it reports anything. */
+  const renamedActivity = ["A", "B", "C"].flatMap((id, i) => [
+    move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+    move(id, "checking", "shipped", `2026-05-10T0${i}:30:00.000Z`),
+  ]);
+  const from = Date.parse("2026-05-10T00:00:00.000Z");
+  const to = Date.parse("2026-05-11T00:00:00.000Z");
+
+  it("measures review duration on a RENAMED board when the caller supplies its lanes", () => {
+    const metric = inReviewDurationMetrics(renamedActivity, from, to, lanes);
+
+    expect(metric.sampleCount).toBe(3);
+    expect(metric.p50Ms).toBe(30 * 60_000);
+  });
+
+  it("reports insufficient-samples for the same activity without the lanes — the defect", () => {
+    const metric = inReviewDurationMetrics(renamedActivity, from, to);
+
+    expect(metric.sampleCount).toBe(0);
+    expect(metric.reason).toBe("insufficient-samples");
+  });
+
+  it("keeps the ORIGINAL review-entry time when a card moves between two review lanes", () => {
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:35 (#2875 review — greptile P1):
+    A board may declare several review-role lanes, and a card moving between them has NOT re-entered
+    review. Overwriting the start on every move into a review lane made the metric measure only the
+    LAST lane — so the number shrank exactly on the boards that review most carefully, and it looked
+    plausible the whole time.
+
+    Each card here spends 30 minutes in `checking`, hops to a second review lane, then completes 30
+    minutes later. The honest duration is 60; the defect reports 30.
+    */
+    const twoReviewLanes = { review: new Set(["checking", "signoff"]), complete: new Set(["shipped"]) };
+    const activity = ["A", "B", "C"].flatMap((id, i) => [
+      move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+      move(id, "checking", "signoff", `2026-05-10T0${i}:30:00.000Z`),
+      move(id, "signoff", "shipped", `2026-05-10T0${i}:59:59.999Z`),
+    ]);
+
+    const metric = inReviewDurationMetrics(activity, from, to, twoReviewLanes);
+
+    expect(metric.sampleCount).toBe(3);
+    expect(metric.p50Ms).toBe(59 * 60_000 + 59_999);
+  });
+
+  it("does NOT count a card that ENTERED review and then bounced out to WIP", () => {
+    /*
+    The paired negative, and it has to look like this to bite. A card that never enters review records
+    no start, so ANY exit predicate — including "count every move" — yields zero and the test passes
+    against a broken implementation. Measured: my first version used drafting -> building noise and
+    stayed green when the exit condition was widened to `ms in range`.
+
+    Entering `checking` and leaving to `building` is the shape that distinguishes them: a start IS
+    recorded, so only a correct COMPLETE-lane check keeps it out of the durations.
+    */
+    const bounced = ["A", "B", "C"].flatMap((id, i) => [
+      move(id, "building", "checking", `2026-05-10T0${i}:00:00.000Z`),
+      move(id, "checking", "building", `2026-05-10T0${i}:30:00.000Z`),
+    ]);
+
+    expect(inReviewDurationMetrics(bounced, from, to, lanes).sampleCount).toBe(0);
   });
 });

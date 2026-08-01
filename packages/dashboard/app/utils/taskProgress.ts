@@ -1,3 +1,4 @@
+import { isReviewColumnRole, type ColumnRoleFlags } from "./columnRoles";
 import type { Task, WorkflowStepResult, WorkflowStepPhase, StepStatus } from "@fusion/core";
 
 /*
@@ -207,6 +208,19 @@ Lane-owned optional gates are header badges, not progress bullet-list rows. Code
 FNXC:TaskCardOptionalGateBadge 2026-07-27-06:10:
 Plan Review's planning-lane restriction is GONE (see getRunningOptionalGateBadge) — it badges wherever it runs. The badge is keyed on the RUNNING gate rather than the card's column, so it stays correct across every workflow regardless of where that workflow places the node.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-15:50:
+DELIBERATE-LITERAL — the unresolved-flags default, reviewed 2026-07-31-15:50.
+
+Census-invisible: a `Set` literal is a definition, not a comparison, so nothing in the lifecycle
+backlog pointed at this gate — in a file whose Plan Review badge directly above was already converted
+off its column restriction. One converted badge and one unconverted one, deciding sibling questions.
+
+Keyed on the literal, the code-review / browser-verification / post-merge badges never appeared on a
+renamed board: the gate WAS running and the card simply showed nothing, which reads as an idle card
+rather than a missing badge. Cosmetic in consequence, but it is the surface an operator watches to
+know a review is in flight.
+*/
 const REVIEW_LANE_COLUMNS = new Set(["in-review"]);
 
 export interface RunningOptionalGateBadge {
@@ -225,6 +239,8 @@ function workflowStepIdFromProgressItemId(itemId: string): string {
 
 export function getRunningOptionalGateBadge(
   task: Pick<Task, "column" | "steps" | "enabledWorkflowSteps" | "workflowStepResults">,
+  /** Resolved trait flags for the card's column; omitted keeps the legacy id. */
+  columnFlags?: ColumnRoleFlags,
 ): RunningOptionalGateBadge | undefined {
   const running = getUnifiedTaskProgress(task).items.find(
     (item) => item.source === "workflow" && item.status === "running",
@@ -259,7 +275,7 @@ export function getRunningOptionalGateBadge(
     };
   }
 
-  if (!REVIEW_LANE_COLUMNS.has(task.column)) return undefined;
+  if (!(columnFlags ? isReviewColumnRole(columnFlags, task.column) : REVIEW_LANE_COLUMNS.has(task.column))) return undefined;
   if (
     workflowStepId !== "code-review"
     && workflowStepId !== "browser-verification"

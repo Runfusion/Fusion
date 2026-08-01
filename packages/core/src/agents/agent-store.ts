@@ -55,6 +55,7 @@ import {
 } from "../types.js";
 import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "../types.js";
 import type { TaskStore } from "../store.js";
+import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
 import { assertImplementationTaskBindAllowed, evaluateImplementationTaskBind } from "./agent-role-policy.js";
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
@@ -223,6 +224,28 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
   if (!linkedTask) {
     return `Current Task: ${taskId} (unresolved)`;
   }
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase — FLAGGED AND LEFT COUNTED):
+  DELIBERATE-LITERAL — marked so it is no longer merely flagged. The note below already decided this
+  stays; it said so in prose, which the census cannot read, so the site kept reading as backlog and
+  every later pass re-derived the same answer. The marker moves it to `deliberateByFile`.
+  A pure formatter over `Pick<Task, "column">` — no store, no task id, and its output PRINTS the column
+  name for a human reader. Same class as `github-tracking-comments.ts:165` and
+  `in-process-runtime`'s duration helpers: threading a resolution into a string builder to pick a word is
+  the wrong trade, and the line degrades gracefully (it says "(not active — <column>)" only for the two
+  legacy ids; on a renamed board it falls through to "(<column>)", which is still accurate, just less
+  specific).
+  */
+  /*
+  DELIBERATE-LITERAL — reviewed 2026-07-31-12:10 (fleet). This picks a WORD for a human reader, not
+  a lifecycle decision: `(not active — done)` versus `(done)`. It degrades gracefully on a renamed
+  board — it falls through to `(<column>)`, still accurate, just less specific — and threading a
+  resolution into a synchronous string builder to choose an adjective is the wrong trade.
+
+  Marked rather than left counted because three separate workers have now independently re-derived
+  this same conclusion. An unmarked correct site costs a fleet cycle every time the census points
+  at it.
+  */
   if (linkedTask.column === "done" || linkedTask.column === "archived") {
     return `Current Task: ${taskId} (not active — ${linkedTask.column})`;
   }
@@ -1466,7 +1489,17 @@ export class AgentStore extends EventEmitter {
       return { ok: false, reason: bindVerdict.reason, task };
     }
 
-    if (task.column === "done" || task.column === "archived") {
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+    The terminal guard on a claim. On a renamed board neither literal matched, so an agent could CLAIM a
+    finished card — the claim succeeded and the agent began work on completed output. `this.taskStore` is
+    already in hand two lines up, so this costs one resolution on a path that already does a task read.
+    */
+    const claimLifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
+    if (
+      task.column === (claimLifecycle?.complete ?? "done")
+      || task.column === (claimLifecycle?.archived ?? "archived")
+    ) {
       return { ok: false, reason: "terminal", task };
     }
 

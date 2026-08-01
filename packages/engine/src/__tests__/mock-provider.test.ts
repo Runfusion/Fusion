@@ -149,7 +149,9 @@ describe("MockAgentRuntime", () => {
     clearMockScript({ sessionPurpose: "executor", taskId });
     updateExecute.mockClear();
     await runtime.promptWithFallback(session, "default");
-    expect(updateExecute).toHaveBeenCalledWith(expect.any(String), { step: 1, status: "done" }, undefined, undefined, expect.anything());
+    // FNXC:MockProvider 2026-07-31-13:00: fn_task_update.step is 0-based (FN-6607); this expectation
+    // previously pinned the mock's 1-based off-by-one, which skipped Step 0 and overran the last step.
+    expect(updateExecute).toHaveBeenCalledWith(expect.any(String), { step: 0, status: "done" }, undefined, undefined, expect.anything());
   });
 
   it("treats graph-owned executor step sessions as successful without lifecycle tools", async () => {

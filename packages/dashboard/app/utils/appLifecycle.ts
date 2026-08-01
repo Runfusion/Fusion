@@ -198,7 +198,22 @@ export function getCliActionDisabledReasonForBanner(session: AiSessionSummary, a
 export interface CliActionDeps {
   currentProjectId?: string;
   retryTask: (id: string) => Promise<unknown>;
-  moveTask: (id: string, column: "todo") => Promise<unknown>;
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-08-01-02:10:
+  `string`, not the literal type — the signature itself was pinning the destination.
+
+  Cancel moves the session's task back to the hold lane. Keyed on `"todo"`, and with the TYPE
+  enforcing that literal so no caller could pass anything else, the move is REJECTED on a board that
+  does not declare `todo` (`moves.ts` throws "Unknown column for this workflow" unless the caller sets
+  `recoveryRehome`, which this is not) — so **Cancel throws instead of cancelling**. A census scanning
+  for comparisons cannot see this: the literal lives in a call argument and a type annotation.
+  */
+  moveTask: (id: string, column: string) => Promise<unknown>;
+  /*
+  The task's own hold lane, resolved by the caller from board-workflow metadata. Omitted → `"todo"`,
+  which is today's behaviour; App.tsx supplies it, so this is not an optional parameter nobody fills.
+  */
+  resolveCancelColumn?: (taskId: string) => string | undefined;
   openAuthenticationSettings: () => void;
   addToast: (message: string, type: "success" | "error") => void;
   apiClient?: typeof api;
@@ -242,7 +257,8 @@ export async function executeCliSessionBannerAction(
     }
 
     if (action === "cancel") {
-      await deps.moveTask(session.id, "todo");
+      /* DELIBERATE-LITERAL — the unresolved-metadata default, reviewed 2026-08-01-02:10. */
+      await deps.moveTask(session.id, deps.resolveCancelColumn?.(session.id) ?? "todo");
       return;
     }
 

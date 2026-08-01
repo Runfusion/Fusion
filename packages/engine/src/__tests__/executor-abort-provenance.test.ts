@@ -256,10 +256,51 @@ describe("pause-abort provenance truthfulness (KB-PROV)", () => {
           provenance,
           true,
           false,
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-21:45:
+          THE REVIEW LANE, which this call was silently omitting.
+
+          #2703 added a seventh parameter so the lane is resolved by the caller instead of through the
+          sync resolver (a no-op under the shipped backend). The call goes through `as any`, so the
+          missing argument was not a type error — it arrived `undefined`, `live.column !== reviewLane`
+          was true for every row, and the classifier returned false for BOTH provenances. That reads as
+          "FN-6796 regressed and clean in-review rows are being stranded again" when the product is
+          fine and the call is short one argument.
+
+          Passed explicitly rather than defaulted inside the classifier: a default would restore the
+          literal this parameter exists to remove.
+          */
+          "in-review",
         );
 
         expect(benign).toBe(true);
       },
     );
+
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-30-21:45:
+    The lane must be USED, not merely accepted. Without this, passing the argument could be reverted to
+    a hardcoded "in-review" inside the classifier and every assertion above would still pass — the
+    parameter would look converted while behaving like the literal, which is the exact failure the
+    census counts as a win. A card resting in a RENAMED review lane is the differential.
+    */
+    it("honours the caller's review lane: a renamed lane classifies the same, a mismatched one does not", () => {
+      const { executor } = makeExecutor();
+      const result = { disposition: "failed", outcome: "failure", visitedNodeIds: ["plan", "execute"], context: {} };
+      const classify = (column: string, reviewLane: string) =>
+        (executor as any).isBenignInReviewPauseAbort(
+          makeTask({ column, steps: [{ name: "Implement", status: "done" }] }),
+          result,
+          "engine-abort",
+          true,
+          false,
+          reviewLane,
+        );
+
+      // Resting in the board's declared review lane, whatever it is called.
+      expect(classify("validating", "validating")).toBe(true);
+      // Resting somewhere else: not a benign in-review pause-abort.
+      expect(classify("validating", "in-review")).toBe(false);
+    });
   });
 });

@@ -138,7 +138,26 @@ describe("ScheduleStepsEditor", () => {
       expect(newSteps[0].type).toBe("create-task");
       expect(newSteps[0].name).toBe("New Create Task Step");
       expect(newSteps[0].taskDescription).toBe("");
-      expect(newSteps[0].taskColumn).toBe("triage");
+      /*
+      FNXC:Automations 2026-07-30-18:40 (greptile #2652 — this assertion PINNED the defect):
+      Was `toBe("triage")`. U11 deletes `triage` from the default workflow, and an explicit column of any
+      value bypasses the workflow entry-column resolution used for column-less creates — so this template
+      manufactured, by default, the exact defect the simple form had just been fixed for. A new step must
+      name NO column and let each workflow resolve its own intake.
+      */
+      expect(newSteps[0].taskColumn, "a new step must not name a column at all").toBeUndefined();
+    });
+
+    it("coerces a persisted legacy `triage` step column to Automatic", async () => {
+      // A step saved before the fix holds a column the select no longer offers: invisible,
+      // unchangeable, and resubmitted by any unrelated edit. Coerced on load so the next save repairs it.
+      const legacy = makeStep({ type: "create-task", taskDescription: "d", taskColumn: "triage" } as never);
+      render(<ScheduleStepsEditor steps={[legacy]} onChange={onChange} />);
+
+      fireEvent.click(screen.getByTestId("icon-pencil").closest("button")!);
+      const select = await waitFor(() => screen.getByLabelText("Target Column") as HTMLSelectElement);
+      expect(select.value, "legacy `triage` must present as Automatic").toBe("");
+      expect(Array.from(select.options).map((o) => o.value), "and it must not be offerable").not.toContain("triage");
     });
 
     it("appends to existing steps", () => {
@@ -295,6 +314,8 @@ describe("ScheduleStepsEditor", () => {
     });
 
     it("allows saving create-task step with all fields filled", async () => {
+      // Starts with a legacy `triage` column on purpose: the editor coerces it to Automatic on load,
+      // so saving an unrelated field must NOT resubmit it. That resubmission is the bug greptile found.
       const steps = [makeStep({ id: "s1", type: "create-task", name: "Create Task", taskDescription: "", taskColumn: "triage" })];
       render(<ScheduleStepsEditor steps={steps} onChange={onChange} />);
       fireEvent.click(screen.getByLabelText("Edit Create Task"));
@@ -309,7 +330,10 @@ describe("ScheduleStepsEditor", () => {
       const savedStep = onChange.mock.calls[0][0][0] as AutomationStep;
       expect(savedStep.taskTitle).toBe("Weekly Review");
       expect(savedStep.taskDescription).toBe("Check dependencies");
-      expect(savedStep.taskColumn).toBe("triage");
+      expect(
+        savedStep.taskColumn,
+        "editing an unrelated field must not resubmit the legacy column",
+      ).toBeUndefined();
     });
   });
 

@@ -9,7 +9,21 @@ export interface TaskAgeStalenessSignal {
   ageMs: number;
   warningThresholdMs: number;
   criticalThresholdMs: number;
-  column: "in-progress" | "in-review";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  WIDENED from `"in-progress" | "in-review"`, because the guard that fills it was converted and this
+  type was left describing the old one.
+
+  `getTaskAgeStalenessSignal` resolves the lanes it accepts (`context.lifecycle?.wip ?? …`), so on a
+  renamed board this field legitimately holds `building` or `checking`. The narrow type therefore
+  asserted something FALSE about live data, and forced a cast to keep saying it — see the note at the
+  assignment.
+
+  A type narrowed to legacy ids is not a harmless leftover: it tells every consumer that a
+  `=== "in-progress"` comparison is exhaustive, which is exactly the guard this program spends its
+  time removing. All three consumers today only display or compare the value, so widening is safe.
+  */
+  column: string;
   paused: boolean;
 }
 
@@ -32,6 +46,17 @@ interface TaskAgeStalenessContext {
   thresholds?: TaskAgeStalenessThresholds;
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-08:10 (fleet phase):
+  The task's resolved lifecycle columns. Age-staleness applies ONLY to the mid-flight and review lanes —
+  a card resting in a hold or terminal lane is not "stale", it is waiting or finished. Both lanes were
+  named by id, so on a renamed board this signal returned undefined for every card and the stale-card
+  warning never appeared anywhere on the board.
+
+  OPTIONAL, so the existing callers and every test keep the legacy-id behaviour. The one production
+  caller (`task-store/reads.ts`) already holds a per-pass IR cache for exactly this kind of resolution.
+  */
+  lifecycle?: { wip?: string; review?: string };
 }
 
 type TaskAgeStalenessTask = Pick<Task, "column" | "paused" | "columnMovedAt" | "updatedAt" | "mergeDetails">;
@@ -47,13 +72,23 @@ export function getTaskAgeStalenessSignal(
   task: TaskAgeStalenessTask,
   context: TaskAgeStalenessContext = {},
 ): TaskAgeStalenessSignal | undefined {
-  if (task.column !== "in-progress" && task.column !== "in-review") {
+  const wipColumn = context.lifecycle?.wip ?? "in-progress";
+  const reviewColumn = context.lifecycle?.review ?? "in-review";
+  if (task.column !== wipColumn && task.column !== reviewColumn) {
     return undefined;
   }
-  // The guard above proves `column` is one of these two legacy ids; the
-  // `ColumnId` union's `string & {}` member can't be excluded by literal `!==`
-  // narrowing, so the cast is provably safe here (#1403).
-  const activeColumn = task.column as "in-progress" | "in-review";
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
+  THE CAST IS GONE, and the comment it carried had become false.
+
+  It read: "the guard above proves `column` is one of these two legacy ids" (#1403). That was true
+  when the guard compared against the literals. The guard now compares against `wipColumn` /
+  `reviewColumn`, which are RESOLVED — so on a renamed board it proves the column is `building` or
+  `checking`, and the cast was asserting the opposite of what the guard established.
+
+  Nothing needs casting now that the field's type matches what the guard admits.
+  */
+  const activeColumn = task.column;
   if (task.mergeDetails?.mergeConfirmed === true) {
     return undefined;
   }
@@ -66,10 +101,10 @@ export function getTaskAgeStalenessSignal(
   };
 
   const warningThresholdMs = getNormalizedThreshold(
-    task.column === "in-progress" ? resolvedThresholds.inProgressWarningMs : resolvedThresholds.inReviewWarningMs,
+    task.column === wipColumn ? resolvedThresholds.inProgressWarningMs : resolvedThresholds.inReviewWarningMs,
   );
   const criticalThresholdMs = getNormalizedThreshold(
-    task.column === "in-progress" ? resolvedThresholds.inProgressCriticalMs : resolvedThresholds.inReviewCriticalMs,
+    task.column === wipColumn ? resolvedThresholds.inProgressCriticalMs : resolvedThresholds.inReviewCriticalMs,
   );
 
   if (warningThresholdMs === undefined && criticalThresholdMs === undefined) {

@@ -16,6 +16,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   TaskStore,
+  createLogger,
   resolvePlanningSettingsModel,
   AgentStore,
   THINKING_LEVELS,
@@ -71,12 +72,47 @@ import {
 import type { AiSessionStore } from "./ai-session-store.js";
 import { resolveBranchAssignmentContext, resolveBranchSelection } from "./routes/branch-selection.js";
 
+const missionRoutesLog = createLogger("dashboard-mission-routes");
+
 /** Resolve the mission-start override through the planning settings hierarchy. */
 export function resolveMissionInterviewThinkingLevel(
   settings: Partial<Settings> | undefined,
   thinkingLevel: ThinkingLevel | undefined,
 ): ThinkingLevel | undefined {
   return resolvePlanningThinkingLevel(settings, thinkingLevel) as ThinkingLevel | undefined;
+}
+
+type MissionTaskHierarchy = {
+  milestones: Array<{
+    slices: Array<{
+      features: Array<{ taskId?: string }>;
+    }>;
+  }>;
+};
+
+export async function pauseMissionTasksForOperatorStop(
+  store: Pick<TaskStore, "pauseTask">,
+  hierarchy: MissionTaskHierarchy,
+): Promise<string[]> {
+  const pausedTaskIds: string[] = [];
+  for (const milestone of hierarchy.milestones) {
+    for (const slice of milestone.slices) {
+      for (const feature of slice.features) {
+        if (!feature.taskId) continue;
+        try {
+          await store.pauseTask(feature.taskId, true, undefined, { userPaused: true });
+          pausedTaskIds.push(feature.taskId);
+        } catch (error) {
+          // Continue stopping the mission if a linked task is already gone, but
+          // keep unexpected pause failures visible to operators.
+          missionRoutesLog.warn(
+            `Failed to pause mission-linked task ${feature.taskId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    }
+  }
+  return pausedTaskIds;
 }
 
 // ── Validation Utilities ────────────────────────────────────────────────────
@@ -210,6 +246,23 @@ function validateMissionBranchStrategy(value: unknown): MissionBranchStrategy | 
     mode,
     branchName: trimmedBranchName,
   };
+}
+
+/*
+FNXC:MissionTaskPrefix 2026-07-26-12:00:
+PATCH/POST accept taskPrefix as a string, empty string, or null. null/empty normalizes to undefined so MissionStore writes NULL and the mission inherits the project-wide prefix. The key must still be present on PATCH (null, not omitted) so clearing is distinct from "leave unchanged" (greptile P1 on PR #1930).
+*/
+function validateTaskPrefix(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw badRequest("taskPrefix must be a string or null");
+  }
+  const trimmed = value.trim().toUpperCase();
+  if (!trimmed) return undefined;
+  if (!/^[A-Z][A-Z0-9]*$/.test(trimmed)) {
+    throw badRequest("taskPrefix must start with a letter and contain only letters and digits");
+  }
+  return trimmed;
 }
 
 function validateOrderedIds(body: unknown): string[] {
@@ -470,7 +523,7 @@ export function createMissionRouter(
   router.post(
     "/",
     catchTypedHandler(async (req, res) => {
-      const { title, description, autoAdvance, autoMerge, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, autoAdvance, autoMerge, baseBranch, branchStrategy, taskPrefix, goalIds } = req.body;
 
       const validatedTitle = validateTitle(title);
       const validatedDescription = validateDescription(description);
@@ -481,6 +534,7 @@ export function createMissionRouter(
         description: validatedDescription,
         baseBranch: validateDescription(baseBranch),
         branchStrategy: validateMissionBranchStrategy(branchStrategy),
+        taskPrefix: validateTaskPrefix(taskPrefix),
         ...(autoMerge !== undefined
           ? {
               // FNXC:MissionAutoMerge 2026-07-18-12:00: Create accepts only a real boolean; null is reserved for PATCH clear-to-inherited.
@@ -1122,7 +1176,7 @@ export function createMissionRouter(
     "/:missionId",
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
-      const { title, description, status, autoAdvance, autoMerge, autopilotEnabled, baseBranch, branchStrategy, goalIds } = req.body;
+      const { title, description, status, autoAdvance, autoMerge, autopilotEnabled, baseBranch, branchStrategy, taskPrefix, goalIds } = req.body;
 
       if (!validateMissionId(missionId)) {
         throw badRequest("Invalid mission ID format");
@@ -1162,6 +1216,9 @@ export function createMissionRouter(
       }
       if (branchStrategy !== undefined) {
         updates.branchStrategy = validateMissionBranchStrategy(branchStrategy);
+      }
+      if (taskPrefix !== undefined) {
+        updates.taskPrefix = validateTaskPrefix(taskPrefix);
       }
 
       if (Object.keys(updates).length === 0 && validatedGoalIds === undefined) {
@@ -3012,22 +3069,8 @@ export function createMissionRouter(
       // Set mission status to blocked
       const updated = await missionStore.updateMission(missionId, { status: "blocked" }, { actor: DASHBOARD_MISSION_ACTOR });
 
-      // Pause all tasks linked to features in this mission
-      const pausedTaskIds: string[] = [];
-      for (const milestone of hierarchy.milestones) {
-        for (const slice of milestone.slices) {
-          for (const feature of slice.features) {
-            if (feature.taskId) {
-              try {
-                await store.pauseTask(feature.taskId, true);
-                pausedTaskIds.push(feature.taskId);
-              } catch (_err) {
-                // Log but don't fail — task may already be paused or not found
-              }
-            }
-          }
-        }
-      }
+      // Pause all tasks linked to features in this mission.
+      const pausedTaskIds = await pauseMissionTasksForOperatorStop(getScopedStore(), hierarchy);
 
       res.json({ ...updated, pausedTaskIds });
     })

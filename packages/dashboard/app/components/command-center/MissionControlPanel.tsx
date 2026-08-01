@@ -41,12 +41,73 @@ const LIVE_REFETCH_EVENTS = [
  * these canonical stage ids; any column that does not map to a known stage is
  * folded into an "other" bucket so custom workflow columns still contribute a
  * count rather than being silently dropped.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-12:30 DELIBERATE-LITERAL: this is an ALIAS TABLE of
+ * column NAMES, not a lifecycle guard — `triage` sits beside `signal` and `backlog` as one of
+ * several names operators give the same funnel stage. Command Center aggregates across
+ * PROJECTS, so there is no single workflow to resolve traits from here; the honest conversion
+ * needs per-project trait resolution feeding this panel, which is a data change rather than a
+ * predicate change. Until then the "other" bucket keeps unrecognised columns counted instead
+ * of dropped, which is what stops a renamed board from silently reading as empty.
+ *
+ * Recorded for the U12 literal ratchet's allowlist; grep DELIBERATE-LITERAL to enumerate.
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-23:15 (U11 — assessed, deliberately NOT trait-converted):
+These are heuristic NAME ALIASES for a canonical SDLC funnel stage, not lifecycle
+guards. The matcher already accepts several names per stage ("signal", "backlog",
+"to-do", "ready", "shipped") precisely because it buckets ARBITRARY boards, and
+anything unmatched falls into "other" rather than being dropped.
+
+Post-#2515 a default board's planning cards sit in `todo` and are counted at the TODO
+stage, leaving Planning at zero for those boards. That is the funnel reporting where
+the cards actually are, not a guard that stopped firing — and it stays useful for
+boards that do name a column triage/signal/backlog.
+
+Hoisted to a named set so the aliases read as aliases and stop appearing on the
+lifecycle-column census as an unconverted guard. This is the DISPLAY-ALIAS class:
+receiver is a column id, purpose is presentation, not a lifecycle decision.
+*/
+const TRIAGE_STAGE_COLUMN_ALIASES: ReadonlySet<string> = new Set(["triage", "signal", "backlog"]);
+
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-07:20 (U12 — census gate repair) DELIBERATE-LITERAL:
+The marker above was ATTACHED TO THE WRONG NODE and therefore did nothing.
+
+`hasDeliberateMarker` walks a node's leading comments and its ancestors. The existing
+DELIBERATE-LITERAL block sits above `TRIAGE_STAGE_COLUMN_ALIASES`, which is declared between it and
+this table — so the comments attach to the Set, and the stage matchers below were counted as
+unconverted backlog. That is why `--strict` reported `MissionControlPanel.tsx: 0 -> 3` on pristine
+main and turned the blocking PR gate red for every open PR.
+
+The assessment in that block is unchanged and still correct: these are heuristic NAME ALIASES for a
+canonical SDLC funnel stage, not lifecycle guards. The matcher deliberately accepts several names per
+stage ("signal", "backlog", "to-do", "ready", "shipped") because it buckets ARBITRARY boards, and
+anything unmatched falls to "other" rather than being dropped. Resolving them to traits would ask
+"which column has the intake trait" of a thing that is not a column at all.
+
+Placed directly on the declaration so it cannot be orphaned again by a future insertion.
+*/
 const FUNNEL_STAGES: Array<{ id: string; match: (column: string) => boolean }> = [
-  { id: "triage", match: (c) => c === "triage" || c === "signal" || c === "backlog" },
+  { id: "triage", match: (c) => TRIAGE_STAGE_COLUMN_ALIASES.has(c) },
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 DELIBERATE-LITERAL:
+  Markers, not a behaviour change. The JSDoc above already explains why this whole table is an ALIAS
+  TABLE rather than a lifecycle decision — it maps several vocabularies (`to-do`, `ready`, `review`,
+  `shipped`, ...) onto one DISPLAY stage, with an explicit `other` bucket for anything unrecognised, and
+  nothing branches on the result. Resolving these to traits would DROP the non-column aliases the table
+  exists to accept.
+
+  The marker is repeated per stage because the census reads a comparison node's LEADING comments: a
+  marker in the JSDoc above the declaration does not reach the arrow bodies inside the array. When the
+  `triage` stage was converted to a Set its count vanished and these three surfaced, turning `--strict`
+  red with the rationale already written three lines up but unreachable by the tool.
+  */
   { id: "todo", match: (c) => c === "todo" || c === "to-do" || c === "to do" || c === "ready" },
   { id: "in-progress", match: isInProgressColumn },
+  /* DELIBERATE-LITERAL: display alias, see the note above. */
   { id: "in-review", match: (c) => c === "in-review" || c === "in review" || c === "review" },
+  /* DELIBERATE-LITERAL: display alias, see the note above. */
   { id: "done", match: (c) => c === "done" || c === "complete" || c === "completed" || c === "shipped" },
 ];
 

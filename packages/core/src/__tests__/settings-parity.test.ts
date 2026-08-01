@@ -529,6 +529,15 @@ describe("settings key parity", () => {
       "gitlabApiBaseUrl",
       "gitlabAuthToken",
       "gitlabAuthTokenType",
+      /*
+      FNXC:ToolOutputBudget 2026-07-30-03:40:
+      Shared ON PURPOSE. settings-schema.ts:462 states it outright: "Project settings participate in
+      the existing effective-settings merge, allowing a project-specific tool-output cap or explicit
+      no-limit sentinel to override global policy." So a global default with a per-project override is
+      the intended shape, and this list is the record of intentional overlap.
+      Placed in GLOBAL_SETTINGS_KEYS order, as the comment above requires.
+      */
+      "agentToolOutputMaxChars",
       "mcpServers",
       "worktrunk",
       "owningNodeHandoffPolicy",

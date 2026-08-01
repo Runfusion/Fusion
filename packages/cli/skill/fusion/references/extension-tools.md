@@ -640,7 +640,7 @@ List all available agents in the system. Shows each agent's name, role, state, p
 
 ### fn_delegate_task
 
-Create a new task and assign it to a specific agent for execution. The task goes to 'todo' and will be picked up by the target agent on their next heartbeat cycle. Use fn_list_agents first to find available agents and their capabilities. Optionally pass workflow_id to select a workflow at creation time; use fn_workflow_list to discover valid IDs.
+Create a new task and assign it to a specific agent for execution. The task lands in the selected workflow's ready lane (`todo` on the built-in board, whatever that workflow calls it otherwise) and will be picked up by the target agent on their next heartbeat cycle. Use fn_list_agents first to find available agents and their capabilities. Optionally pass workflow_id to select a workflow at creation time; use fn_workflow_list to discover valid IDs.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -1694,12 +1694,22 @@ async function readGrokCliOidcToken(): Promise<string | null> {
   return null;
 }
 
+type GrokCliBillingUsageOutcome =
+  | { outcome: "window" }
+  | { outcome: "unauthorized" }
+  | { outcome: "no-data" }
+  | { outcome: "http-error"; status: number }
+  | { outcome: "transport-error"; message: string };
+
 /**
  * Fetch Grok subscription credit usage via the grok CLI's billing endpoint.
- * Returns null when the request fails in any way so the caller can fall back
- * to the xAI API-key auth-validity card.
+ * Preserves the observed reason no usage window was emitted so callers never
+ * infer authentication failure from unavailable meter data.
  */
-async function fetchGrokCliBillingUsage(token: string, usage: ProviderUsage): Promise<boolean> {
+async function fetchGrokCliBillingUsage(
+  token: string,
+  usage: ProviderUsage,
+): Promise<GrokCliBillingUsageOutcome> {
   try {
     const res = await httpsRequest("https://cli-chat-proxy.grok.com/v1/billing?format=credits", {
       method: "GET",
@@ -1708,26 +1718,22 @@ async function fetchGrokCliBillingUsage(token: string, usage: ProviderUsage): Pr
         "content-type": "application/json",
       },
     });
-    if (res.status !== 200) return false;
+    if (res.status === 401 || res.status === 403) return { outcome: "unauthorized" };
+    if (res.status !== 200) return { outcome: "http-error", status: res.status };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped API response
     const data: any = res.body.trim().length > 0 ? JSON.parse(res.body) : {};
     const config = data?.config;
-    if (!config || typeof config !== "object") return false;
+    if (!config || typeof config !== "object") return { outcome: "no-data" };
 
     const parsedReset = _parseResetTimestamp(config.billingPeriodEnd ?? config.currentPeriod?.end);
     const isWeekly = config.currentPeriod?.type === "USAGE_PERIOD_TYPE_WEEKLY";
     /*
-    FNXC:UsageProviders 2026-07-14-14:47:
-    Grok's billing endpoint omits `creditUsagePercent` when the weekly allowance is exhausted. Grok Build renders that valid reduced config as “Weekly limit: 0%” (zero allowance remaining), while Fusion's usage model stores percent consumed. Therefore the omitted exhausted value maps to 100% used—not 0% used. Only infer exhaustion when the response still proves a weekly billing period and reset boundary, so malformed payloads continue to fail closed.
+    FNXC:UsageProviders 2026-07-31-20:31:
+    A real account reported zero Grok credit usage while its billing response omitted `creditUsagePercent`, disproving the former omitted-field-to-100% inference. Emit a credits window only for a finite API-supplied percentage; field absence must remain an authenticated but unmeterable state rather than fabricate consumption or infer expired CLI auth.
     */
-    const rawPercentUsed = config.creditUsagePercent;
-    const pctUsed = typeof rawPercentUsed === "number" && Number.isFinite(rawPercentUsed)
-      ? rawPercentUsed
-      : isWeekly && parsedReset
-        ? 100
-        : undefined;
-    if (pctUsed === undefined) return false;
+    const pctUsed = config.creditUsagePercent;
+    if (typeof pctUsed !== "number" || !Number.isFinite(pctUsed)) return { outcome: "no-data" };
 
     usage.windows.push({
       label: isWeekly ? "Weekly (credits)" : "Credits",
@@ -1739,9 +1745,12 @@ async function fetchGrokCliBillingUsage(token: string, usage: ProviderUsage): Pr
       windowDurationMs: isWeekly ? 7 * 24 * 60 * 60 * 1000 : undefined,
     });
     usage.status = "ok";
-    return true;
-  } catch {
-    return false;
+    return { outcome: "window" };
+  } catch (error: unknown) {
+    return {
+      outcome: "transport-error",
+      message: error instanceof Error ? error.message : "Failed to fetch",
+    };
   }
 }
 
@@ -1770,17 +1779,30 @@ async function fetchGrokUsage(authStorage?: AuthStorageLike): Promise<ProviderUs
   // Prefer grok CLI subscription credentials — they yield a real percent-used
   // weekly credits window instead of the API-key auth-validity card below.
   const cliToken = await readGrokCliOidcToken();
-  if (cliToken && (await fetchGrokCliBillingUsage(cliToken, usage))) {
+  const billingOutcome = cliToken ? await fetchGrokCliBillingUsage(cliToken, usage) : null;
+  if (billingOutcome?.outcome === "window") {
     return usage;
   }
 
   const apiKey = await readGrokApiKey(authStorage);
   if (!apiKey) {
     if (cliToken) {
-      // A grok CLI login exists but its billing call failed — surface an
-      // actionable error card instead of hiding the provider as no-auth.
-      usage.status = "error";
-      usage.error = "Grok CLI auth expired — run 'grok login' (or set GROK_API_KEY)";
+      /*
+      FNXC:UsageProviders 2026-08-01-02:05:
+      A successful Grok billing response can be authenticated yet contain no meterable percentage. The Usage indicator must claim expired CLI auth only after the endpoint explicitly rejects the OIDC token with HTTP 401 or 403; unavailable meter data and transport failures require their own non-fabricated states.
+      */
+      if (billingOutcome?.outcome === "unauthorized") {
+        usage.status = "error";
+        usage.error = "Grok CLI auth expired — run 'grok login' (or set GROK_API_KEY)";
+      } else if (billingOutcome?.outcome === "no-data") {
+        usage.status = "ok";
+      } else if (billingOutcome?.outcome === "http-error") {
+        usage.status = "error";
+        usage.error = `Grok CLI billing request failed: HTTP ${billingOutcome.status}`;
+      } else if (billingOutcome?.outcome === "transport-error") {
+        usage.status = "error";
+        usage.error = `Grok CLI billing request failed: ${billingOutcome.message}`;
+      }
     } else {
       usage.error = "No Grok credentials — set GROK_API_KEY or add a key";
     }

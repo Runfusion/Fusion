@@ -179,6 +179,8 @@ describe("DevServerView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // FNXC:DevServer 2026-07-22-13:45: persisted selection/command state (R12) must not leak between tests.
+    localStorage.clear();
     mockUseDevServer.mockReturnValue(createDevServerHookState());
     mockUseDevServerConfig.mockReturnValue(createConfigHookState());
     mockUseDevServerLogs.mockReturnValue(createDevServerLogsHookState());
@@ -499,5 +501,32 @@ describe("DevServerView", () => {
 
     expect(screen.queryByText("FN-100 — No checkout")).not.toBeInTheDocument();
     expect(screen.getByText("FN-101 — Has checkout")).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:DevServer 2026-07-22-13:45:
+  FN remount-churn fix R12: DevServerView unmounts on navigation by design, so the typed-but-unsent command and the selected script restore from per-project persisted state after an unmount round-trip; a fresh project keeps defaults.
+  */
+  it("restores the typed command and selected script after an unmount round-trip", () => {
+    localStorage.clear();
+    const { unmount } = render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    fireEvent.click(screen.getByTestId("dev-server-candidate-dev-root"));
+    fireEvent.change(screen.getByTestId("dev-server-command-input"), { target: { value: "pnpm dev --port 0" } });
+
+    unmount();
+    render(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    expect(screen.getByTestId("dev-server-command-input")).toHaveValue("pnpm dev --port 0");
+    expect(screen.getByTestId("dev-server-selected-summary")).toHaveTextContent("dev");
+  });
+
+  it("keeps defaults for a project with no persisted dev-server state", () => {
+    localStorage.clear();
+    render(<DevServerView addToast={addToast} projectId="fresh-project" />);
+
+    // No selection restored; the command shows the existing first-candidate auto-suggestion.
+    expect(screen.getByTestId("dev-server-command-input")).toHaveValue("pnpm dev");
+    expect(screen.queryByTestId("dev-server-selected-summary")).not.toBeInTheDocument();
   });
 });

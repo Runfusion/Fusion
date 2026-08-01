@@ -61,6 +61,15 @@ export function createExecutorColumnBoundaryHooks(
     // KTD-3 drift-park loop fix (PR #2342): detectDrift clears the stale pin
     // row fields so an ordinary requeue re-resolves the CURRENT IR fresh.
     clearPin: pinPersistence.clearPin,
+    /* FNXC:EnginePause 2026-08-01-00:20: settings re-read per node entry — event-independent. */
+    isPaused: async () => {
+      try {
+        const settings = await store.getSettings();
+        return settings.globalPause === true;
+      } catch {
+        return false;
+      }
+    },
     onSuspend: async (suspension) => {
       const items = await store.listWorkflowWorkItemsForTask(task.id, { kinds: ["task"] });
       /* Only an ACTIVE row suppresses a fresh continuation. A cancelled/exhausted/manual-required

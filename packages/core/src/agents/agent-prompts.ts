@@ -16,6 +16,9 @@
  */
 
 import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from "../types.js";
+// FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: these are ROLE comparisons, not column
+// guards — the planner LANE is named `triage` and stays named that. See PLANNER_AGENT_ROLE.
+import { PLANNER_AGENT_ROLE } from "../types/task/task-log.js";
 
 // ---------------------------------------------------------------------------
 // Built-in prompt text (canonical source for workflow seam prompts)
@@ -1466,10 +1469,10 @@ export function resolveAgentPrompt(
       );
     }
 
-    if (role === "triage" && template.builtIn && template.id === "default-triage") {
+    if (role === PLANNER_AGENT_ROLE && template.builtIn && template.id === "default-triage") {
       return `${TRIAGE_PROMPT_TEXT}\n\n${buildTriageHeartbeatGuidance(options)}`;
     }
-    if (role === "triage" && template.builtIn && template.id === "concise-triage") {
+    if (role === PLANNER_AGENT_ROLE && template.builtIn && template.id === "concise-triage") {
       return `${CONCISE_TRIAGE_PROMPT_TEXT}\n\n${buildConciseTriageHeartbeatGuidance(options)}`;
     }
     return template.prompt;
@@ -1477,7 +1480,7 @@ export function resolveAgentPrompt(
 
   // Fall back to built-in default for the role
   const builtIn = BUILTIN_AGENT_PROMPTS.find((t) => t.role === role && t.id === `default-${role}`);
-  if (role === "triage" && builtIn?.id === "default-triage") {
+  if (role === PLANNER_AGENT_ROLE && builtIn?.id === "default-triage") {
     return `${TRIAGE_PROMPT_TEXT}\n\n${buildTriageHeartbeatGuidance(options)}`;
   }
   return builtIn?.prompt ?? "";

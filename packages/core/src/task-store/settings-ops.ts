@@ -26,10 +26,6 @@ import {appendConfigurationRevision, createConfigurationRevision} from "../async
 export async function publishSettingsUpdated(store: TaskStore, previous: Settings, settings: Settings): Promise<void> {
   /* FNXC:ConfigVersioning 2026-07-18-14:20: rollback is an observable settings replacement, so it must use the same post-commit notification/effects seam as a forward mutation. */
   store.emit("settings:updated", { settings, previous });
-  if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(settings)) {
-    try { await store.evacuateCustomColumnsToLegacy("flag-toggled-off"); }
-    catch (err) { storeLog.warn("workflowColumns ON→OFF evacuation failed", { phase: "evacuate-custom-columns", error: err instanceof Error ? err.message : String(err) }); }
-  }
   if (settings.memoryEnabled !== false && previous.memoryEnabled === false) {
     try { await ensureMemoryFileWithBackend(store.rootDir, settings); }
     catch (err) { storeLog.warn("Project-memory bootstrap failed after memory toggle-on", { phase: "updateSettings:memory-toggle-on", rootDir: store.rootDir, error: err instanceof Error ? err.message : String(err) }); }
@@ -262,20 +258,33 @@ export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<
     // Emit settings:updated so SSE listeners pick up the change
     store.emit("settings:updated", { settings: merged, previous });
 
-    // #1409: workflowColumns lives in experimentalFeatures (a global key), so the
-    // ON→OFF toggle flows through here. Evacuate any card stranded in a custom
-    // column when the flag flips off.
-    if (isWorkflowColumnsCompatibilityFlagEnabled(previous) && !isWorkflowColumnsCompatibilityFlagEnabled(merged)) {
-      try {
-        await store.evacuateCustomColumnsToLegacy("flag-toggled-off");
-      } catch (err) {
-        storeLog.warn("workflowColumns ON→OFF evacuation failed", {
-          phase: "evacuate-custom-columns",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    /*
+    FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — R9):
+    The #1409 `workflowColumns` ON→OFF evacuation hook is DELETED from both settings
+    write paths.
 
+    CORRECTED (PR #2500 review — greptile P1). An earlier draft of this note claimed the
+    ON→OFF transition was unreachable because no production writer sets the key. That is
+    wrong: `settings-schema.ts` explicitly TOLERATES stale persisted values, so a project
+    upgraded from a version where this was a real toggle can carry
+    `experimentalFeatures.workflowColumns: true`, and a settings import or configuration
+    rollback can then flip it to false. The transition is reachable. It is the EVACUATION
+    that is wrong, not the trigger.
+
+    Post-cutover the evacuation is a destructive reposition, not a repair. It moved cards
+    OUT of columns their own workflow legitimately declares and into the legacy `triage`
+    column. It existed to protect the legacy enum BOARD, which could only render the six
+    legacy ids — and that board is deleted in this same change, so the thing it protected
+    is gone.
+
+    The stranding it guarded against does not occur either: `moves.ts` resolves a
+    NON-LEGACY source column's targets from the task's own workflow adjacency on the
+    flag-OFF path (the FN-7591 carve-out), so a card in a custom column still moves.
+    `src/__tests__/coding-ideas-move.test.ts` proves this in the production shape — it
+    never writes the flag — covering the forward chain and the non-adjacent rejection.
+    And `reconcileUndeclaredTaskColumns` correctly leaves such a card alone: its workflow
+    DECLARES its column, so there is nothing undeclared to reconcile.
+    */
     return merged;
   }
 

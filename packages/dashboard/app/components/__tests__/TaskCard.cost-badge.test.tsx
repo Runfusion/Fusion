@@ -108,33 +108,74 @@ describe("TaskCard cost badge", () => {
     expect(badges[0]?.closest(".card-footer-row-right")).not.toBeNull();
   });
 
-  it("keeps unpriced usage guess-free and renders once below Promote", () => {
-    const { container } = render(
-      <CostBadgeProvider value={{ enabled: true }}>
-        <TaskCard
-          task={taskWithUsage({
-            tokenUsage: {
-              ...taskWithUsage().tokenUsage!,
-              modelProvider: "unknown",
-              modelId: "no-price",
-              perModel: [
-                { modelProvider: "openai", modelId: "gpt-5-mini", inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000 },
-                { modelProvider: "unknown", modelId: "no-price", inputTokens: 1, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1 },
-              ],
-            },
-          })}
-          onOpenDetail={noop}
-          addToast={noop}
-          onPromote={vi.fn().mockResolvedValue(undefined)}
-        />
-      </CostBadgeProvider>,
-    );
+  it.each([1280, 390])("omits unavailable cost chips and their shells at %ipx with or without Promote", (width) => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
 
-    const badges = container.querySelectorAll(".card-cost-indicator");
-    expect(badges).toHaveLength(1);
-    expect(badges[0]?.textContent).toBe("—");
-    expect(badges[0]?.closest(".card-promote-cost-row")).not.toBeNull();
-    expect(badges[0]?.closest(".card-footer-row-right")).toBeNull();
+    try {
+      const unavailableWithoutPromote = render(
+        <CostBadgeProvider value={{ enabled: true }}>
+          <TaskCard
+            task={taskWithUsage({
+              tokenUsage: { ...taskWithUsage().tokenUsage!, modelProvider: "unknown", modelId: "no-price" },
+            })}
+            onOpenDetail={noop}
+            addToast={noop}
+          />
+        </CostBadgeProvider>,
+      );
+      expect(unavailableWithoutPromote.container.querySelector(".card-cost-indicator")).toBeNull();
+      expect(unavailableWithoutPromote.container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
+      expect(unavailableWithoutPromote.container.querySelector(".card-promote-cost-row")).toBeNull();
+      unavailableWithoutPromote.unmount();
+
+      const unavailableWithPromote = render(
+        <CostBadgeProvider value={{ enabled: true }}>
+          <TaskCard
+            task={taskWithUsage({
+              tokenUsage: {
+                ...taskWithUsage().tokenUsage!,
+                modelProvider: "unknown",
+                modelId: "no-price",
+                perModel: [
+                  { modelProvider: "openai", modelId: "gpt-5-mini", inputTokens: 1_000_000, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1_000_000 },
+                  { modelProvider: "unknown", modelId: "no-price", inputTokens: 1, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 1 },
+                ],
+              },
+            })}
+            onOpenDetail={noop}
+            addToast={noop}
+            onPromote={vi.fn().mockResolvedValue(undefined)}
+          />
+        </CostBadgeProvider>,
+      );
+      expect(unavailableWithPromote.container.querySelector(".card-cost-indicator")).toBeNull();
+      expect(unavailableWithPromote.container.querySelector(".card-cost-indicator[aria-label]")).toBeNull();
+      expect(unavailableWithPromote.container.querySelector(".card-promote-cost-row")).toBeNull();
+      unavailableWithPromote.unmount();
+
+      const pricedWithoutPromote = render(
+        <CostBadgeProvider value={{ enabled: true }}>
+          <TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} />
+        </CostBadgeProvider>,
+      );
+      const footerBadge = pricedWithoutPromote.container.querySelectorAll(".card-cost-indicator");
+      expect(footerBadge).toHaveLength(1);
+      expect(footerBadge[0]?.textContent).toContain("$");
+      pricedWithoutPromote.unmount();
+
+      const pricedWithPromote = render(
+        <CostBadgeProvider value={{ enabled: true }}>
+          <TaskCard task={taskWithUsage()} onOpenDetail={noop} addToast={noop} onPromote={vi.fn().mockResolvedValue(undefined)} />
+        </CostBadgeProvider>,
+      );
+      const promoteBadge = pricedWithPromote.container.querySelectorAll(".card-cost-indicator");
+      expect(promoteBadge).toHaveLength(1);
+      expect(promoteBadge[0]?.textContent).toContain("$");
+      expect(promoteBadge[0]?.closest(".card-promote-cost-row")).not.toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
   });
 
   it("keeps the shared card cost chip visible at the mobile breakpoint", () => {

@@ -17,6 +17,7 @@ import type {
   NotificationPayload,
   WorkflowWorkItem,
   WorkflowWorkItemState,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   AsyncCentralClaimStore,
@@ -24,6 +25,7 @@ import {
   isEphemeralAgent,
   isTaskBlockedOnApproval,
   resolveWorkflowIrForTask,
+  resolveTaskLifecycleColumns,
 } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../merge/pr-monitor.js";
@@ -34,6 +36,7 @@ import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
 import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree/worktree-pool.js";
 import { AgentSemaphore, ScopedAgentSemaphore } from "../concurrency/concurrency.js";
+import type { PlanningHandoffOutcome } from "../triage.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { AutoClaimSnapshotManager } from "../scheduling/auto-claim-snapshot.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../scheduling/routine-runner.js";
@@ -63,6 +66,18 @@ import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
+
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_ARCHIVE_LANES: readonly string[] = ["archived"];
+
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
@@ -114,15 +129,35 @@ export interface PlanningContinuationCandidate {
  * non-dispatchable so their orphaned work items can be cancelled instead of
  * blocking later due rows (FN-8470 tombstone starved FN-8471 plan-review).
  */
+/*
+FNXC:WorkflowLifecycleColumns 2026-08-02-15:10 (fleet: the planning-continuation drain):
+THE TERMINAL PAIR ARRIVES FROM THE CALLER, matching this file's OWN injection idiom — the
+specification-complete reaction already takes a `resolveIr` dependency for exactly this reason (the
+classifiers are exported so they can be tested without constructing a runtime, which would attach to the real
+project registry).
+
+These two classifiers decide whether a due planning work item is DISPATCHABLE or an ORPHAN to cancel. Spelled
+as the default lineage's ids, a renamed board answered "not terminal" for every finished card — so an
+archived or completed card's orphaned work item was treated as live and, per FN-8470's own note, ONE orphan
+earlier in created_at FIFO prevented every later planning continuation from dispatching. The failure is not
+local: one stale item starves the whole drain.
+
+Optional and defaulting to the legacy pair, so every existing caller and test is unchanged.
+*/
 export function isPlanningContinuationTaskDispatchable(
   task: Task | null | undefined,
+  terminalColumns?: ReadonlySet<string>,
 ): task is Task {
   if (task == null) return false;
   if (task.paused === true || task.userPaused === true) return false;
   if (task.deletedAt) return false;
-  if (task.column === "archived" || task.column === "done") return false;
+  const terminal = terminalColumns ?? LEGACY_TERMINAL_PAIR;
+  if (terminal.has(task.column)) return false;
   return true;
 }
+
+/** The terminal ids from before workflows owned the vocabulary; the fallback when no set is supplied. */
+const LEGACY_TERMINAL_PAIR: ReadonlySet<string> = new Set(["done", "archived"]);
 
 /** Outcome of resolving one due work item for the planning-continuation drain. */
 export type PlanningContinuationResolution =
@@ -143,12 +178,13 @@ export type PlanningContinuationResolution =
 export function resolvePlanningContinuationCandidate(
   item: WorkflowWorkItem,
   task: Task | null | undefined,
-  opts?: { taskLookupFailed?: boolean },
+  opts?: { taskLookupFailed?: boolean; terminalColumns?: ReadonlySet<string> },
 ): PlanningContinuationResolution {
   if (opts?.taskLookupFailed === true || task == null) {
     return { kind: "orphan", item, reason: "task-not-found" };
   }
-  if (task.deletedAt || task.column === "archived" || task.column === "done") {
+  const terminal = opts?.terminalColumns ?? LEGACY_TERMINAL_PAIR;
+  if (task.deletedAt || terminal.has(task.column)) {
     return { kind: "orphan", item, reason: "task-terminal" };
   }
   if (item.waitReason !== "planning") {
@@ -172,7 +208,21 @@ export function resolvePlanningContinuationCandidate(
   if (task.paused === true || task.userPaused === true) {
     return { kind: "skip", item, reason: "paused" };
   }
-  if (!isPlanningContinuationTaskDispatchable(task)) {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-01:40 (the partially-threaded conversion named by
+  workflow-planning-continuation-terminal-gap-live-e2e.pg.test.ts):
+  THREAD THE SET THIS FUNCTION ALREADY RESOLVED. The terminal test at the top of this function uses the
+  caller's `terminal`; this delegation then re-tested against `LEGACY_TERMINAL_PAIR`, so the conversion
+  was whole at the call site and not whole inside it.
+
+  The reachable case is narrow but real: a board that DECLARES `done` as a non-terminal column id. The
+  outer check passes (not terminal per the resolved set), then the inner predicate calls it terminal per
+  the legacy pair and the continuation is skipped as "paused" — a card stalled by a lane name.
+
+  A partially threaded conversion is indistinguishable from a complete one at every call site that looks
+  converted, which is why this is worth closing even though the outer check dominates the common case.
+  */
+  if (!isPlanningContinuationTaskDispatchable(task, terminal)) {
     return { kind: "skip", item, reason: "paused" };
   }
   return { kind: "actionable", item, task };
@@ -243,11 +293,69 @@ export function resolveParkedContinuationDeferral(
  *  prevents is a property of this bound, so the two belong in one place. */
 export const DUE_PLANNING_CONTINUATION_BATCH_LIMIT = 20;
 
+/** Everything the specification-complete reaction touches, injected so the
+ *  reaction is exercisable without constructing a runtime. */
+export interface SpecificationCompleteReactionDeps {
+  taskId: string;
+  outcome: PlanningHandoffOutcome;
+  getTask: (taskId: string) => Promise<Task | undefined>;
+  resolveIr: (taskId: string) => Promise<WorkflowIr>;
+  seed: (task: Task, ir: WorkflowIr) => Promise<{ seeded: boolean; reason?: string }>;
+  kick: () => void;
+  log: (message: string) => void;
+}
+
+/**
+ * FNXC:PlanningHandoffOutcome 2026-07-28-10:05 (U7 / R4, R5 — workflow-owned lifecycle):
+ * The engine's reaction to a finished specification: arm the graph's pre-release
+ * Plan Review run for a card that was actually handed off.
+ *
+ * WHAT WAS WRONG: this fired on every finished specification, because the seam that
+ * announces it fired unconditionally. So a card parked at the manual plan-approval
+ * gate — finalize writes `status: "awaiting-approval"` and RETURNS EARLY, before the
+ * release move — was logged as "Specified X → todo" and had a Plan Review run armed
+ * for a plan the operator had not approved. PR #2491 stopped the seeder from acting
+ * on that, defensively, at the seeder. This removes the reason it was ever asked.
+ *
+ * `released` is the ONLY outcome that licenses arming a run: it is the only one that
+ * means the card crossed into the hold column (or was already resting there) and is
+ * the graph's now. `parked` belongs to a human, `withheld` belongs to the caller's
+ * retry budget — arming a run for either is doing work nobody asked for.
+ *
+ * The log line reports the real outcome rather than asserting a move that may not
+ * have happened; an operator reading "Specified → todo" for a card sitting in the
+ * planner column is being told something false about their own board.
+ *
+ * EXTRACTED from the inline `onSpecifyComplete` callback for the same reason the
+ * continuation drain was in PR #2491: the callback is constructed inside
+ * `InProcessRuntime`, whose construction attaches to the real project registry, so
+ * no test could tell "the reaction respects the outcome" from "the reaction ignores
+ * it". A guard that cannot be shown to fail is not a guard.
+ */
+export async function reactToSpecificationComplete(
+  deps: SpecificationCompleteReactionDeps,
+): Promise<void> {
+  if (deps.outcome !== "released") {
+    deps.log(
+      `Specification finished for ${deps.taskId} without a handoff (${deps.outcome}) — no plan review armed`,
+    );
+    return;
+  }
+  deps.log(`Specified ${deps.taskId} → todo`);
+  const live = await deps.getTask(deps.taskId);
+  if (!live || live.paused || live.userPaused) return;
+  const ir = await deps.resolveIr(live.id);
+  await deps.seed(live, ir);
+  deps.kick();
+}
+
 /** Everything the drain pass touches, injected so the pass is exercisable without
  *  constructing a runtime (which would attach to the real project registry). */
 export interface DuePlanningContinuationDrainDeps {
   listDue: () => Promise<WorkflowWorkItem[]>;
   getTask: (taskId: string) => Promise<Task | undefined>;
+  /** The task's own terminal columns; omitted in tests and legacy callers, which keep the legacy pair. */
+  resolveTerminalColumns?: (taskId: string) => Promise<ReadonlySet<string>>;
   cancelOrphan: (
     item: WorkflowWorkItem,
     reason: "task-not-found" | "task-terminal",
@@ -298,7 +406,10 @@ export async function drainDuePlanningContinuations(
         }`,
       );
     }
-    const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed });
+    const terminalColumns = taskLookupFailed
+      ? undefined
+      : await deps.resolveTerminalColumns?.(item.taskId).catch(() => undefined);
+    const resolved = resolvePlanningContinuationCandidate(item, task, { taskLookupFailed, terminalColumns });
     if (resolved.kind === "orphan") {
       await deps.cancelOrphan(resolved.item, resolved.reason);
       continue;
@@ -466,8 +577,14 @@ export class InProcessRuntime
   private scheduler!: Scheduler;
   private executor!: TaskExecutor;
   private worktreePool!: WorktreePool;
-  private globalSemaphore?: AgentSemaphore;
-  private projectSemaphore?: ScopedAgentSemaphore;
+  /*
+  FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+  The global and project-scoped semaphores are DELETED. Capacity is two numbers
+  per project; the machine-wide cap was a third limiter with a separate authority
+  (a central-DB singleton row) that the per-project gates then had to be reconciled
+  against. The scheduler/triage semaphore gate is now simply ABSENT rather than
+  holding an infinite limit — absence cannot start binding again by accident.
+  */
   private stuckTaskDetector?: StuckTaskDetector;
   /**
    * Per-project CLI Agent Executor runtime bundle (PTY manager + telemetry hub +
@@ -503,12 +620,12 @@ export class InProcessRuntime
   private triageProcessor?: TriageProcessor;
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
+  private workflowContinuationDrainSince = 0;
   private messageStore?: MessageStore;
   /** FNXC:TaskDeleteNotice 2026-07-26-16:10: identity-guarded teardown for the delete-notice mailbox seam. */
   private unregisterTaskDeleteNoticeMailbox?: () => void;
   private chatStore?: ChatStore;
   private detachAgentLinkSync?: () => void;
-  private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
    * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
@@ -753,28 +870,6 @@ export class InProcessRuntime
 
       await yieldEventLoop();
 
-      // 4. Initialize global semaphore — use shared one from ProjectManager if provided,
-      // otherwise create a local one from CentralCore (single-project mode).
-      if (this.config.globalSemaphore) {
-        this.globalSemaphore = this.config.globalSemaphore;
-      } else {
-        // Dynamic getter that re-reads from CentralCore on each semaphore acquire.
-        // This ensures changes via PUT /api/global-concurrency take effect immediately.
-        let cachedLimit = await this.getGlobalConcurrencyLimit();
-        this.globalSemaphore = new AgentSemaphore(() => cachedLimit);
-
-        // Listen for concurrency changes from CentralCore (if it supports events)
-        if (typeof this.centralCore.on === "function") {
-          this.concurrencyChangedListener = (state: { globalMaxConcurrent: number }) => {
-            cachedLimit = state.globalMaxConcurrent;
-            runtimeLog.log(`Global concurrency limit updated to ${cachedLimit}`);
-          };
-          this.centralCore.on("concurrency:changed", this.concurrencyChangedListener);
-        }
-      }
-
-      this.projectSemaphore = new ScopedAgentSemaphore(this.globalSemaphore);
-
       await yieldEventLoop();
 
       // 5a. Initialize AgentStore (required for scheduler assignment, reflection service, and heartbeat monitoring)
@@ -904,7 +999,6 @@ export class InProcessRuntime
       this.scheduler = new Scheduler(this.taskStore, {
         maxConcurrent: this.config.maxConcurrent,
         maxWorktrees: this.config.maxWorktrees,
-        semaphore: this.projectSemaphore,
         // FNXC:GlobalConcurrencyControls 2026-07-17-00:00: Feed the triage service's
         // live pre-planning in-flight count into the scheduler's stale-semaphore
         // recovery so a triage session holding a slot before it writes
@@ -1041,7 +1135,6 @@ export class InProcessRuntime
         attribution. Reading it lazily at runner-construction time picks up the resolved id.
         */
         getLocalNodeId: () => this.localNodeId,
-        semaphore: this.projectSemaphore,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
         stuckTaskDetector: this.stuckTaskDetector,
@@ -1088,8 +1181,23 @@ export class InProcessRuntime
             void (async () => {
               try {
                 const latest = await this.taskStore.getTask(task.id);
-                if (latest?.column === "in-progress") {
-                  await this.taskStore.moveTask(task.id, "todo");
+                /*
+                FNXC:WorkflowLifecycleColumns 2026-08-02-15:30 (fleet — GUARD AND DESTINATION together):
+                A mission task that errored is requeued from the WIP lane back to the HOLD lane. Both ends were
+                literals, so on a renamed board the guard never matched and the requeue never happened — the
+                errored mission task stayed in the wip lane holding a slot, which is worse than a requeue that
+                fails loudly.
+
+                Converting the guard alone would be worse still: it would admit the card and then move it to a
+                `todo` the board may not declare, `moveTask` rejects an unknown column, and the task stays put
+                with an exception in the log. A board that declares no hold lane keeps the card in place
+                deliberately — the same outcome it has today.
+                */
+                const requeueLifecycle = await resolveTaskLifecycleColumns(this.taskStore, task.id);
+                const requeueWip = requeueLifecycle?.wip ?? "in-progress";
+                const requeueHold = requeueLifecycle ? requeueLifecycle.hold : "todo";
+                if (latest?.column === requeueWip && requeueHold !== undefined) {
+                  await this.taskStore.moveTask(task.id, requeueHold as never);
                 }
               } catch (moveErr) {
                 runtimeLog.warn(`Failed to requeue mission task ${task.id} after error:`, moveErr);
@@ -1294,7 +1402,6 @@ export class InProcessRuntime
         this.taskStore,
         this.config.workingDirectory,
         {
-          semaphore: this.projectSemaphore,
           stuckTaskDetector: this.stuckTaskDetector,
           usageLimitPauser: this.usageLimitPauser,
           agentStore: this.agentStore,
@@ -1306,16 +1413,19 @@ export class InProcessRuntime
             this.recordActivity();
             runtimeLog.log(`Specifying ${t.id}...`);
           },
-          onSpecifyComplete: (t) => {
+          onSpecifyComplete: (t, report) => {
+            // Activity is recorded for EVERY outcome: a planning session ran either
+            // way, and idle detection must not depend on whether it released.
             this.recordActivity();
-            runtimeLog.log(`Specified ${t.id} → todo`);
-            void (async () => {
-              const live = await this.taskStore.getTask(t.id);
-              if (!live || live.paused || live.userPaused) return;
-              const ir = await resolveWorkflowIrForTask(this.taskStore, live.id);
-              await seedPreReleasePlanReviewContinuation(this.taskStore, live, ir);
-              this.kickWorkflowContinuationProcessor();
-            })().catch((error) => {
+            void reactToSpecificationComplete({
+              taskId: t.id,
+              outcome: report.outcome,
+              getTask: (id) => Promise.resolve(this.taskStore.getTask(id)),
+              resolveIr: (id) => resolveWorkflowIrForTask(this.taskStore, id),
+              seed: (task, ir) => seedPreReleasePlanReviewContinuation(this.taskStore, task, ir),
+              kick: () => this.kickWorkflowContinuationProcessor(),
+              log: (message) => runtimeLog.log(message),
+            }).catch((error) => {
               runtimeLog.error(`Failed to start Todo plan review for ${t.id}:`, error);
             });
           },
@@ -1403,13 +1513,22 @@ export class InProcessRuntime
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
         clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
+        /*
+        FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756):
+        Wire the read-only liveness probe. self-healing.ts's own comment records that
+        `releaseExecutorWorktreeOwnership` was a declared-but-never-wired option that
+        silently no-opped; an unwired probe here would be worse — `?.() === true` is
+        false when unwired, so every sweep gating on it would silently stop deferring
+        for live sessions and the FN-6756 fix would evaporate without a test failing.
+        */
+        hasLiveSessionSurface: (taskId: string) => this.executor?.hasLiveSessionSurface(taskId) ?? false,
         listWorktreeHolders: () => this.executor?.listWorktreeHolders() ?? [],
         // FNXC:PlanningEvacuation 2026-07-25-23:00: the executor owns the release safety conditions.
         releasePreExecutionWorktree: (taskId, reason) =>
           this.executor?.releasePreExecutionWorktree(taskId, reason) ?? Promise.resolve(false),
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
         getPlanningTaskIds: () => this.triageProcessor?.getPlanningTaskIds() ?? new Set<string>(),
-        // FNXC:TaskTiming 2026-08-01-12:00: orphan planning recovery must defer
+        // FNXC:TaskTiming 2026-07-20-12:00: orphan planning recovery must defer
         // while executor-owned graph Plan Review holds the sole planning anchor.
         hasActivePlanningWorkflowSession: (taskId) => this.executor?.hasActivePlanningWorkflowSession(taskId) ?? false,
         reserveAdvancedTriageRecovery: (taskId) => this.triageProcessor?.tryReserveAdvancedRecovery(taskId),
@@ -1646,12 +1765,6 @@ export class InProcessRuntime
         clearInterval(this.workflowContinuationTimer);
         this.workflowContinuationTimer = undefined;
       }
-      // 1. Remove concurrency change listener (if we registered one)
-      if (this.concurrencyChangedListener && typeof this.centralCore.off === "function") {
-        this.centralCore.off("concurrency:changed", this.concurrencyChangedListener);
-        this.concurrencyChangedListener = undefined;
-      }
-
       // 2. Stop self-healing manager
       if (this.selfHealingManager) {
         this.selfHealingManager.stop();
@@ -1797,16 +1910,15 @@ export class InProcessRuntime
         );
       }
 
-      /**
-       * FNXC:Scheduler-Concurrency 2026-06-27-20:05:
-       * After stop aborts a project's agents and waits the bounded drain window, any slots still attributed to this runtime are residual leaks from sessions that did not settle their normal finally path. Return only this project's scoped slots so pauseProject/stopAll promptly free shared global capacity without clobbering other projects' active slots.
-       */
-      const returnedResidualSlots = this.projectSemaphore?.returnAllHeldSlots() ?? 0;
-      if (returnedResidualSlots > 0) {
-        runtimeLog.warn(
-          `Returned ${returnedResidualSlots} residual global concurrency slot(s) after project stop drain`,
-        );
-      }
+      /*
+      FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+      The residual-slot return on stop is GONE with the scoped semaphore it drained.
+      There is no shared cross-project pool left to leak INTO, so a session that
+      skips its finally path can no longer strand capacity belonging to another
+      project. Per-project capacity is derived from live task rows by the hold/
+      release sweep, which recomputes occupancy every pass rather than tracking a
+      counter that can drift.
+      */
 
       // 8. Shutdown plugin runner
       if (this.pluginRunner) {
@@ -2036,8 +2148,13 @@ export class InProcessRuntime
       ? (this.executor as unknown as { activeWorktrees?: Map<string, string> }).activeWorktrees?.size ?? 0
       : 0;
 
-    // Get active agent count from the semaphore
-    const activeAgents = this.globalSemaphore?.activeCount ?? 0;
+    /*
+    FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
+    Active-agent load now comes from the executor's live worktree map rather than a
+    semaphore counter. The counter was a second bookkeeping of the same fact and
+    needed its own leak reaper when the two drifted.
+    */
+    const activeAgents = inFlightTasks;
 
     // Get memory usage if available
     const memoryBytes = process.memoryUsage?.().heapUsed;
@@ -2191,8 +2308,29 @@ export class InProcessRuntime
    * adapters that bind the pass to this runtime's store and executor.
    */
   private async drainWorkflowContinuations(): Promise<void> {
-    if (this.workflowContinuationDrainActive || this.status !== "active") return;
+    if (this.status !== "active") return;
+    if (this.workflowContinuationDrainActive) {
+      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. */
+      const stuckMs = this.workflowContinuationDrainSince > 0 ? Date.now() - this.workflowContinuationDrainSince : 0;
+      if (stuckMs < 300_000) return;
+      runtimeLog.warn(`continuation-drain watchdog: previous drain still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open`);
+    }
     this.workflowContinuationDrainActive = true;
+    this.workflowContinuationDrainSince = Date.now();
+    /*
+    FNXC:EnginePause 2026-08-01-00:20:
+    A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
+    this gate the drain would re-dispatch it on the next tick and the graph would bounce
+    suspend→dispatch→suspend forever while paused — and worse, dispatch genuinely new work under
+    Stop AI Engine. Settings are re-read here (not event-driven) for the same reason as the
+    boundary probe: the pause must bind even if `settings:updated` never reaches this instance.
+    */
+    try {
+      const settings = await this.taskStore.getSettings();
+      if (settings.globalPause === true || settings.enginePaused === true) return;
+    } catch {
+      /* unreadable settings: proceed as before rather than wedging the pump */
+    }
     try {
       await drainDuePlanningContinuations({
         listDue: () => this.taskStore.listDueWorkflowWorkItems({
@@ -2201,6 +2339,19 @@ export class InProcessRuntime
           limit: DUE_PLANNING_CONTINUATION_BATCH_LIMIT,
         }),
         getTask: (taskId) => Promise.resolve(this.taskStore.getTask(taskId)),
+        /* FNXC:WorkflowLifecycleColumns 2026-08-02-15:20 (fleet): the PRODUCTION resolver for the drain's
+           terminal check — the pure pass keeps the legacy pair when this is omitted, which is what every
+           existing test relies on. One IR read per due item, and the batch is capped by
+           DUE_PLANNING_CONTINUATION_BATCH_LIMIT. */
+        resolveTerminalColumns: async (taskId) => {
+          const lifecycle = await resolveTaskLifecycleColumns(this.taskStore, taskId);
+          return new Set([
+            lifecycle?.complete ?? "done",
+            lifecycle?.archived ?? "archived",
+            "done",
+            "archived",
+          ]);
+        },
         cancelOrphan: (item, reason) => this.cancelOrphanedWorkflowWorkItem(item, reason),
         defer: (deferral) => this.deferParkedWorkflowWorkItem(deferral),
         dispatch: (task, item) => {
@@ -2337,13 +2488,33 @@ export class InProcessRuntime
     // Forward task:moved events
     this.taskStore.on("task:moved", (data: { task: Task; from: string; to: string }) => {
       this.recordActivity();
-      if (data.to === "archived") {
-        /*
-        FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
-        In-process task archival is the retention cutoff for task-local planner chats. Keep interacted planner chats when tasks reach done, but delete exact task-planner sessions on archive through ChatStore so normal conversations and other tasks remain untouched.
-        */
-        void this.chatStore?.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`, { projectId: this.config.projectId });
-      }
+      /*
+      FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
+      In-process task archival is the retention cutoff for task-local planner chats. Keep interacted planner chats when tasks reach done, but delete exact task-planner sessions on archive through ChatStore so normal conversations and other tasks remain untouched.
+
+      FNXC:WorkflowLifecycleColumns 2026-08-02-15:50 (fleet):
+      ARCHIVAL IS THE CUTOFF, and on a renamed board the literal never matched — so task-planner chats were
+      never deleted on archive. That is the quiet direction of this defect class: nothing breaks, data that
+      should have been cleaned up simply accumulates, and the only symptom is storage growth nobody attributes
+      to a column name.
+
+      The resolution is async and this is a sync event handler, so the branch moves inside a `void (async …)`
+      — the deletion was already fire-and-forget (`void this.chatStore?.…`), so nothing about the handler's
+      timing contract changes. `data.to` is still accepted when it equals the legacy `archived`, because a row
+      moved into a column the workflow no longer declares is still archived.
+      */
+      void (async () => {
+        const archivedLifecycle = await resolveTaskLifecycleColumns(this.taskStore, data.task.id)
+          .catch(() => undefined);
+        const archivedColumn = archivedLifecycle?.archived ?? "archived";
+        /* Resolved archive lane UNION the legacy id — the guard already accepted either. */
+        const archivedLanes = new Set<string>([archivedColumn, ...LEGACY_ARCHIVE_LANES]);
+        if (!archivedLanes.has(data.to)) return;
+        await this.chatStore?.deleteSessionsForAgentId(
+          `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`,
+          { projectId: this.config.projectId },
+        );
+      })();
       this.emit("task:moved", data);
     });
 
@@ -2381,20 +2552,12 @@ export class InProcessRuntime
     this.lastActivityAt = new Date().toISOString();
   }
 
-  /**
-   * Get global concurrency limit from CentralCore.
-   */
-  private async getGlobalConcurrencyLimit(): Promise<number> {
-    try {
-      const state = await this.centralCore.getGlobalConcurrencyState();
-      return state.globalMaxConcurrent;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      runtimeLog.warn(`Failed to fetch global concurrency from CentralCore, falling back to default (4): ${msg}`);
-      // Fallback to default if CentralCore is unavailable
-      return 4;
-    }
-  }
+  /*
+  FNXC:CapacityModel 2026-07-28-23:30 (drop the cross-project cap — settings half):
+  `getGlobalConcurrencyLimit` is DELETED. Its only caller was the global semaphore
+  construction removed in the enforcement half, so it has been reading a limit
+  nothing consults. Capacity is two numbers per project.
+  */
 
   /**
    * Record task completion in CentralCore.

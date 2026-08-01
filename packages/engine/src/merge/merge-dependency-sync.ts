@@ -8,7 +8,10 @@ import type { Settings } from "@fusion/core";
 const execAsync = promisify(exec);
 
 export const INSTALL_MARKER_RELPATH = join("node_modules", ".fusion-install-marker");
-const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
+/* FNXC:MergeNoCommits 2026-07-30-19:25: exported so merger-ai's no-commits dep-sync skip tests the
+   SAME lockfile names this module installs against. A second copy of the list is how the skip and the
+   installer drift into disagreeing about what counts as a dependency change. */
+export const LOCKFILE_CANDIDATES = ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lockb", "bun.lock"];
 const INSTALL_TIMEOUT_MS = 300_000;
 
 export interface WorktreeDependencySyncLogger {
@@ -166,9 +169,25 @@ export async function installWorktreeDependencies(options: InstallWorktreeDepend
   logger?.log?.(`${taskId}: syncing dependencies ${context}`);
   await log?.(`Syncing dependencies ${context}: ${installCommand}`);
 
+  /*
+  FNXC:MergeDeps 2026-07-17-12:00:
+  Pass corepack/pnpm env vars (PNPM_HOME, COREPACK_HOME, npm_config_registry) to the exec
+  child process — mirrors mission-verification.ts VERIFICATION_ENV_ALLOWLIST so pnpm is
+  resolvable even when the engine process starts without full shell initialization. Without
+  these vars, corepack cannot locate its pnpm shim and "pnpm: command not found" occurs.
+  */
+  const resolvedEnv: NodeJS.ProcessEnv = { ...process.env };
+  const PNPM_ENV_VARS = ["COREPACK_HOME", "PNPM_HOME", "npm_config_registry"] as const;
+  for (const key of PNPM_ENV_VARS) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      resolvedEnv[key] = value;
+    }
+  }
   const runInstall = (command: string): Promise<unknown> =>
     execAsync(command, {
       cwd,
+      env: resolvedEnv,
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
       timeout: INSTALL_TIMEOUT_MS,

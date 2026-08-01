@@ -38,7 +38,10 @@ function ensureMigrationsStaged() {
   }
 }
 
-async function importCore() {
+/* FNXC:OperatorScriptLaneAssumptions 2026-07-31-02:10: exported so operator scripts can reach core
+   helpers (lane resolution) through the SAME staged-dist seam `openBackend` already uses, rather than
+   each growing its own dist path — `@fusion/core` is not resolvable from the repo-root `scripts/`. */
+export async function importCore() {
   ensureMigrationsStaged();
   try {
     return await import(pathToFileURL(resolve(repoRoot, "packages/core/dist/index.js")).href);

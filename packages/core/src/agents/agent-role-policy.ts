@@ -1,5 +1,31 @@
 import type { Agent, Task } from "../types.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-15:20 (FLAGGED, NOT FIXED — found by a #2739 review thread):
+THE ROLE-ROUTING POLICY IS BYPASSED ENTIRELY ON A RENAMED BOARD.
+
+`isImplementationTask` is a Set membership test over these hardcoded ids, and
+`evaluateImplementationTaskBind` short-circuits to `{ allowed: true }` when it returns false. So on a
+workflow whose lanes are named anything else, EVERY agent is bind-compatible with EVERY task: the role
+check that exists to stop a liaison/custom agent being handed implementation work — the NEXT-871 loop
+FN-7851 fixed — silently does not apply.
+
+HOW IT SURFACED, which is the part worth keeping: a reviewer noticed my dispatch test claimed to exercise
+the bind evaluator while omitting the optional `agent` argument. Passing a real agent was not enough to
+prove the evaluator RAN, so I added a case asserting a `custom`-role agent is refused an implementation
+task on a renamed lane. It FAILED — the task was handed over — and the cause is this Set, not the test.
+
+WHY THE CENSUS NEVER FLAGGED IT: these are Set MEMBERS, not comparisons. The lifecycle-column census scans
+`===`/`!==` against a column, so a literal collection is invisible to it — the same blind spot that hid the
+raw-`sql` encoding of the archived gate (PR #2724). Worth knowing that the backlog number is a floor, not a
+total.
+
+NOT FIXED HERE. `isImplementationTask` is a SYNC pure predicate with no store and no task id, called from
+`evaluateImplementationTaskBind`, which gates agent assignment; resolving a workflow inside it means
+threading a resolver through the routing policy and making its callers async. That is a behaviour change to
+agent admission, not a vocabulary conversion, and the failure mode of getting it wrong is either handing
+implementation work to a liaison or refusing work to a valid executor.
+*/
 const IMPLEMENTATION_TASK_COLUMNS: ReadonlySet<Task["column"]> = new Set([
   "triage",
   "todo",

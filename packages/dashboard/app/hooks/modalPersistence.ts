@@ -141,3 +141,83 @@ export function getGitHubImportState(projectId?: string): GitHubImportPersistedS
 export function clearGitHubImportState(projectId?: string): void {
   removeScopedItem(STORED_GITHUB_IMPORT_KEY, projectId);
 }
+
+// Command Center / Dev Server cheap-view persistence
+
+/*
+FNXC:CommandCenter 2026-07-22-13:40:
+FN remount-churn fix R12: CommandCenter fully unmounts on main-content navigation (it is intentionally NOT kept alive), so its cheap UI state — active sub-tab and date range — persists per project like the GitHub import state above. Only restorable selection state is stored; fetched analytics re-derive on remount. A fresh project (nothing stored) keeps today's defaults, and an unknown/removed tab id falls back to overview at the consumer.
+*/
+export const STORED_COMMAND_CENTER_KEY = "kb-dashboard-command-center-state";
+
+export interface CommandCenterPersistedState {
+  activeTab: string;
+  range: { from: string | null; to: string | null; preset: string };
+}
+
+export function saveCommandCenterState(state: CommandCenterPersistedState, projectId?: string): void {
+  try {
+    setScopedItem(STORED_COMMAND_CENTER_KEY, JSON.stringify(state), projectId);
+  } catch {
+    // Best-effort persistence; ignore storage failures.
+  }
+}
+
+export function getCommandCenterState(projectId?: string): CommandCenterPersistedState | null {
+  try {
+    const raw = getScopedItem(STORED_COMMAND_CENTER_KEY, projectId);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as Record<string, unknown>;
+    const range = p.range as Record<string, unknown> | undefined;
+    if (typeof p.activeTab !== "string" || !range || typeof range !== "object" || typeof range.preset !== "string") return null;
+    return {
+      activeTab: p.activeTab,
+      range: {
+        from: typeof range.from === "string" ? range.from : null,
+        to: typeof range.to === "string" ? range.to : null,
+        preset: range.preset,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/*
+FNXC:DevServer 2026-07-22-13:40:
+FN remount-churn fix R12: DevServerView also unmounts on navigation; the selected script/task target and a typed-but-unsent command survive the round-trip per project. Log pagination/scroll intentionally does not persist (logs re-derive live). A fresh project gets defaults.
+*/
+export const STORED_DEV_SERVER_KEY = "kb-dashboard-dev-server-state";
+
+export interface DevServerPersistedState {
+  selectedScript: string | null;
+  selectedTaskId: string | null;
+  commandInput: string;
+}
+
+export function saveDevServerState(state: DevServerPersistedState, projectId?: string): void {
+  try {
+    setScopedItem(STORED_DEV_SERVER_KEY, JSON.stringify(state), projectId);
+  } catch {
+    // Best-effort persistence; ignore storage failures.
+  }
+}
+
+export function getDevServerState(projectId?: string): DevServerPersistedState | null {
+  try {
+    const raw = getScopedItem(STORED_DEV_SERVER_KEY, projectId);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as Record<string, unknown>;
+    return {
+      selectedScript: typeof p.selectedScript === "string" ? p.selectedScript : null,
+      selectedTaskId: typeof p.selectedTaskId === "string" ? p.selectedTaskId : null,
+      commandInput: typeof p.commandInput === "string" ? p.commandInput : "",
+    };
+  } catch {
+    return null;
+  }
+}

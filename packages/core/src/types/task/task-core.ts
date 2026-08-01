@@ -1133,7 +1133,7 @@ export interface Task {
    *  never cleared by reopen flows. */
   cumulativeActiveMs?: number;
   /**
-   * FNXC:TaskTiming 2026-08-01-10:00:
+   * FNXC:TaskTiming 2026-07-23-10:00:
    * Monotonic active AI planning duration. Unlike column dwell this is only
    * accrued by a live planning session and is never cleared by reopen.
    */
@@ -1306,6 +1306,12 @@ export interface TaskCreateInput {
   branch?: string;
   /** Optional planning/mission branch-group metadata carried across related tasks. */
   branchContext?: TaskBranchContext;
+  /**
+   * FNXC:MissionTaskPrefix 2026-07-26-12:00:
+   * Transient minting hint: overrides the project taskPrefix for this task's id
+   * reservation (used by mission triage to honor a per-mission prefix). Not persisted.
+   */
+  taskPrefix?: string;
   /** Optional per-task auto-merge override. Undefined means no task-level override. */
   autoMerge?: boolean;
   /** Durable source provenance for the originating external issue. */

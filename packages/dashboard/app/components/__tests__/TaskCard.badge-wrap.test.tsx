@@ -160,7 +160,14 @@ function expectHeaderActionsControlCenterline(container: HTMLElement, expected: 
     expect(menuStyles.alignItems).toBe("center");
     expect(menuStyles.justifyContent).toBe("center");
     expect(menuStyles.lineHeight).toBe("1");
-    expect(menuStyles.minHeight).toBe("");
+    /*
+    FNXC:TaskCardBadges 2026-07-30-09:30:
+    `auto` IS the unset value. `.card-menu-btn` declares no `min-height` (TaskCard.css:1645), and
+    `auto` is the CSS initial value for it — jsdom 29 reports that spec-correct initial where jsdom 27
+    returned the empty string. The intent here is "nothing constrains the button's height", which
+    `auto` states; asserting `""` was pinning a jsdom-27 quirk rather than a style fact.
+    */
+    expect(menuStyles.minHeight).toBe("auto");
   } else {
     expect(menu).toBeNull();
   }

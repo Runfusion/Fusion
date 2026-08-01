@@ -1,4 +1,4 @@
-import { resolveTaskLifecycleColumns } from "@fusion/core";
+import { resolveWorkflowIrForTask, columnsWithFlag } from "@fusion/core";
 import type { Agent, AgentHeartbeatRun, AgentStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
 export const PARKED_AGENT_LINK_FRESH_RUN_MS = 5 * 60_000;
@@ -56,11 +56,22 @@ async function resolveLinkSyncColumnRoles(
   taskId: string,
   cache?: Map<string, WorkflowIr>,
 ): Promise<LinkSyncColumnRoles> {
-  const lifecycle = await resolveTaskLifecycleColumns(store, taskId, cache);
-  if (!lifecycle) return LEGACY_COLUMN_ROLES;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:40 (the arity trap, sixth site):
+  MEMBERSHIP, not first-per-role. These two sets are consumed by `roles.parked.includes(to)` and
+  `roles.clear.includes(to)` — membership tests — but were built from `resolveTaskLifecycleColumns`,
+  which returns the FIRST column carrying each trait. A workflow declaring two hold lanes, or an
+  archive lane plus a second terminal one, had link hygiene applied to only one of them.
 
-  const parked = [lifecycle.hold, lifecycle.intake].filter((c): c is string => typeof c === "string");
-  const terminal = [lifecycle.complete, lifecycle.archived].filter((c): c is string => typeof c === "string");
+  `resolveLifecycleColumns` answers "which column is THE hold lane?"; a membership test asks "is this
+  column ANY hold lane". Nothing in the types distinguishes them, which is why this program has now hit
+  it six times. `columnsWithFlag` returns every column carrying the trait.
+  */
+  const ir = await resolveWorkflowIrForTask(store, taskId, cache).catch(() => undefined);
+  if (!ir) return LEGACY_COLUMN_ROLES;
+
+  const parked = [...new Set([...columnsWithFlag(ir, "hold"), ...columnsWithFlag(ir, "intake")])];
+  const terminal = [...new Set([...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")])];
   const clear = [...terminal, ...parked];
 
   // A v2 workflow declaring none of the four roles yields an empty clear set,
@@ -136,17 +147,70 @@ export function evaluateParkedAgentTaskLink(options: {
 
 type LoggerLike = { log: (msg: string) => void; warn: (msg: string) => void };
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-28-14:20 (PR #2514 review):
+THE COMPLETION SIGNAL for an otherwise unobservable listener.
+
+`task:moved` is a plain EventEmitter event and this handler is `async`, so
+`store.emit` returns the moment the handler hits its first `await` and NOTHING
+awaits the rest. That is fine in production — link hygiene is best-effort — but it
+means the handler has no completion signal at all, and a caller cannot distinguish
+"the handler ran and correctly did nothing" from "the handler has not run yet".
+
+That distinction is not merely a testing inconvenience. The negative case of this
+handler — a move that must NOT release the agent — has no observable effect by
+construction, so without this hook the only way to check it is to wait a while and
+look, which cannot fail: a handler that never ran looks exactly like a handler that
+correctly declined. An unobservable async listener in an event-driven lifecycle is
+a design gap, and this closes it with the narrowest thing that does: one optional
+callback, fired on EVERY exit path including the early return and the error path.
+
+Production passes nothing and is byte-identical.
+*/
+export interface AgentLinkSyncOutcome {
+  taskId: string;
+  from: string;
+  to: string;
+  /** False when `to` is not one of the workflow's clear columns — the handler
+   *  intentionally did nothing. This is what makes "declined" observable. */
+  matchedClearColumn: boolean;
+  /** Agents whose task link was cleared by this move. */
+  clearedAgentIds: string[];
+  /** Linked agents deliberately left alone by the parked-link preservation proof. */
+  preservedAgentIds: string[];
+  /** Set when the agent listing/mutation threw; the handler swallows it as before. */
+  error?: string;
+}
+
 export interface AttachAgentLinkSyncOptions {
   store: TaskStore;
   agentStore: AgentStore;
   hasActiveAgentExecution?: (agentId: string) => boolean;
   logger?: LoggerLike;
+  /** Fired after the handler settles for one move, on every exit path. Optional;
+   *  absent in production. Must never throw into the handler. */
+  onHandled?: (outcome: AgentLinkSyncOutcome) => void;
 }
 
 export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => void {
   const logger: LoggerLike = opts.logger ?? console;
 
   const handler = async ({ task, from, to }: { task: { id: string }; from: string; to: string }) => {
+    const outcome: AgentLinkSyncOutcome = {
+      taskId: task.id,
+      from,
+      to,
+      matchedClearColumn: false,
+      clearedAgentIds: [],
+      preservedAgentIds: [],
+    };
+    const settle = (): void => {
+      try {
+        opts.onHandled?.(outcome);
+      } catch {
+        // A diagnostics hook must never affect link hygiene.
+      }
+    };
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-27-22:55 (Phase B / U5):
     Resolve the roles from the moved task's OWN workflow rather than matching
@@ -164,8 +228,10 @@ export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => voi
     }
 
     if (!roles.clear.includes(to)) {
+      settle();
       return;
     }
+    outcome.matchedClearColumn = true;
 
     try {
       const agents = await opts.agentStore.listAgents({ includeEphemeral: false });
@@ -182,6 +248,7 @@ export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => voi
             parkedColumns: roles.parked,
           });
           if (proof.shouldPreserveParkedLink) {
+            outcome.preservedAgentIds.push(agent.id);
             continue;
           }
         }
@@ -190,12 +257,16 @@ export function attachAgentLinkSync(opts: AttachAgentLinkSyncOptions): () => voi
           await opts.agentStore.updateAgentState(agent.id, "active");
         }
         await opts.agentStore.syncExecutionTaskLink(agent.id, undefined);
+        outcome.clearedAgentIds.push(agent.id);
         logger.log(`taskAgentLinkSync: cleared agent ${agent.id} taskId from ${task.id} after move ${from} → ${to}`);
       }
     } catch (error) {
+      outcome.error = error instanceof Error ? error.message : String(error);
       logger.warn(
         `taskAgentLinkSync: failed to sync agents for task ${task.id} after move ${from} → ${to}: ${error instanceof Error ? error.message : String(error)}`,
       );
+    } finally {
+      settle();
     }
   };
 

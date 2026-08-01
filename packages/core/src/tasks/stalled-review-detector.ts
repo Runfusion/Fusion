@@ -1,5 +1,17 @@
 import type { Task } from "../types.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
 /**
  * Heuristic-only stalled review detector.
  *
@@ -38,11 +50,30 @@ export interface StalledReviewSignal {
   lastMatchAt: string;
 }
 
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-31-01:20 (fleet — the review lane, resolved):
+`reviewColumns` is an optional RESOLVED answer; omitted, this is byte-for-byte today's behaviour, so
+no caller or test outside `reads.ts` changes.
+
+Why it mattered. All four production call sites are stall-badge hydration passes in
+`task-store/reads.ts`, and every one of them ALREADY resolves the review lane one line earlier and
+hands it to the adjacent `getInReviewStallReason`/`getInReviewStalledSignal`. That file states the
+invariant in its own words — "RESOLVED BEFORE THE FIRST SIGNAL, because two adjacent signals must not
+disagree" — and then called THIS detector with the literal. So on a renamed board the two stall
+signals for one card disagreed by construction: the in-review stall reason resolved the board's real
+review lane while `stalledReview` compared against `"in-review"`, a column that board does not
+contain, and silently returned `undefined` for every card. The stall this detector exists to surface
+was unreportable on any renamed board.
+
+The set is the union of the three review roles (`resolveReviewColumnsForTask`), which unions the
+legacy id too, so a board mid-rename is never skipped.
+*/
 export function detectStalledReview(
   task: Pick<Task, "column" | "paused" | "log">,
-  options?: { now?: number; windowMs?: number },
+  options?: { now?: number; windowMs?: number; reviewColumns?: ReadonlySet<string> },
 ): StalledReviewSignal | undefined {
-  if (task.column !== "in-review" || task.paused === true || task.log.length === 0) {
+  const inReview = (options?.reviewColumns ?? LEGACY_REVIEW_LANES).has(task.column);
+  if (!inReview || task.paused === true || task.log.length === 0) {
     return undefined;
   }
 

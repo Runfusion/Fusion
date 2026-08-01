@@ -585,7 +585,10 @@ describe("gating-classifications parity", () => {
         continue;
       }
       if (FILE_WRITE_DELETE_FN_TOOLS.has(toolName)) {
-        expect({ toolName, actionKind, permanentKind }).toEqual({ toolName, actionKind: "readonly", permanentKind: "file-write" });
+        // FNXC:AgentGating 2026-07-26-15:10: both gates now agree fn_task_attach
+        // is a file write; the old "readonly" action-side expectation encoded the
+        // silent exempt-fallback defect fixed by the fail-closed classifier.
+        expect({ toolName, actionKind, permanentKind }).toEqual({ toolName, actionKind: "file-write", permanentKind: "file-write" });
         continue;
       }
       if (NETWORK_API_TOOLS.has(toolName) && !ACTION_GATE_NETWORK_API_TOOLS.has(toolName)) {

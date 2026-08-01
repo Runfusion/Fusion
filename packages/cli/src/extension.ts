@@ -34,7 +34,19 @@ import {
   getProjectRootFromWorktree,
   resolveTaskGithubTracking,
   formatCurrentTaskLine,
+  resolveFusionSessionPrincipal,
+  resolveEffectiveAgentPermissionPolicy,
+  type FusionSessionPrincipal,
+  type AgentPermissionPolicy,
+  type ApprovalRequestActorSnapshot,
   type SecretScope,
+  declaresAnyLifecycleTrait,
+  resolveTaskLifecycleColumns,
+  resolveNodeOverrideLanes,
+  resolveLifecycleColumns,
+  resolveWorkflowIrForTaskWithProvenance,
+  resolveWorkflowIrForTask,
+  resolveReviewColumns,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -70,6 +82,8 @@ import {
   normalizeAgentLogPaging,
   renderAgentLogEntries,
   createAgentTask,
+  evaluateAgentActionGate,
+  resolveGateOutcome,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, relative, isAbsolute, sep, basename, extname, join } from "node:path";
@@ -738,14 +752,20 @@ ephemeral so the project policy still applies. An absent id keeps the human pass
 resolved permanent agent is still never gated.
 
 FNXC:EphemeralAgentTaskCreation 2026-07-26-07:40:
-KNOWN LIMITATION — this gate does not currently fire in production, and must not be counted as
-enforcement of the Deny policy. pi's `ExtensionContext` (pi-coding-agent, core/extensions/types)
-carries no `agentId`; the read at the fn_task_create execute site is a speculative cast, and only
-tests ever supply one. Every real call therefore short-circuits at `!callerAgentId` and passes
-through as a human caller. The fail-closed direction above is correct for the day an identity
-signal exists, but making this lane genuinely enforce Deny needs the engine to thread the session's
-agent/task identity into the extension context (env or an augmented context) — a plumbing decision,
-not a local fix. Enforcement today lives in the engine lanes, which withhold the tool outright.
+KNOWN LIMITATION (superseded 2026-07-26, see below) — pi's `ExtensionContext` (pi-coding-agent,
+core/extensions/types) carries no `agentId`; the read at the fn_task_create execute site is a
+speculative cast, and only tests ever supply one. Without another identity signal every real call
+short-circuited at `!callerAgentId` and passed through as a human caller.
+
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+The identity signal now exists: the engine registers agent sessions by cwd in @fusion/core's
+session-identity registry (resolveFusionSessionPrincipal). fn_task_create's ephemeral gate uses
+the registry-resolved agentId as a fallback when ctx.agentId is absent (see
+resolveExtensionCallerPrincipal below), so the Deny policy is enforceable for engine-spawned
+sessions even though pi's ExtensionContext still carries no identity of its own. The fail-closed
+lookup semantics above are unchanged: a caller id that is present but unresolvable is classified
+ephemeral, an ambiguous registry entry is treated as an agent with unknown identity, and an
+unregistered cwd remains a human operator CLI pass-through.
 */
 async function isEphemeralCallerAgent(cwd: string, callerAgentId: string | undefined): Promise<boolean> {
   if (!callerAgentId) return false;
@@ -758,6 +778,351 @@ async function isEphemeralCallerAgent(cwd: string, callerAgentId: string | undef
     return isEphemeralAgent(agent);
   } catch {
     return true;
+  }
+}
+
+// ── Caller principal + agent tool gates ────────────────────────────
+
+/** Minimal caller-context shape read from the pi ExtensionContext (augmented fields are optional). */
+type ExtensionCallerContext = {
+  cwd?: string;
+  agentId?: unknown;
+  agentName?: unknown;
+  taskId?: unknown;
+  runId?: unknown;
+};
+
+/** Stand-in agent id when the principal is ambiguous (multiple live sessions in one cwd). */
+const AMBIGUOUS_AGENT_PRINCIPAL_ID = "unknown-agent";
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+Security incident root cause: all fn_* host-extension tools are delivered to engine agent
+sessions via pi's extension loader and NEVER pass through the engine's per-session gate
+wrappers, so destructive tools (fn_task_delete etc.) ran ungated for agents — an agent
+autonomously deleted a live task. The engine now registers agent sessions by cwd in
+@fusion/core's session-identity registry; this resolver is the extension-side principal
+channel. Precedence:
+1. An explicit ctx.agentId (engine-augmented contexts and tests) is an agent principal.
+2. Otherwise the registry decides: no registration = human operator CLI, exactly one live
+   registration = that agent, multiple = ambiguous.
+"ambiguous" MUST be treated as an agent with unknown identity (fail closed), never as an
+operator. Operator (human CLI) behavior is unchanged by every gate built on this resolver.
+*/
+export function resolveExtensionCallerPrincipal(ctx: ExtensionCallerContext): FusionSessionPrincipal {
+  const explicitAgentId =
+    typeof ctx.agentId === "string" && ctx.agentId.trim().length > 0 ? ctx.agentId.trim() : undefined;
+  if (explicitAgentId) {
+    return {
+      kind: "agent",
+      identity: {
+        agentId: explicitAgentId,
+        ...(typeof ctx.agentName === "string" && ctx.agentName ? { agentName: ctx.agentName } : {}),
+        ...(typeof ctx.taskId === "string" && ctx.taskId ? { taskId: ctx.taskId } : {}),
+        registeredAt: Date.now(),
+      },
+    };
+  }
+  return resolveFusionSessionPrincipal(typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd());
+}
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+INTENDED BEHAVIOR CHANGE for agents: these destructive/irreversible tools are hard-withheld
+from agent and ambiguous principals at execute time, regardless of permission policy or
+preset. Human operator CLI sessions (no registry entry, no ctx.agentId) are unaffected.
+The guard runs FIRST in each tool's execute, before any store access or param validation.
+*/
+const WITHHELD_FROM_AGENT_EXTENSION_TOOLS: ReadonlySet<string> = new Set([
+  "fn_task_delete",
+  "fn_task_bypass_review",
+  "fn_mission_delete",
+  "fn_milestone_delete",
+  "fn_slice_delete",
+  "fn_feature_delete",
+  "fn_workflow_delete",
+  "fn_experiment_finalize",
+  "fn_skills_install",
+]);
+
+interface AgentGateDenyResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+  details: Record<string, unknown>;
+}
+
+/**
+ * FNXC:ToolPermissionGates 2026-07-26-14:40:
+ * Dedupe-key lookup that works in PostgreSQL backend mode.
+ * ApprovalRequestStore.findLatestByDedupeKey's backend branch parses the jsonb
+ * `targetContext` (already an object from drizzle) through the string-only fromJson
+ * helper, so it never matches and every retry minted a duplicate request. Until that
+ * core defect is fixed, fall back to list() — whose backend row mapping returns the
+ * parsed context verbatim — and match `context.approvalDedupeKey` newest-first, the
+ * same contract chat.ts uses.
+ */
+async function findLatestApprovalRequestByDedupeKey(
+  approvalStore: ApprovalRequestStore,
+  input: { requesterActorId: string; taskId?: string; dedupeKey: string },
+): Promise<Awaited<ReturnType<ApprovalRequestStore["findLatestByDedupeKey"]>>> {
+  const direct = await approvalStore.findLatestByDedupeKey(input);
+  if (direct) return direct;
+  const rows = await approvalStore.list({ requesterActorId: input.requesterActorId, ...(input.taskId ? { taskId: input.taskId } : {}) });
+  return (
+    rows.find((row) => row.targetAction.context?.approvalDedupeKey === input.dedupeKey) ?? null
+  );
+}
+
+/**
+ * FNXC:ToolPermissionGates 2026-07-26-13:55:
+ * Shared hard-deny for the withheld list above. Returns null for operator principals
+ * (tool proceeds unchanged) and a structured error result for agent/ambiguous principals.
+ */
+function denyWithheldToolForAgentPrincipal(
+  toolName: string,
+  ctx: ExtensionCallerContext,
+): AgentGateDenyResult | null {
+  if (!WITHHELD_FROM_AGENT_EXTENSION_TOOLS.has(toolName)) return null;
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "operator") return null;
+  const agentId = principal.kind === "agent" ? principal.identity.agentId : undefined;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `${toolName} is withheld from agent sessions: this destructive operation is reserved for the human operator. ` +
+          "Do not retry it; ask the operator to run it from the dashboard or CLI if it is genuinely needed.",
+      },
+    ],
+    isError: true as const,
+    details: {
+      deniedFor: "agent-principal",
+      tool: toolName,
+      ...(agentId ? { agentId } : {}),
+    },
+  };
+}
+
+/*
+FNXC:ToolPermissionGates 2026-07-26-13:55:
+Policy gate for sensitive-but-policy-governed extension tools called by agent/ambiguous
+principals. Resolves the caller's effective permission policy (agent row policy layered over
+the project default; the shipped default preset is `unrestricted`) and evaluates the SAME
+engine action gate used in engine lanes. Contract:
+- Operator principals: never gated, behavior unchanged.
+- disposition "allow" (the DEFAULT PRESET path): proceed friction-free — no approval row is
+  ever created on this path.
+- "block": structured deny.
+- "require-approval": reuse the latest request for the dedupe key (pending → still waiting,
+  denied → deny, approved → consume the grant via markCompleted and proceed once); otherwise
+  mint one approval request with the agent's REAL requester snapshot.
+- Ambiguous principals resolve the project default policy only (unknown agent, fail closed on
+  identity but still policy-governed).
+- Any resolution failure (store/asyncLayer unavailable, policy read error) fails CLOSED with a
+  structured deny.
+*/
+async function applyAgentPolicyGateForExtensionTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  ctx: ExtensionCallerContext,
+): Promise<
+  | AgentGateDenyResult
+  | { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }
+  | null
+> {
+  const principal = resolveExtensionCallerPrincipal(ctx);
+  if (principal.kind === "operator") return null;
+  const callerAgentId = principal.kind === "agent" ? principal.identity.agentId : undefined;
+  const cwd = typeof ctx.cwd === "string" && ctx.cwd ? ctx.cwd : process.cwd();
+  const taskId = typeof ctx.taskId === "string" && ctx.taskId ? ctx.taskId : undefined;
+  const runId = typeof ctx.runId === "string" && ctx.runId ? ctx.runId : undefined;
+
+  try {
+    const store = await getStore(cwd);
+    const settings = await store.getSettings();
+
+    let agentRow: { name?: string; permissionPolicy?: AgentPermissionPolicy } | null = null;
+    if (callerAgentId) {
+      try {
+        const agentStore = await getAgentStore(cwd);
+        await agentStore.init();
+        agentRow = await agentStore.resolveAgent(callerAgentId);
+      } catch {
+        // Unknown/unreadable agent row: fall through to the project default policy (still an
+        // agent principal — never an operator).
+        agentRow = null;
+      }
+    }
+
+    const policy = resolveEffectiveAgentPermissionPolicy(
+      agentRow?.permissionPolicy,
+      settings.defaultAgentPermissionPolicy,
+    );
+    const gateAgentId = callerAgentId ?? AMBIGUOUS_AGENT_PRINCIPAL_ID;
+    let decision = evaluateAgentActionGate({
+      agentId: gateAgentId,
+      ...(taskId ? { taskId } : {}),
+      toolName,
+      args,
+      permissionPolicy: policy,
+    });
+    if (decision.category === "exempt") {
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      A policy-gated extension tool that the engine's static classification does not know
+      (today: fn_agent_set_instructions) must not fall through the gate's exempt default to
+      an unconditional allow. Treat it as task_agent_mutation, honoring exact toolRules first
+      — under the default `unrestricted` preset this still resolves to "allow", so default
+      agent behavior is unchanged.
+      */
+      const fallbackDisposition = policy.toolRules?.[toolName] ?? policy.rules.task_agent_mutation;
+      decision = {
+        ...decision,
+        disposition: fallbackDisposition,
+        category: "task_agent_mutation",
+        resourceType: "agent",
+      };
+    }
+
+    if (decision.disposition === "allow") {
+      // DEFAULT PRESET PATH: friction-free, no approval row.
+      return null;
+    }
+
+    if (decision.disposition === "block") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} is blocked by this agent's permission policy (category ${decision.category}). Ask the operator to run it or adjust the agent's permission policy.`,
+          },
+        ],
+        isError: true as const,
+        details: {
+          deniedFor: "agent-permission-policy",
+          tool: toolName,
+          disposition: "block",
+          category: decision.category,
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    // require-approval
+    const layer = store.getAsyncLayer();
+    if (!layer) {
+      throw new Error("approval request store unavailable (no project async layer)");
+    }
+    const approvalStore = new ApprovalRequestStore(null, { asyncLayer: layer });
+    const requester: ApprovalRequestActorSnapshot = {
+      actorId: gateAgentId,
+      actorType: "agent",
+      actorName:
+        agentRow?.name ??
+        (principal.kind === "agent" ? principal.identity.agentName ?? gateAgentId : gateAgentId),
+    };
+    const latest = await findLatestApprovalRequestByDedupeKey(approvalStore, {
+      requesterActorId: gateAgentId,
+      ...(taskId ? { taskId } : {}),
+      dedupeKey: decision.approvalDedupeKey,
+    });
+    const outcome = resolveGateOutcome(decision, latest ? { id: latest.id, status: latest.status } : null);
+
+    if (outcome.outcome === "execute-once-then-complete" && outcome.approvalRequestId) {
+      // Consume the operator's grant so it cannot be replayed; then proceed once.
+      await approvalStore.markCompleted(outcome.approvalRequestId, {
+        actor: requester,
+        note: `Approval consumed by ${toolName}`,
+        expectedRequesterActorId: gateAgentId,
+      });
+      return null;
+    }
+
+    if (outcome.outcome === "block") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} was denied by the operator (approval request ${outcome.approvalRequestId ?? "unknown"}).`,
+          },
+        ],
+        isError: true as const,
+        details: {
+          deniedFor: "agent-approval-denied",
+          tool: toolName,
+          ...(outcome.approvalRequestId ? { approvalRequestId: outcome.approvalRequestId } : {}),
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    if (latest && latest.status === "pending") {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${toolName} requires operator approval. Request ${latest.id} is still pending — do not retry until it is decided.`,
+          },
+        ],
+        details: {
+          outcome: "pending_approval",
+          approvalRequestId: latest.id,
+          tool: toolName,
+          ...(callerAgentId ? { agentId: callerAgentId } : {}),
+        },
+      };
+    }
+
+    const request = await approvalStore.create({
+      requester,
+      targetAction: {
+        category: decision.category === "exempt" ? "task_agent_mutation" : decision.category,
+        action: decision.operation,
+        summary: decision.summary,
+        resourceType: decision.resourceType,
+        resourceId: decision.resourceId ?? "",
+        context: {
+          approvalDedupeKey: decision.approvalDedupeKey,
+          toolName,
+          toolArgs: args,
+          source: "pi-extension-agent-gating",
+        },
+      },
+      ...(taskId ? { taskId } : {}),
+      ...(runId ? { runId } : {}),
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${toolName} requires operator approval. Request ${request.id} created and pending — approve via POST /api/approvals/:id/decision.`,
+        },
+      ],
+      details: {
+        outcome: "pending_approval",
+        approvalRequestId: request.id,
+        tool: toolName,
+        ...(callerAgentId ? { agentId: callerAgentId } : {}),
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${toolName} denied: the agent permission policy could not be resolved (${message}). Failing closed — ask the operator to run this tool.`,
+        },
+      ],
+      isError: true as const,
+      details: {
+        deniedFor: "agent-permission-policy-unavailable",
+        tool: toolName,
+        error: message,
+        ...(callerAgentId ? { agentId: callerAgentId } : {}),
+      },
+    };
   }
 }
 
@@ -870,7 +1235,10 @@ async function formatDuplicateLineageLine(task: Task, store: TaskStore): Promise
   const labels = await Promise.all(lineage.map(async (id) => {
     try {
       const linked = await store.getTask(id);
-      return linked.column === "archived" ? `${id} (archived)` : id;
+      /* FNXC:WorkflowLifecycleColumns 2026-08-02-12:45 (fleet): the board's archived column — the same marker
+         as the CLI command's copy of this helper, converted there in this PR. */
+      const linkedLifecycle = await resolveTaskLifecycleColumns(store, id);
+      return linked.column === (linkedLifecycle?.archived ?? "archived") ? `${id} (archived)` : id;
     } catch {
       return id;
     }
@@ -885,6 +1253,11 @@ export function formatTaskLine(t: Task): string {
   const source = getTaskSourceLabel(t);
   const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
+  /* DELIBERATE-LITERAL: `formatTaskLine` is a SYNCHRONOUS formatter taking only a Task — no store, no IR, and
+     it is called from list rendering where a per-row async resolution would be a read per line. The literal
+     only decides whether to print "(paused)", so a renamed board's mislabel is cosmetic. Converting it means
+     threading resolved flags in from every caller, which belongs with the board-render conversion that owns
+     the same problem (see the glyph note in commands/task.ts). */
   const isTerminalColumn = t.column === "done" || t.column === "archived";
   const paused = t.paused && !isTerminalColumn ? " (paused)" : "";
   return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
@@ -1106,7 +1479,22 @@ export default function kbExtension(pi: ExtensionAPI) {
 
         FNXC:WorkflowAuthoringTools 2026-06-29-23:06:
         fn_workflow_select may default only in task-bound extension contexts; no-task published API calls must pass task_id explicitly so an empty ambient task cannot accidentally route the wrong card.
+
+        FNXC:ToolPermissionGates 2026-07-26-13:55:
+        fn_workflow_delete is hard-withheld from agent principals; fn_workflow_update is
+        policy-gated per the caller agent's effective permission policy. Operator CLI calls
+        are unaffected by both.
         */
+        const withheldDenied = denyWithheldToolForAgentPrincipal(spec.name, ctx as ExtensionCallerContext);
+        if (withheldDenied) return withheldDenied;
+        if (spec.name === "fn_workflow_update") {
+          const gated = await applyAgentPolicyGateForExtensionTool(
+            spec.name,
+            params as Record<string, unknown>,
+            ctx as ExtensionCallerContext,
+          );
+          if (gated) return gated;
+        }
         const store = await getStore(ctx.cwd);
         const extensionContext = ctx as typeof ctx & { taskId?: string };
         const currentTaskId = typeof extensionContext.taskId === "string" ? extensionContext.taskId : "";
@@ -1184,7 +1572,21 @@ export default function kbExtension(pi: ExtensionAPI) {
       */
       const fnCtx = ctx as typeof ctx & { agentId?: string; taskId?: string };
       const projectSettingsForGate = await store.getSettings();
-      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId);
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      Fall back to the session-identity registry when pi's context carries no agentId so the
+      ephemeral-task-creation policy actually fires for engine-spawned sessions. An ambiguous
+      principal uses a sentinel id that never resolves to an agent row, which the fail-closed
+      lookup classifies as ephemeral.
+      */
+      const createPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      const registryAgentId =
+        createPrincipal.kind === "agent"
+          ? createPrincipal.identity.agentId
+          : createPrincipal.kind === "ambiguous"
+            ? AMBIGUOUS_AGENT_PRINCIPAL_ID
+            : undefined;
+      const callerIsEphemeral = await isEphemeralCallerAgent(ctx.cwd ?? process.cwd(), fnCtx.agentId ?? registryAgentId);
       if (callerIsEphemeral) {
         const policy = fusionCore.resolveEphemeralTaskCreationPolicy(projectSettingsForGate);
         if (policy === "deny") {
@@ -1418,7 +1820,55 @@ export default function kbExtension(pi: ExtensionAPI) {
         store.updateTask all exhibit identical behavior.
         */
         const normalizedNodeId = normalizeNullableStringInput(params.nodeId);
-        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null);
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-12:20:
+        Supply this task's resolved WIP and COMPLETE lanes — without them the guard does not fire.
+
+        `validateNodeOverrideChange` defaults `wipColumns` to `{"in-progress"}`, so on a board whose
+        WIP lane is named anything else `wipColumns.has(task.column)` is false and the mid-flight
+        check passes. An operator could then change the node override on a RUNNING task, which is
+        precisely what that guard exists to refuse (see its own note in node-override-guard.ts).
+
+        The guard's options doc says "Both callers supply them" and assumes a CLI tool has no cheap
+        IR access. Neither held here: this is a third caller, and it is an async handler that has
+        already awaited `store.getTask`, so one more resolve is the same cost `resolveTaskLifecycleColumns`
+        is already paid for elsewhere in this file (the linked-lineage label at ~1239).
+
+        Passed as present-but-conditionally-valued rather than a conditional argument: an omitted
+        set keeps the documented legacy default, and only this shape is visible to
+        scripts/lib/lane-wiring-census.mjs, which matches an object-literal argument and cannot see a
+        ternary. This site was a known-unwired entry in that gate's baseline.
+        */
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-31-01:30:
+        EVERY wip/complete lane, not the FIRST — and via the guard's own resolver, like its two other callers.
+
+        #3019 wired this call with `resolveTaskLifecycleColumns(...).wip`, whose per-role accessor is
+        `resolved.find(...)` (workflow-lifecycle-traits.ts:353) — the FIRST column carrying the trait.
+        The guard's contract is every column: `resolveNodeOverrideLanes` builds its sets from
+        `columnsWithFlag(ir, "countsTowardWip")`. On a board with a build lane beside a verify lane
+        the two answers differ, and a task sitting in the SECOND wip lane slipped the mid-flight
+        check — the exact defect #3019 set out to close, still open one lane over.
+
+        Interchangeable on any single-wip-lane board, which is why it read as correct. Same arity trap
+        #2975 removed from the surfacing family.
+
+        `resolveNodeOverrideLanes` is what `task-update.ts` and `branch-and-pr-entities.ts` already
+        call, so all three callers now resolve identically and the fallback lives in one place.
+        */
+        const overrideLanes = await resolveNodeOverrideLanes(store, task.id);
+        /*
+        Spelled as an object literal naming both keys, not `…, overrideLanes)`. The two are identical
+        at runtime, but `scripts/lib/lane-wiring-census.mjs` matches an object-literal argument and
+        cannot see through a variable — passing the resolved object directly reads to that gate as an
+        UNWIRED call and turns it red. #3019's header records the same constraint, and it is what
+        pushed that PR toward resolving the lanes inline; the constraint is real, the bespoke
+        resolution it produced was not required by it.
+        */
+        const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null, {
+          wipColumns: overrideLanes.wipColumns,
+          completeColumns: overrideLanes.completeColumns,
+        });
         if (!validation.allowed) {
           return {
             content: [{ type: "text", text: validation.message ?? "Node override change blocked" }],
@@ -1444,6 +1894,30 @@ export default function kbExtension(pi: ExtensionAPI) {
               await store.selectTaskWorkflowAndReconcile(task.id, workflowId);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
+              /*
+              FNXC:WorkflowColumns 2026-07-28-00:00 (U12 — PR #2512 review):
+              TRANSLATE the switch re-home failure here too. `fn_task_update` is a
+              second switch consumer alongside `fn_task_set_workflow`, and a bare
+              message string gives the caller no way to tell "nothing changed, retry
+              after making room" from "the selection committed and the task is now
+              INCONSISTENT" — which is exactly the distinction that decides whether it
+              may treat the switch as done.
+              */
+              const typed = error as { name?: string; committed?: boolean; taskId?: string; workflowId?: string; fromColumn?: string; intendedColumn?: string };
+              if (typed?.name === "WorkflowSwitchRehomeFailedError") {
+                return {
+                  content: [{ type: "text", text: `ERROR: ${message}` }],
+                  isError: true,
+                  details: {
+                    code: "workflow-switch-rehome-failed",
+                    taskId: typed.taskId,
+                    workflowId: typed.workflowId,
+                    fromColumn: typed.fromColumn,
+                    intendedColumn: typed.intendedColumn,
+                    selectionCommitted: typed.committed === true,
+                  },
+                };
+              }
               return {
                 content: [{ type: "text", text: `ERROR: ${message}` }],
                 isError: true,
@@ -1774,8 +2248,11 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_pause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
-      const task = await store.pauseTask(params.id, true);
+      const task = await store.pauseTask(params.id, true, undefined, { userPaused: true });
 
       return {
         content: [{ type: "text", text: `Paused ${task.id}` }],
@@ -1797,6 +2274,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_unpause", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
       const task = await store.pauseTask(params.id, false);
 
@@ -1827,8 +2307,11 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_retry", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
-      
+
       // Validate task exists
       let task;
       try {
@@ -1841,8 +2324,32 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
       
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-12:40 (PR #2728 review — the retry gate exists THREE times):
+      This is `fn_task_retry`, the MCP tool AGENTS call — the third copy of the same classifier, after the
+      dashboard route (#2713) and the CLI command (this PR). Converting two of three is worse than converting
+      none: the operator retries from the board and it works, the agent retries the same card and is told it
+      is not retryable, and nothing in either message mentions columns.
+
+      Same SET semantics as the other two surfaces (mergeBlocker / humanReview can sit on different columns,
+      #2713), and the same note applies: three copies of one predicate is the argument for a set-returning
+      resolver in core, which is a follow-up rather than a rider on this PR.
+      */
+      /*
+      FNXC:WorkflowLifecycleColumns 2026-08-02-22:15 (consolidation onto #2730's core resolver):
+      CORE'S `resolveReviewColumns` — see the fuller note in `commands/task.ts`. This copy carried
+      `.slice(0, 1)` on the merge-orchestration lanes while the CLI command took the full union, so
+      `fn_task_retry` refused a card in a SECOND merge lane that `fn task retry` accepted: two surfaces, one
+      operator action, two answers. That is the exact defect #2728 was opened to remove, reproduced by two
+      copies of one definition drifting apart within a single PR.
+      */
+      const retryIr = await resolveWorkflowIrForTask(store, params.id).catch(() => undefined);
+      const resolvedRetryReviewColumns = retryIr === undefined ? [] : resolveReviewColumns(retryIr);
+      const retryReviewColumns = new Set<string>(
+        resolvedRetryReviewColumns.length > 0 ? resolvedRetryReviewColumns : ["in-review"],
+      );
       const isInReviewStatusNone =
-        task.column === "in-review" && (task.status === null || task.status === undefined);
+        retryReviewColumns.has(task.column) && (task.status === null || task.status === undefined);
       const hasIncompleteSteps = task.steps.some(
         (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
       );
@@ -1853,7 +2360,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
       const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
       const isInReviewRetry =
-        task.column === "in-review" &&
+        retryReviewColumns.has(task.column) &&
         (task.status === "failed" ||
           task.status === "stuck-killed" ||
           isInReviewExecutionStall ||
@@ -1862,7 +2369,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       FNXC:MissingWorktreeRetry 2026-07-10-18:30:
       Upstream #1992 requires fn_task_retry to recover an in-review unusable-worktree session-start failure even when status remains merge-active. Keep this status bypass constrained to the centrally classified missing/incomplete/unregistered worktree signature.
       */
-      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task);
+      const isMissingWorktreeSessionRetry = isInReviewMissingWorktreeSessionStartFailure(task, retryReviewColumns.has(task.column));
 
       // Validate task is in a retryable state
       if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry && !isMissingWorktreeSessionRetry) {
@@ -1888,9 +2395,12 @@ export default function kbExtension(pi: ExtensionAPI) {
           ...buildManualRetryResetPatch({ resetMergeRetries: true }),
         });
         await store.logEntry(params.id, `Retry requested via Fusion extension (unusable worktree session-start recovery → todo, preserving progress${retryLogSuffix})`);
-        await store.moveTask(params.id, "todo", { preserveProgress: true });
+        /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — a call argument, not a comparison. This is an OPERATOR-triggered Retry: on a board that does not declare `todo` the move is REJECTED and the retry fails in the operator's face. The reply text below uses the SAME resolved value so it cannot name a lane the card did not go to. */
+        const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+        /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
+        await store.moveTask(params.id, retryTarget, { preserveProgress: true, moveSource: "user" });
         return {
-          content: [{ type: "text", text: `Retried ${params.id} → todo (unusable worktree session metadata cleared)` }],
+          content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (unusable worktree session metadata cleared)` }],
           details: { taskId: params.id, newColumn: 'todo' },
         };
       }
@@ -1910,9 +2420,12 @@ export default function kbExtension(pi: ExtensionAPI) {
               ? `Retry requested via Fusion extension (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
               : `Retry requested via Fusion extension (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
           );
-          await store.moveTask(params.id, "todo", { preserveProgress: true });
+          /* FNXC:WorkflowResolvedColumns 2026-07-30-22:20: census-invisible moveTask DESTINATION — same operator Retry path as above. */
+          const executionRetryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+          /* FNXC:ToolPermissionGates 2026-07-30-13:55: fn_task_retry is a user-facing lever — carry the user move source (target resolves by role). */
+          await store.moveTask(params.id, executionRetryTarget, { preserveProgress: true, moveSource: "user" });
           return {
-            content: [{ type: "text", text: `Retried ${params.id} → todo (execution failure, preserving step progress)` }],
+            content: [{ type: "text", text: `Retried ${params.id} → ${executionRetryTarget} (execution failure, preserving step progress)` }],
             details: { taskId: params.id, newColumn: 'todo' },
           };
         }
@@ -1938,15 +2451,25 @@ export default function kbExtension(pi: ExtensionAPI) {
         ...buildManualRetryResetPatch({ resetMergeRetries: true }),
       });
       
-      // Move to todo column
-      await store.moveTask(params.id, 'todo');
-      
+      /*
+      FNXC:TaskRetry 2026-07-31-23:59 (the SECOND instance of the review finding on #3152):
+      A reviewer caught the chat `fn_task_retry` tool resolving its move target while still reporting
+      `"todo"` in the log, the response text and `details.newColumn`. This CLI retry had the identical
+      gap — same PR, same conversion, same three unconverted report sites — so it is fixed with it
+      rather than waiting for the same comment on the next surface.
+
+      Resolve once, then use that value everywhere the operator or a downstream tool reads it.
+      */
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: user-facing retry move carries the user/hard-cancel source (Move-Task contract).
+      const retryTarget = await fusionCore.resolveReboundTargetForTask(store, params.id);
+      await store.moveTask(params.id, retryTarget, { moveSource: "user" });
+
       // Log the retry action
-      await store.logEntry(params.id, "Retry requested via Fusion extension", "Task reset to todo for retry");
-      
+      await store.logEntry(params.id, "Retry requested via Fusion extension", `Task reset to ${retryTarget} for retry`);
+
       return {
-        content: [{ type: "text", text: `Retried ${params.id} → todo (failure state cleared)` }],
-        details: { taskId: params.id, newColumn: 'todo' },
+        content: [{ type: "text", text: `Retried ${params.id} → ${retryTarget} (failure state cleared)` }],
+        details: { taskId: params.id, newColumn: retryTarget },
       };
     },
   });
@@ -1962,9 +2485,14 @@ export default function kbExtension(pi: ExtensionAPI) {
    * surface — deliberately NOT wired into packages/engine/src/executor.ts or
    * packages/engine/src/agent-heartbeat.ts autonomous per-role tool lists, and
    * NOT part of packages/dashboard/src/planning-board-tools.ts read-only
-   * planning tools — so headless executor/reviewer/triage agent runs never
-   * gain the bypass. Requires a mandatory reason; audit-logged via
+   * planning tools. Requires a mandatory reason; audit-logged via
    * store.bypassFailedPreMergeReviewStep's run-audit event.
+   *
+   * FNXC:ToolPermissionGates 2026-07-26-13:55:
+   * Registration-surface separation alone was NOT sufficient: pi's host-extension
+   * loader delivers this tool into engine agent sessions too. Operator-only access
+   * is now enforced by construction — the withheld-from-agents principal guard runs
+   * first in execute and hard-denies agent/ambiguous principals.
    */
   pi.registerTool({
     name: "fn_task_bypass_review",
@@ -1986,6 +2514,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_task_bypass_review", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const fnCtx = ctx as typeof ctx & { agentId?: string };
       const actor = fnCtx.agentId ?? "cli-operator";
@@ -2108,6 +2638,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_task_archive", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const store = await getStore(ctx.cwd);
       const task = await store.archiveTask(params.id, {
         removeLineageReferences: params.removeLineageReferences === true,
@@ -2178,6 +2711,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals (root cause of the live-task deletion incident); operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_task_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const callerTaskId = (ctx as { taskId?: string }).taskId;
       const task = await store.deleteTask(params.id, {
@@ -2274,7 +2810,10 @@ export default function kbExtension(pi: ExtensionAPI) {
         const task = await store.createTask({
           title: title || undefined,
           description,
-          column: "triage",
+          /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+             `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+             override it. Hard-coding `"triage"` created the card in a column the default
+             lineage no longer declares (#2515), i.e. straight into the stranded state. */
           dependencies: [],
           sourceIssue: source.sourceIssue,
           source: {
@@ -2369,7 +2908,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       const task = await store.createTask({
         title: title || undefined,
         description,
-        column: "triage",
+        /* FNXC:WorkflowLifecycleColumns 2026-07-29-20:15 (U11): no explicit column —
+           `createTaskImpl` resolves the WORKFLOW'S intake column, and `input.column` would
+           override it. Hard-coding `"triage"` created the card in a column the default
+           lineage no longer declares (#2515), i.e. straight into the stranded state. */
         dependencies: [],
         sourceIssue: source.sourceIssue,
         source: {
@@ -2506,7 +3048,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const provenance = dashboard.buildGitLabTaskProvenance({ auth: client.auth, resourceType, item, projectInput: resourceType !== "group_issue" ? target : undefined, groupInput: resourceType === "group_issue" ? target : undefined });
       if (existingTasks.some((task) => dashboard.isGitLabAlreadyImported(task, provenance))) continue;
       const title = resourceType === "merge_request" ? `Review MR !${item.iid}: ${item.title.slice(0, 180)}` : item.title.slice(0, 200);
-      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), column: "triage", dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } });
+      const task = await store.createTask({ title: title || undefined, description: dashboard.buildGitLabTaskDescription(item), dependencies: [], sourceIssue: provenance.sourceIssue, gitlabTracking: provenance.gitlabTracking, source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata } });
       await store.logEntry(task.id, resourceType === "merge_request" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl);
       existingTasks.push(task);
       createdTasks.push({ id: task.id, title: task.title || item.title });
@@ -2761,26 +3303,85 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (decision.policy === "prompt") {
-        
+        /*
+        FNXC:SecretsApproval 2026-07-26-14:10:
+        BEHAVIOR CHANGES (broken approval control, both intentional):
+        (a) An `approved` row previously fell through and minted a BRAND-NEW pending request,
+            so operator approval never granted anything — the loop was unwinnable. The status
+            ladder is now: pending → still-awaiting message (no re-mint); denied → denied
+            message (no re-mint); approved → REDEEM: reveal the secret, then markCompleted so
+            the grant is consumed execute-once; completed (already redeemed) → mint a fresh
+            request.
+        (b) The approval row's category was "task_mutation" (normalized to
+            task_agent_mutation), so the dashboard's emitSecretsAccessDecisionAudit — which
+            fires only for category "secrets_access" — never ran. The category is now
+            "secrets_access" (accepted verbatim by normalizeApprovalRequestActionCategory).
+        */
         const cliLayer = requireProjectLayer(store, "CLI secret approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
-        const existing = await approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
-        const request = existing && existing.status === "pending"
-          ? existing
-          : await approvalStore.create({
-            requester: { actorId: fnCtx.agentId ?? "user", actorType: "agent", actorName: fnCtx.agentName ?? fnCtx.agentId ?? "Agent" },
-            targetAction: {
-              category: "task_mutation",
-              action: "read",
-              summary: `Read secret ${params.key}`,
-              resourceType: "secret",
-              resourceId: record.id,
-              context: { approvalDedupeKey: dedupeKey, key: params.key, scope: resolvedScope },
-            },
-            ...(fnCtx.runId ? { runId: fnCtx.runId } : {}),
-            ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}),
+        const requesterActorId = fnCtx.agentId ?? "user";
+        /*
+        FNXC:SecretsAccessApproval 2026-07-26-18:35:
+        Review finding: a caller with no agentId is the human CLI operator, and
+        recording it as actorType "agent" mislabels the attribution this branch
+        exists to fix. Snapshot the real principal shape.
+        */
+        const requesterSnapshot: ApprovalRequestActorSnapshot = fnCtx.agentId
+          ? {
+              actorId: requesterActorId,
+              actorType: "agent",
+              actorName: fnCtx.agentName ?? fnCtx.agentId,
+            }
+          : { actorId: "user", actorType: "user", actorName: "CLI User" };
+        const existing = await findLatestApprovalRequestByDedupeKey(approvalStore, { requesterActorId, ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}), dedupeKey });
+
+        if (existing?.status === "pending") {
+          emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
+          return {
+            content: [{ type: "text", text: `Secret access approval request ${existing.id} is still pending. Approve via POST /api/approvals/:id/decision.` }],
+            details: { outcome: "pending_approval", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
+          };
+        }
+
+        if (existing?.status === "denied") {
+          emitSecretAudit(store, fnCtx, "secret:approval-denied", `${resolvedScope}:${params.key}`);
+          return {
+            content: [{ type: "text", text: `Secret access request ${existing.id} was denied by the operator. Do not retry without operator direction.` }],
+            details: { outcome: "denied", approvalRequestId: existing.id, key: params.key, scope: resolvedScope },
+          };
+        }
+
+        if (existing?.status === "approved") {
+          const revealedAfterApproval = await secretsStore.revealSecret(record.id, resolvedScope, { agentId: fnCtx.agentId ?? null });
+          await approvalStore.markCompleted(existing.id, {
+            actor: requesterSnapshot,
+            note: "Secret revealed after approval",
+            // FNXC:SecretsAccessApproval 2026-07-26-18:35: ownership guard — secret grants
+            // get the same expectedRequesterActorId enforcement as the gate path.
+            expectedRequesterActorId: requesterActorId,
           });
+          emitSecretAudit(store, fnCtx, "secret:read", `${resolvedScope}:${params.key}`, { key: params.key, scope: resolvedScope, approvalRequestId: existing.id });
+          return {
+            content: [{ type: "text", text: `Loaded secret '${params.key}' from ${resolvedScope} scope (approval ${existing.id} consumed).` }],
+            details: { key: params.key, value: revealedAfterApproval.plaintextValue, scope: resolvedScope, approvalRequestId: existing.id },
+          };
+        }
+
+        // No prior request, or the previous grant was already redeemed (completed) → mint a fresh one.
+        const request = await approvalStore.create({
+          requester: requesterSnapshot,
+          targetAction: {
+            category: "secrets_access",
+            action: "read",
+            summary: `Read secret ${params.key}`,
+            resourceType: "secret",
+            resourceId: record.id,
+            context: { approvalDedupeKey: dedupeKey, key: params.key, scope: resolvedScope },
+          },
+          ...(fnCtx.runId ? { runId: fnCtx.runId } : {}),
+          ...(fnCtx.taskId ? { taskId: fnCtx.taskId } : {}),
+        });
 
         emitSecretAudit(store, fnCtx, "secret:approval-requested", `${resolvedScope}:${params.key}`);
         return {
@@ -2815,6 +3416,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       summary: Type.Optional(Type.String({ description: "Optional finalize summary" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_experiment_finalize", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       try {
         const store = await getStore(ctx.cwd);
         const sessionStore = store.getExperimentSessionStore();
@@ -3829,6 +4433,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_mission_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4074,6 +4681,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_feature_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4108,6 +4718,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_slice_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4142,6 +4755,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals; operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_milestone_delete", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const missionStore = store.getMissionStore();
 
@@ -4459,7 +5075,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_stop", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
 
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
@@ -4524,7 +5142,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals; operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_start", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
 
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
@@ -4596,11 +5216,42 @@ export default function kbExtension(pi: ExtensionAPI) {
       message_response_mode: Type.Optional(Type.Union([Type.Literal("immediate"), Type.Literal("on-heartbeat")])),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
       const store = await getStore(ctx.cwd);
-      const caller = { id: "user", role: "user", isPrivileged: true } as const;
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      BEHAVIOR CHANGE (honest provisioning caller): this site previously hardcoded
+      `{ id: "user", role: "user", isPrivileged: true }`, so an agent session calling this
+      tool through the host extension was treated as a privileged human and bypassed the
+      provisioning policy entirely. The caller is now principal-derived: operator CLI stays
+      privileged (unchanged); agent principals use their real id/role and are NOT privileged;
+      ambiguous principals are an unknown, unprivileged agent. Approval requests carry the
+      REAL requester snapshot instead of the hardcoded CLI User.
+      */
+      const provisionPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      let caller: { id: string; role: string; isPrivileged: boolean };
+      let provisionRequester: ApprovalRequestActorSnapshot;
+      if (provisionPrincipal.kind === "operator") {
+        caller = { id: "user", role: "user", isPrivileged: true };
+        provisionRequester = { actorId: "user", actorType: "user", actorName: "CLI User" };
+      } else {
+        const callerAgentId = provisionPrincipal.kind === "agent" ? provisionPrincipal.identity.agentId : AMBIGUOUS_AGENT_PRINCIPAL_ID;
+        let callerRow: { name?: string; role?: string } | null = null;
+        if (provisionPrincipal.kind === "agent") {
+          try {
+            callerRow = await agentStore.resolveAgent(callerAgentId);
+          } catch {
+            callerRow = null;
+          }
+        }
+        const fallbackName = provisionPrincipal.kind === "agent"
+          ? provisionPrincipal.identity.agentName ?? callerAgentId
+          : callerAgentId;
+        caller = { id: callerAgentId, role: callerRow?.role ?? "custom", isPrivileged: false };
+        provisionRequester = { actorId: callerAgentId, actorType: "agent", actorName: callerRow?.name ?? fallbackName };
+      }
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_create",
         caller,
@@ -4618,10 +5269,17 @@ export default function kbExtension(pi: ExtensionAPI) {
         const cliLayer2 = requireProjectLayer(store, "CLI agent-create approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer2 });
         const request = await approvalStore.create({
-          requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
+          requester: provisionRequester,
           targetAction: { category: "agent_provisioning", action: "create", summary: `Create agent ${params.name} (${params.role})`, resourceType: "agent", resourceId: "", context: { tool: "fn_agent_create", params } },
         });
         return { content: [{ type: "text" as const, text: `Approval required. Request ${request.id} created.` }], details: { outcome: "pending_approval", approvalRequestId: request.id, matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode } };
+      }
+
+      if (policy.decision === "deny") {
+        return {
+          content: [{ type: "text" as const, text: `DENIED: agent create blocked by policy (${policy.matchedRule})` }],
+          details: { outcome: "denied", matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode },
+        };
       }
 
       const runtimeConfig: Record<string, unknown> = {
@@ -4907,7 +5565,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: policy-gated for agent principals (classified as task_agent_mutation via the extension gate's exempt fallback); operators unaffected.
+      const gated = await applyAgentPolicyGateForExtensionTool("fn_agent_set_instructions", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+      if (gated) return gated;
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
 
@@ -4983,11 +5643,38 @@ export default function kbExtension(pi: ExtensionAPI) {
       reassign_to: Type.Optional(Type.String({ description: "Optional replacement agent for assigned tasks" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      
+
       const agentStore = await getAgentStore(ctx.cwd);
       await agentStore.init();
       const store = await getStore(ctx.cwd);
-      const caller = { id: "user", role: "user", isPrivileged: true } as const;
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      BEHAVIOR CHANGE (honest provisioning caller) — see the matching comment on
+      fn_agent_create: the caller is principal-derived instead of a hardcoded privileged
+      CLI User, and approval requests carry the real agent requester snapshot.
+      */
+      const provisionPrincipal = resolveExtensionCallerPrincipal(ctx as ExtensionCallerContext);
+      let caller: { id: string; role: string; isPrivileged: boolean };
+      let provisionRequester: ApprovalRequestActorSnapshot;
+      if (provisionPrincipal.kind === "operator") {
+        caller = { id: "user", role: "user", isPrivileged: true };
+        provisionRequester = { actorId: "user", actorType: "user", actorName: "CLI User" };
+      } else {
+        const callerAgentId = provisionPrincipal.kind === "agent" ? provisionPrincipal.identity.agentId : AMBIGUOUS_AGENT_PRINCIPAL_ID;
+        let callerRow: { name?: string; role?: string } | null = null;
+        if (provisionPrincipal.kind === "agent") {
+          try {
+            callerRow = await agentStore.resolveAgent(callerAgentId);
+          } catch {
+            callerRow = null;
+          }
+        }
+        const fallbackName = provisionPrincipal.kind === "agent"
+          ? provisionPrincipal.identity.agentName ?? callerAgentId
+          : callerAgentId;
+        caller = { id: callerAgentId, role: callerRow?.role ?? "custom", isPrivileged: false };
+        provisionRequester = { actorId: callerAgentId, actorType: "agent", actorName: callerRow?.name ?? fallbackName };
+      }
       const policy = resolveAgentProvisioningPolicy({
         tool: "fn_agent_delete",
         caller,
@@ -4998,7 +5685,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         const cliLayer3 = requireProjectLayer(store, "CLI agent-delete approval store");
         const approvalStore = new ApprovalRequestStore(null, { asyncLayer: cliLayer3 });
         const request = await approvalStore.create({
-          requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
+          requester: provisionRequester,
           targetAction: { category: "agent_provisioning", action: "delete", summary: `Delete agent ${params.agent_id}`, resourceType: "agent", resourceId: params.agent_id, context: { tool: "fn_agent_delete", params } },
         });
         return { content: [{ type: "text" as const, text: `Approval required. Request ${request.id} created.` }], details: { outcome: "pending_approval", approvalRequestId: request.id, matchedRule: policy.matchedRule, effectiveMode: policy.effectiveMode, agentId: params.agent_id } };
@@ -5116,15 +5803,16 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_delegate_task",
     label: "fn: Delegate Task",
     description:
-      "Create a new task and assign it to a specific agent for execution. The task goes to " +
-      "'todo' and will be picked up by the target agent on their next heartbeat cycle. " +
+      "Create a new task and assign it to a specific agent for execution. The task lands in the " +
+      "selected workflow's ready lane (`todo` on the built-in board, whatever that workflow calls " +
+      "it otherwise) and will be picked up by the target agent on their next heartbeat cycle. " +
       "Use fn_list_agents first to find available agents and their capabilities. " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
       "fn_workflow_list to discover valid IDs.",
     promptSnippet: "Delegate a task to a specific Fusion agent",
     promptGuidelines: [
       "Use fn_list_agents first to find available agents and their capabilities",
-      "The task is created in 'todo' and assigned to the target agent",
+      "The task is created in the workflow's ready (hold) lane and assigned to the target agent",
       "Cannot delegate to ephemeral/runtime agents",
       "Implementation tasks use executor by default; durable engineer supports explicit routing without override, other non-executor roles require override=true",
       "Optionally specify dependencies on other tasks",
@@ -5148,6 +5836,16 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      /*
+      FNXC:ToolPermissionGates 2026-07-26-13:55:
+      Ordinary delegation stays ungated (coordination primitive), but the executor-role
+      policy override is a sensitive escalation: policy-gate it for agent principals when
+      override=true. Operators unaffected.
+      */
+      if (params.override === true) {
+        const gated = await applyAgentPolicyGateForExtensionTool("fn_delegate_task", params as Record<string, unknown>, ctx as ExtensionCallerContext);
+        if (gated) return gated;
+      }
       // Validate target agent exists and is not ephemeral
       const delegateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "todo" };
       const agentError = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), params.agent_id, delegateTask, params.override === true);
@@ -5168,10 +5866,35 @@ export default function kbExtension(pi: ExtensionAPI) {
         // Create task assigned to the target agent
         const store = await getStore(ctx.cwd);
         const workflowId = params.workflow_id?.trim() || undefined;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:30:
+        Delegation lands in the HOLD lane of the workflow the card ACTUALLY got, not in the literal
+        `todo` and not in a lane resolved from a second, independent read.
+
+        The tool's contract (see the description above) is "the task goes to the ready-to-work lane
+        and the target agent picks it up on its next heartbeat" — deliberately NOT intake, so this
+        cannot simply omit `column` and inherit `createTask`'s intake resolution: on a manual-intake
+        workflow the card would sit waiting for a human and never reach the agent it was delegated
+        to. Keyed on the literal, a workflow that calls that lane anything else received a card in an
+        undeclared column: written, reported as delegated, invisible to the agent.
+
+        RESOLVED FROM THE CREATED TASK, and that ordering is the fix rather than a detail (#2843
+        review, greptile P1 — it is right). My first version resolved the hold column BEFORE the
+        create, from `getDefaultWorkflowId()`. `createTask` then resolves the project default AGAIN
+        to select the workflow, so two reads answered the same question and a default changed between
+        them yields a column from workflow A written onto a card selected into workflow B — the exact
+        undeclared-lane write this conversion exists to remove, reintroduced by the fix for it.
+
+        Resolving afterwards leaves ONE authority: the task's own selection. The move is skipped
+        entirely when the entry lane already carries `hold` — true on the built-in board, where entry
+        and hold are both `todo` — so the common path is byte-identical and costs no extra write.
+
+        A failed move is reported, not swallowed: the card exists either way, and telling the caller
+        it is ready when it is sitting in intake is the failure mode this whole change is about.
+        */
         const task = await store.createTask({
           description: params.description,
           dependencies: params.dependencies,
-          column: "todo",
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           source: {
@@ -5180,15 +5903,214 @@ export default function kbExtension(pi: ExtensionAPI) {
           },
         });
 
+        let landedColumn = task.column;
+        let landingError: string | undefined;
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (#2843 review — coderabbit major / greptile P1):
+        AN UNRESOLVABLE WORKFLOW, AN UNTRAITED BOARD, AND A BOARD WITH NO HOLD LANE ARE THREE ANSWERS.
+
+        Reading `?.hold` off the result collapsed the first two into one: both produced `undefined`,
+        the move was skipped, and the tool reported success — so a split-lane workflow whose IR could
+        not be read left the card on intake while telling the caller it was on its way. That is the
+        same success-with-nothing-behind-it this branch was rewritten to remove, arriving a line early.
+
+          - `undefined` OBJECT — the workflow could not be resolved at all. Nothing can be verified, so
+            the landing is reported as failed rather than assumed.
+          - resolved, NO column declares any lifecycle trait — a v1 graph upgraded by
+            `synthesizeDefaultColumns`, or a fixture like `linearWorkflowIr`. Its `todo` column plainly
+            exists and is where agents pick work up, so the legacy vocabulary still applies and success
+            is honest. Failing these would break every untraited board to fix a case none of them have,
+            and the existing suite caught exactly that when this gate was first written without it.
+          - resolved, traits EXPRESSED, still no hold lane — the board has answered, and the answer is
+            that nothing will dispatch this card: assigned-agent selection picks OUT OF the hold lane.
+            Staying on intake is correct and "will be picked up" is false, so it is reported like any
+            other failed landing.
+
+        A FOURTH STATE, and it is the one that made the first arm look unreachable (#2843 review,
+        greptile P1 — the third round, and right again). `resolveWorkflowIrForTask` never throws: an
+        unreadable selection, a missing definition, a malformed one and a throwing lookup ALL
+        SUBSTITUTE the default coding IR. So the substitution never surfaced as a failure, it surfaced
+        as the BUILT-IN lanes — `hold: "todo"`.
+
+        I argued that was harmless because `todo` would be undeclared on such a board and the move
+        would be rejected. That is true only of a board that does not declare `todo` AT ALL. A
+        workflow that holds work in `queued` and ALSO declares a `todo` column for something else
+        gets a move that SUCCEEDS into a lane nothing dispatches from, and a success message. The
+        argument was right about the mechanism and wrong about the population it covers.
+
+        `resolveWorkflowIrForTaskWithProvenance` is the seam built for exactly this: it reports
+        `source: "selection"` ONLY when it genuinely resolved the workflow the task selected, and
+        `"default"` whenever it substituted. Pairing that with the task's own selection separates the
+        two reasons for `"default"` — no workflow selected (legitimate; the built-in board IS the
+        answer) from selected-but-unresolvable (a substitution wearing the board's authority).
+
+        This also makes the first arm REACHABLE, so it is now covered rather than defended.
+        */
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:10 (#2843 review — greptile P1, fourth round):
+        ONE READ. Provenance and lanes come from the same snapshot, and a substitution is judged by
+        whether it would MOVE the card rather than by a second lookup.
+
+        My previous fix paired the provenance read with an independent `getTaskWorkflowSelectionAsync`
+        to tell "no workflow selected" (legitimate — the built-in board IS the answer) apart from
+        "selected but unresolvable". Two reads answering one question is the same defect the FIRST
+        review round on this PR caught, reintroduced three rounds later in a different place: a
+        selection written or cleared between them makes `resolved.ir` describe one workflow and
+        `selectedWorkflowId` another, and the tool then moves the card with the wrong board's hold
+        lane or reports a resolution error that never happened.
+
+        The second read is not needed. `source === "selection"` means the resolver genuinely resolved
+        what the task selected, so the lanes are authoritative. `"default"` means it SUBSTITUTED —
+        and the honest question is not why, it is whether the substitution is about to be acted on:
+
+          - the substituted hold lane equals the card's current column: no move, nothing is being
+            decided on unverified information, and this is exactly the no-selection/untraited case
+            where the built-in vocabulary is correct. Success.
+          - it DIFFERS: acting would move a real card into a lane inferred from a workflow that is
+            not the card's. That is the misroute round three found, and it is refused.
+
+        Judging by the action rather than by the reason needs no second lookup, so there is no window
+        for the two to disagree.
+        */
+        const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
+        /* `resolveLifecycleColumns` returns undefined for an IR that declares no columns at all;
+           `holdColumn` is then undefined and the untraited branch below is the honest answer. */
+        const holdColumn = resolveLifecycleColumns(resolved.ir)?.hold;
+        const substituted = resolved.source !== "selection";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-20:30 (#2843 review — greptile P1, "fallback equality
+        masks wrong hold"):
+        A SUBSTITUTION IS FATAL WHEN THE CALLER NAMED THE WORKFLOW. Equality proves nothing on its own.
+
+        The equality rule below accepts a substitution whose hold lane already matches the card's
+        column, on the grounds that no move means nothing was decided on bad information. The review
+        names the board where that is false: a workflow using `todo` as INTAKE and `queued` as hold
+        puts the card on `todo`, the degraded lookup fabricates `hold: "todo"`, the two match, and the
+        delegation is reported for a card assigned-agent dispatch will never select.
+
+        `params.workflow_id` settles the decidable half WITHOUT a second read — it is caller input, so
+        there is no snapshot to race. When the caller NAMED a workflow and the resolver substituted,
+        a real workflow provably exists and we provably failed to read it, so its hold lane cannot be
+        inferred from the built-in vocabulary and the landing is refused.
+
+        WHAT THIS DOES NOT COVER, stated because the gap is real: the same board reached through the
+        project DEFAULT with no `workflow_id` argument. There, "substituted" and "this project has no
+        resolvable workflow" are the same observation, and the second is a legitimate configuration
+        whose cards belong exactly where they are. Failing it would trade a false success for a false
+        alarm on a valid setup. Distinguishing them needs the read that just failed; it is not
+        available here, and guessing is what produced the last four rounds of this review.
+        */
+        if (substituted && workflowId) {
+          landingError = `the requested workflow (${workflowId}) could not be resolved, so its ready lane is unknown`;
+        } else if (substituted && holdColumn && holdColumn !== task.column) {
+          landingError = "the task's workflow could not be resolved, so its ready lane is unknown";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-19:35 (#2843 review — greptile P1, "lifecycle snapshot
+        race persists"):
+        THE SAME SNAPSHOT, NOT A SECOND RESOLVE.
+
+        This read the traits through a helper that resolved the workflow AGAIN, so a selection changing
+        in between combined the hold column from one board with the trait state of another — the exact
+        two-reads-of-one-fact defect the round above removed, surviving in the branch I added to fix a
+        different one. `resolved.ir` is already in hand and is the only snapshot anything here should
+        consult.
+        */
+        } else if (!holdColumn && declaresAnyLifecycleTrait(resolved.ir)) {
+          landingError = "this workflow declares no hold (ready-to-pick-up) lane";
+        } else if (holdColumn && holdColumn !== task.column) {
+          try {
+            await store.moveTask(task.id, holdColumn);
+            landedColumn = holdColumn;
+          } catch (moveError) {
+            landingError = moveError instanceof Error ? moveError.message : String(moveError);
+          }
+        }
+
         const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
         const workflow = workflowId ? ` (workflow: ${workflowId})` : "";
+        /*
+        FNXC:WorkflowLifecycleColumns 2026-07-30-14:50 (#2843 review — greptile P1, and it is right):
+        A FAILED landing is an ERROR result, not a success sentence with a warning appended.
+
+        My first version kept the "will be picked up by X on their next heartbeat cycle" text and
+        added a ` WARNING: ...` suffix. That still LEADS with a claim that is false: assigned-agent
+        selection skips cards outside the workflow's hold lane, so a card stranded on intake is never
+        dispatched, and a caller — usually another agent — reads the first sentence and moves on.
+        "Reported success with a caveat" is how the delegation silently goes nowhere.
+
+        The task id stays in `details` because the card DOES exist and the caller needs it to finish
+        the job by hand; what changes is that nothing in this branch claims the delegation completed.
+
+        The MOVE-REJECTED half of this is defensive rather than a live path: `holdColumn` comes from
+        the task's own resolved IR, so `moveTask`'s declared-column check passes by construction. I
+        tried to reach it with a workflow declaring a `hold` column with no node on it, expecting a
+        rejection — the move SUCCEEDED and the card landed there, because `moveTask` accepts any
+        column the workflow DECLARES and node reachability does not gate it. The unresolvable-workflow
+        half above is reachable. Both are covered by the message-shape test, which is explicit that it
+        pins the handling and not the reachability.
+        */
+        if (landingError) {
+          const target = holdColumn ? `the ready lane "${holdColumn}"` : "its ready lane";
+          const remedy = holdColumn
+            ? `move it to "${holdColumn}" to dispatch it`
+            : "resolve its workflow and move it to that workflow's ready lane to dispatch it";
+          const text = `ERROR: Created ${task.id}${deps}${workflow} and assigned it to ${agent!.name} (${agent!.id}), `
+            + `but it could NOT be moved out of "${task.column}" into ${target}: ${landingError}. `
+            + `It is stranded on intake and will NOT be picked up — ${remedy}.`;
+          return {
+            content: [{ type: "text" as const, text }],
+            isError: true,
+            details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name, column: landedColumn, error: landingError },
+          };
+        }
         return {
           content: [{
             type: "text" as const,
-            text: `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. ` +
-              `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
+            /*
+            FNXC:WorkflowLifecycleColumns 2026-07-30-22:10 (#2894 review, second round — greptile):
+            THE CAVEAT BELONGS IN THE SENTENCE, NOT ONLY IN `details`.
+
+            `landingVerified: false` was the right fact in the wrong place: the caller is usually
+            another agent, and agents read the first sentence. A structured field beside a confident
+            "will be picked up" is the same "success with a caveat" shape the error branch was
+            rewritten to remove — the caveat is present and nobody sees it.
+
+            The pickup claim is therefore CONDITIONAL on having verified the landing. Where it could
+            not be verified the text says what is true — the card exists, is assigned, and sits on a
+            lane we could not confirm — without either promising dispatch or failing a configuration
+            that is probably fine.
+            */
+            text: substituted
+              ? `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow} in `
+                + `"${landedColumn}". Its workflow could not be resolved, so I could NOT confirm that `
+                + `column is the lane ${agent!.name} picks work up from — check the board if it does `
+                + "not start."
+              : `Delegated to ${agent!.name} (${agent!.id}): Created ${task.id}${deps}${workflow}. `
+                + `The task will be picked up by ${agent!.name} on their next heartbeat cycle.`,
           }],
-          details: { taskId: task.id, agentId: agent!.id, agentName: agent!.name },
+          /*
+          FNXC:WorkflowLifecycleColumns 2026-07-30-20:45 (#2894 review — greptile, "fallback equality
+          strands delegations"): THE GAP IS DELIBERATE; THE SILENCE WAS NOT.
+
+          The finding restates the limitation recorded above: with no `workflow_id` argument,
+          "substituted" and "this project has no resolvable workflow" are the same observation, and the
+          second is a valid configuration whose cards belong where they are. Failing it would trade a
+          false success for a false alarm on a working setup, and distinguishing them needs the read
+          that just failed.
+
+          What IS fixable is that the card came back indistinguishable from a verified landing. The
+          caller — usually another agent — now gets `landingVerified: false`, so "we could not confirm
+          this card is on a lane anything picks up from" is a readable fact rather than an absence.
+          Same principle as the contamination sweep in #2891: when you cannot answer, say so instead of
+          picking a side.
+          */
+          details: {
+            taskId: task.id,
+            agentId: agent!.id,
+            agentName: agent!.name,
+            column: landedColumn,
+            ...(substituted ? { landingVerified: false } : {}),
+          },
         };
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("Task ID already exists:")) {
@@ -5523,6 +6445,9 @@ export default function kbExtension(pi: ExtensionAPI) {
     Kill npx on abort/timeout so outer tool budgets cannot leave orphan install processes after the agent turn fails closed.
     */
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // FNXC:ToolPermissionGates 2026-07-26-13:55: hard-withheld from agent/ambiguous principals (installs third-party code into the project); operators unaffected.
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_skills_install", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       // Validate source format
       if (!/^[^/]+\/[^/]+$/.test(params.source)) {
         return {

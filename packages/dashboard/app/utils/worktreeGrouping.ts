@@ -1,5 +1,6 @@
 import type { Task } from "@fusion/core";
 import { getPathBasename } from "./pathDisplay";
+import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole } from "./columnRoles";
 
 export interface WorktreeGroupData {
   label: string;
@@ -58,6 +59,31 @@ export function groupByWorktree(
   inProgressTasks: Task[],
   allTasks: Task[],
   maxConcurrent: number,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The ids of TASKS whose own column is a hold lane in their own workflow, when the caller
+  resolved them.
+
+  Task ids, not column ids (PR #2625 review — greptile). This helper scans `allTasks`, which
+  can span workflows, and column ids are namespaced per workflow — two workflows may both
+  declare `staging` with only one of them marking it `hold`. A unioned column-id set cannot
+  tell those apart and would list every executing card of the second workflow as waiting.
+  Only a card's own workflow can answer "is this waiting?", so the caller answers it per task
+  and passes the result.
+
+  Board resolves this; Lane does not pass it and keeps the legacy-id fallback.
+  */
+  holdTaskIds?: ReadonlySet<string>,
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-11:30 (batch-dashboard-app):
+  Per-dependency column flags, mirroring the `holdTaskIds` seam directly above: the caller resolves,
+  this stays pure. Omitted -> the legacy ids, i.e. today's behaviour for every unconverted caller.
+
+  Without it, "are this card's dependencies satisfied?" was three legacy ids. On a renamed board a
+  FINISHED dependency matched none of them, so the dependent never appeared in the worktree view's
+  upcoming-work list — it looked like there was nothing ready to run while there was.
+  */
+  dependencyColumnFlags?: ReadonlyMap<string, Parameters<typeof isCompleteColumnRole>[0]>,
 ): WorktreeGroupData[] {
   // Separate assigned vs unassigned in-progress tasks
   const assigned = inProgressTasks.filter((t) => t.worktree);
@@ -72,14 +98,36 @@ export function groupByWorktree(
     worktreeMap.set(key, list);
   }
 
-  // Find queued todo tasks: "todo" tasks with all deps satisfied (done or in-review)
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — R8 drift conversion):
+  The filter wants "cards waiting for capacity" — the HOLD role, resolved from the board's
+  columns rather than the id `todo`.
+
+  THE BUG THIS CLOSES, measured rather than assumed: on the default board the id and the
+  role coincide (U11 gave `todo` the hold trait), so this looked healthy. On a board whose
+  hold column is renamed the filter matched NOTHING, so the worktree view showed no upcoming
+  work at all and read as idle — a whole panel silently empty, with nothing failing.
+
+  Dependency satisfaction below still names terminal ids. That is a separate question from
+  the hold role and is left alone deliberately: it needs `complete`/`mergeBlocker`/`archived`
+  traits for the DEPENDENCY's column, which is another lookup and another unit of work.
+  */
+  // Find queued hold-lane tasks: cards in the hold column with all deps satisfied.
   const taskById = new Map(allTasks.map((t) => [t.id, t]));
-  const todoTasks = allTasks.filter((t) => t.column === "todo");
+  const isWaitingTask = (task: Task): boolean =>
+    holdTaskIds ? holdTaskIds.has(task.id) : isHoldColumnRole(undefined, task.column);
+  const todoTasks = allTasks.filter(isWaitingTask);
   const eligible = todoTasks.filter((t) =>
     !t.paused &&
     (t.dependencies || []).every((depId) => {
       const dep = taskById.get(depId);
-      return dep && (dep.column === "done" || dep.column === "in-review" || dep.column === "archived");
+      if (!dep) return false;
+      const depFlags = dependencyColumnFlags?.get(dep.id);
+      /* Satisfied = the dependency rests in its OWN board's terminal pair, or its review lane —
+         the same union the scheduler's legacy rule uses, preserved exactly. */
+      return isCompleteColumnRole(depFlags, dep.column)
+        || isArchivedColumnRole(depFlags, dep.column)
+        || isReviewColumnRole(depFlags, dep.column);
     }),
   );
 

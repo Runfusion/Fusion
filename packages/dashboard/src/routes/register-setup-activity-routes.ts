@@ -90,12 +90,18 @@ router.get("/activity-feed", async (req, res) => {
     const typesParam = typeof req.query.types === "string" ? req.query.types.split(",") : undefined;
     const types = typesParam as import("@fusion/core").ActivityEventType[] | undefined;
 
-    const { CentralCore } = await import("@fusion/core");
-    const central = new CentralCore();
-    await central.init();
+    /*
+    FNXC:ActivityFeed 2026-07-28-03:00:
+    Prefer the server-owned centralCore (already backend-mode with asyncLayer) over `new CentralCore()` so GET /api/activity-feed does not open a per-request pool and cannot hit backendHandle-before-attach. Mirrors global-concurrency / setup-state routes. Layer-less fallback still works once CentralCore.init restores PG bootstrap (#2454 regression).
+    */
+    const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
+    const shouldClose = !options?.centralCore;
+    if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+      await central.init();
+    }
 
     const entries = await central.getRecentActivity({ limit, projectId, types });
-    await central.close();
+    if (shouldClose) await central.close();
 
     res.json(entries);
   } catch (err: unknown) {
@@ -106,62 +112,31 @@ router.get("/activity-feed", async (req, res) => {
   }
 });
 
-/**
- * GET /api/global-concurrency
- * Get global concurrency state across all projects.
- * Returns: GlobalConcurrencyState
- */
+/*
+FNXC:CapacityModel 2026-07-28-23:45 (drop the cross-project cap — settings half):
+PUT /api/global-concurrency is DELETED: it set a machine-wide limit that no longer
+exists. Capacity is two numbers PER PROJECT.
+
+GET SURVIVES but returns TELEMETRY ONLY — live "N running" counts per project, via
+CentralCore's registered side-effect-safe source. It no longer reports
+globalMaxConcurrent or queuedCount: those came from the deleted cap and from slot
+bookkeeping that production code never incremented, so publishing them was
+publishing zeros dressed as state. Nothing gates on this route.
+*/
 router.get("/global-concurrency", async (_req, res) => {
   try {
     const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
     const shouldClose = !options?.centralCore;
     if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
 
-    const state = await central.getGlobalConcurrencyState();
     const liveCounts = await central.getLiveRunningAgentCounts();
 
-    /*
-    FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
-    The published global-concurrency route reads currentlyActive/projectsActive through CentralCore's live seam while preserving globalMaxConcurrent/queuedCount from slot bookkeeping. The dashboard-registered source only inspects already-open project stores, so this read stays side-effect-safe and never opens watchers or starts project runtimes.
-    */
-    const liveState = {
-      ...state,
+    if (shouldClose) await central.close();
+
+    res.json({
       currentlyActive: liveCounts.currentlyActive,
       projectsActive: liveCounts.projectsActive,
-    };
-
-    if (shouldClose) await central.close();
-
-    res.json(liveState);
-  } catch (err: unknown) {
-    if (err instanceof ApiError) {
-      throw err;
-    }
-    rethrowAsApiError(err);
-  }
-});
-
-/**
- * PUT /api/global-concurrency
- * Update the system-wide concurrency limit across all projects.
- * Body: { globalMaxConcurrent: number }
- * Returns: GlobalConcurrencyState
- */
-router.put("/global-concurrency", async (req, res) => {
-  const { globalMaxConcurrent } = req.body ?? {};
-  if (!Number.isInteger(globalMaxConcurrent) || globalMaxConcurrent < 1 || globalMaxConcurrent > 10000) {
-    throw badRequest("globalMaxConcurrent must be an integer between 1 and 10000");
-  }
-
-  try {
-    const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
-    const shouldClose = !options?.centralCore;
-    if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
-
-    const state = await central.updateGlobalConcurrency({ globalMaxConcurrent });
-    if (shouldClose) await central.close();
-
-    res.json(state);
+    });
   } catch (err: unknown) {
     if (err instanceof ApiError) {
       throw err;

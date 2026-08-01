@@ -332,6 +332,18 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     const marker = this.localDb
       .prepare("SELECT value FROM __meta WHERE key = 'pluginCentralMigrationV1'")
       .get() as { value: string } | undefined;
+    /*
+    FNXC:LifecycleColumnCensus 2026-07-30-23:59 DELIBERATE-LITERAL: a MIGRATION MARKER, not a lane.
+
+    The lifecycle-column census counts `=== "done"` comparisons, and this one is a `__meta` key/value
+    row recording whether `pluginCentralMigrationV1` has run — the same vocabulary the two writes below
+    use. It has nothing to do with a board column, and converting it to a role read would compare a
+    migration flag against a workflow's complete lane, which is meaningless and would break the
+    migration on any board that renames `done`.
+
+    Marked rather than left counted because an entry in the backlog is a claim that a conversion is
+    OWED here, and the next person to work the list would spend the time discovering it is not.
+    */
     if (marker?.value === "done") return;
 
     const hasPluginsTable = this.localDb

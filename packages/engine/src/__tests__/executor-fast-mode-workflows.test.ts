@@ -536,7 +536,26 @@ describe("fast mode workflow/runtime invariants", () => {
     const result = await runner.run(task({ executionMode: "fast" }), { experimentalFeatures: { workflowGraphExecutor: true } });
 
     expect(result.disposition).toBe("completed");
-    expect(result.visitedNodeIds).toEqual(["start", "review"]);
+    /*
+    FNXC:WorkflowResolvedColumns 2026-07-31-02:40:
+    `start` is NOT traversed here, and that is the graph-entry contract working.
+
+    v1 normalization places nodes into synthesized default columns BY SEAM (workflow-ir.ts:150):
+    `seam: "review"` -> `in-review`, seam-less nodes -> `todo`. This card rests in `in-progress`,
+    which this three-node graph has no node for, so `resolveColumnResumeNode`
+    (workflow-graph-executor.ts:473) resumes at the next node FORWARD — the review node — rather than
+    re-entering at `start`. Its `>=` comparison is commented for exactly this case: "a card can rest
+    in a column the pipeline has no node for ... and must then resume at the next node forward."
+
+    Why the sibling skill-executor case two tests up still expects `["start", "skill-review"]`: its
+    node carries no `seam`, so it normalizes into `todo`, which is BEHIND `in-progress` — no forward
+    match, so entry falls back to `start`. That contrast is an accident of the seam-less config rather
+    than a deliberate difference, so do not "align" the two expectations.
+
+    This mechanism is why the failure resisted diagnosis: nothing about the assertion, the fast-mode
+    flag, or the node kind points at column normalization of a v1 IR.
+    */
+    expect(result.visitedNodeIds).toEqual(["review"]);
     expect(review).toHaveBeenCalledTimes(1);
     expect(runCustomNode).not.toHaveBeenCalled();
   });

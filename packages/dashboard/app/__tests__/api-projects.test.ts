@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { API_JSON_HEADERS, API_JSON_HEADERS_NO_ATTRIBUTION } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
   uploadAttachment,
@@ -62,7 +63,6 @@ import {
   resumeProject,
   fetchFirstRunStatus,
   fetchGlobalConcurrency,
-  updateGlobalConcurrency,
   fetchPiSettings,
   updatePiSettings,
   installPiPackage,
@@ -366,7 +366,7 @@ describe("refineText", () => {
 
     expect(result).toBe("Refined task description");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/ai/refine-text", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ text: "Original text", type: "clarify" }),
     });
@@ -381,7 +381,7 @@ describe("refineText", () => {
 
     expect(result).toBe("Refined with scoped settings");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/ai/refine-text?projectId=proj-123", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
       method: "POST",
       body: JSON.stringify({ text: "Original text", type: "clarify" }),
     });
@@ -507,7 +507,9 @@ describe("summarizeTitle", () => {
       "/api/ai/summarize-title",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // `summarizeTitle` calls `fetch()` directly, bypassing `api()`, so no attribution header.
+        // See the note in test/apiRequestHeaders.ts — this is a MUTATION without attribution.
+        headers: API_JSON_HEADERS_NO_ATTRIBUTION,
         body: JSON.stringify({ description: "a".repeat(201), provider: undefined, modelId: undefined }),
       })
     );
@@ -640,7 +642,7 @@ describe("fetchProjects", () => {
     expect(result[0].name).toBe("Test Project");
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/projects",
-      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+      expect.objectContaining({ headers: API_JSON_HEADERS })
     );
   });
 
@@ -972,24 +974,17 @@ describe("fetchGlobalConcurrency", () => {
     expect(result.projectsActive["proj_abc123"]).toBe(2);
   });
 
-  it("updates global concurrency state", async () => {
-    const mockState: GlobalConcurrencyState = {
-      globalMaxConcurrent: 10,
-      currentlyActive: 4,
-      queuedCount: 0,
-      projectsActive: {},
-    };
-    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockState));
+  /*
+  FNXC:CapacityModel 2026-07-30-22:40:
+  The "updates global concurrency state" case is DELETED with the client function it exercised.
+  `updateGlobalConcurrency` PUT to `/api/global-concurrency`, a route removed when the machine-wide cap
+  went (capacity is two numbers PER PROJECT), so the client could only call an endpoint that no longer
+  exists. I deleted the function and missed this test — it kept asserting the deleted write, and the
+  full-suite run is what caught it.
 
-    const result = await updateGlobalConcurrency({ globalMaxConcurrent: 10 });
-
-    expect(result.globalMaxConcurrent).toBe(10);
-    expect(globalThis.fetch).toHaveBeenCalledWith("/api/global-concurrency", {
-      headers: { "Content-Type": "application/json" },
-      method: "PUT",
-      body: JSON.stringify({ globalMaxConcurrent: 10 }),
-    });
-  });
+  `fetchGlobalConcurrency` and its cases above SURVIVE: the GET route remains and serves live
+  utilization telemetry to the footer and Command Center. A read, not a limiter.
+  */
 });
 
 describe("fetchProjectTasks", () => {
@@ -1064,7 +1059,7 @@ describe("fetchExecutorStats", () => {
     expect(result.maxConcurrent).toBe(4);
     expect(result.lastActivityAt).toBe("2026-04-01T12:00:00.000Z");
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/executor/stats", {
-      headers: { "Content-Type": "application/json" },
+      headers: API_JSON_HEADERS,
     });
   });
 

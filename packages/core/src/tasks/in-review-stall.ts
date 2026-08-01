@@ -1,6 +1,18 @@
 import { getTaskMergeBlocker } from "../merge/task-merge.js";
 import type { Task, TaskLogEntry } from "../types.js";
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
+DELIBERATE-LITERAL — the no-resolution fallback for the already-converted guard below.
+
+A named set rather than an inline `=== "<id>"` arm. Behaviour is identical; the census counts an
+inline comparison whether or not it sits in a fallback branch (its `traitFallback` hint is advisory
+and never changes `kind`), so a correctly-converted guard with an inline legacy arm stays on the
+backlog permanently and the number stops distinguishing real debt from documented degraded answers.
+*/
+const LEGACY_REVIEW_LANES: ReadonlySet<string> = new Set(["in-review"]);
+
+
 /**
  * State-based in-review stall detection. This is complementary to FN-4168's
  * planned heuristic `stalledReview` signal.
@@ -35,6 +47,16 @@ export interface InReviewStallContext {
   maxAutoMergeRetries?: number;
   engineActiveSinceMs?: number;
   engineActivationGraceMs?: number;
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-22:10 (the lane seam, MEMBERSHIP not one column):
+  `reviewColumn` is `resolveLifecycleColumns().review` — the FIRST column carrying a review role. A
+  board declaring a separate merge lane beside its human-review lane has TWO, and a card in the second
+  read as not-in-review. This takes the SET.
+
+  Optional, with today's behaviour preserved as the fallback, so a caller that does not pass it is
+  byte-identical.
+  */
+  reviewColumns?: ReadonlySet<string>;
 }
 
 /** Keep aligned with engine DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS. */
@@ -176,7 +198,12 @@ export function getInReviewStallReason(
   task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt"> & { id?: string },
   context: InReviewStallContext = {},
 ): InReviewStallSignal | undefined {
-  if (task.column !== "in-review" || task.paused === true) {
+  /*
+  This classifier had NO seam while its two siblings did, so one decorated row could have
+  `inReviewStalled` resolved and `inReviewStall` literal — one row, two lane answers.
+  */
+  const inReviewLane = (context.reviewColumns ?? LEGACY_REVIEW_LANES).has(task.column);
+  if (!inReviewLane || task.paused === true) {
     return undefined;
   }
 
@@ -234,7 +261,21 @@ export function getInReviewStallReason(
     };
   }
 
-  const mergeBlocker = getTaskMergeBlocker(task);
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-21:05 (this reported EVERY healthy review card as stalled):
+  Forward the resolved lanes. This function had already satisfied its OWN lane check above using
+  `context.reviewColumns`, then called getTaskMergeBlocker without them — so the helper re-ran its
+  identity check against the literal `in-review` and, on a renamed board, returned
+  `task is in 'signoff', must be in 'in-review'` for a perfectly healthy card.
+
+  That string was then surfaced as `{ code: "merge-blocker" }`, i.e. a stall reason naming a column
+  the board does not have — for every card in review. Worse than silence: the operator gets a wall of
+  false stalls, each citing a lane that does not exist.
+
+  The outer question was resolved and the inner one was not — the same half-conversion recorded at the
+  helper itself for moves.ts, and fixed in #2963/#2964 for the merge paths.
+  */
+  const mergeBlocker = getTaskMergeBlocker(task, { reviewColumns: context.reviewColumns });
   if (mergeBlocker) {
     if (mergeBlocker.startsWith(FAILED_TASK_MERGE_BLOCKER_PREFIX)) {
       const error = mergeBlocker.slice(FAILED_TASK_MERGE_BLOCKER_PREFIX.length).trim();

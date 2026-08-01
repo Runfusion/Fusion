@@ -93,9 +93,22 @@ let warnSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  /*
+  FNXC:TestInfrastructure 2026-07-29-17:05:
+  worktree-pool logs its checkout-failure at DEBUG level, and createLogger's debug
+  writes to console.error like the rest — but debug is GATED on FUSION_DEBUG
+  (logger.ts:43), which is unset under vitest. So the line was never emitted and
+  the two checkout-failure cases below measured zero calls. One of them is even
+  named "logs checkout -- failure at debug level" while asserting a channel debug
+  could not reach without this flag. Enabling it is what makes those assertions
+  real; re-pointing them at another channel would only describe whatever the code
+  happened to do. Deleted in afterEach so the flag cannot leak into sibling files.
+  */
+  process.env.FUSION_DEBUG = "worktree-pool";
 });
 
 afterEach(() => {
+  delete process.env.FUSION_DEBUG;
   errorSpy.mockRestore();
   warnSpy.mockRestore();
 });

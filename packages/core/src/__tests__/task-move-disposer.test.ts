@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import "@fusion/core"; // registers the built-in column traits
 import {
   __setTaskMoveDisposalTimeoutForTesting,
   disposeTaskBeforeMove,
@@ -32,6 +33,78 @@ describe("task move disposer", () => {
     resolveCancellation?.();
     await preparation;
     expect(moveReady).toBe(true);
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-15:35 (batch-core):
+
+  THE HARD CANCEL MUST FIRE ON A RENAMED BOARD.
+
+  Keyed on `from === "in-progress" && to === "todo"`, this returned early for every board that renamed
+  either lane, so the disposer never ran: a user pulling a card out of active execution got a task
+  that LOOKS parked while its agent kept running. A cancellation contract failing OPEN — the operator
+  believes the work stopped.
+
+  The resolution is LAZY, taken only when the literals do not already match, because an unconditional
+  await pushed the disposer past the one-microtask window the test above pins. That is why this case
+  drives a board whose lanes share NO id with the legacy pair.
+  */
+  it("fires the hard cancel on a RENAMED board", async () => {
+    const renamedIr = {
+      version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      ],
+    };
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    const store = {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-renamed", ir: renamedIr }),
+    } as never;
+    const disposer = vi.fn().mockResolvedValue(undefined);
+    registerTaskMoveDisposer(store, disposer);
+
+    await disposeTaskBeforeMove(store, {
+      task: { id: "FN-RENAMED" } as never,
+      from: "building",
+      to: "backlog",
+      source: "user",
+    });
+
+    expect(disposer).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT fire for a renamed move that is not wip -> pre-wip", async () => {
+    /*
+    The paired negative: resolving lanes must not turn every user move into a cancel. `backlog` is
+    the hold lane, so hold -> wip is a start, not a cancel.
+    */
+    const renamedIr = {
+      version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+      columns: [
+        { id: "backlog", name: "Backlog", traits: [{ trait: "hold" }] },
+        { id: "building", name: "Building", traits: [{ trait: "wip" }] },
+      ],
+    };
+    const selection = { workflowId: "wf-renamed", stepIds: [] as string[] };
+    const store = {
+      getTaskWorkflowSelection: () => selection,
+      getTaskWorkflowSelectionAsync: async () => selection,
+      getWorkflowDefinition: async () => ({ id: "wf-renamed", ir: renamedIr }),
+    } as never;
+    const disposer = vi.fn().mockResolvedValue(undefined);
+    registerTaskMoveDisposer(store, disposer);
+
+    await disposeTaskBeforeMove(store, {
+      task: { id: "FN-START" } as never,
+      from: "backlog",
+      to: "building",
+      source: "user",
+    });
+
+    expect(disposer).not.toHaveBeenCalled();
   });
 
   it("awaits every executor registered to the same store", async () => {

@@ -60,7 +60,7 @@ describe("worktree-hooks", () => {
     expect(hook).toContain("--if-exists doNothing");
     expect(hook).toContain("--trailer \"$TRAILER_NAME: $TASK_ID\"");
     expect(hook).toContain("--if-exists addIfDifferent");
-    expect(hook).toContain('CO_AUTHOR_TRAILER="Co-authored-by: Fusion <noreply@runfusion.ai>"');
+    expect(hook).toContain("CO_AUTHOR_TRAILER='Co-authored-by: Fusion <noreply@runfusion.ai>'");
     expect(hook).toContain("s/^FN-//i");
   });
 
@@ -69,7 +69,7 @@ describe("worktree-hooks", () => {
       commitAuthorName: "Fusion Bot",
       commitAuthorEmail: "bot@example.com",
     });
-    expect(customHook).toContain('CO_AUTHOR_TRAILER="Co-authored-by: Fusion Bot <bot@example.com>"');
+    expect(customHook).toContain("CO_AUTHOR_TRAILER='Co-authored-by: Fusion Bot <bot@example.com>'");
     expect(customHook).toContain("--if-exists addIfDifferent");
 
     const disabledHook = buildCommitMsgTrailerHook("FN-42", { commitAuthorEnabled: false });
@@ -79,9 +79,56 @@ describe("worktree-hooks", () => {
 
   it("parameterizes commit-msg hook for custom prefix and trailer name", () => {
     const hook = buildCommitMsgTrailerHook("KB-9", { taskPrefix: "KB", trailerName: "Task-Id" });
-    expect(hook).toContain('PREFIX="KB"');
-    expect(hook).toContain('TRAILER_NAME="Task-Id"');
+    expect(hook).toContain("PREFIX='KB'");
+    expect(hook).toContain("TRAILER_NAME='Task-Id'");
     expect(hook).toContain("s/^KB-//i");
+  });
+
+  it("derives the strip prefix from the task id, ignoring a mismatched options.taskPrefix", () => {
+    // A per-mission ticket (ERR-5) whose project-wide options.taskPrefix is still "FN" must strip its own ERR- prefix, not "FN-".
+    const hook = buildCommitMsgTrailerHook("ERR-5", { taskPrefix: "FN" });
+    expect(hook).toContain("PREFIX='ERR'");
+    expect(hook).toContain("s/^ERR-//i");
+    expect(hook).not.toContain("PREFIX='FN'");
+  });
+
+  // FNXC:WorktreeHooks 2026-07-26-12:00: fallback options.taskPrefix is quoted in case and escaped for sed -E so metacharacters cannot break the hook (greptile P2 on PR #1930).
+  it("quotes the case prefix and escapes sed ERE metacharacters on the fallback taskPrefix path", () => {
+    const hook = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "A.B+C" });
+    expect(hook).toContain("PREFIX='A.B+C'");
+    expect(hook).toContain('"$PREFIX"-*) ;;');
+    expect(hook).toContain("s/^A\\.B\\+C-//i");
+  });
+
+  // FNXC:WorktreeHooks 2026-07-26-12:00: `/` must be escaped too so `/`-delimited sed stays valid.
+  it("escapes slash in the fallback taskPrefix so sed delimiters stay intact", () => {
+    const hook = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "TEAM/API" });
+    expect(hook).toContain("PREFIX='TEAM/API'");
+    expect(hook).toContain("s/^TEAM\\/API-//i");
+  });
+
+  // FNXC:WorktreeHooks 2026-07-26-12:00: PREFIX must be a single-quoted shell literal so $(...) cannot expand (greptile P1 security).
+  it("single-quotes PREFIX so shell command substitution cannot expand on the fallback path", () => {
+    const cmdSub = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "$(id)" });
+    expect(cmdSub).toContain("PREFIX='$(id)'");
+    expect(cmdSub).not.toMatch(/PREFIX="\$\(id\)"/);
+    expect(cmdSub).not.toMatch(/PREFIX="[^"]*\$\(/);
+
+    const injection = buildCommitMsgTrailerHook("not-a-numeric-id", {
+      taskPrefix: "; rm -rf /; #",
+    });
+    expect(injection).toContain("PREFIX='; rm -rf /; #'");
+    expect(injection).not.toMatch(/PREFIX="[^']*;/);
+
+    const withQuote = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "O'Brien" });
+    // Embedded ' → '\'' inside the outer single-quoted literal.
+    expect(withQuote).toContain("PREFIX='O'\\''Brien'");
+  });
+
+  it("single-quotes the fallback sed expression so backticks cannot execute", () => {
+    const hook = buildCommitMsgTrailerHook("not-a-numeric-id", { taskPrefix: "`id`" });
+    expect(hook).toContain("PREFIX='`id`'");
+    expect(hook).toContain('"$PREFIX"-*) ;;');
   });
 
   it("installs metadata and pre-commit + commit-msg hooks in linked worktree", async () => {

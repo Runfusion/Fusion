@@ -716,7 +716,6 @@ html .column.drag-over * {
   transition: none !important;
 }
 
-[data-theme="light"] .agent-detail-overlay,
 [data-theme="light"] .agent-dialog-overlay,
 [data-theme="light"] .chat-new-dialog-backdrop {
   background: transparent;
@@ -2236,7 +2235,17 @@ FN-7825 makes .settings-navigation the sole owner of Settings rail width and rem
   height: var(--card-chip-height);
   min-height: var(--card-chip-height);
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
+  /*
+  FNXC:TaskCardParity 2026-07-31-01:05:
+  TOKENIZED so chip geometry survives a theme change. This was a hardcoded `1px` while the sibling
+  chips (.card-time-indicator and friends, TaskCard.css) use `var(--btn-border-width)`. The default
+  token IS 1px, so the two matched on the default theme — but `factory` and `factory-mono` set
+  --btn-border-width: 2px (theme-data.css), and under those themes the timer chip grew to 2px while
+  this badge stayed at 1px. That is exactly the footer-chip misalignment FN-4511 exists to prevent,
+  and it was invisible to the parity test because the fixture does not mount theme-data.css.
+  Found via greptile on PR #2782.
+  */
+  border: var(--btn-border-width) solid transparent;
   box-sizing: border-box;
   color: inherit;
   text-decoration: none;
@@ -3770,7 +3779,6 @@ Toast text must contrast its status background across every dashboard theme and 
 
   /* Modal: full-screen on mobile (cross-cutting overlay/modal base chrome) */
   .modal-overlay:not(.confirm-dialog-overlay),
-  .agent-detail-overlay,
   .agent-dialog-overlay,
   .workflow-output-modal-overlay {
     padding-top: 0;

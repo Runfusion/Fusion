@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { planRecoverBlockedBy } from "../recover-stale-blocked-by.mjs";
+import { planRecoverBlockedBy, unrecognisedLanes } from "../recover-stale-blocked-by.mjs";
 
 function setupTasksDir() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fn-3899-"));
@@ -116,4 +116,52 @@ test("treats soft-deleted blockers as missing and never plans for deleted depend
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/*
+FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:30:
+THE INVARIANT: a board this script cannot reason about is REPORTED, never silently skipped.
+
+Every lane test in the planner is a legacy id, and the candidate gate is `row.column !== "todo"`, so a
+renamed board matches nothing and the planner returns []. That is indistinguishable from "no repairs
+needed" — the worst possible answer from a recovery tool, which an operator consults during an
+incident and reads as a clean bill of health.
+
+The first case below documents that gap directly: the planner still finds nothing, and that is NOT
+fixed here (correct classification needs the board's trait vocabulary, which this script has no store
+to resolve). What is fixed is that the condition is now detectable and printed.
+
+Reverted (`unrecognisedLanes` removed), these fail to import.
+*/
+test("names lanes the planner does not understand, so an empty result cannot read as healthy", () => {
+  const rows = [
+    { id: "FN-1", column: "backlog", blockedBy: "FN-2" },
+    { id: "FN-2", column: "checking", blockedBy: null },
+  ];
+
+  assert.deepEqual(unrecognisedLanes(rows), ["backlog", "checking"]);
+  // The gap this warns about, pinned rather than claimed fixed: the planner still sees nothing.
+  const { tasksDir } = setupTasksDir();
+  assert.deepEqual(planRecoverBlockedBy({ rows, tasksDir }), []);
+});
+
+test("stays quiet on a legacy board, so the warning means something when it appears", () => {
+  const rows = [
+    { id: "FN-1", column: "todo", blockedBy: "FN-2" },
+    { id: "FN-2", column: "in-review", blockedBy: null },
+    { id: "FN-3", column: "done", blockedBy: null },
+  ];
+
+  assert.deepEqual(unrecognisedLanes(rows), []);
+});
+
+test("reports each unknown lane once, ignoring rows with no column at all", () => {
+  const rows = [
+    { id: "FN-1", column: "building" },
+    { id: "FN-2", column: "building" },
+    { id: "FN-3", column: null },
+    { id: "FN-4", column: "" },
+  ];
+
+  assert.deepEqual(unrecognisedLanes(rows), ["building"]);
 });

@@ -443,12 +443,15 @@ describe("AgentSemaphore", () => {
     expect(hasPreHeldExecutorSlot("FN-1")).toBe(false);
     expect(takePreHeldExecutorSlot("FN-1")).toBe(false);
 
-    // Failed dispatch path releases both the registry entry and the semaphore slot.
-    expect(sem.tryAcquire()).toBe(true);
+    /*
+    FNXC:CapacityModel 2026-07-29-13:20: the failed-dispatch path releases the
+    REGISTRY ENTRY; the semaphore half moved to the call sites that own the
+    reference. The surviving contract is that a failed dispatch leaves nothing a
+    later pass could "take".
+    */
     registerPreHeldExecutorSlot("FN-2");
-    dropPreHeldExecutorSlot("FN-2", sem);
+    dropPreHeldExecutorSlot("FN-2");
     expect(hasPreHeldExecutorSlot("FN-2")).toBe(false);
-    expect(sem.activeCount).toBe(1);
     sem.release();
     clearPreHeldExecutorSlotsForTests();
   });
@@ -471,8 +474,9 @@ describe("AgentSemaphore", () => {
     expect(sem.activeCount).toBe(1);
 
     // Authoritative / work-engine / heartbeat-defer early returns must drop, not leave the registration.
-    dropPreHeldExecutorSlot("FN-LEGACY-HANDOFF", sem);
+    dropPreHeldExecutorSlot("FN-LEGACY-HANDOFF");
     expect(hasPreHeldExecutorSlot("FN-LEGACY-HANDOFF")).toBe(false);
+    sem.release();
     expect(sem.activeCount).toBe(0);
 
     // Happy path: re-register then take + release (runWithExecutorSemaphore contract).
@@ -483,8 +487,8 @@ describe("AgentSemaphore", () => {
     sem.release();
     expect(sem.activeCount).toBe(0);
     // Second drop after take is a no-op — safe for execute()'s outer finally belt-and-suspenders.
-    dropPreHeldExecutorSlot("FN-LEGACY-TAKE", sem);
-    expect(sem.activeCount).toBe(0);
+    dropPreHeldExecutorSlot("FN-LEGACY-TAKE");
+    expect(hasPreHeldExecutorSlot("FN-LEGACY-TAKE")).toBe(false);
     clearPreHeldExecutorSlotsForTests();
   });
 
@@ -507,13 +511,12 @@ describe("AgentSemaphore", () => {
     const release = () => {
       if (released) return;
       released = true;
-      dropPreHeldExecutorSlot("FN-MOVE-FAIL", sem);
+      dropPreHeldExecutorSlot("FN-MOVE-FAIL");
     };
     release();
     release(); // idempotent
 
     expect(hasPreHeldExecutorSlot("FN-MOVE-FAIL")).toBe(false);
-    expect(sem.activeCount).toBe(0);
     clearPreHeldExecutorSlotsForTests();
   });
 
@@ -1207,8 +1210,10 @@ describe("ProjectAdmissionCoordinator", () => {
     expect(semaphore.activeCount).toBe(1);
     expect(hasPreHeldExecutorSlot("FN-TAKES")).toBe(true);
 
-    dropPreHeldExecutorSlot("FN-TAKES", semaphore);
-    expect(semaphore.activeCount).toBe(0);
+    dropPreHeldExecutorSlot("FN-TAKES");
+    expect(hasPreHeldExecutorSlot("FN-TAKES")).toBe(false);
+    // The admitted candidate keeps its host slot until its own lane releases.
+    expect(semaphore.activeCount).toBe(1);
     clearPreHeldExecutorSlotsForTests();
   });
 

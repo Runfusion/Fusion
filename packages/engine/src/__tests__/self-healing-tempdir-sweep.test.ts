@@ -193,6 +193,28 @@ describe("SelfHealingManager worktrees-dir sweeps", () => {
 });
 
 describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
+  it("removes stale fn-verify verification checkouts from tmpdir (leak found on the live board)", async () => {
+    /*
+    FNXC:TempWorktreeSweep 2026-07-31-22:55:
+    GitCheckoutMaterializer's dispose() is in-process best-effort; a killed process leaks the
+    fn-verify-* checkout AND its git worktree registration forever, because no sweep knew the
+    prefix. Reverting the sweep-prefix change makes this test fail (the dir survives).
+    */
+    const stale = tempMergeDir(`fn-verify-${Math.random().toString(36).slice(2)}`);
+    makeStale(stale);
+    const staleApp = tempMergeDir(`fn-verify-app-${Math.random().toString(36).slice(2)}`);
+    makeStale(staleApp);
+    const fresh = tempMergeDir(`fn-verify-fresh-${Math.random().toString(36).slice(2)}`);
+    const { manager } = makeManager();
+
+    await expect(sweep(manager)).resolves.toBe(2);
+
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(staleApp)).toBe(false);
+    // Young checkouts may belong to a live verification run — the age gate must hold.
+    expect(existsSync(fresh)).toBe(true);
+  });
+
   it("removes stale fusion-ai-merge directories and emits success audits", async () => {
     const stale = tempMergeDir();
     makeStale(stale);
@@ -316,6 +338,44 @@ describe("SelfHealingManager temp-dir AI merge worktree sweep", () => {
     expect(existsSync(stale)).toBe(false);
     expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
       expect.objectContaining({ metadata: expect.objectContaining({ path: realpathSync(sandboxRoot) + "/fusion-ai-merge-fn-999-donetask", success: true, reason: "done-task-stale" }) }),
+    ]));
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-20:10:
+  `mergeTempTerminalColumns` was UNCOVERED on the #3115 map. The two cases around this one use `done`
+  and `archived` — the ids — so blinding the resolver leaves them green.
+
+  The terminal check picks the SHORTER grace: a finished task's temp merge worktree is reaped after
+  DONE_TASK_TEMP_WORKTREE_GRACE_MS instead of the full stale window. Keyed on the ids, a card in a
+  renamed completion lane never qualified, so its worktree lingered for the long window — disk held
+  by work that finished, and the audit reason reads "stale" rather than "done-task-stale", so the
+  sweep's own record misattributes why it eventually acted.
+  */
+  it("uses the done-task grace for a task in a RENAMED terminal lane", async () => {
+    const stale = tempMergeDir("fusion-ai-merge-fn-999-renamedterminal");
+    makeDoneTaskStale(stale);
+    const { manager, audits } = makeManager({}, taskWithColumn("shipped"));
+    (manager as unknown as { store: Record<string, unknown> }).store.listWorkflowDefinitions =
+      vi.fn(async () => [{
+        id: "custom:renamed",
+        ir: {
+          version: "v2",
+          id: "custom:renamed",
+          nodes: [],
+          edges: [],
+          columns: [
+            { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+            { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+          ],
+        },
+      }]);
+
+    await expect(sweep(manager)).resolves.toBe(1);
+
+    expect(existsSync(stale)).toBe(false);
+    expect(sweepAudits(audits)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ metadata: expect.objectContaining({ success: true, reason: "done-task-stale" }) }),
     ]));
   });
 

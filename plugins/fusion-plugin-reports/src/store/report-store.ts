@@ -270,6 +270,14 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       updated.approvedBy = opts.approvedBy ?? current.approvedBy;
     }
     if (next === "published") updated.publishedAt = now;
+    /*
+    DELIBERATE-LITERAL — reviewed 2026-07-30-22:10 (batch-cli-plugins).
+    `next` is a `ReportStatus`, NOT a board column. The reports plugin has its own status lineage
+    (`draft → generating → review_* → approved → published`, plus `failed`/`archived`) that merely
+    shares two spellings with the lifecycle vocabulary. Resolving a workflow IR here would answer a
+    question nobody asked: a report is not on a board and has no workflow. The census matches this on
+    the string alone, so the marker is the only thing that keeps it out of the backlog.
+    */
     if (next === "archived") updated.archivedAt = now;
 
     this.syncDb().transaction(() => this.persistExisting(updated));
@@ -577,6 +585,14 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       updated.approvedBy = opts.approvedBy ?? current.approvedBy;
     }
     if (next === "published") updated.publishedAt = now;
+    /*
+    DELIBERATE-LITERAL — reviewed 2026-07-30-22:10 (batch-cli-plugins).
+    `next` is a `ReportStatus`, NOT a board column. The reports plugin has its own status lineage
+    (`draft → generating → review_* → approved → published`, plus `failed`/`archived`) that merely
+    shares two spellings with the lifecycle vocabulary. Resolving a workflow IR here would answer a
+    question nobody asked: a report is not on a board and has no workflow. The census matches this on
+    the string alone, so the marker is the only thing that keeps it out of the backlog.
+    */
     if (next === "archived") updated.archivedAt = now;
     await this.persistExistingAsync(updated);
     this.emit("report:status-changed", updated);

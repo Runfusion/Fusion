@@ -18,6 +18,10 @@ export interface TestHarness {
   projectRoot: string;
   ctx: PluginContext;
   emitted: Array<{ event: string; data: unknown }>;
+  /** Register a workflow definition the ctx's task store can resolve by id. */
+  defineWorkflow(id: string, ir: unknown): void;
+  /** Point a task at one of those workflows, as a real selection row would. */
+  assignTaskWorkflow(taskId: string, workflowId: string): void;
   close(): void;
 }
 
@@ -63,10 +67,29 @@ export async function makeHarness(): Promise<TestHarness> {
 
   const emitted: Array<{ event: string; data: unknown }> = [];
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-04:20:
+  THE WORKFLOW-SELECTION SURFACE, added so lane-vocabulary behaviour is testable through this ctx.
+
+  `resolveWorkflowIrForTask` reads a task's selection and then the named definition. The stub carried
+  neither, so any plugin code resolving a board's real lanes could only be exercised against the
+  builtin default — which is the one vocabulary where a legacy literal and a resolved answer agree,
+  and therefore the one that proves nothing.
+
+  Both readers stay ABSENT until a test seeds them, so every existing test sees the previous shape.
+  */
+  const workflowDefinitions = new Map<string, unknown>();
+  const taskWorkflowIds = new Map<string, string>();
+
   const taskStore = {
     getAsyncLayer: () => layer,
     isBackendMode: () => true,
     getRootDir: () => projectRoot,
+    getWorkflowDefinition: (id: string) => workflowDefinitions.get(id),
+    getTaskWorkflowSelectionAsync: async (taskId: string) => {
+      const workflowId = taskWorkflowIds.get(taskId);
+      return workflowId ? { workflowId } : undefined;
+    },
   } as unknown as PluginContext["taskStore"];
 
   const ctx: PluginContext = {
@@ -84,6 +107,8 @@ export async function makeHarness(): Promise<TestHarness> {
     projectRoot,
     ctx,
     emitted,
+    defineWorkflow: (id: string, ir: unknown) => { workflowDefinitions.set(id, { id, ir }); },
+    assignTaskWorkflow: (taskId: string, workflowId: string) => { taskWorkflowIds.set(taskId, workflowId); },
     close: () => {
       rmSync(projectRoot, { recursive: true, force: true });
     },

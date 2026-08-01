@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import {
@@ -41,9 +42,21 @@ function setupRepo() {
   return dir;
 }
 
-function makeFakeStore(tasks: Record<string, { column: string }>) {
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-13:20 (batch-engine tail):
+`ir` is optional so every existing caller is byte-identical: with no workflow the resolver degrades to
+the built-in coding IR, whose complete lane IS `done`, which is what these cases already assert.
+*/
+function makeFakeStore(tasks: Record<string, { column: string }>, ir?: unknown) {
   return {
     getTask: async (id: string) => tasks[id.toUpperCase()] ?? null,
+    ...(ir
+      ? {
+          getTaskWorkflowSelectionAsync: async () => ({ workflowId: "orphan-lifecycle", stepIds: [] }),
+          getTaskWorkflowSelection: () => ({ workflowId: "orphan-lifecycle", stepIds: [] }),
+          getWorkflowDefinition: async (id: string) => (id === "orphan-lifecycle" ? { ir } : undefined),
+        }
+      : {}),
   } as any;
 }
 
@@ -83,6 +96,79 @@ describe("classifyOrphanOurAdvance", () => {
         expect(result.sourceTaskId).toBe("FN-5551");
         expect(result.orphanSha).toBe(orphanSha);
       }
+    } finally {
+      removeTmpDirSync(dir);
+    }
+  });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:20 (batch-engine tail):
+  The case above proves orphan classification for the LEGACY complete id, which is what the guard
+  compared against — it passed before this conversion and would pass for a broken one. On a renamed
+  complete lane the source read as unfinished, so orphaned commits were never rehomed and stayed
+  stranded off the integration branch with no error surfaced.
+
+  REVERT CHECK, measured: with `sourceTask.column !== "done"` restored, this fails with
+  `orphan: false, reason: "source-task-not-done"`.
+  */
+  it("classifies the orphan when the source task sits in a RENAMED complete lane", async () => {
+    const dir = setupRepo();
+    try {
+      git(dir, "git checkout -b sibling-orphan-renamed");
+      writeFileSync(join(dir, "orphan-renamed.txt"), "orphan\n");
+      git(dir, "git add orphan-renamed.txt");
+      git(dir, `git commit -m "feat(FN-5551): orphaned squash" -m "Fusion-Task-Id: FN-5551"`);
+      const orphanSha = git(dir, "git rev-parse HEAD");
+      git(dir, "git checkout main");
+
+      const result = await classifyOrphanOurAdvance({
+        repoDir: dir,
+        taskStore: makeFakeStore(
+          { "FN-5551": { column: RENAMED_VOCAB.complete } },
+          lifecycleIr(RENAMED_VOCAB, "orphan-lifecycle"),
+        ),
+        integrationBranch: "main",
+        currentTaskId: "FN-5419",
+        commitSha: orphanSha,
+        commitSubject: "feat(FN-5551): orphaned squash",
+        commitBody: "Fusion-Task-Id: FN-5551\n",
+      });
+
+      expect(result.orphan).toBe(true);
+    } finally {
+      removeTmpDirSync(dir);
+    }
+  });
+
+  it("still refuses on a RENAMED board when the source task is mid-flight", async () => {
+    /*
+    Non-vacuous companion: without it, a guard that treated every source as finished would pass the case
+    above. Same renamed board, same shape — only the source lane changes.
+    */
+    const dir = setupRepo();
+    try {
+      git(dir, "git checkout -b sibling-orphan-wip");
+      writeFileSync(join(dir, "orphan-wip.txt"), "orphan\n");
+      git(dir, "git add orphan-wip.txt");
+      git(dir, `git commit -m "feat(FN-5551): orphaned squash" -m "Fusion-Task-Id: FN-5551"`);
+      const orphanSha = git(dir, "git rev-parse HEAD");
+      git(dir, "git checkout main");
+
+      const result = await classifyOrphanOurAdvance({
+        repoDir: dir,
+        taskStore: makeFakeStore(
+          { "FN-5551": { column: RENAMED_VOCAB.wip } },
+          lifecycleIr(RENAMED_VOCAB, "orphan-lifecycle"),
+        ),
+        integrationBranch: "main",
+        currentTaskId: "FN-5419",
+        commitSha: orphanSha,
+        commitSubject: "feat(FN-5551): orphaned squash",
+        commitBody: "Fusion-Task-Id: FN-5551\n",
+      });
+
+      expect(result.orphan).toBe(false);
+      if (!result.orphan) expect(result.reason).toBe("source-task-not-done");
     } finally {
       removeTmpDirSync(dir);
     }

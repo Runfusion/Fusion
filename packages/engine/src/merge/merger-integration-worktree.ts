@@ -3,6 +3,8 @@ import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   normalizeMergeIntegrationWorktreeMode,
+  resolveWorkflowIrForTask,
+  columnsWithFlag,
 } from "@fusion/core";
 import type {
   MergeIntegrationWorktreeMode,
@@ -10,6 +12,7 @@ import type {
   ProjectSettings,
   Task,
   TaskStore,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   activeSessionRegistry,
@@ -334,11 +337,27 @@ export async function probeIntegrationWorktreeState(
   }
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-engine tail):
+"Someone else is still using this worktree" excludes tasks that have FINISHED. Keyed on the literal, a
+renamed complete lane meant a shipped task still counted as a live user, so the integration worktree
+could never be reused and the merge path took the slower rebuild every time.
+
+Resolved per CANDIDATE task (each may run its own workflow), one IR cache for the scan, and only for
+the tasks that actually share the worktree path — the common case resolves nothing at all.
+*/
 async function findOtherWorktreeUser(store: TaskStore, worktreePath: string, excludeTaskId: string): Promise<string | null> {
   const tasks = await store.listTasks({ slim: true, includeArchived: false } as never);
+  const irCache = new Map<string, WorkflowIr>();
   for (const task of tasks) {
     if (task.id === excludeTaskId) continue;
-    if (task.worktree === worktreePath && task.column !== "done") {
+    if (task.worktree !== worktreePath) continue;
+    const completeColumns = new Set<string>(["done"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(store, task.id, irCache);
+      if (ir) for (const id of columnsWithFlag(ir, "complete")) completeColumns.add(id);
+    } catch { /* degraded: legacy id only */ }
+    if (!completeColumns.has(task.column)) {
       return task.id;
     }
   }

@@ -304,8 +304,23 @@ describe("settings defaults invariants", () => {
       expect(normalizeMergeIntegrationWorktreeMode("cwd-main")).toBe("cwd-integration-branch");
       expect(normalizeMergeIntegrationWorktreeMode("cwd-main")).toBe("cwd-integration-branch");
 
+      /*
+      FNXC:EngineDiagnostics 2026-07-30-18:00:
+      Asserted with a CONTAINS check, because the logger deliberately wraps every message in a
+      machine-readable severity marker — `withSeverityMarker` (logger.ts:31) prepends an
+      `fnlvl=<level>` marker plus a `[core-merge-policy]` subsystem tag. Pinning the raw string
+      coupled this case to log FORMATTING rather than to the behaviour it exists to check, so it
+      broke when that convention landed.
+
+      Same defect and same fix as the audit-emitter assertion in central-archive-secrets (PR #2675).
+      Two instances is a pattern: `toHaveBeenCalledWith` on a logger is brittle by construction here,
+      because the logger's job is to decorate the message.
+
+      What this case actually cares about — warn-once semantics, and that the warning names the legacy
+      value and its replacement — is unchanged and still fully asserted.
+      */
       expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy).toHaveBeenCalledWith(
+      expect(String(warnSpy.mock.calls[0]![0])).toContain(
         "[merger] settings.mergeIntegrationWorktree=cwd-main is legacy; normalized to cwd-integration-branch",
       );
     });

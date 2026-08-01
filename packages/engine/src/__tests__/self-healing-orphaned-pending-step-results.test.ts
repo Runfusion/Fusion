@@ -256,4 +256,56 @@ describe("review-gate lease liveness (in-review gates)", () => {
     const after = await store.getTask("FN-NO-OWNER");
     expect(after?.workflowStepResults?.[0]?.status).toBe("failed");
   });
+
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-17:40:
+  THE EXECUTOR-OWNED SKIP IS A WIP-ROLE QUESTION, and it was asked with the id `in-progress`.
+
+  On a board whose execution lane is named anything else, the skip never fired: this sweep reached a
+  card an executor is actively running and rewrote its `pending` step results to `failed` — the one
+  thing the header above says it must never do. The liveness triple does not save it either, because
+  those legs prove an in-process session, and an executor on another node or between session handles
+  is exactly the case the column skip exists to cover.
+
+  Every other test in this file uses `in-review`/`in-progress`, where the literal is correct — which
+  is why 204 self-healing tests passed with this conversion reverted.
+  */
+  const RENAMED_WIP_IR = {
+    version: "v2", id: "custom:renamed", nodes: [], edges: [],
+    columns: [
+      { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+    ],
+  };
+
+  it("skips an executor-owned card resting in a RENAMED wip lane", async () => {
+    const executing = task("FN-WIP", {
+      column: "building",
+      workflowStepResults: [stepResult({ status: "pending", workflowStepId: "code-review", workflowStepName: "Code Review" })],
+    });
+    const store = storeFor([executing]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions =
+      vi.fn(async () => [{ ir: RENAMED_WIP_IR }]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(0);
+    /* The executor's lease is untouched. */
+    expect((await store.getTask("FN-WIP"))?.workflowStepResults?.[0]?.status).toBe("pending");
+    expect(recordRunAuditEventMock).not.toHaveBeenCalled();
+  });
+
+  it("still recovers a genuine orphan on that same renamed board", async () => {
+    /* The skip must narrow, not disable: a card in the REVIEW lane is not executor-owned. */
+    const stranded = task("FN-REV", {
+      column: "checking",
+      workflowStepResults: [stepResult({ status: "pending", workflowStepId: "code-review", workflowStepName: "Code Review" })],
+    });
+    const store = storeFor([stranded]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions =
+      vi.fn(async () => [{ ir: RENAMED_WIP_IR }]);
+    const manager = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    expect(await manager.reconcileOrphanedPendingStepResults()).toBe(1);
+    expect((await store.getTask("FN-REV"))?.workflowStepResults?.[0]?.status).toBe("failed");
+  });
 });

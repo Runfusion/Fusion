@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { evaluateSpecStaleness, getPromptPath } from "../execution/spec-staleness.js";
+import { evaluateSpecStaleness, getPromptPath, shouldSkipSpecStalenessForPreservedProgress} from "../execution/spec-staleness.js";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Settings, Task } from "@fusion/core";
@@ -307,5 +307,55 @@ describe("evaluateSpecStaleness", () => {
       expect(result.isStale).toBe(true);
       expect(result.ageMs).toBe(fixedNow);
     });
+  });
+});
+
+/*
+FNXC:MergedPlanningColumn 2026-07-29-12:55 (U11):
+PER-SITE PROOF that `spec-staleness.ts`'s `task.column === "triage"` needs NO conversion, recorded
+as a test because "I read it and it looked fine" is not evidence.
+
+The guard refuses to skip the staleness check while a card is being planned — that is exactly when
+its PROMPT.md is being rewritten underneath it. The obvious U11 reading is that the `triage`
+literal stops matching for default-workflow cards and the refusal silently disappears.
+
+It does not, and the reason matters: the refusal is carried by STATUS, not by column. A card being
+planned has `status === "planning"` or `"needs-replan"`, both of which the same guard already
+tests, and neither of which is column-dependent. The `triage` disjunct is belt-and-braces that
+goes dead for the default lineage while remaining live for legacy-coding, Ideas and every linear
+built-in (R11).
+
+Adding `|| task.column === "todo"` was TRIED and is wrong: it breaks "skips stale-spec rerouting
+for parked tasks with preserved execution progress" above, which deliberately parks a `todo` card
+with preserved progress and expects the skip. After the merge `todo` is both the planner column and
+the capacity-hold column, so the column can no longer distinguish "being planned" from "parked
+waiting for a slot" — only status can. That is the finding: for this site the merge removes the
+column's ability to answer the question, and the code was already asking status instead.
+*/
+describe("spec staleness — the planner guard is carried by status, not column (U11 proof)", () => {
+  const card = (over: Record<string, unknown>) => ({
+    column: "todo",
+    status: null,
+    currentStep: 3,
+    steps: [{ status: "done" }],
+    ...over,
+  }) as never;
+
+  it("refuses to skip a card that is actively being planned, in the MERGED column", () => {
+    expect(shouldSkipSpecStalenessForPreservedProgress(card({ status: "planning" }))).toBe(false);
+  });
+
+  it("refuses to skip a card awaiting replan, in the MERGED column", () => {
+    expect(shouldSkipSpecStalenessForPreservedProgress(card({ status: "needs-replan" }))).toBe(false);
+  });
+
+  it("still SKIPS a parked card with preserved progress in the same merged column", () => {
+    // The behavior a column-based conversion would have destroyed: same column, different status,
+    // opposite correct answer.
+    expect(shouldSkipSpecStalenessForPreservedProgress(card({ status: null }))).toBe(true);
+  });
+
+  it("keeps refusing for the legacy planner column, which other workflows still declare", () => {
+    expect(shouldSkipSpecStalenessForPreservedProgress(card({ column: "triage" }))).toBe(false);
   });
 });

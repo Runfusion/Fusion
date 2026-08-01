@@ -13,7 +13,7 @@ import type {
   TaskStore,
 } from "@fusion/core";
 import { createLogger } from "../logger.js";
-import { resolveProjectDefaultModel } from "@fusion/core";
+import { resolveProjectDefaultModel, columnsWithFlag, resolveWorkflowIrForTask} from "@fusion/core";
 import { createFnAgent, promptWithFallback } from "../pi.js";
 import { resolveMcpServersForStore } from "../mcp/mcp-resolution.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
@@ -243,7 +243,7 @@ export class AgentReflectionService {
         return null;
       }
 
-      const outcome = this.classifyOutcome(task);
+      const outcome = await this.classifyOutcome(task);
       if (!outcome || outcome === "stuck") {
         await this.emitReflectionAudit(auditor, "reflection:skipped", agentId, trigger, { taskId, ...options }, {
           reason: "not-completed",
@@ -519,7 +519,7 @@ export class AgentReflectionService {
         continue;
       }
 
-      const outcome = this.classifyOutcome(task);
+      const outcome = await this.classifyOutcome(task);
       if (!outcome) {
         continue;
       }
@@ -700,7 +700,23 @@ export class AgentReflectionService {
     return ids;
   }
 
-  private classifyOutcome(task: Task): TaskOutcome["outcome"] | null {
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-30-13:10 (batch-engine tail):
+  "Completed" here is the COMPLETE and REVIEW roles, not the two ids. Keyed on the literals, a renamed
+  board returned `null` for every finished task, so BOTH callers treated it as nothing-to-reflect-on:
+  the per-task path recorded `reflection:skipped` with reason "not-completed" for work that had in fact
+  completed, and the sweep path silently `continue`d. Agent performance reflection therefore captured
+  nothing at all on a custom board.
+
+  Async because the resolution is: the sync IR reader returns the DEFAULT workflow for every task in
+  production (see sync-workflow-ir-callsite-allowlist), so a sync guard here would read as converted and
+  still be wrong. Both call sites already sit inside async functions, so this adds no new seam.
+
+  Unioned with the legacy pair — `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than
+  throwing, and without the union a degraded board resolves a set excluding its own terminal lanes,
+  which reproduces the bug.
+  */
+  private async classifyOutcome(task: Task): Promise<TaskOutcome["outcome"] | null> {
     const normalizedStatus = task.status?.toLowerCase() ?? "";
     const hasStuckSignal =
       normalizedStatus.includes("stuck")
@@ -717,7 +733,16 @@ export class AgentReflectionService {
       return "failed";
     }
 
-    if (task.column === "done" || task.column === "in-review") {
+    const completedColumns = new Set<string>(["done", "in-review"]);
+    try {
+      const ir = await resolveWorkflowIrForTask(this.taskStore, task.id);
+      if (ir) {
+        for (const flag of ["complete", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
+          for (const id of columnsWithFlag(ir, flag)) completedColumns.add(id);
+        }
+      }
+    } catch { /* degraded: legacy pair only */ }
+    if (completedColumns.has(task.column)) {
       return "completed";
     }
 

@@ -23,8 +23,19 @@ vi.mock("../../../plugins/PluginDashboardViewHost", () => ({
 }));
 
 vi.mock("../../TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void }) => (
-    <button type="button" onClick={() => onOpenDetail(task)}>Open rendered task card</button>
+  TaskCard: ({ task, onOpenDetail, taskColumnFlags }: {
+    task: Task | TaskDetail;
+    onOpenDetail: (task: Task | TaskDetail) => void;
+    taskColumnFlags?: Record<string, boolean | undefined>;
+  }) => (
+    <button
+      type="button"
+      /* The probe for the trait hand-off: absent means the card resolved nothing. */
+      data-column-flags={taskColumnFlags ? JSON.stringify(taskColumnFlags) : "none"}
+      onClick={() => onOpenDetail(task)}
+    >
+      Open rendered task card
+    </button>
   ),
 }));
 
@@ -300,5 +311,35 @@ describe("MainContent graph task pop-out wiring", () => {
 
     act(() => result.current.popOut(otherTask));
     expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-GRAPH", "FN-OTHER"]);
+  });
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-05:20:
+  A PLUGIN-RENDERED CARD RESOLVED NO COLUMN TRAITS AT ALL.
+
+  `renderTaskCard` is how a plugin view draws a real task card. It built a `TaskCard` without
+  `taskColumnFlags`, so every role helper inside that card fell back to the legacy id — archive and
+  revert affordances, progress, the elapsed-time indicator, the planning badge — for every plugin
+  view on every board. The map was already in this component's scope; the card was simply never
+  given it.
+
+  The same omission existed in `useRightDockController`'s `renderTaskCard`, which also had the map in
+  scope. Both are fixed together: this is one affordance with two producers, which is the shape the
+  Surface Enumeration rule exists for.
+
+  REVERT CHECK: drop `taskColumnFlags` from either `renderTaskCard` and this reads "none".
+  */
+  it("hands a plugin-rendered card its own resolved column traits", () => {
+    hostContexts.length = 0;
+    render(
+      <MainContent
+        {...mainContentProps({
+          taskView: "graph",
+          columnFlagsByTaskId: new Map([[graphTask.id, { complete: true }]]),
+        })}
+      />,
+    );
+
+    const card = screen.getByTestId("rendered-task-card").querySelector("button");
+    expect(card?.getAttribute("data-column-flags")).toBe(JSON.stringify({ complete: true }));
   });
 });

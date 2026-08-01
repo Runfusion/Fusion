@@ -439,10 +439,9 @@ export function NodeDetailModal({
 
   return (
     /* FNXC:ModalTouchGeometry 2026-07-26-13:15: Shared FloatingWindow owns this modal's touch drag, resize, clamping, and persistence while phone and short viewports retain their sheet behavior. */
-    <FloatingWindow windowKey="node-detail" title={t("nodes.modalTitle", "Node Details")} ariaLabel={`${t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })} dialog`} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--node-detail" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:node-detail" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
+    <FloatingWindow windowKey="node-detail" title={t("nodes.modalTitle", "Node Details")} ariaLabel={t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })} onClose={onClose} hideHeader dragHandleSelector=".modal-header" className="floating-window--node-detail" defaultSize={{ width: 720, height: 560 }} minSize={{ width: 360, height: 280 }} persistGeometryKey="floating-window:node-detail" suspendGeometryPersistenceOnMobile suspendGeometryPersistenceOnShortViewport closeOnOutsidePointerDown>
       <div
         className="modal modal-lg node-detail-modal"
-        aria-label={t("nodes.modalAriaLabel", "Node details for {{name}}", { name: node.name })}
       >
         <div className="modal-header">
           <h3>{t("nodes.modalTitle", "Node Details")}</h3>

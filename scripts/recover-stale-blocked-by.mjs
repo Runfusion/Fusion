@@ -65,6 +65,44 @@ function isTerminalColumn(column) {
   return column === "done" || column === "archived";
 }
 
+/*
+FNXC:OperatorScriptLaneAssumptions 2026-07-30-23:30:
+Refuse to look healthy on a board this script cannot reason about.
+
+Every lane test here is a legacy id: `isTerminalColumn` is done/archived, "active" is
+in-progress/in-review, and the candidate gate is `row.column !== "todo"`. On a board whose lanes are
+named anything else that gate matches NOTHING, so the planner returns no findings and the script
+prints "Repairs: 0" — an operator running a recovery reads that as "the board is fine" when in fact
+the tool never examined a single card. A silently empty answer from a RECOVERY tool is the worst
+shape available: it is indistinguishable from success and it is consulted precisely during incidents.
+
+Detection only, deliberately. Correct classification needs the board's resolved trait vocabulary, and
+this script holds a raw backend (`openBackend` -> asyncLayer + sql), not a TaskStore — resolving lanes
+here would mean reimplementing IR trait resolution in a .mjs script, which is a worse bug than the one
+it fixes. So the assumptions are not repaired; they are made LOUD, which is the same principle the
+lane-wiring gate applies to itself ("a gate whose errors land on nothing to report is the one failure
+mode a ratchet must not have").
+
+Pure and exported so the warning is testable without a database, matching how `planRecoverBlockedBy`
+is already structured.
+*/
+const LEGACY_LANES_THIS_SCRIPT_UNDERSTANDS = new Set([
+  "triage",
+  "todo",
+  "in-progress",
+  "in-review",
+  "done",
+  "archived",
+]);
+
+export function unrecognisedLanes(rows) {
+  return [...new Set(
+    rows
+      .map((row) => row.column)
+      .filter((column) => typeof column === "string" && column.length > 0 && !LEGACY_LANES_THIS_SCRIPT_UNDERSTANDS.has(column)),
+  )].sort();
+}
+
 /**
  * Pure FN-3899 planning: rows are { id, column, blockedBy, worktree, paused }.
  * Returns findings; entries with newBlocker === null are the repairs.
@@ -123,6 +161,10 @@ export async function recoverBlockedBy({ backend, tasksDir, dryRun = true }) {
   );
 
   const findings = planRecoverBlockedBy({ rows, tasksDir });
+  /* Attached to the returned array rather than changing the return type: `recoverBlockedBy` is
+     consumed as findings[] by the entry point below and by tests, and widening it to an object would
+     be a breaking change to a script an operator may already be scripting around. */
+  Object.defineProperty(findings, "unrecognisedLanes", { value: unrecognisedLanes(rows), enumerable: false });
   if (dryRun) return findings;
 
   const byId = new Map(rows.map((row) => [row.id, row]));
@@ -151,9 +193,19 @@ function resolveProjectRoot() {
   return path.resolve(commonDir, "..");
 }
 
-function printFindings(findings, dryRun) {
+function printFindings(findings, dryRun, unknownLanes = []) {
   const changed = findings.filter((row) => row.oldBlocker !== row.newBlocker);
   console.log(dryRun ? "Mode: DRY RUN" : "Mode: APPLY");
+  /* Printed BEFORE the results, because the results are the thing it qualifies — "Repairs: 0" under
+     unrecognised lanes means "not examined", not "nothing to fix". See `unrecognisedLanes`. */
+  if (unknownLanes.length > 0) {
+    console.warn(
+      `WARNING: this board uses lanes this script does not understand: ${unknownLanes.join(", ")}.\n`
+      + "         Its blocked/active/terminal tests are hardcoded to the legacy column ids, so cards in\n"
+      + "         those lanes were NOT examined. Treat the result below as incomplete, not as a clean bill\n"
+      + "         of health, and recover those cards by another route.",
+    );
+  }
   console.log("taskId\toldBlocker\tnewBlocker\treason");
   for (const row of findings) {
     if (row.oldBlocker === row.newBlocker) continue;
@@ -170,7 +222,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const backend = await openBackend(projectRoot);
   try {
     const findings = await recoverBlockedBy({ backend, tasksDir, dryRun });
-    printFindings(findings, dryRun);
+    printFindings(findings, dryRun, findings.unrecognisedLanes ?? []);
   } finally {
     await backend.shutdown().catch(() => {});
   }

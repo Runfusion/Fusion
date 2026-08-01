@@ -334,11 +334,55 @@ export async function getTaskMovedCountsByDay(
 FNXC:ReliabilityHealth 2026-07-14-16:13:
 Reliability metrics must query PostgreSQL activity rows through the async data layer. Keep the bounded duration-event shape and project scope used by the dashboard without falling through to the unavailable SQLite TaskStore database.
 */
+/*
+FNXC:WorkflowLifecycleColumns 2026-07-30-22:15:
+The lane ids were baked into the SQL, which is the one place nothing could see them.
+
+This is the Reliability panel's third input. #2861 converted the other two — they were call arguments
+— and this one stayed blind, so the panel went from uniformly wrong to partially wrong: the entry and
+bounce counts started working while `inReviewDurationMetrics` kept reporting `no-in-review-entries`.
+Partial blindness is harder to notice than total, which is why it is worth finishing rather than
+leaving as a known gap.
+
+INVISIBLE TO EVERY CHECK WE HAVE, and that is the general lesson: the lifecycle census scans
+`===`/`!==` comparisons and the unwired-lane-parameter guard scans declarations, so a lane id inside a
+`sql` template is in neither total. The backlog number is a floor for this reason as well as the
+usual one. (`scripts/check-sql-column-literals.mjs`, in flight, is the detector for this class; it
+freezes the surface rather than converting it.)
+
+The predicate is built from the caller's resolved lanes as parameterised equality fragments rather
+than an interpolated list — same shape, one branch per id, no string building. Lanes default to the
+legacy pair so a caller that cannot resolve keeps exactly today's query.
+
+WHY A UNION IS CORRECT HERE, not a widening hack: these are MOVE RECORDS, and a past move recorded the
+column name as it was at the time. A board renamed last month has old rows under the old id and new
+rows under the new one, so the honest query covers both — which is precisely what
+`resolveProjectColumnsForRoles` returns, legacy id always unioned in.
+*/
+const LEGACY_REVIEW_LANES = ["in-review"] as const;
+const LEGACY_COMPLETE_LANES = ["done"] as const;
+
+/** Lane ids for the two roles this query reads; omit to keep the built-in board's ids. */
+export interface InReviewDurationLanes {
+  reviewColumns?: ReadonlyArray<string>;
+  completeColumns?: ReadonlyArray<string>;
+}
+
+/** `expr = ANY(values)` as an OR of parameterised equalities — never string-built. */
+function metadataColumnIn(field: "from" | "to", values: ReadonlyArray<string>) {
+  const key = field === "to" ? sql`'to'` : sql`'from'`;
+  const parts = values.map((value) => sql`${schema.project.activityLog.metadata}->>${key} = ${value}`);
+  return parts.length === 1 ? parts[0] : or(...parts);
+}
+
 export async function getInReviewDurationEvents(
   db: AsyncDataLayer["db"] | DbTransaction,
   projectId: string,
   options: { since: string; until: string },
+  lanes?: InReviewDurationLanes,
 ): Promise<ActivityLogEntry[]> {
+  const reviewColumns = lanes?.reviewColumns?.length ? lanes.reviewColumns : LEGACY_REVIEW_LANES;
+  const completeColumns = lanes?.completeColumns?.length ? lanes.completeColumns : LEGACY_COMPLETE_LANES;
   const rows = await db
     .select()
     .from(schema.project.activityLog)
@@ -348,10 +392,10 @@ export async function getInReviewDurationEvents(
       gt(schema.project.activityLog.timestamp, options.since),
       lte(schema.project.activityLog.timestamp, options.until),
       or(
-        sql`${schema.project.activityLog.metadata}->>'to' = 'in-review'`,
+        metadataColumnIn("to", reviewColumns),
         and(
-          sql`${schema.project.activityLog.metadata}->>'from' = 'in-review'`,
-          sql`${schema.project.activityLog.metadata}->>'to' = 'done'`,
+          metadataColumnIn("from", reviewColumns),
+          metadataColumnIn("to", completeColumns),
         ),
       ),
     ))

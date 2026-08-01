@@ -73,6 +73,84 @@ Public `@fusion/core` exports consumed by runtime tools should include a literal
 <!-- FNXC:EngineProcessRules 2026-06-26-03:58: FN-7056 adds a focused static guard for user-configured command paths. Keep the protected-path registry in the test file, not as a whole-file execSync ban, because engine git plumbing still has legitimate deterministic execSync uses. -->
 `packages/engine/src/__tests__/user-configured-command-no-execsync.test.ts` guards user-configured command execution helpers against accidental `execSync` usage or dropped async bounds. Its registry covers verification helpers, `fn_run_verification`, executor configured-command execution, merger post-merge script execution, routine command execution, and the native/bubblewrap/sandbox-exec sandbox backends. Each protected slice must keep the appropriate bounded async safeguard (`timeout`/`timeoutMs`, `maxBuffer`, or `maxLifetimeMs`). The test intentionally slices named function bodies instead of scanning whole files; deterministic git-plumbing `execSync` in merger/self-healing/already-merged/integration/worktree-prune paths and the executor git ancestry check are explicitly out of scope.
 
+## FNXC future-date advisory
+
+<!-- FNXC:FnxcStampHygiene 2026-08-01-01:30: The baseline ratchet prevents new future stamps but cannot say whether a tolerated stamp is physically plausible. Keep the advisory non-blocking so existing authors' records are visible without forcing a mass rewrite. -->
+`pnpm check:fnxc-future-dates` continues to block new future-dated stamps while reporting a non-blocking advisory for the existing population. It scans only `packages/`, `scripts/`, and `docs/`, classifying each future stamp as **timezone-plausible** (≤26h ahead), **suspect** (>26h through 48h), or **implausible** (>48h). Run `pnpm check:fnxc-future-dates -- --report-anomalies` for a read-only full census grouped by file and area; report mode never writes the baseline or fails the build.
+
+## Lifecycle-column census (report-only)
+
+<!-- FNXC:WorkflowLifecycleColumns 2026-07-30-14:50: added while converting the last of the tracked triage guards. The point of documenting it is the measurement, not the script: the number the workflow-owned-lifecycle program tracked was wrong in three ways at once, and the same mistake is available to any future migration that greps for one string. -->
+`pnpm census:lifecycle-columns` reports every comparison against the six legacy column ids
+(`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`) across the packages and plugins
+source trees, with comments stripped. It reports **four separate numbers**, and that separation is
+the whole value — three of the four must NOT be converted, and every one of them was silently
+inside the single tracked figure:
+
+- **COLUMN guards** — the real backlog. A lifecycle decision made by column NAME stops matching
+  the moment a board renames a column.
+- **ROLE comparisons** — `role === "triage"`, `agentType === "triage"`, `entry.agent === "triage"`.
+  These compare an AGENT ROLE. The planner *lane* is named `triage` and keeps that name; U11
+  removed only the *column*. These must NOT be converted — renaming the role silently empties the
+  planner's prompt template and mis-binds its model markers.
+- **STATUS comparisons** — `step.status === "done"`, `goal.status === "archived"`,
+  `feature.status === "done"`. `StepStatus` is `pending | in-progress | done | skipped`, and
+  missions, goals and features carry their own statuses; three of those names collide with column
+  ids. This is the largest correction the census makes — 182 sites, inflating `done` by 105 and
+  `in-progress` by 49. Converting one is a category error: asking which column carries the
+  `complete` trait about a STEP's status would stop the step reading as finished.
+- **DELIBERATE-LITERAL** — reviewed sites whose literal is correct, with the reason recorded at the
+  site rather than in a list that can drift from it. Grep `DELIBERATE-LITERAL` to enumerate them.
+
+Why it exists: the program tracked its remaining work by grepping `=== "triage"`, and that count
+was simultaneously too low (six ids exist; `triage` was under 4% of the total, and the pattern was
+anchored on locals named `column`, so real guards on `from` and `originColumn` were invisible) and
+too high (12 role comparisons and 182 entity-status comparisons counted as backlog). A count that is
+wrong in both directions sends work to the wrong files and hides the files that need it.
+
+The two non-column classes are recognised structurally, not by a name list, because names are
+unbounded and a name list was already wrong twice (`sessionPurpose`, `surface`). `AgentRole` is
+`triage | executor | reviewer | merger` and `StepStatus` is `pending | in-progress | done | skipped`;
+the members that are NEVER column ids (`executor`/`reviewer`/`merger`, `pending`/`skipped`) identify
+which vocabulary an expression belongs to whatever its variable is called.
+
+**The classifier is AST-based** (`scripts/lib/lifecycle-column-census-ast.mjs`, `ts.createSourceFile`),
+because three people measured this backlog with three greps and got three different answers for the
+role bucket (6, 8, 12). A regex cannot tell a column guard from an agent role, a session purpose, a
+surface name, a step status, or a comment. The parser also sees shapes no per-line pattern can:
+multi-line comparisons, literal-on-the-left, loose equality, and JSX. The text classifier is kept
+beside it as an independent second implementation — `--compare` asserts the parser is a strict
+SUPERSET of the regex (measured +6, all real) and FAILS if the regex ever finds something the parser
+misses, which would mean the parser has a blind spot and its count cannot be the bar.
+
+What the parser still cannot do, stated rather than implied: without a full type-checker program it
+cannot prove a receiver is column-typed, so classification remains evidence-based (receiver name plus
+the vocabulary its siblings use). That is why the four classes are reported separately and never
+netted — a wrong classification stays visible instead of silently moving the bar.
+
+`--json` emits the machine-readable form. `--strict` compares per-file counts against
+`scripts/lib/lifecycle-column-census-baseline.json`:
+
+- a **rise** fails hard — that is the ratchet's purpose, "no new guards";
+- a **drop** TIGHTENS the baseline automatically, reports what it lowered, and exits 0.
+
+<!-- FNXC:LifecycleColumnCensus 2026-08-01-03:05: the drop behaviour was a hard failure and is not any more,
+because the drop is almost never the failing author's to fix. Eleven files dropped in one merge wave, none of
+those PRs re-recorded, and none of their authors did anything wrong; measured three times since CI began
+gating this. A permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then
+nothing is guarded at all. -->
+The tightened file must be **committed** — in CI the write is discarded with the runner, which is why the gate
+goes green rather than silently passing a stale allowance. `--strict --exact` restores hard failure on a drop,
+for the end state where the count is pinned and any divergence is a real event. `--strict --update-baseline`
+re-records unconditionally and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
+
+The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
+each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
+multiple hits per line) and each it must not (role comparisons, comment prose, trailing line
+comments, marked sites) — plus that one marker cannot launder a distant guard in the same file.
+The CLI additionally exits non-zero on an empty file list, because a guard that reports success
+without checking anything is worse than no guard.
+
 
 ## Dashboard Availability & Supervised Mode
 
@@ -160,6 +238,46 @@ already runs plus the skip-list. You do not need to register a new file by hand 
 it to run — the curated-gate hole that silently skipped unenumerated files is closed
 (see "Curated-gate completeness" below). Add a file to a curated `qualityApp*`/`qualityApi`
 list only when you want it in a specific fast lane rather than the backfill catch-all.
+
+## When a dashboard element is "missing", probe before theorising
+
+`getByText` / `getByRole` failures name the element that was not found, which is almost never where
+the fault is. Three separate causes in `App.test.tsx` and `board-mobile-view-switch.test.tsx` all
+presented identically as a missing element, and in each case the DOM looked healthy:
+
+| what the test said | what was actually wrong |
+|---|---|
+| `Unable to find "+ New Task"` | `ListView` rendered its workflow SKELETON, which carries the same `list-view` class as the real body, so the preceding `waitFor(".list-view")` passed |
+| `Unable to find role="heading" "New Task"` | `NewTaskModal` THREW — an incomplete `vi.mock` was missing `isShortViewport` — and an `ErrorBoundary` swallowed it |
+| `Unable to find [data-testid="switch-to-board"]` | an uncaught render error unmounted the entire React root; the DOM was empty three lines earlier |
+
+**Three theories were offered for these before any probe, and all three were wrong** ("the board
+renders nothing", "i18n is returning keys", "the FloatingWindow rework"). Three probes each landed
+the cause on the first try. The technique is simply to print what is really there at the failing
+assertion:
+
+```ts
+// eslint-disable-next-line no-console
+console.log(
+  "PROBE testids:", JSON.stringify([...document.querySelectorAll("[data-testid]")]
+    .map((e) => e.getAttribute("data-testid")).slice(0, 12)),
+  "| boundary:", document.querySelector('[class*="error-boundary"]')?.textContent?.trim() ?? "none",
+);
+```
+
+What each signal means:
+
+- **an `error-boundary` class in the DOM** — a component threw and the boundary ate it. Read its
+  text; for a mock-related throw it names the missing export exactly.
+- **an empty DOM with no boundary** — an uncaught render error unmounted the root. Everything after
+  it fails misleadingly, so trust the FIRST failing assertion, not the reported one.
+- **the element's container present but its contents absent** — a skeleton or empty state is
+  standing in. Check whether the selector you waited on is shared with that state; `list-view` is,
+  which is why `list-view-body` exists.
+
+Corollary for writing assertions: **wait on a marker only the real thing has.** A class shared with a
+loading or empty state turns "the list rendered" into "something rendered", and the test then fails
+one line later against a DOM that looks fine.
 
 ## Curated-gate completeness and the skip-list
 

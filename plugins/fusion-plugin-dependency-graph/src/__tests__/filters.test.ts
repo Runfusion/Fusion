@@ -67,6 +67,40 @@ describe("filterGraphTasks", () => {
     expect(filterGraphTasks([invalidTask])).toEqual([]);
   });
 
+  /*
+  FNXC:WorkflowLifecycleColumns 2026-07-30-23:05:
+  THE INVARIANT: a card in a lane this filter has never heard of is still a graph node.
+
+  Reverted to the `INCLUDED_COLUMNS` allowlist, this case returns `[]` for three live cards — which is
+  what a renamed board got: an entirely blank dependency graph, indistinguishable from "no dependencies".
+
+  Every case above stays green either way, which is the point: they only ever enumerate the six legacy
+  ids, so the allowlist and the denylist agree on all of them. Nothing here could see the blackout.
+  */
+  it("renders cards from lanes it does not recognise, instead of blanking the graph", () => {
+    const renamed = [
+      createTask("FN-1", "backlog" as Task["column"]),
+      createTask("FN-2", "building" as Task["column"]),
+      createTask("FN-3", "checking" as Task["column"]),
+    ];
+
+    expect(filterGraphTasks(renamed).map((task) => task.id)).toEqual(["FN-1", "FN-2", "FN-3"]);
+  });
+
+  it("still drops finished lanes when the rest of the board is renamed", () => {
+    const mixed = [
+      createTask("FN-1", "building" as Task["column"]),
+      createTask("FN-2", "done"),
+      createTask("FN-3", "archived"),
+    ];
+
+    expect(filterGraphTasks(mixed).map((task) => task.id)).toEqual(["FN-1"]);
+  });
+
+  it("excludes an empty-string column, which names no lane at all", () => {
+    expect(filterGraphTasks([createTask("FN-1", "" as Task["column"])])).toEqual([]);
+  });
+
   it("preserves task object identity", () => {
     const taskA = createTask("FN-1", "todo");
     const taskB = createTask("FN-2", "in-review");

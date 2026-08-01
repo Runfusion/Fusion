@@ -18,6 +18,7 @@ import {randomUUID} from "node:crypto";
 import {and, eq, inArray, isNull} from "drizzle-orm";
 import {filterArchived as filterArchivedAsync} from "../async-stores/async-archive-db.js";
 import type {Task, TaskCreateInput, Column, ColumnId, TaskDocumentWithTask, RunMutationContext, TaskCommitAssociation, GoalCitation, GoalCitationInput, TaskBranchAssignmentMode, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind} from "../types.js";
+import { resolveTaskPrefix } from "./task-prefix.js";
 import {COLUMNS} from "../types.js";
 import {parseWorkflowIr, serializeWorkflowIr} from "../workflows/workflow-ir.js";
 import {resolveAllowedColumns, workflowHasColumn} from "../workflows/workflow-transitions.js";
@@ -33,7 +34,7 @@ import {normalizeTaskCommitAssociation} from "../tasks/task-lineage.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
-import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
+import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues, preserveResolvedTaskWedgeEpisode} from "../task-store/async/async-persistence.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkflowSerialization} from "../task-store/async/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async/async-audit.js";
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async-comments-attachments.js";
@@ -103,6 +104,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
         return;
       }
       const existingRow = store.pgRowToTaskRow(pgRow);
+      preserveResolvedTaskWedgeEpisode(existingRow, task);
       const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
       if (deletedAt) {
         store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
@@ -148,7 +150,8 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
 
 export async function createTaskWithDistributedReservationImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; createTaskWithId?: (taskId: string) => Promise<Task>; },): Promise<Task> {
     const settings = await store.getSettingsFast();
-    const prefix = (settings.taskPrefix || "FN").trim().toUpperCase();
+    // FNXC:MissionTaskPrefix 2026-07-26-12:00: prefer TaskCreateInput.taskPrefix (mission triage minting hint) over the project-wide settings.taskPrefix so a single mission can use e.g. ERR- while the board stays FN-.
+    const prefix = resolveTaskPrefix(input.taskPrefix, settings.taskPrefix, "FN");
     const allocator = store.getDistributedTaskIdAllocator();
     const nodeId = await store.resolveLocalNodeIdForTaskAllocation();
     const reservation = await allocator.reserveDistributedTaskId({
@@ -348,8 +351,14 @@ export async function getTaskColumnsImpl(store: TaskStore, ids: string[]): Promi
 export async function prepareWorkflowMovePolicyPreflightImpl(store: TaskStore, id: string, toColumn: ColumnId, options: MoveTaskOptions | undefined, internal: MoveTaskInternalOptions,): Promise<MoveTaskInternalOptions["movePolicyPreflight"]> {
     const task = await store.readTaskForMove(id);
     const moveSource = options?.moveSource ?? "engine";
-    const mergedSettingsForMove = await store.getSettingsFast();
-    if (!isWorkflowColumnsCompatibilityFlagEnabled(mergedSettingsForMove)) return undefined;
+    /*
+    FNXC:WorkflowColumns 2026-07-30-04:00 (U12 — flipped ATOMICALLY with moves.ts):
+    The compatibility-flag gate is DELETED. This preflight computes the `movePolicyPreflight` that
+    `moves.ts` consumes and validates, so the two could never be flipped independently: un-gating
+    this alone would evaluate workflow move policies — with their plugin-gate side effects — while
+    the branch consuming the result stayed off, and un-gating `moves.ts` alone would validate against
+    a preflight that was never computed. Both readers go in the same commit for that reason.
+    */
     if (task.column === toColumn) return undefined;
 
     /* FNXC:WorkflowModelLanes 2026-07-14-16:31: PostgreSQL move preflight must validate against the task's migrated workflow selection, not the synchronous builtin:coding fallback. */

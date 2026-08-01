@@ -1,0 +1,16 @@
+{
+  "counts": {
+    "packages/core/src/task-merge.ts": 1,
+    "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
+    "packages/core/src/task-store/moves.ts": 1,
+    "packages/core/src/task-store/task-update.ts": 1,
+    "packages/engine/src/auto-merge-finalization.ts": 1,
+    "packages/engine/src/project-engine.ts": 1,
+    "packages/engine/src/runtimes/in-process-runtime.ts": 1,
+    "packages/dashboard/src/routes/register-task-workflow-routes.ts": 1,
+    "packages/dashboard/app/hooks/useBlockerFanout.ts": 1,
+    "packages/cli/src/commands/dashboard-tui/app.tsx": 1,
+    "packages/cli/src/commands/dashboard-tui/bucket-mapping.ts": 1,
+    "plugins/fusion-plugin-even-realities-glasses/src/routes/board-routes.ts": 1
+  }
+}

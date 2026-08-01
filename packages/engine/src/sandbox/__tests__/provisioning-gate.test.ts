@@ -178,4 +178,48 @@ describe("requireSandboxProvisioningApproval", () => {
       (secondError as SandboxProvisioningPendingError).dedupeKey,
     );
   });
+
+  /*
+  FNXC:SandboxProvisioningGate 2026-07-26-13:40:
+  Self-asserted requester.actorType === "user" must NOT grant privilege; only the
+  caller-verified callerVerifiedPrivileged flag set by trusted engine code does.
+  Expected outcomes are hardcoded, never derived from the policy module.
+  */
+  it("self-asserted actorType 'user' no longer bypasses the gate: still requires approval", async () => {
+    const createApprovalRequest = vi.fn(async () => makeApproval("apr-1", "pending"));
+
+    await expect(
+      requireSandboxProvisioningApproval({
+        backendId: "bubblewrap",
+        operation: "install",
+        description: "Install bubblewrap",
+        context: {
+          taskId: "FN-4641",
+          requester: { actorId: "someone", actorType: "user", actorName: "Impostor" },
+          settings: undefined,
+          createApprovalRequest,
+        },
+      }),
+    ).rejects.toBeInstanceOf(SandboxProvisioningPendingError);
+
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("callerVerifiedPrivileged set by trusted engine code allows without approval", async () => {
+    const createApprovalRequest = vi.fn();
+    const result = await requireSandboxProvisioningApproval({
+      backendId: "bubblewrap",
+      operation: "install",
+      description: "Install bubblewrap",
+      context: {
+        taskId: "FN-4641",
+        requester: { actorId: "operator", actorType: "user", actorName: "Operator" },
+        callerVerifiedPrivileged: true,
+        settings: undefined,
+        createApprovalRequest,
+      },
+    });
+    expect(result).toEqual({ outcome: "allow" });
+    expect(createApprovalRequest).not.toHaveBeenCalled();
+  });
 });

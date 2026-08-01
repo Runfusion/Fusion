@@ -251,7 +251,13 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
     await mod.runTaskMove("FN-5", "todo");
 
     expect(moveTask).toHaveBeenCalledTimes(1);
-    expect(moveTask).toHaveBeenCalledWith("FN-5", "todo");
+    /*
+    FNXC:ToolPermissionGates 2026-07-30-14:05:
+    A CLI move IS a user action, so it now carries `moveSource: "user"` — the store's move pipeline
+    applies user-move semantics (and the dashboard move route already did this). Asserting the bare
+    two-arg call pinned the pre-hardening shape.
+    */
+    expect(moveTask).toHaveBeenCalledWith("FN-5", "todo", { moveSource: "user" });
     expect(closeProjectStore).toHaveBeenCalled();
     logSpy.mockRestore();
   });

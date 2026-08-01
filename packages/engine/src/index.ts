@@ -5,8 +5,8 @@ export {
   type ReportHealthClassification,
   type ReportHealthInput,
 } from "./reports-health.js";
-export { reloadExemptTools, addToExemptTools, getExemptToolNames } from "./agents/agent-action-gate.js";
-export type { AgentActionGateContext } from "./agents/agent-action-gate.js";
+export { reloadExemptTools, addToExemptTools, getExemptToolNames, evaluateAgentActionGate, resolveGateOutcome } from "./agents/agent-action-gate.js";
+export type { AgentActionGateContext, AgentActionGateDecision } from "./agents/agent-action-gate.js";
 export { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
 export {
   DEFAULT_MODEL_REGISTRY_REFRESH_TIMEOUT_MS,
@@ -73,6 +73,18 @@ export {
   createWorkflowDeleteTool,
   createWorkflowSettingsTool,
   createTraitListTool,
+  createTaskArchiveTool,
+  createTaskUnarchiveTool,
+  createTaskDeleteTool,
+  createTaskRetryTool,
+  createTaskPauseTool,
+  createTaskUnpauseTool,
+  createTaskDuplicateTool,
+  createTaskMergeTool,
+  createTaskUpdateTool,
+  createTaskAddDepTool,
+  createReadEvaluationsTool,
+  createUpdateIdentityTool,
   createWorkflowAuthoringTools,
   createAgentTask,
   taskCreateParams,

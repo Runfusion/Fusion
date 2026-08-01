@@ -45,6 +45,7 @@ import {
   type PlanningContextualComment,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
+import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { FloatingWindow } from "./FloatingWindow";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import {
@@ -162,6 +163,11 @@ interface PlanningModeModalProps {
   initialSessions?: AiSessionSummary[];
   /** Render without the full-screen modal chrome when Planning Mode is mounted as a top-level app view. */
   presentation?: ModalPresentation;
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:25:
+  Keep-alive visibility gate. The embedded Planning view stays mounted-but-hidden after its first open so navigation preserves ViewState, conversation, streaming output, and drafts (FN remount-churn fix R5). While `active` is false the session-list SSE subscription, the loading-state recovery poll, and the elapsed ticker are suspended (R8); the in-flight per-session stream connection intentionally stays open so a generating turn keeps accumulating. Defaults to true so the modal presentation is unaffected.
+  */
+  active?: boolean;
 }
 
 interface QuestionResponse {
@@ -468,7 +474,7 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
   };
 }
 
-export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal" }: PlanningModeModalProps) {
+export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, onViewTask, tasks, initialPlan: initialPlanProp, onInitialPlanConsumed, projectId, workflowId, resumeSessionId, initialSessions, presentation = "modal", active = true }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
   // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
   // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
@@ -551,6 +557,33 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [newSessionFocusSignal, setNewSessionFocusSignal] = useState(0);
   const modalRef = useRef<HTMLDivElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
+  // FNXC:PlanningKeepAlive 2026-07-22-12:25: true while the session-list SSE channel is suspended (hidden keep-alive); triggers a one-shot sessions refresh on reveal.
+  const sessionEventsSuspendedRef = useRef(false);
+  // FNXC:PlanningKeepAlive 2026-07-22-12:25: distinguishes first activation of this instance ("remount") from a keep-alive reveal ("route-active") for resume instrumentation.
+  const hasEverActivatedRef = useRef(false);
+
+  /*
+  FNXC:PlanningKeepAlive 2026-07-22-12:25:
+  Remount-vs-reveal instrumentation (mirrors Board's recordResumeEvent usage): the first activation of an instance records `remount`; later reveals of the kept-alive instance record `route-active` and hides record `route-inactive`. Regression tests assert a navigation round-trip yields route-active — never a second remount.
+  */
+  useEffect(() => {
+    if (!isOpen || !active) return;
+    recordResumeEvent({
+      view: "PlanningMode",
+      trigger: hasEverActivatedRef.current ? "route-active" : "remount",
+      projectId,
+      replayAttempted: false,
+    });
+    hasEverActivatedRef.current = true;
+    return () => {
+      recordResumeEvent({
+        view: "PlanningMode",
+        trigger: "route-inactive",
+        projectId,
+        replayAttempted: false,
+      });
+    };
+  }, [active, isOpen, projectId]);
   const streamConnectionEpochRef = useRef(0);
   const currentSessionIdRef = useRef<string | null>(null);
   const viewRef = useRef<ViewState>({ type: "initial" });
@@ -1141,6 +1174,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setElapsedSeconds(0);
       return;
     }
+    // FNXC:PlanningKeepAlive 2026-07-22-12:25: no ticking while hidden (R8); elapsed recomputes from startedAt on reveal so the counter stays correct.
+    if (!active) return;
 
     const startedAt = generationStartTime ?? Date.now();
     if (generationStartTime === null) {
@@ -1155,7 +1190,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     const timer = setInterval(updateElapsed, 1000);
 
     return () => clearInterval(timer);
-  }, [generationStartTime, view.type]);
+  }, [active, generationStartTime, view.type]);
 
   /*
   FNXC:PlanningMultiTask 2026-07-24-01:40:
@@ -1186,6 +1221,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // during normal generation.
   useEffect(() => {
     if (view.type !== "loading") return;
+    // FNXC:PlanningKeepAlive 2026-07-22-12:25: a hidden kept-alive Planning view must not poll (R8). A question/summary event dropped while hidden is recovered within one tick after reveal because this effect re-arms when `active` flips true.
+    if (!active) return;
 
     let cancelled = false;
     /*
@@ -1298,7 +1335,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       cancelled = true;
       clearInterval(interval);
     };
-  }, [projectId, resetPlanningAutoRetryBudget, t, view.type]);
+  }, [active, projectId, resetPlanningAutoRetryBudget, t, view.type]);
 
   const resetDetailState = useCallback((options?: { preserveInitialPlan?: boolean }) => {
     if (!options?.preserveInitialPlan) {
@@ -2280,8 +2317,19 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   a stale question. Locally streamed turns keep their existing connection and reconcile in place.
   */
   useEffect(() => {
-    if (!isOpen) return;
+    /*
+    FNXC:PlanningKeepAlive 2026-07-22-12:25:
+    While the kept-alive view is hidden (`active` false) the session-list SSE channel is closed (R8) and this effect marks the gap; on reveal it re-subscribes and refreshes the list once so session events dropped while hidden cannot leave stale sidebar rows — the same recovery the onReconnect handler performs for a dropped channel.
+    */
+    if (!isOpen || !active) {
+      sessionEventsSuspendedRef.current = true;
+      return;
+    }
     const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    if (sessionEventsSuspendedRef.current) {
+      sessionEventsSuspendedRef.current = false;
+      void refreshSessionsList();
+    }
 
     const handleUpdated = (e: MessageEvent) => {
       try {
@@ -2320,7 +2368,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         void refreshSessionsList();
       },
     });
-  }, [isOpen, loadSession, projectId, refreshSessionsList]);
+  }, [active, isOpen, loadSession, projectId, refreshSessionsList]);
 
   // Sidebar handlers
   const handleSelectSession = useCallback(
@@ -3555,7 +3603,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     <FloatingWindow
       windowKey="planning-mode"
       title={t("planning.title", "Planning Mode")}
-      ariaLabel={`${t("planning.title", "Planning Mode")} dialog`}
+      ariaLabel={t("planning.title", "Planning Mode")}
       onClose={handleClose}
       hideHeader
       dragHandleSelector=".planning-modal > .modal-header"

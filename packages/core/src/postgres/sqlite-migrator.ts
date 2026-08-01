@@ -2022,7 +2022,13 @@ async function insertBatch(
   */
   const replacesCentralSeed =
     plan.pgSchema === CENTRAL_SCHEMA &&
-    (plan.pgTable === "central_settings" || plan.pgTable === "global_concurrency");
+    /*
+    FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
+    `global_concurrency` is no longer a destination: the table is dropped and its
+    drizzle model is gone, so no plan targets it. Only `central_settings` still
+    needs seed-replacing semantics.
+    */
+    plan.pgTable === "central_settings";
   const isSharedSingleton = isSharedSingletonTable(plan.pgSchema, plan.pgTable);
   const conflictClause = replacesCentralSeed
     ? sql.raw(`ON CONFLICT (${quoteIdent("id")}) DO UPDATE SET ${cols

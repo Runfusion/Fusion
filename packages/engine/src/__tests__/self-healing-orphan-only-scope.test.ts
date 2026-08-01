@@ -107,6 +107,53 @@ describe("recoverOrphanOnlyScopeViolations (FN-4379 / FN-4350)", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-4350", expect.stringContaining("Auto-finalized from in-review/paused: content proven on main"));
   });
 
+  /*
+  FNXC:WorkflowResolvedColumns 2026-07-31-20:50:
+  `orphanReviewColumns` — the PROJECT-level query that selects candidates — was UNCOVERED on the
+  #3115 map, and the reason is worth stating: every case in this file stubs `listTasks` to return the
+  same task whatever column is asked for, so the query is never exercised. Blinding the resolver
+  changes which column is requested and the fake answers identically, so nothing fails.
+
+  A fake that ignores its own filter cannot see a filter bug. That is the same blindness this sweep's
+  production code had, reproduced in the harness.
+
+  Here `listTasks` HONOURS the column, so a card resting in a renamed review lane is found only if
+  the query asked for that lane. Keyed on the id it asked for `in-review`, got nothing, and a failed
+  orphan-only card stayed failed forever.
+  */
+  it("finds a candidate resting in a RENAMED review lane (the project query)", async () => {
+    const renamed = failedReviewTask({ id: "FN-RENAMED", column: "checking", branch: "fusion/fn-renamed" });
+    const RENAMED_IR = {
+      version: "v2",
+      id: "custom:renamed",
+      nodes: [],
+      edges: [],
+      columns: [
+        { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+        { id: "checking", name: "checking", traits: [{ trait: "merge" }] },
+      ],
+    };
+    (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(
+      async (opts?: { column?: string }) => (opts?.column === "checking" ? [renamed] : []),
+    );
+    Object.assign(store as unknown as Record<string, unknown>, {
+      listWorkflowDefinitions: vi.fn(async () => [{ id: "custom:renamed", ir: RENAMED_IR }]),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "custom:renamed", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir: RENAMED_IR })),
+    });
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { type: "tool_error", detail: DETAIL.replace("FN-4350", "FN-RENAMED") },
+    ]);
+    mockedExecSync.mockImplementation((command: string | Buffer) => {
+      if (String(command).includes("Fusion-Task-Id: FN-RENAMED")) return "abc123456789\n" as any;
+      return "" as any;
+    });
+
+    expect(await manager.recoverOrphanOnlyScopeViolations()).toBe(1);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-RENAMED", "done");
+  });
+
   it("does NOT recover when landed commit cannot be verified (FN-4280)", async () => {
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([failedReviewTask()]);
     (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([{ type: "tool_error", detail: DETAIL }]);

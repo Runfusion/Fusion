@@ -82,12 +82,17 @@ export function resolveConcurrency(env = process.env) {
 function parseArgs(argv) {
   let group = "all";
   let list = false;
+  let allLanes = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--group") {
       group = argv[index + 1] ?? "";
       index += 1;
+      continue;
+    }
+    if (arg === "--all" || arg === "--no-fail-fast") {
+      allLanes = true;
       continue;
     }
     if (arg.startsWith("--group=")) {
@@ -105,7 +110,7 @@ function parseArgs(argv) {
     throw new Error(`Invalid --group value ${JSON.stringify(group)}; expected all, app, or api`);
   }
 
-  return { group, list };
+  return { group, list, allLanes };
 }
 
 function selectLanes(group) {
@@ -152,6 +157,7 @@ export async function runQualityTests({
   concurrency = resolveConcurrency(),
   lanes = selectLanes(group),
   runner = runLane,
+  failFast = true,
 } = {}) {
   const queue = [...lanes];
   const failed = [];
@@ -173,7 +179,11 @@ export async function runQualityTests({
           completed += 1;
           if (!result.ok) {
             failed.push(result);
-            stopScheduling = true;
+            /* FNXC:DashboardQualityLanes 2026-07-31-18:05 (u12 — #2784's structural half):
+               Fail-fast stays the DEFAULT so a broken lane still gives fast local feedback, but it is
+               now switchable. Stopping hid 123 real failures behind one red lane (#2784): nine lanes
+               were never run, and "skipped 9 lane(s)" reads exactly like a benign skip. */
+            if (failFast) stopScheduling = true;
           }
           if ((queue.length === 0 || stopScheduling) && running === 0) {
             resolve({ ok: failed.length === 0, failed, completed, skipped: queue.length });
@@ -192,7 +202,7 @@ export async function runQualityTests({
 }
 
 async function main() {
-  const { group, list } = parseArgs(process.argv.slice(2));
+  const { group, list, allLanes } = parseArgs(process.argv.slice(2));
   const lanes = selectLanes(group);
 
   if (list) {
@@ -202,11 +212,14 @@ async function main() {
     return;
   }
 
-  const result = await runQualityTests({ group, lanes });
+  const result = await runQualityTests({ group, lanes, failFast: !allLanes });
   if (!result.ok) {
     console.error(`[dashboard-quality] failed lane(s): ${result.failed.map(({ lane }) => lane.name).join(", ")}`);
     if (result.skipped > 0) {
-      console.error(`[dashboard-quality] skipped ${result.skipped} lane(s) after first failure`);
+      console.error(
+        `[dashboard-quality] ${result.skipped} lane(s) were NOT RUN after the first failure — their status is UNKNOWN, not passing.`
+        + `\n[dashboard-quality] re-run with --all (or --no-fail-fast) to execute every lane and see the full failure set.`,
+      );
     }
     process.exit(1);
   }

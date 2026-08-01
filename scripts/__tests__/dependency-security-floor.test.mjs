@@ -73,9 +73,41 @@ test("source manifests keep vulnerable dependency floors out", async () => {
   }
 });
 
+/*
+FNXC:DependencySecurity 2026-07-31-11:20:
+The override moved; the guard did not follow it.
+
+#2220 relocated pnpm overrides from `package.json` to `pnpm-workspace.yaml` for pnpm 11, and this
+assertion kept reading `package.json`. It has been failing ever since, on a non-blocking lane, saying
+"protobufjs range undefined" — which reads exactly like the security floor was DELETED. It was not:
+`pnpm-workspace.yaml` still pins `^7.5.8` and the lockfile resolves 7.6.5.
+
+That is the expensive kind of stale test. A red guard that names a real risk teaches its readers that
+red means nothing here, and the next reader cannot tell this from an actual removed pin without
+doing the archaeology. Read the file the overrides actually live in, so removing the pin fails again.
+*/
 test("pnpm overrides pin transitive protobufjs to a safe floor", async () => {
-  const manifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-  assertRangeMeetsFloor({ location: "package.json pnpm.overrides", name: "protobufjs", range: manifest.pnpm?.overrides?.protobufjs, minimum: "7.5.5" });
+  const workspace = YAML.parse(await readFile(path.join(root, "pnpm-workspace.yaml"), "utf8"));
+  assertRangeMeetsFloor({
+    location: "pnpm-workspace.yaml overrides",
+    name: "protobufjs",
+    range: workspace?.overrides?.protobufjs,
+    minimum: "7.5.5",
+  });
+});
+
+test("the protobufjs floor is asserted where overrides actually live", async () => {
+  /*
+  The guard above is only meaningful while `pnpm-workspace.yaml` is the overrides home. If they move
+  again, this fails and points at the next reader rather than letting the floor go unchecked in
+  silence — the failure mode #2220 produced.
+  */
+  const rootManifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  assert.equal(
+    Object.keys(rootManifest.pnpm?.overrides ?? {}).length,
+    0,
+    "package.json declares pnpm.overrides again — point the floor assertion above at it, or at both",
+  );
 });
 
 test("lockfile resolutions satisfy dependency security floors", async () => {

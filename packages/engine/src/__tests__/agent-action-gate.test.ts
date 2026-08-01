@@ -228,6 +228,40 @@ describe("agent-action-gate", () => {
     expect(blockedDecision.disposition).toBe("block");
   });
 
+  /*
+  FNXC:AgentGating 2026-07-26-12:00:
+  #2376 greptile P1: project chat has no ambient gate taskId. Approvals for fn_task_delete/archive must key off the invocation target so approving task A cannot authorize task B.
+  */
+  it("scopes task_agent_mutation approval dedupe keys to the param-supplied target task", () => {
+    const deleteA = evaluateAgentActionGate({
+      agentId: "agent-chat",
+      toolName: "fn_task_delete",
+      args: { id: "FN-A" },
+      permissionPolicy: approvalPolicy,
+    });
+    const deleteB = evaluateAgentActionGate({
+      agentId: "agent-chat",
+      toolName: "fn_task_delete",
+      args: { id: "FN-B" },
+      permissionPolicy: approvalPolicy,
+    });
+    const mergeC = evaluateAgentActionGate({
+      agentId: "agent-chat",
+      toolName: "fn_task_merge",
+      args: { task_id: "FN-C" },
+      permissionPolicy: approvalPolicy,
+    });
+
+    expect(deleteA.resourceType).toBe("task");
+    expect(deleteA.resourceId).toBe("FN-A");
+    expect(deleteB.resourceId).toBe("FN-B");
+    expect(mergeC.resourceId).toBe("FN-C");
+    expect(deleteA.approvalDedupeKey).not.toBe(deleteB.approvalDedupeKey);
+    expect(deleteA.approvalDedupeKey).toContain("FN-A");
+    expect(deleteB.approvalDedupeKey).toContain("FN-B");
+    expect(mergeC.approvalDedupeKey).toContain("FN-C");
+  });
+
   // FN-7728: fn_task_bypass_review must classify as its own review_gate_bypass category,
   // not task_agent_mutation, and must never fall through to the unrecognized-tool exempt fallback.
   it("classifies fn_task_bypass_review as review_gate_bypass, distinct from task_agent_mutation and exempt", () => {

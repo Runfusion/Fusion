@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
 import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
-import { AgentSemaphore } from "../concurrency/concurrency.js";
+import { AgentSemaphore, projectAdmissionCoordinator} from "../concurrency/concurrency.js";
 // Resolves to the vi.mock factory above (the mocked merger-ai exports the real-shaped
 // workspace land error classes so the dispatch's `instanceof` matching is exercised).
 import { WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "../merge/merger-ai.js";
@@ -3722,4 +3722,97 @@ describe("enqueueEligibleInReviewTasks honors per-task autoMerge override (share
     expect(count).toBe(1);
     expect(enqueueSpy).toHaveBeenCalledWith("FN-explicit-false");
   });
+});
+
+/*
+FNXC:MergeSafeguards 2026-07-28-19:40 (U9):
+The user-pause filter on merge admission had ZERO test coverage: deleting it
+produced no new failure across project-engine, merge-*, concurrency, or
+merge-single-flight-invariant. The guard works correctly today — what was missing
+is anything that would notice if it stopped. U9 moves merge behind graph nodes, so
+it must be pinned BEFORE the conversion, not after.
+
+(An earlier draft also added a single-flight test here. That was redundant —
+merge-single-flight-invariant.test.ts already covers capacity, verified by
+mutation. It is admitted to the gate instead.)
+
+The test asserts BOTH directions (guard blocks / guard permits) so it fails if the
+guard is removed AND if the filter stops discriminating — a one-sided assertion
+would still pass against a guard that rejects everything.
+*/
+describe("U9 merge safeguards without prior coverage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /*
+  Safeguard 1 — user pause. The pause invariant re-ratified in #2486: never MUTATE
+  lifecycle state of a user-paused card. The merge admission provider is the seam
+  that decides which queued in-review cards are offered to the merge pump; without
+  its `paused || userPaused` filter a user-paused card is admitted and merged.
+  */
+  it("merge admission excludes a user-paused card and admits the same card once unpaused", async () => {
+    const registered = new Map<string, { refresh: () => Promise<unknown[]> }>();
+    const registerSpy = vi
+      .spyOn(projectAdmissionCoordinator, "registerProvider")
+      .mockImplementation((providerId: string, provider: never) => {
+        registered.set(providerId, provider as unknown as { refresh: () => Promise<unknown[]> });
+        return () => {};
+      });
+
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+
+    const mergeProvider = [...registered.entries()].find(([id]) => id.startsWith("merge:"))?.[1];
+    if (!mergeProvider) throw new Error("merge admission provider was not registered");
+
+    const privateEngine = engine as unknown as { mergeQueue: string[]; coordinatorAdmittedMergeTaskIds: Set<string> };
+    privateEngine.mergeQueue = ["FN-paused"];
+    privateEngine.coordinatorAdmittedMergeTaskIds.clear();
+
+    // User-paused: must NOT be offered for merge admission.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: false,
+      userPaused: true,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    await expect(mergeProvider.refresh()).resolves.toEqual([]);
+
+    // Same card, same queue, pause cleared: must now be offered. This half proves
+    // the exclusion above came from the pause flag and not from an unrelated gate.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: false,
+      userPaused: false,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    const admitted = (await mergeProvider.refresh()) as Array<{ taskId: string }>;
+    expect(admitted.map((c) => c.taskId)).toEqual(["FN-paused"]);
+
+    // Engine-level `paused` is the sibling half of the same filter.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-paused",
+      column: "in-review",
+      paused: true,
+      userPaused: false,
+      status: null,
+      mergeRetries: 0,
+      createdAt: new Date(0).toISOString(),
+    });
+    await expect(mergeProvider.refresh()).resolves.toEqual([]);
+
+    registerSpy.mockRestore();
+    await engine.stop();
+  });
+
 });

@@ -63,7 +63,23 @@ test("release script dry-run exits before proceed confirmation and gates ask thr
   const promptGateIndex = source.indexOf("shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })");
   const askIndex = source.indexOf("await ask(`Release version");
   const dryRunExitIndex = source.indexOf("if (DRY_RUN) {");
-  const confirmIndex = source.indexOf("await confirm(`Proceed with release");
+  /*
+  FNXC:ReleaseSafety 2026-07-31-21:40:
+  Probe the STABLE prefix, not the whole sentence — the interpolated part is not the safety property.
+
+  This read `await confirm(\`Proceed with release`, and the prompt has since become
+  `Proceed with ${CHANNEL} release v${chosenVersion} (...)`. `indexOf` returned -1, the comparison
+  `dryRunExitIndex < -1` was false, and this assertion has been red on `main` ever since — reporting a
+  release-safety failure that did not exist.
+
+  The property itself still holds and was verified directly rather than inferred from the green:
+  the first `if (DRY_RUN) {` guard sits at 28808 and calls `process.exit(0)`; the sole `await confirm(`
+  call site is at 44503. Two dry-run exit guards, one confirmation, and the exit precedes it.
+
+  A stale probe on a SAFETY test is worse than on an ordinary one: it spends the alarm on wording, so
+  a genuine reordering later arrives at an assertion everyone has learned is red for cosmetic reasons.
+  */
+  const confirmIndex = source.indexOf("await confirm(`Proceed with ");
 
   assert.notEqual(promptGateIndex, -1, "release.mjs should use the pure prompt gate");
   assert.notEqual(askIndex, -1, "release.mjs should still support version prompts");

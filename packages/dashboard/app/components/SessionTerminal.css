@@ -126,11 +126,25 @@ FN-6811 recurrence #6 found the attach terminal imported its own CSS chunk but d
   color: var(--text-muted);
 }
 
-.cli-session-terminal__viewport {
+/*
+FNXC:TerminalLayout 2026-08-01-01:00:
+FN-8634 keeps the embedded SessionTerminal's xterm viewport unpadded because its injected
+native scrollbar occupies the inline-end edge. The shell owns the symmetric token padding so
+xterm fit and reflow keep their existing viewport dimensions while painted and absent tracks
+have equal perceived empty inset.
+*/
+.cli-session-terminal__viewport-shell {
+  display: flex;
   flex: 1 1 auto;
   min-height: 0;
   padding: var(--space-xs);
   background: var(--terminal-bg, var(--bg));
+}
+
+.cli-session-terminal__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 /*

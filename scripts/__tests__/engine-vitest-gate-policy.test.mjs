@@ -110,9 +110,29 @@ test("pg gate canaries remain a subset of the enabled non-blocking PG suite", ()
       .map((file) => `src/__tests__/postgres/${file}`),
   );
   const gateMembers = core.scripts?.["test:pg-gate"]?.match(/src\/__tests__\/postgres\/[^ ]+\.pg\.test\.ts/g) ?? [];
+  /*
+  FNXC:TestInfrastructure 2026-07-31-20:30:
+  The third canary is RECORDED here, not approved here — and the distinction is the point.
+
+  #2759 (`ae4ff9c111`) added `sync-workflow-ir-is-always-default.pg.test.ts` and its gate entry in one
+  commit without updating this list, so the assertion has been red on `main` since. A red policy test
+  protects nothing: while it fails, the NEXT gate admission is invisible too, which is the opposite of
+  what a narrow-canary ledger is for. Restoring it re-arms that protection.
+
+  The admission carries the evidence of value AGENTS.md requires, which is why recording it is not a
+  rubber stamp. It pins that `resolveTaskWorkflowIrSync` returns the DEFAULT IR for every task in
+  production — so a guard written as `resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id))?.hold`
+  reads as converted, counts as census progress, and is silently wrong for every custom workflow
+  because the non-optional return type hides the substitution. Ten call sites depend on that fact
+  today. A whole class of inert conversions is cheaper to catch at the gate than in review.
+
+  If the gate's owner disagrees with a third canary, the fix is to remove it from
+  `packages/core`'s `test:pg-gate` script and shorten this list again — not to leave the ledger red.
+  */
   const expectedCanaries = [
     "src/__tests__/postgres/handoff-to-review-atomicity.pg.test.ts",
     "src/__tests__/postgres/task-lifecycle-e2e.pg.test.ts",
+    "src/__tests__/postgres/sync-workflow-ir-is-always-default.pg.test.ts",
   ];
   const formerGateMembers = [
     ...expectedCanaries,

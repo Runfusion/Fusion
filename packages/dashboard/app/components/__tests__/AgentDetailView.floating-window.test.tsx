@@ -16,7 +16,7 @@ const renderModal = (onClose = vi.fn()) => render(
 );
 
 /**
- * FNXC:ModalTouchGeometry 2026-08-13-12:40:
+ * FNXC:ModalTouchGeometry 2026-07-27-12:40:
  * FN-8619 keeps Agent Detail's deliberately narrower mouse-pair dismissal while moving geometry
  * to FloatingWindow. Exercise the production portal, rather than a synthetic window, so touch
  * gestures cannot silently become an outside-dismiss path.
