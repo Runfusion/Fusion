@@ -41,7 +41,7 @@ import { BacklogPressureReporter } from "./backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import type { TaskMoveLanes } from "@fusion/core";
-import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, isTerminalColumnRole, columnsWithFlag } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./hold-release.js";
@@ -2243,11 +2243,26 @@ export class Scheduler {
       Marker sits in the DECLARATION's leading comments, not inline: markers are read from a node's
       leading comments, so a mid-expression one attaches to the wrong node and is silently ignored.
       */
-      const isTerminalColumnTask = (task: Task): boolean => {
-        const flags = columnFlagsForTask(task);
-        if (flags) return flags.complete === true || flags.archived === true;
-        return task.column === "done" || task.column === "archived";
-      };
+      /*
+      FNXC:WorkflowResolvedColumns 2026-08-01-10:05 (fleet — correcting "nothing to convert TO"):
+      There is: `isTerminalColumnRole` in core is this predicate, term for term. With flags it reads
+      `flags.complete === true || flags.archived === true`; without them it falls back to the legacy
+      complete/archived ids — the same two arms written out below, verified against `column-roles.ts`.
+
+      Its own doc-comment names this exact case: it exists "because the pattern
+      `column !== \"done\" && column !== \"archived\"` is the single most repeated shape in the backlog"
+      and "keeps callers from re-deriving it and from accidentally dropping one half."
+
+      The DELIBERATE reasoning above is otherwise correct and kept: the undefined-flags arm is a live
+      path and treating an unreadable workflow as non-terminal would count a finished card's retained
+      worktree against live capacity. That argument is about the FALLBACK's existence, not about where
+      the predicate lives — and the shared helper carries the identical fallback.
+
+      Second time in this file: `isWipColumnTask` two lines up records that it was itself once "a
+      hand-rolled copy of `isWipColumnRole`".
+      */
+      const isTerminalColumnTask = (task: Task): boolean =>
+        isTerminalColumnRole(columnFlagsForTask(task), task.column);
       const wipTaskIdSet = new Set(wipTaskIds);
       const nonWipWorktreeHolderIds = tasks
         .filter((task) => !wipTaskIdSet.has(task.id)
