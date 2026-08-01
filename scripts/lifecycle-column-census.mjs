@@ -1061,12 +1061,30 @@ if (stale.length > 0) {
     console.error("\nRe-record it:\n\n  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n");
     process.exit(1);
   }
-  writeBaseline();
-  console.log("\nlifecycle-column-census --strict: baseline TIGHTENED — the tree has fewer guards than it allowed\n");
+  /*
+  FNXC:LifecycleColumnCensus 2026-08-01-01:35 (#3287's defect, same shape in this tool):
+  REPORT THE TIGHTENING, DO NOT WRITE IT. This branch used to call `writeBaseline()` during a plain
+  `--strict` CHECK, so running the gate modified the tree it was checking.
+
+  #3287 measured what that costs on the sibling fnxc gate: every worker who ran it received a
+  byte-identical uncommitted diff they had not authored and reasonably committed it — #3283 and
+  #3285 are the same `+0/-1`, five minutes apart, by two authors, neither of whom wrote that line.
+  The gate wrote it in both checkouts. I hit it here the same way, on my own branch, and started
+  looking for where my change had touched the baseline. It had not.
+
+  The tightening itself is right, and the "COMMIT IT" message made the diff explained rather than
+  mysterious. Neither fixes the mechanism: a check that writes turns every reader into an author.
+
+  Still computed, still reported loudly, written only under an explicit `--update-baseline` — which
+  has its own path above, so a deliberate re-record is unaffected. A plain run stays GREEN rather
+  than failing, because guard counts drop on merges the author never touched; failing would redden
+  main on someone else's cleanup.
+  */
+  console.log("\nlifecycle-column-census --strict: baseline CAN BE TIGHTENED — the tree has fewer guards than it allowed\n");
   for (const line of lines) console.log(line);
   console.log(
-    "\nThe baseline file has been rewritten downward. COMMIT IT so the allowance cannot be regrown into;\n"
-    + "in CI this write is discarded with the runner, which is why the gate is green and not silent.\n",
+    "\nNot written. Record it deliberately, so the diff has one author:\n\n"
+    + "  node scripts/lifecycle-column-census.mjs --strict --update-baseline\n",
   );
   process.exit(0);
 }
