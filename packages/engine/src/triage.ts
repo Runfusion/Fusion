@@ -381,6 +381,8 @@ function isOrphanedLegacyTriageRow(column: string, declaresTriage: boolean): boo
 export class TriageProcessor {
   private running = false;
   private polling = false;
+  /** FNXC:TriagePollWatchdog 2026-08-01-01:25: wall-clock start of the in-flight poll, for the hung-poll watchdog below. */
+  private pollingSince = 0;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   /** The interval (ms) of the currently active `setInterval` timer. */
   private activePollMs: number | null = null;
@@ -2004,6 +2006,8 @@ export class TriageProcessor {
 
   /** Coalescing window for requestImmediatePoll, so a multi-card drag causes one poll, not N. */
   private static readonly NUDGE_DEBOUNCE_MS = 150;
+  /** FNXC:TriagePollWatchdog 2026-08-01-01:25: a poll marked in-flight past this long is treated as hung. */
+  private static readonly POLL_WATCHDOG_MS = 120_000;
 
   /**
    * FNXC:DuplicateIntake 2026-07-26-10:40:
@@ -2015,8 +2019,28 @@ export class TriageProcessor {
 
   private async poll(): Promise<void> {
     if (!this.running) return;
-    if (this.polling) return;
+    if (this.polling) {
+      /*
+      FNXC:TriagePollWatchdog 2026-08-01-01:25 (live incident — planning admission silently dead):
+      The re-entrance guard makes ONE hung poll a PERMANENT silent triage death: `this.polling`
+      stays true forever, every 15s tick and every task:created wake drops here without a log
+      line, and new tasks sit "Queued to plan" until an unrelated sweep rescues them (observed
+      twice on the live board: 5m50s and ~10m admission delays with capacity wide open, both
+      ending in a batch admission the moment something else poked the store). A dropped poll is
+      normal for seconds — a poll is genuinely in flight — but minutes means the in-flight poll
+      hung (store call, provider probe). Recover loudly instead of dying silently: past the
+      watchdog threshold, log at WARN with the stuck duration and force the guard open so this
+      tick's poll proceeds. The hung promise, if it ever resolves, resets `polling` in its own
+      finally — hitting the guard already open is harmless (it just sets it true again).
+      */
+      const stuckMs = this.pollingSince > 0 ? Date.now() - this.pollingSince : 0;
+      if (stuckMs < TriageProcessor.POLL_WATCHDOG_MS) return;
+      planLog.warn(
+        `triage poll watchdog: previous poll still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open so planning admission resumes`,
+      );
+    }
     this.polling = true;
+    this.pollingSince = Date.now();
     this.nudgeDuringPoll = false;
 
     try {

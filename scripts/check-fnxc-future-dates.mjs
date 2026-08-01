@@ -149,7 +149,8 @@ function scan() {
 
 const found = scan();
 
-if (process.argv.includes("--update-baseline")) {
+const updateBaseline = process.argv.includes("--update-baseline");
+if (updateBaseline) {
   writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
   const total = Object.values(found).reduce((a, b) => a + b, 0);
   console.log(`[check-fnxc-future-dates] baseline written: ${total} stamp(s) in ${Object.keys(found).length} file(s)`);
@@ -219,14 +220,35 @@ for (const [file, allowed] of Object.entries(baseline)) {
   const count = found[file] ?? 0;
   if (count < allowed) tightened.push(`  ${file}: ${allowed} -> ${count}`);
 }
+/*
+FNXC:FnxcStampHygiene 2026-08-01-00:55 (a CHECK must not modify the tree it is checking):
+This block used to rewrite the baseline on every plain run. The tightening itself is right — the
+comment above explains why banking a stale allowance is worse — but performing it as a SIDE EFFECT of
+checking handed every worker an identical uncommitted diff they had not written.
+
+Measured cost: on 2026-07-31/08-01 nine PRs chased three defects in this gate's area, and two of them
+(#3283, #3285, five minutes apart, `+0/-1` each) deleted the SAME baseline line. Neither author wrote
+it; the gate wrote it, in both of their checkouts, and each reasonably committed what they found. I
+also mis-attributed my own dirty tree to leftover work and retracted a measurement partly on that
+basis.
+
+So: still computed, still reported loudly, but only WRITTEN under --update-baseline. A plain run is
+read-only and stays green — failing on a tightening would redden main every time a stamp simply ages
+into the past, which is exactly why the auto-write existed.
+*/
 if (tightened.length > 0) {
-  for (const [file, allowed] of Object.entries(baseline)) {
-    const count = found[file] ?? 0;
-    if (count < allowed) { if (count === 0) delete baseline[file]; else baseline[file] = count; }
-  }
-  writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
-  console.log(`[check-fnxc-future-dates] baseline TIGHTENED for ${tightened.length} file(s):`);
+  console.log(`[check-fnxc-future-dates] baseline CAN BE TIGHTENED for ${tightened.length} file(s):`);
   for (const line of tightened.sort()) console.log(line);
+  if (updateBaseline) {
+    for (const [file, allowed] of Object.entries(baseline)) {
+      const count = found[file] ?? 0;
+      if (count < allowed) { if (count === 0) delete baseline[file]; else baseline[file] = count; }
+    }
+    writeFileSync(BASELINE, `${JSON.stringify(baseline, null, 2)}\n`);
+    console.log("[check-fnxc-future-dates] baseline re-recorded.");
+  } else {
+    console.log("  run `pnpm check:fnxc-future-dates --update-baseline` to record it (one commit, one author).");
+  }
 }
 
 if (problems.length > 0) {

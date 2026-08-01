@@ -3881,7 +3881,24 @@ export class ProjectEngine {
               }
             }
             let selected = false;
-            let value: T | undefined;
+            /*
+            FNXC:ConcurrencyAdmission 2026-08-01-01:50 (ROOT CAUSE — triage admission died during every merge):
+            This lane previously ran `value = await start()` INSIDE its admission `start()` callback —
+            i.e. the ENTIRE merge (git rebase, verification, landing: minutes, or forever when the
+            merge wedges) executed inside `admitOldest`'s single-flight drain. The coordinator is a
+            project-wide singleton and every caller awaits the previous drain, so triage's poll parked
+            at `await existing` for the whole merge window, its `polling` re-entrance guard stayed
+            closed, and every 15s tick + task:created wake dropped silently. Observed twice on the
+            live board as "queued to plan with open capacity" (5m50s behind FN-8627's merge; ~10min
+            behind FN-8635's adoption-paused landing), each ending in a batch admission the second
+            the merge finished. With merge pinned at 1, every merge was a planning outage.
+
+            The lane start now only CLAIMS the admission and returns; the merge body runs after
+            `admitOldest` settles, outside the drain. Capacity stays honest: the merge row's own
+            merging/landing status is what `claimed()` counts, and at-most-once merging is enforced
+            by the merge lease, not by this drain. The transient admit→status-write gap is the same
+            one every other lane (triage `void specifyTask`, scheduler `void schedule`) already has.
+            */
             await projectAdmissionCoordinator.admitOldest({
               projectId: cwd,
               maxConcurrent: (await store.getSettings()).maxConcurrent ?? 2,
@@ -3895,14 +3912,16 @@ export class ProjectEngine {
                 createdAt: mergeCandidate?.createdAt,
                 start: async () => {
                   selected = true;
-                  value = await start();
                   return true;
                 },
               }],
             });
             if (!selected) return undefined;
-            projectAdmissionCoordinator.releaseReservation(taskId);
-            return value;
+            try {
+              return await start();
+            } finally {
+              projectAdmissionCoordinator.releaseReservation(taskId);
+            }
           };
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge && !routeWorkspaceDirect) {
