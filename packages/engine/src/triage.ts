@@ -121,6 +121,7 @@ import type {
   ToolDefinition,
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
+import { nonWipWorktreeHolderIdsOf } from "./scheduler.js";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "./replan-target.js";
 import {
@@ -2157,9 +2158,11 @@ export class TriageProcessor {
         workflow reads for a question with one project-level answer.
         */
         const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
-        const heldWorktrees = allTasks.filter((t) =>
-          !terminalColumns.has(t.column)
-          && typeof t.worktree === "string" && t.worktree.length > 0).length;
+        /* ONE implementation of the holder rule, shared with the scheduler's ledger and the spawn
+           gate's — see the note on `nonWipWorktreeHolderIdsOf`. */
+        const heldWorktrees = nonWipWorktreeHolderIdsOf(
+          allTasks, [], (t) => terminalColumns.has(t.column),
+        ).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
       const maxToStart = Math.min(projectRoom, worktreeRoom);

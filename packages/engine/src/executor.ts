@@ -13,7 +13,7 @@ import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, AsyncMissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
-import { getUnmetSchedulingDependencies } from "./scheduler.js";
+import { getUnmetSchedulingDependencies, nonWipWorktreeHolderIdsOf } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
@@ -21944,9 +21944,12 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
             per-task: this filters every task and the answer is project-level.
             */
             const spawnTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
-            const heldWorktrees = spawnTasks.filter((t) =>
-              !spawnTerminalColumns.has(t.column)
-              && typeof t.worktree === "string" && t.worktree.length > 0).length;
+            /* ONE implementation of the holder rule, shared with the scheduler's ledger and triage's
+               — see the note on `nonWipWorktreeHolderIdsOf`. No wip exclusions here: this gate counts
+               every live holder, and the spawn reservation is tracked separately. */
+            const heldWorktrees = nonWipWorktreeHolderIdsOf(
+              spawnTasks, [], (t) => spawnTerminalColumns.has(t.column),
+            ).length;
             // totalSpawnedCount already includes THIS reservation; heldWorktrees covers task lanes.
             if (heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees) {
               releaseSpawnReservation();
