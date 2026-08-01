@@ -890,6 +890,48 @@ export interface SchedulerOptions {
  * itself is also refreshed: if `pollIntervalMs` differs from the active
  * timer, the `setInterval` is transparently restarted.
  */
+/*
+FNXC:WorktreeCapacity 2026-08-01-00:45:
+THE WORKTREE-CAPACITY HOLDER SET, behind a seam so its arithmetic can be pinned.
+
+Two live defects came out of these few lines and neither had behavioural coverage. Measured by the
+author of #3262: blinding the terminal predicate to `false` leaves all 22 scheduler suites green.
+
+  UNDER-COUNT admits work over the cap. The commit that added this gate reports maxWorktrees=4 with
+  four planning sessions holding worktrees and a fifth admitted, because the ledger counted WIP cards
+  only and never learned to count planners.
+
+  OVER-COUNT self-deadlocks. A planned Ready card RETAINS its planning worktree for execution reuse,
+  so counting it as a holder blocked its own release: 2 wip + 3 idle-held = 5/4 and the first unpause
+  released 2 of 4 slots' worth of work.
+
+The two errors are not symmetric — under-counting breaks the cap, over-counting only starves dispatch
+— so both directions are pinned rather than just the one that reads as "safe".
+
+Extracted rather than tested in place because the call site is inside `schedule()`, which a unit test
+has no business standing up (same reasoning as `scheduler-load-lane-union.test.ts`).
+*/
+export function nonWipWorktreeHolderIdsOf(
+  tasks: readonly Task[],
+  wipTaskIds: readonly string[],
+  isTerminalColumnTask: (task: Task) => boolean,
+): string[] {
+  const wipTaskIdSet = new Set(wipTaskIds);
+  return tasks
+    .filter((task) => !wipTaskIdSet.has(task.id)
+      && !isTerminalColumnTask(task)
+      && typeof task.worktree === "string" && task.worktree.length > 0)
+    .map((task) => task.id);
+}
+
+/**
+ * Slots a candidate must clear to dispatch. A candidate that ALREADY holds a worktree subtracts its
+ * own slot: on release the slot TRANSFERS (it executes in the same worktree) rather than adding.
+ */
+export function effectiveActiveWorktrees(reservedWorktreeSlots: number, candidateHoldsWorktree: boolean): number {
+  return reservedWorktreeSlots - (candidateHoldsWorktree ? 1 : 0);
+}
+
 export class Scheduler {
   private running = false;
   private scheduling = false;
@@ -2263,12 +2305,7 @@ export class Scheduler {
       */
       const isTerminalColumnTask = (task: Task): boolean =>
         isTerminalColumnRole(columnFlagsForTask(task), task.column);
-      const wipTaskIdSet = new Set(wipTaskIds);
-      const nonWipWorktreeHolderIds = tasks
-        .filter((task) => !wipTaskIdSet.has(task.id)
-          && !isTerminalColumnTask(task)
-          && typeof task.worktree === "string" && task.worktree.length > 0)
-        .map((task) => task.id);
+      const nonWipWorktreeHolderIds = nonWipWorktreeHolderIdsOf(tasks, wipTaskIds, isTerminalColumnTask);
       /*
       FNXC:WorkflowScheduling 2026-07-31-01:05 (self-deadlock in the widened ledger, observed live):
       A planned Ready card RETAINS its planning worktree for execution reuse, so counting it as a
@@ -2894,7 +2931,7 @@ export class Scheduler {
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
             maxConcurrent,
-            activeWorktrees: reservedWorktreeSlots - (candidateHoldsWorktree ? 1 : 0),
+            activeWorktrees: effectiveActiveWorktrees(reservedWorktreeSlots, candidateHoldsWorktree),
             maxWorktrees,
             worktreeHolderTaskIds: [...inProgressTaskIds, ...nonWipWorktreeHolderIds],
             semaphore: this.options.semaphore,
