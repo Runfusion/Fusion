@@ -133,6 +133,42 @@ Run against all five lifecycle gates on one tree, staging a probe file per form.
 | `check-inert-sync-lane-conversions` | lane reads via the `resolvePlannerLanes` helper | a DIRECT `store.resolveTaskWorkflowIrSync(...)` read feeding `resolveLifecycleColumns` — inert by the same mechanism, untracked |
 | `check-fnxc-future-dates` | future stamps | nothing found — it caught the author of this table, twice |
 
+### The axis this table did not have
+
+Everything above is **detection**: what each tool can and cannot see. I probed that thoroughly and
+then wrote "sound" for two gates on the strength of it.
+
+Within a day, three of these tools turned out to share a different defect entirely — **they wrote to
+the tree they were checking**, auto-tightening their own baseline during a plain check run:
+
+| gate | wrote during a check | fixed by |
+|---|---|---|
+| `check-fnxc-future-dates` | yes | #3287 |
+| `lifecycle-column-census` | yes, under `--strict` | #3289 |
+| `check-sql-column-literals` | yes | #3292 |
+
+No number of detection probes could have surfaced that. The table asserted one property carefully and
+**said nothing about the other while reading as comprehensive** — which is the same failure it
+documents in the tools it audits.
+
+What it cost: every worker who ran a gate received a byte-identical uncommitted diff they had not
+authored, and reasonably committed it. #3283 and #3285 are the same `+0/-1` five minutes apart, by
+two authors, neither of whom wrote that line.
+
+**So audit a tool on at least three axes, not one:**
+
+1. **What can it see?** — probe each spelling of the thing it claims to catch.
+2. **Can it fail at all?** — invoke it as `package.json` does; a report-only run exits 0 forever.
+3. **Does it write?** — `git status --porcelain` before and after, on a clean tree.
+
+A trap for the third: these gates write only when a tightening is *available*, so a clean tree after
+a run proves the trigger is absent, not that the tool is read-only. Inflate a baseline entry first,
+then run it.
+
+Three tools converged on the same write-during-check design independently, which says the pattern is
+attractive rather than that anyone was careless: the tightening is correct, the write saves a step,
+and the message even tells you to commit it.
+
 Two lessons the table encodes beyond its rows.
 
 **A ratchet's blind spot is invisible in exactly the way its subject is.** Both fixed gaps sat next to
