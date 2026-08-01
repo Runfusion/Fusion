@@ -1,5 +1,7 @@
 ---
-"@fusion/engine": patch
+"@runfusion/fusion": patch
 ---
 
-Resolve terminal workflow columns before counting retained worktrees against planning and child-agent capacity.
+summary: Planning and spawn capacity stop counting finished cards' worktrees on renamed boards.
+category: fix
+dev: Both gates resolve terminal lanes via `resolveProjectColumnsForRoles(store, TERMINAL_ROLES)` instead of comparing `"done"`/`"archived"`.

@@ -21936,6 +21936,14 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           const spawnMaxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
           if (typeof spawnMaxWorktrees === "number" && Number.isFinite(spawnMaxWorktrees)) {
             const spawnTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+            /*
+            FNXC:WorktreeCapacity 2026-08-01-02:06:
+            Terminal membership is project-wide, same rule as the planning gate in triage.ts and the
+            scheduler's ledger: custom workflows rename both completion and archive lanes, and a
+            retained terminal worktree is cleanup-owned rather than live capacity. Resolved once per
+            pass — this filters every task, so a per-task flags read would be N+1 workflow reads for
+            a question with one project-level answer.
+            */
             const terminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
             const heldWorktrees = spawnTasks.filter((t) =>
               !terminalColumns.has(t.column)
