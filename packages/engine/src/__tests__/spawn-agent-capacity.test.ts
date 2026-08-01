@@ -163,3 +163,88 @@ describe("fn_spawn_agent capacity", () => {
     expect((executor as unknown as { totalSpawnedCount: number }).totalSpawnedCount).toBe(0);
   });
 });
+
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-03:20:
+THE SPAWN WORKTREE LEDGER EXCLUDES TERMINAL LANES BY ROLE, NOT BY NAME.
+
+`6c7467a78d` added the maxWorktrees dimension to this gate with `t.column !== "done" && t.column
+!== "archived"`. On a RENAMED board neither literal matches, so every finished card still counts as
+a live worktree holder, `heldWorktrees` only grows, and eventually EVERY spawn is refused on a board
+with free slots. That is worse than the over-spawn the gate exists to prevent, because a permanent
+refusal is silent — the operator sees children that never start and no capacity breach to explain it.
+
+Measured before this case existed: blinding the resolver back to the two literals left all 19 tests
+in the capacity suites green, so nothing in the tree could tell the conversion from what it replaced.
+
+The fixture is built so the two answers DISAGREE, which is the whole point: one card sits in a
+renamed COMPLETE lane holding a worktree, with `maxWorktrees: 1`. Resolved, it is terminal and
+consumes nothing, so the spawn proceeds. Against the literals it is counted, `heldWorktrees` is 1,
+and 1 + the reserved child exceeds the budget.
+*/
+describe("fn_spawn_agent worktree ledger on a renamed board", () => {
+  /** Complete lane is `shipped`; the board declares no column called `done`. */
+  const RENAMED_IR = {
+    version: "v2", id: "wf-renamed", name: "renamed", nodes: [], edges: [],
+    columns: [
+      { id: "building", name: "Building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      { id: "filed", name: "Filed", traits: [{ trait: "archived" }] },
+    ],
+  };
+
+  function executorOnRenamedBoard(tasks: unknown[]) {
+    const executor = Object.create(TaskExecutor.prototype) as TaskExecutor;
+    const priv = executor as unknown as Record<string, unknown>;
+    priv.store = {
+      listTasks: vi.fn(async () => tasks),
+      getTask: vi.fn(async (id: string) => ({ id, column: "building" })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => undefined),
+      getWorkflowDefinition: vi.fn(async () => undefined),
+      /* The only store read `resolveProjectColumnsForRoles` makes. */
+      listWorkflowDefinitions: vi.fn(async () => [{ ir: RENAMED_IR }]),
+    };
+    priv.options = { agentStore: { createAgent: vi.fn() } };
+    priv.spawnedAgents = new Map<string, Set<string>>();
+    priv.totalSpawnedCount = 0;
+    return executor;
+  }
+
+  async function spawnWith(executor: TaskExecutor, settings: unknown) {
+    const tool = (executor as unknown as {
+      createSpawnAgentTool(taskId: string, worktreePath: string, settings: unknown): {
+        execute(id: string, params: unknown): Promise<{ content: Array<{ text: string }>; details: { state: string } }>;
+      };
+    }).createSpawnAgentTool("FN-1", "/tmp/wt", settings);
+    return tool.execute("call-1", { name: "child", role: "engineer", task: "do a thing" });
+  }
+
+  it("does not count a card in a RENAMED complete lane against the worktree budget", async () => {
+    const executor = executorOnRenamedBoard([
+      { id: "FN-1", column: "building" },
+      /* Finished work whose worktree is cleanup-owned, not capacity. */
+      { id: "FN-SHIPPED", column: "shipped", worktree: "/tmp/wt-shipped" },
+    ]);
+
+    const result = await spawnWith(executor, { maxConcurrent: 10, maxWorktrees: 1 });
+
+    /* Against the literals `shipped` is counted, heldWorktrees is 1, and the spawn is refused. */
+    expect(result.content[0]?.text ?? "").not.toContain("Worktree capacity reached");
+  });
+
+  /*
+  THE PAIRED POSITIVE. The case above is a "does not refuse" assertion, which a gate that never
+  refused would also satisfy — including one broken into ignoring maxWorktrees entirely. This pins
+  that the SAME renamed board still refuses when a live card genuinely holds the last worktree.
+  */
+  it("still refuses when a card in a live RENAMED lane holds the last worktree", async () => {
+    const executor = executorOnRenamedBoard([
+      { id: "FN-1", column: "building" },
+      { id: "FN-LIVE", column: "building", worktree: "/tmp/wt-live" },
+    ]);
+
+    const result = await spawnWith(executor, { maxConcurrent: 10, maxWorktrees: 1 });
+
+    expect(result.content[0]?.text ?? "").toContain("Worktree capacity reached");
+  });
+});

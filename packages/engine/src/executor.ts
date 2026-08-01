@@ -21936,8 +21936,21 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           const spawnMaxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
           if (typeof spawnMaxWorktrees === "number" && Number.isFinite(spawnMaxWorktrees)) {
             const spawnTasks = await this.store.listTasks({ slim: true, includeArchived: false });
+            /*
+            FNXC:WorkflowResolvedColumns 2026-08-01-03:05:
+            TERMINAL IS A ROLE, NOT A NAME — same conversion as the planning-admission ledger this
+            gate was copied from. Against the literals a RENAMED board matches neither `done` nor
+            `archived`, so finished cards keep counting as live worktree holders, `heldWorktrees`
+            only ever grows, and every spawn is refused on a board with free slots. A permanent
+            refusal is worse than the over-spawn this gate exists to prevent, because it is silent.
+
+            PROJECT-level (`resolveProjectColumnsForRoles`) because the ledger spans the whole
+            board with no single task to resolve against; it is legacy-seeded, so a default board
+            still excludes exactly `done` and `archived` and this is byte-identical there.
+            */
+            const spawnTerminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
             const heldWorktrees = spawnTasks.filter((t) =>
-              t.column !== "done" && t.column !== "archived"
+              !spawnTerminalColumns.has(t.column)
               && typeof t.worktree === "string" && t.worktree.length > 0).length;
             // totalSpawnedCount already includes THIS reservation; heldWorktrees covers task lanes.
             if (heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees) {

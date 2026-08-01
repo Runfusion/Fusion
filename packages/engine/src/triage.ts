@@ -2145,8 +2145,23 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-08-01-03:05:
+        TERMINAL IS A ROLE HERE, NOT A NAME. The ledger above excludes terminal lanes because their
+        retained worktrees are cleanup-owned rather than capacity; against the literals `done` and
+        `archived` a RENAMED board matched neither, so every finished card still counted as a live
+        worktree holder. The gate then reads worktreeRoom=0 on a board with free slots and planning
+        admission stalls permanently — the mirror of the breach this commit set out to fix, and
+        strictly worse, because a stall is silent where a breach is at least visible as 8 planners.
+
+        PROJECT-level, matching this file's existing use at `sweepStalePlanningStatuses`: the ledger
+        spans every card on the board, so there is no single task to resolve against.
+        `resolveProjectColumnsForRoles` is legacy-seeded, so a default board still excludes exactly
+        `done` and `archived` and this conversion is byte-identical there.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
         const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
+          !terminalColumns.has(t.column)
           && typeof t.worktree === "string" && t.worktree.length > 0).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
