@@ -932,6 +932,27 @@ export function effectiveActiveWorktrees(reservedWorktreeSlots: number, candidat
   return reservedWorktreeSlots - (candidateHoldsWorktree ? 1 : 0);
 }
 
+/**
+ * FNXC:WorktreeCapacity 2026-08-01-01:05:
+ * The two ledger MUTATIONS, named so they can be pinned alongside the totals they modify.
+ *
+ * `reserveWorktreeOnDispatch` is the exact counterpart of `effectiveActiveWorktrees`: a candidate
+ * that already holds a worktree reuses it, so dispatch TRANSFERS the slot rather than adding one.
+ * The two must agree — subtracting for the gate but incrementing anyway would leak a slot per
+ * dispatch until the cap wedged.
+ *
+ * `releaseReservedSlot` carries the floor. A failed dispatch gives its slot back, and the
+ * `Math.max(0, …)` is what stops a double-release from handing out capacity that does not exist —
+ * a negative reserved count reads as free slots to every later comparison in the loop.
+ */
+export function reserveWorktreeOnDispatch(reservedWorktreeSlots: number, candidateHoldsWorktree: boolean): number {
+  return candidateHoldsWorktree ? reservedWorktreeSlots : reservedWorktreeSlots + 1;
+}
+
+export function releaseReservedSlot(reservedSlots: number): number {
+  return Math.max(0, reservedSlots - 1);
+}
+
 export class Scheduler {
   private running = false;
   private scheduling = false;
@@ -3017,7 +3038,7 @@ export class Scheduler {
           });
 
           // Transfer, not addition, for a candidate that already holds its worktree.
-          if (!candidateHoldsWorktree) reservedWorktreeSlots += 1;
+          reservedWorktreeSlots = reserveWorktreeOnDispatch(reservedWorktreeSlots, candidateHoldsWorktree);
           reservedConcurrentSlots += 1;
           let released = false;
           return {
@@ -3028,8 +3049,8 @@ export class Scheduler {
                 activeScopes.delete(task.id);
                 activeScopeColumns.delete(task.id);
               }
-              reservedWorktreeSlots = Math.max(0, reservedWorktreeSlots - 1);
-              reservedConcurrentSlots = Math.max(0, reservedConcurrentSlots - 1);
+              reservedWorktreeSlots = releaseReservedSlot(reservedWorktreeSlots);
+              reservedConcurrentSlots = releaseReservedSlot(reservedConcurrentSlots);
               dispatchPrepByTaskId.delete(task.id);
               if (dropPreHeldExecutorSlot(task.id)) sem?.release();
               if (acquiredSymbols) {

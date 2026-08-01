@@ -28,7 +28,7 @@ it here would make this file fail for that reason instead of this one.
 
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
-import { effectiveActiveWorktrees, nonWipWorktreeHolderIdsOf } from "../scheduler.js";
+import { effectiveActiveWorktrees, nonWipWorktreeHolderIdsOf, releaseReservedSlot, reserveWorktreeOnDispatch } from "../scheduler.js";
 
 const task = (id: string, overrides: Partial<Task> = {}): Task => ({
   id,
@@ -122,5 +122,45 @@ describe("effectiveActiveWorktrees", () => {
     /* A holder implies a reservation, so 0-with-holder cannot arise; assert it degrades rather than
        silently handing out a negative slot count if a future caller gets the pairing wrong. */
     expect(effectiveActiveWorktrees(0, true)).toBeLessThanOrEqual(0);
+  });
+});
+
+describe("ledger mutations", () => {
+  it("dispatch TRANSFERS a held slot rather than adding one", () => {
+    expect(reserveWorktreeOnDispatch(4, true)).toBe(4);
+  });
+
+  it("dispatch ADDS a slot for a candidate holding no worktree", () => {
+    expect(reserveWorktreeOnDispatch(4, false)).toBe(5);
+  });
+
+  it("the gate subtraction and the dispatch increment agree — the pairing invariant", () => {
+    /*
+    These two must move together. Subtracting the candidate's own slot for the gate check while
+    incrementing anyway on dispatch leaks one slot per dispatch, and the cap wedges after enough
+    Ready cards reuse their planning worktrees. Asserted as a round trip rather than two constants:
+    for a HOLDER the ledger must be unchanged across gate-then-dispatch.
+    */
+    const reserved = 5;
+    for (const holds of [true, false]) {
+      const gated = effectiveActiveWorktrees(reserved, holds);
+      const after = reserveWorktreeOnDispatch(reserved, holds);
+      /* A holder occupies the slot it was gated against; a non-holder adds the one it was gated for. */
+      expect(after - gated).toBe(1);
+    }
+  });
+
+  it("a failed dispatch gives the slot back", () => {
+    expect(releaseReservedSlot(5)).toBe(4);
+  });
+
+  it("release FLOORS at zero — a negative count would read as free capacity", () => {
+    /*
+    The floor is the whole point of the Math.max. Every later comparison in the loop treats the
+    reserved count as "slots in use"; a negative value silently hands out capacity that does not
+    exist, which is the under-count direction that admits work over the cap.
+    */
+    expect(releaseReservedSlot(0)).toBe(0);
+    expect(releaseReservedSlot(-3)).toBe(0);
   });
 });
