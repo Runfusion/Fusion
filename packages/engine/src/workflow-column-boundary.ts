@@ -103,7 +103,7 @@ export interface WorkflowColumnBoundaryDeps {
   /** Persist a durable continuation before control returns to the scheduler. */
   onSuspend?: (suspension: Extract<WorkflowColumnBoundaryEntryResult, { kind: "suspended" }>) => void | Promise<void>;
   /*
-  FNXC:EnginePause 2026-07-31-22:20 (Stop AI Engine did not stop the graph):
+  FNXC:EnginePause 2026-08-01-00:20 (Stop AI Engine did not stop the graph):
   Operator-observed regression: with `globalPause: true` the graph runner kept crossing node
   boundaries — a live run started a NEW Plan Review step (fresh model session) two minutes after
   Stop AI Engine, and the plan-review→replan loop kept cycling "attempt N/unbounded". The legacy
@@ -290,7 +290,7 @@ export function createWorkflowColumnBoundary(
       const toColumn = node.column;
 
       /*
-      FNXC:EnginePause 2026-07-31-22:20:
+      FNXC:EnginePause 2026-08-01-00:20:
       Pause gates EVERY node entry — columnless and same-column nodes included, because each node
       can start a real AI session regardless of whether the card moves. Suspend with the same
       durable-continuation mechanism capacity uses, so unpause resumes at exactly this node; the
