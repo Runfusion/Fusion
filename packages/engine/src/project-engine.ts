@@ -458,6 +458,7 @@ export class ProjectEngine {
   private unregisterMergeAdmissionProvider?: () => void;
   private pausedReviewTaskIds = new Set<string>();
   private mergeRunning = false;
+  private mergeRunningSince = 0;
   private activeMergeSession: { dispose: () => void } | null = null;
   private activeMergeTaskId: string | null = null;
   /** Wall-clock when `activeMergeTaskId` was claimed; self-healing uses this when agent logs are silent. */
@@ -3297,8 +3298,14 @@ export class ProjectEngine {
   }
 
   private async drainMergeQueue(): Promise<void> {
-    if (this.mergeRunning) return;
+    if (this.mergeRunning) {
+      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. A legitimate merge runs many minutes (rebase, verification, land), so the threshold is 30min — past it the merge is wedged (stale-merge sweeps own the TASK, this owns the PUMP flag). */
+      const stuckMs = this.mergeRunningSince > 0 ? Date.now() - this.mergeRunningSince : 0;
+      if (stuckMs < 1_800_000) return;
+      runtimeLog.warn(`merge-queue watchdog: previous drain still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open so merging resumes`);
+    }
     this.mergeRunning = true;
+    this.mergeRunningSince = Date.now();
 
     try {
       this.reconcileStaleMergeActive();

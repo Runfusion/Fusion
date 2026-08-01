@@ -620,6 +620,7 @@ export class InProcessRuntime
   private triageProcessor?: TriageProcessor;
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
+  private workflowContinuationDrainSince = 0;
   private messageStore?: MessageStore;
   /** FNXC:TaskDeleteNotice 2026-07-26-16:10: identity-guarded teardown for the delete-notice mailbox seam. */
   private unregisterTaskDeleteNoticeMailbox?: () => void;
@@ -2307,7 +2308,15 @@ export class InProcessRuntime
    * adapters that bind the pass to this runtime's store and executor.
    */
   private async drainWorkflowContinuations(): Promise<void> {
-    if (this.workflowContinuationDrainActive || this.status !== "active") return;
+    if (this.status !== "active") return;
+    if (this.workflowContinuationDrainActive) {
+      /* FNXC:PumpWatchdog 2026-08-01-02:00: one hung pass leaves the guard closed forever and every later tick/wake drops SILENTLY (the triage-poll death, 00769fad7c/e51ebff381). Past the threshold, warn with the stuck duration and force the guard open; the hung pass's own finally re-clearing it later is harmless. */
+      const stuckMs = this.workflowContinuationDrainSince > 0 ? Date.now() - this.workflowContinuationDrainSince : 0;
+      if (stuckMs < 300_000) return;
+      runtimeLog.warn(`continuation-drain watchdog: previous drain still marked in-flight after ${Math.round(stuckMs / 1000)}s — forcing the guard open`);
+    }
+    this.workflowContinuationDrainActive = true;
+    this.workflowContinuationDrainSince = Date.now();
     /*
     FNXC:EnginePause 2026-08-01-00:20:
     A pause-suspended run persists a runnable continuation (same mechanism as capacity). Without
@@ -2322,7 +2331,6 @@ export class InProcessRuntime
     } catch {
       /* unreadable settings: proceed as before rather than wedging the pump */
     }
-    this.workflowContinuationDrainActive = true;
     try {
       await drainDuePlanningContinuations({
         listDue: () => this.taskStore.listDueWorkflowWorkItems({
