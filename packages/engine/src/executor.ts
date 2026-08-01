@@ -16,7 +16,7 @@ import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings,
 import { getUnmetSchedulingDependencies, heldWorktreeCountOf } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -21936,10 +21936,23 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           const spawnMaxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
           if (typeof spawnMaxWorktrees === "number" && Number.isFinite(spawnMaxWorktrees)) {
             const spawnTasks = await this.store.listTasks({ slim: true, includeArchived: false });
-            const heldWorktrees = heldWorktreeCountOf(
-              spawnTasks,
-              (t) => t.column === "done" || t.column === "archived",
-            );
+            /*
+            FNXC:WorkflowResolvedColumns 2026-08-01-01:53 (fleet — twin of triage.ts's admission ledger):
+            Same predicate, same fix, and it MUST stay the same: this gate and planning admission
+            arbitrate ONE budget, so a renamed board where only one of them recognises its terminal
+            lanes gives two different answers to "how many worktrees are held", and whichever lane
+            asks first wins with its own number.
+
+            Set membership over the whole board (`resolveProjectColumnsForRoles` + `TERMINAL_ROLES`)
+            rather than this task's own terminal role: the filter spans every task, possibly across
+            workflows. The returned set always contains the legacy ids, so an unreadable definition
+            list reproduces the previous behaviour exactly.
+
+            The added await is safe against the TOCTOU rule stated above: the agent-slot reservation
+            is already held at this point, and a worktree refusal unwinds it.
+            */
+            const spawnTerminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+            const heldWorktrees = heldWorktreeCountOf(spawnTasks, (t) => spawnTerminalColumns.has(t.column));
             // totalSpawnedCount already includes THIS reservation; heldWorktrees covers task lanes.
             if (heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees) {
               releaseSpawnReservation();

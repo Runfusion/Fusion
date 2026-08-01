@@ -37,6 +37,7 @@ import {
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
   resolveProjectColumnsForRoles,
+  TERMINAL_ROLES,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -2146,10 +2147,26 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
-        const heldWorktrees = heldWorktreeCountOf(
-          allTasks,
-          (t) => t.column === "done" || t.column === "archived",
-        );
+        /*
+        FNXC:WorkflowResolvedColumns 2026-08-01-01:53 (fleet — the ledger's "non-terminal" test):
+        The pair `column === "done" || column === "archived"` is legacy-id-only, so on a renamed board
+        NOTHING is terminal and every finished card's retained worktree counts against live capacity.
+        This fails in the direction that STALLS the board — `worktreeRoom` reaches 0 and planning
+        admission refuses work while real slots sit free — which is the mirror image of the breach the
+        note above was written for, and quieter: a stalled board looks like an idle one.
+
+        `resolveProjectColumnsForRoles(store, TERMINAL_ROLES)` is the resolver this needs rather than
+        the per-task `resolveTerminalColumnsFor`. The filter spans EVERY task on the board, which may
+        span workflows, and the question is set membership ("is this lane one of the finished ones"),
+        not "which lane is this task's complete role" — so it also answers correctly for a board
+        declaring more than one complete-trait column, which a first-match role lookup cannot.
+        One store read for the whole filter.
+
+        Degrades the way every other adopter does: the returned set always contains the legacy ids, so
+        an unreadable definition list gives exactly the behaviour of the literal it replaces.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
+        const heldWorktrees = heldWorktreeCountOf(allTasks, (t) => terminalColumns.has(t.column));
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
       const maxToStart = Math.min(projectRoom, worktreeRoom);
