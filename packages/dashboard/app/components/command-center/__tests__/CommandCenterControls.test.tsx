@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { CommandCenterControls } from "../CommandCenterControls";
 import { ConfirmDialogProvider } from "../../../hooks/useConfirm";
 import { readAppFile } from "../../../test/cssFixture";
@@ -163,6 +163,80 @@ describe("CommandCenterControls concurrency markers", () => {
     for (const slider of screen.getAllByRole("slider")) {
       expect(slider.closest(".cc-controls-slider")).toBeTruthy();
     }
+  });
+
+  /*
+  FNXC:CommandCenter 2026-08-01-00:14:
+  jsdom cannot calculate grid layout or detect a visually suppressed native range
+  thumb. The browser e2e verification owns geometry; these tests lock the DOM,
+  label, range, state, and save invariants for both capacity controls.
+  */
+  it("keeps both capacity sliders visible and disabled while concurrency settings load", () => {
+    legacyMocks.fetchConfig.mockReturnValue(new Promise(() => {}));
+    legacyMocks.fetchSettings.mockReturnValue(new Promise(() => {}));
+    renderControls();
+
+    for (const name of [/Max concurrent tasks/i, /Max worktrees/i]) {
+      const slider = screen.getByRole("slider", { name });
+      expect(slider).toHaveAttribute("min", "1");
+      expect(slider).toBeVisible();
+      expect(slider).toBeDisabled();
+    }
+  });
+
+  it("keeps both capacity sliders enabled and saves a loaded worktree edit", async () => {
+    renderControls();
+    const worktrees = await screen.findByRole("slider", { name: /Max worktrees/i });
+    vi.useFakeTimers();
+    const concurrent = screen.getByRole("slider", { name: /Max concurrent tasks/i });
+
+    expect(concurrent).toBeEnabled();
+    expect(worktrees).toBeEnabled();
+    expect(worktrees).toHaveAttribute("min", "1");
+    expect(worktrees).toHaveAttribute("max", "50");
+    expect(worktrees).toHaveValue("4");
+
+    try {
+      fireEvent.change(worktrees, { target: { value: "5" } });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save change" }));
+      await act(async () => {});
+      expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ maxWorktrees: 5 }),
+        "proj_123",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps both sliders visible and disabled with an error explanation when loading fails", async () => {
+    legacyMocks.fetchSettings.mockRejectedValue(new Error("settings unavailable"));
+    renderControls();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("settings unavailable");
+    expect(screen.getByRole("slider", { name: /Max concurrent tasks/i })).toBeDisabled();
+    expect(screen.getByRole("slider", { name: /Max worktrees/i })).toBeDisabled();
+    expect(screen.getByRole("slider", { name: /Max worktrees/i })).toHaveValue("4");
+  });
+
+  it("uses the default for missing worktrees, expands persisted values, and explains an intentionally disabled limit", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({ maxConcurrent: 12 });
+    renderControls();
+    expect(await screen.findByRole("slider", { name: /Max worktrees/i })).toHaveValue("4");
+    expect(screen.getByRole("slider", { name: /Max worktrees/i })).toBeEnabled();
+
+    document.body.innerHTML = "";
+    cleanup();
+    legacyMocks.fetchSettings.mockResolvedValue({ maxConcurrent: 12, maxWorktrees: 80, worktreeLimitEnabled: false });
+    renderControls();
+    const worktrees = await screen.findByRole("slider", { name: /Max worktrees/i });
+    expect(worktrees).toHaveValue("80");
+    expect(worktrees).toHaveAttribute("max", "80");
+    expect(worktrees).toBeDisabled();
+    expect(screen.getByText("Enable the worktree limit in Settings to edit this capacity.")).toBeInTheDocument();
   });
 
   it("matches the desktop and mobile native thumb-size CSS contract", () => {

@@ -32,20 +32,22 @@ type AsyncState<T> =
 type ConcurrencyValues = {
   maxConcurrent: number;
   maxWorktrees: number;
+  worktreeLimitEnabled: boolean;
 };
 
 const CONCURRENCY_SAVE_DEBOUNCE_MS = 500;
 const DEFAULT_CONCURRENCY_VALUES: ConcurrencyValues = {
   maxConcurrent: DEFAULT_PROJECT_SETTINGS.maxConcurrent,
   maxWorktrees: DEFAULT_PROJECT_SETTINGS.maxWorktrees,
+  worktreeLimitEnabled: Boolean(DEFAULT_PROJECT_SETTINGS.worktreeLimitEnabled),
 };
 
-const CONCURRENCY_SLIDER_LIMITS: Record<keyof ConcurrencyValues, { min: number; max: number }> = {
+const CONCURRENCY_SLIDER_LIMITS: Record<Exclude<keyof ConcurrencyValues, "worktreeLimitEnabled">, { min: number; max: number }> = {
   maxConcurrent: { min: 1, max: 50 },
   maxWorktrees: { min: 1, max: 50 },
 };
 
-const CONCURRENCY_SETTING_LABEL_KEYS: Record<keyof ConcurrencyValues, { key: string; defaultValue: string }> = {
+const CONCURRENCY_SETTING_LABEL_KEYS: Record<Exclude<keyof ConcurrencyValues, "worktreeLimitEnabled">, { key: string; defaultValue: string }> = {
   maxConcurrent: { key: "commandCenter.controls.concurrency.maxConcurrent", defaultValue: "Max concurrent tasks" },
   maxWorktrees: { key: "commandCenter.controls.concurrency.maxWorktrees", defaultValue: "Max worktrees" },
 };
@@ -61,7 +63,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function getConcurrencySliderMax(key: keyof ConcurrencyValues, value: number) {
+function getConcurrencySliderMax(key: Exclude<keyof ConcurrencyValues, "worktreeLimitEnabled">, value: number) {
   return Math.max(CONCURRENCY_SLIDER_LIMITS[key].max, value);
 }
 
@@ -82,7 +84,8 @@ function getUseMarkerStyle(ratio: number): CSSProperties {
 }
 
 function getChangedConcurrencyKeys(values: ConcurrencyValues, persisted: ConcurrencyValues) {
-  return (Object.keys(values) as Array<keyof ConcurrencyValues>).filter((key) => values[key] !== persisted[key]);
+  return (Object.keys(CONCURRENCY_SETTING_LABEL_KEYS) as Array<Exclude<keyof ConcurrencyValues, "worktreeLimitEnabled">>)
+    .filter((key) => values[key] !== persisted[key]);
 }
 
 function StatusPill({ paused, label }: { paused: boolean; label: string }) {
@@ -123,6 +126,7 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
           const persistedValues = {
             maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
             maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
+            worktreeLimitEnabled: settings.worktreeLimitEnabled !== false,
           };
           persistedConcurrencyRef.current = persistedValues;
           pendingConcurrencyKeyRef.current = null;
@@ -137,7 +141,7 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
         if (!cancelled) {
           setConcurrencyState({
             status: "error",
-            data: DEFAULT_CONCURRENCY_VALUES,
+            data: persistedConcurrencyRef.current,
             error: error instanceof Error ? error.message : t("commandCenter.controls.concurrency.error", "Unable to load concurrency settings"),
           });
         }
@@ -219,7 +223,7 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
     return () => clearTimeout(timeoutId);
   }, [confirm, concurrencyDirty, concurrencyState.data, projectId, refresh, t]);
 
-  const updateConcurrencyValue = (key: keyof ConcurrencyValues, rawValue: string, min: number, max: number) => {
+  const updateConcurrencyValue = (key: Exclude<keyof ConcurrencyValues, "worktreeLimitEnabled">, rawValue: string, min: number, max: number) => {
     const nextValue = clamp(Number(rawValue), min, max);
     pendingConcurrencyKeyRef.current = key;
     setConcurrencyState((current) => ({
@@ -236,6 +240,8 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
   const globalCountsLoaded = gc.status === "loaded";
   const projectActive = gc.projectActiveCount(projectId);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
+  const worktreesEditable = concurrencyState.status === "loaded" && concurrencyValues.worktreeLimitEnabled;
+  const slidersEditable = concurrencyState.status === "loaded";
   const projectUseMarkerRatio = getUseMarkerRatio(
     projectActive,
     concurrencyValues.maxConcurrent,
@@ -369,7 +375,7 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
                   min={CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min}
                   max={maxConcurrentSliderMax}
                   value={concurrencyValues.maxConcurrent}
-                  disabled={concurrencyState.status === "loading"}
+                  disabled={!slidersEditable}
                   onChange={(event) => updateConcurrencyValue(
                     "maxConcurrent",
                     event.target.value,
@@ -387,26 +393,39 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
                 ) : null}
               </span>
             </label>
+            {/*
+            FNXC:CommandCenter 2026-08-01-00:14:
+            The Concurrency card must always show both per-project capacity sliders. When
+            settings are loading, failed, or intentionally disable the worktree limit, keep
+            the native control visible but disabled with an explanation rather than hiding it.
+            */}
             <label className="cc-controls-slider" htmlFor="cc-max-worktrees">
               <span className="cc-controls-slider-label">
                 {t("commandCenter.controls.concurrency.maxWorktrees", "Max worktrees")}
                 <strong>{concurrencyValues.maxWorktrees}</strong>
               </span>
-              <input
-                id="cc-max-worktrees"
-                className="cc-controls-touch-slider"
-                type="range"
-                min={CONCURRENCY_SLIDER_LIMITS.maxWorktrees.min}
-                max={getConcurrencySliderMax("maxWorktrees", concurrencyValues.maxWorktrees)}
-                value={concurrencyValues.maxWorktrees}
-                disabled={concurrencyState.status === "loading"}
-                onChange={(event) => updateConcurrencyValue(
-                  "maxWorktrees",
-                  event.target.value,
-                  CONCURRENCY_SLIDER_LIMITS.maxWorktrees.min,
-                  getConcurrencySliderMax("maxWorktrees", concurrencyValues.maxWorktrees),
-                )}
-              />
+              <span className="cc-controls-range-wrap">
+                <input
+                  id="cc-max-worktrees"
+                  className="cc-controls-touch-slider"
+                  type="range"
+                  min={CONCURRENCY_SLIDER_LIMITS.maxWorktrees.min}
+                  max={getConcurrencySliderMax("maxWorktrees", concurrencyValues.maxWorktrees)}
+                  value={concurrencyValues.maxWorktrees}
+                  disabled={!worktreesEditable}
+                  onChange={(event) => updateConcurrencyValue(
+                    "maxWorktrees",
+                    event.target.value,
+                    CONCURRENCY_SLIDER_LIMITS.maxWorktrees.min,
+                    getConcurrencySliderMax("maxWorktrees", concurrencyValues.maxWorktrees),
+                  )}
+                />
+              </span>
+              {!concurrencyValues.worktreeLimitEnabled && concurrencyState.status === "loaded" ? (
+                <small className="cc-controls-slider-caption">
+                  {t("commandCenter.controls.concurrency.worktreeLimitDisabled", "Enable the worktree limit in Settings to edit this capacity.")}
+                </small>
+              ) : null}
             </label>
           </div>
           {concurrencyState.status === "error" ? <p className="cc-controls-error" role="alert">{concurrencyState.error}</p> : null}

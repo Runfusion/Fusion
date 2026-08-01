@@ -118,12 +118,18 @@ cannot desynchronize the range tracks at desktop or tablet widths.
 /*
 FNXC:GlobalConcurrencyControls 2026-07-15-17:30:
 FN-8007 makes the current-use dot's half-thumb edge inset match the native desktop range thumb. This preserves the min-relative thumb alignment used by the marker: one running agent stays visible at the start and over-cap use stays on the cap thumb.
+
+FNXC:CommandCenter 2026-08-01-00:14:
+Both capacity controls use this wrapper so their range sizing and native thumb token remain
+identical. A disabled capacity is still a visible control; only its editability changes.
 */
 .cc-controls-range-wrap {
   --cc-controls-range-thumb-size: calc(var(--space-lg) + var(--space-xs) / 2);
   position: relative;
   display: flex;
   align-items: center;
+  inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .cc-controls-range-wrap,
