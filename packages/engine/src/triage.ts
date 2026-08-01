@@ -2146,6 +2146,7 @@ export class TriageProcessor {
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
         /*
+        FNXC:CapacityModel 2026-08-01-02:12:
         Terminal membership is project-wide: custom workflows can rename both completion and archive
         lanes. Resolving the complete set once keeps retained terminal worktrees cleanup-owned instead
         of charging them against planning capacity.
