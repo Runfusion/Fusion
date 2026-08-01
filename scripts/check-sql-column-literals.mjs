@@ -458,14 +458,29 @@ if (process.argv.includes("--update-baseline")) {
   }
 
   if (tightened.length > 0) {
-    writeFileSync(BASELINE, `${JSON.stringify(found, null, 2)}\n`);
-    console.log("\n[check-sql-column-literals] baseline TIGHTENED — fewer literals than it allowed\n");
+    /*
+    FNXC:SqlColumnLiterals 2026-08-01-01:45 (u12 — last of three gates that wrote to the tree they check):
+    This rewrote the baseline during a plain CHECK. The tightening is right — an allowance nobody spends
+    is a hole a literal can be regrown into — but performing it as a side effect handed every worker a
+    byte-identical uncommitted diff they had not authored, which they then reasonably committed.
+
+    Measured cost across the family: nine PRs chased three defects on 2026-07-31/08-01, and two of them
+    (#3283/#3285, five minutes apart, `+0/-1` each) deleted the SAME baseline line — neither author wrote
+    it. As #3289 put it: a check that writes turns every reader into an author. Two of us separately
+    mis-attributed a gate-written baseline to our own work while debugging something else.
+
+    Fixed in #3287 (fnxc) and #3289 (census); this is the third and last. Still computed, still reported
+    loudly, written only under --update-baseline. A plain run stays GREEN rather than failing: counts drop
+    when someone ELSE's merge removes a literal, so failing would redden main on a change the author never
+    made. Report, do not enforce — the rise path above still exits 1 and is untouched.
+    */
+    console.log("\n[check-sql-column-literals] baseline CAN BE TIGHTENED — fewer literals than it allowed\n");
     for (const { file, allowed, count } of tightened.sort((a, b) => a.file.localeCompare(b.file))) {
       console.log(`  ${file}: allowed ${allowed}, now ${count}`);
     }
     console.log(
-      "\nThe baseline has been rewritten downward. COMMIT IT so the allowance cannot be regrown into;\n"
-      + "in CI this write is discarded with the runner, which is why the gate is green and not silent.\n",
+      "\nNot written. Record it deliberately, so the diff has one author:\n"
+      + "\n  node scripts/check-sql-column-literals.mjs --update-baseline\n",
     );
     process.exit(0);
   }

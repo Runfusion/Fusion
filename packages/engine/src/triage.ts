@@ -2366,6 +2366,73 @@ export class TriageProcessor {
    * checks and finalizes. Workflow Plan Review is the single optional AI plan
    * quality gate before execution; triage does not inject a separate review tool.
    */
+  /*
+  FNXC:ImportNearDuplicatePreCheck 2026-08-01-02:55 (live incident — five same-event imports planned as five tasks):
+  The FN-5152 near-duplicate backstop runs POST-planning (triage→todo), so a batch of GitHub-issue
+  imports for one underlying event (five issues auto-filed for the same red main) each burned a
+  full planning session before any duplicate check ran — and racing concurrently, none saw the
+  others. The comparator's inputs (title + description) exist BEFORE planning for an import, which
+  carries the full issue body at create. Run the SAME comparator (same extractor, same
+  findNearDuplicates, same 7-day window, same flag metadata shape) at specifyTask entry for
+  import-sourced tasks; on an older-canonical hit, flag for the operator's duplicate decision and
+  skip the planner entirely. Scoped to imports: dashboard/API creates keep the post-plan-only
+  behavior, whose signature quality benefits from the planned PROMPT. Fail-open like the backstop —
+  a comparator error must never block planning.
+  */
+  private async flagImportNearDuplicateBeforePlanning(task: Task): Promise<boolean> {
+    if (task.sourceType !== "github_import") return false;
+    try {
+      const nowMs = Date.now();
+      const listed = await this.store.listTasks({ slim: false, includeArchived: false });
+      const isTerminalCandidate = await resolveTerminalColumnsForTasks(this.store, listed);
+      const candidates = listed
+        .filter((candidate) => candidate.id !== task.id)
+        .filter((candidate) => !isTerminalCandidate(candidate))
+        .filter((candidate) => Date.parse(candidate.createdAt) >= nowMs - 7 * 24 * 60 * 60 * 1000)
+        .map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title ?? "",
+          description: candidate.description ?? "",
+          column: candidate.column,
+          createdAt: Date.parse(candidate.createdAt),
+        } satisfies NearDuplicateCandidate));
+      const matches = findNearDuplicates(
+        { title: task.title ?? "", description: task.description ?? "" },
+        candidates,
+        { windowMs: 7 * 24 * 60 * 60 * 1000, nowMs },
+      );
+      const canonical = matches[0];
+      if (!canonical) return false;
+      const canonicalRow = listed.find((candidate) => candidate.id === canonical.id);
+      // Same tie rule as the backstop: only an older (or tie-canonical) row wins; and never flag
+      // against an inactive canonical (FN-6439 defense-in-depth).
+      if (!canonicalRow || Date.parse(canonicalRow.createdAt) > Date.parse(task.createdAt)) return false;
+      await this.store.updateTask(task.id, {
+        sourceMetadataPatch: {
+          nearDuplicateOf: canonical.id,
+          nearDuplicateScore: canonical.score,
+          nearDuplicateSharedTokens: canonical.sharedTokens,
+        },
+      } as Parameters<typeof this.store.updateTask>[1]);
+      await this.store.logEntry(
+        task.id,
+        `Flagged as near-duplicate of ${canonical.id} before planning (imported issue; awaiting user decision)`,
+        `Shared tokens: ${canonical.sharedTokens.join(", ")}`,
+      );
+      await this.store.recordActivity({
+        type: "task:near-duplicate-flagged",
+        taskId: task.id,
+        taskTitle: task.title ?? "",
+        details: `Near-duplicate of ${canonical.id} (pre-planning import check)`,
+        metadata: { canonicalTaskId: canonical.id, source: "import-pre-planning" },
+      });
+      return true;
+    } catch (error: unknown) {
+      planLog.warn(`${task.id}: import near-duplicate pre-check failed open: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
   async specifyTask(task: Task): Promise<void> {
     /*
     FNXC:TriageStuckKill 2026-07-18-21:05:
@@ -2383,6 +2450,11 @@ export class TriageProcessor {
       // planner handoff must return it instead of pinning max concurrency.
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       this.coordinatorAdmittedTaskIds.delete(task.id);
+      return;
+    }
+
+    if (await this.flagImportNearDuplicateBeforePlanning(task)) {
+      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
       return;
     }
     this.processing.add(task.id);
