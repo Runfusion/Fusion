@@ -2145,8 +2145,14 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
+        /*
+        Terminal membership is project-wide: custom workflows can rename both completion and archive
+        lanes. Resolving the complete set once keeps retained terminal worktrees cleanup-owned instead
+        of charging them against planning capacity.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, ["complete", "archived"]);
         const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
+          !terminalColumns.has(t.column)
           && typeof t.worktree === "string" && t.worktree.length > 0).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
