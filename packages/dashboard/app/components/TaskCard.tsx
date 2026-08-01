@@ -3392,7 +3392,15 @@ function TaskCardComponent({
           ? t("tasks.needsInput", "Needs input")
           : isTransientPlannerActive
             ? t("tasks.statusPlanning", "Planning")
-            : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
+            /*
+            FNXC:TaskStatusBadge 2026-08-01-03:20 (operator: ONE queued badge family, no dupes):
+            Queued-to-plan renders through THIS badge now — same span, same family as Planning —
+            instead of the standalone `queued-to-plan` pill it used to be (removed below). One card,
+            one badge; the muted modifier class and testid survive on this span.
+            */
+            : showQueuedToPlanBadge
+              ? t("tasks.queuedToPlan", "Queued to plan")
+              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
@@ -3536,9 +3544,9 @@ function TaskCardComponent({
               : pausedByAgent ? t("tasks.pausedByAgent", "paused by agent") : t("tasks.paused", "paused")}
           </span>
         )}
-        {showStatusBadge && (
+        {(showStatusBadge || showQueuedToPlanBadge) && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${showQueuedToPlanBadge ? " queued-to-plan" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${isPlanReviewReplanCapApproval ? " awaiting-approval--plan-review-replan-cap" : ""}${isAwaitingInput ? " awaiting-input" : ""}${isAgentActive ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
             title={
               isPlanReviewReplanCapApproval
                 ? t(
@@ -3560,6 +3568,11 @@ function TaskCardComponent({
                   idle Revising card explains itself. Gated on !isAgentActive so a genuinely
                   running revise cycle keeps no misleading "waiting" text.
                   */
+                  : showQueuedToPlanBadge
+                    ? t(
+                        "tasks.queuedToPlanTitle",
+                        "Waiting for a planning slot — planning starts when an agent slot frees up",
+                      )
                   : task.status === "needs-replan" && !isAgentActive
                     ? t(
                         "tasks.needsReplanQueuedTitle",
@@ -3568,7 +3581,7 @@ function TaskCardComponent({
                     : undefined
             }
             aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
-            data-testid={isAwaitingApproval ? `card-awaiting-approval-${task.id}` : undefined}
+            data-testid={isAwaitingApproval ? `card-awaiting-approval-${task.id}` : showQueuedToPlanBadge ? `card-queued-to-plan-${task.id}` : undefined}
             data-awaiting-approval-reason={isAwaitingApproval ? (task.awaitingApprovalReason ?? "manual") : undefined}
           >
             {statusBadgeLabel}
@@ -3624,18 +3637,6 @@ function TaskCardComponent({
         find. Names the surviving dimension only. Worktrees can also be the binding gate, but only when
         the operator has worktree limiting on, so it is not stated unconditionally here.
         */}
-        {showQueuedToPlanBadge && (
-          <span
-            className="card-status-badge card-status-badge--todo queued-to-plan"
-            data-testid={`card-queued-to-plan-${task.id}`}
-            title={t(
-              "tasks.queuedToPlanTitle",
-              "Waiting for a planning slot — planning starts when an agent slot frees up",
-            )}
-          >
-            {t("tasks.queuedToPlan", "Queued to plan")}
-          </span>
-        )}
         {hasInReviewStall && stallCopy && (
           <span
             className={`card-status-badge card-status-badge--in-review in-review-stall in-review-stall--${stallCopy.code}`}

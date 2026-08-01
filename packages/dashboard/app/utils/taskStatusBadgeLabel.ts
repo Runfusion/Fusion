@@ -74,6 +74,14 @@ export function getTaskStatusBadgeLabel(
     return t("tasks.statusQueuedBehind", "Queued behind {{taskId}}", { taskId: context.overlapBlockedBy });
   }
   /*
+  FNXC:TaskStatusBadge 2026-08-01-03:20 (operator: one queued family, like the planning badge):
+  Raw "queued" (scheduler capacity/dependency marker) previously fell through to the verbatim
+  lowercase engine token. Map it so every queued state reads as the same badge family.
+  */
+  if (status === "queued") {
+    return t("tasks.statusQueued", "Queued");
+  }
+  /*
   FNXC:TaskStatusBadge 2026-07-26-14:05:
   "planning" is an engine token, not operator copy, and it was only ever hidden because U12's
   workflow-step override happened to cover the same cards. Now that the Plan Review gate has its own
