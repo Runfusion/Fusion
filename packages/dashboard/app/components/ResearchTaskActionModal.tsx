@@ -90,6 +90,20 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
 
   useEffect(() => {
     if (!open || mode !== "enrich") return;
+    /*
+    FNXC:ResearchTaskPicker 2026-08-01-00:30 (#3286 review — "ignore results from superseded task
+    requests"): LAST REQUEST WINS, AND THE STALE LIST IS NOT SELECTABLE MEANWHILE.
+
+    `projectId` / `isArchivedColumn` changing starts a second fetch while the first is in flight. With
+    no guard the slower one resolves last and repopulates the picker from the OLD project — and because
+    the previous rows stayed listed while loading, an operator could attach a finding to a task from a
+    project they had already switched away from. Wrong-row attachment, not a cosmetic flicker.
+
+    Clearing on entry also removes the stale-but-selectable window: the picker is empty while loading
+    rather than showing rows the current filters have not vetted.
+    */
+    let superseded = false;
+    setTasks([]);
     setLoadingTasks(true);
     void fetchTasks(50, 0, projectId)
       /*
@@ -107,8 +121,16 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
       The guard was real either way: on a renamed board `archived` matched nothing, so filed-away
       tasks stayed in this picker and an operator could attach findings to work they had archived.
       */
-      .then((rows) => setTasks(rows.filter((task) => !isArchivedColumn(task.column))))
-      .finally(() => setLoadingTasks(false));
+      .then((rows) => {
+        if (superseded) return;
+        setTasks(rows.filter((task) => !isArchivedColumn(task.column)));
+      })
+      .finally(() => {
+        if (!superseded) setLoadingTasks(false);
+      });
+    return () => {
+      superseded = true;
+    };
   }, [open, mode, projectId, isArchivedColumn]);
 
   if (!open) return null;
