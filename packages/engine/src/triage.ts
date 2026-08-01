@@ -37,6 +37,7 @@ import {
   resolveLifecycleColumns,
   resolveWorkflowIrForTaskWithProvenance,
   resolveProjectColumnsForRoles,
+  TERMINAL_ROLES,
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
@@ -2145,8 +2146,19 @@ export class TriageProcessor {
       const maxWorktrees = (settings as { maxWorktrees?: number | null }).maxWorktrees ?? 4;
       let worktreeRoom = Number.POSITIVE_INFINITY;
       if (typeof maxWorktrees === "number" && Number.isFinite(maxWorktrees)) {
+        /*
+        FNXC:WorktreeCapacity 2026-08-01-01:55:
+        TERMINAL BY ROLE. This ledger mirrors the scheduler's, and the scheduler's resolves — so
+        comparing `"done"`/`"archived"` here meant the same capacity question got different answers
+        depending on which lane asked it. On a renamed board every finished card counted as a live
+        worktree holder, and planning admission starved against a cap it could never reach.
+
+        PROJECT-WIDE, not per-task: this filters every task, so a per-task flags read would be N+1
+        workflow reads for a question with one project-level answer.
+        */
+        const terminalColumns = await resolveProjectColumnsForRoles(this.store, TERMINAL_ROLES);
         const heldWorktrees = allTasks.filter((t) =>
-          t.column !== "done" && t.column !== "archived"
+          !terminalColumns.has(t.column)
           && typeof t.worktree === "string" && t.worktree.length > 0).length;
         worktreeRoom = Math.max(0, maxWorktrees - heldWorktrees);
       }
