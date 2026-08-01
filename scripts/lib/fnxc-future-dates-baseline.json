@@ -59,7 +59,6 @@
   "packages/engine/src/restart-recovery-coordinator.ts": 1,
   "packages/engine/src/runtime-resolution.ts": 1,
   "packages/engine/src/runtimes/in-process-runtime.ts": 4,
-  "packages/engine/src/scheduler.ts": 1,
   "packages/engine/src/triage.ts": 5,
   "docs/dashboard-guide.md": 2,
   "docs/workflow-steps.md": 1
