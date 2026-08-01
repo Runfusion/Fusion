@@ -145,11 +145,35 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
       expect.objectContaining({
         mutationType: "task:execution-blocked-parked",
         target: "FN-8141",
-        metadata: { taskId: "FN-8141", blockedBy: ["FN-8145"], hasReason: true },
+        // FNXC:HonestBlockedExit 2026-08-01-01:45: `parkedAs` discriminates the dependency-free
+        // auto-replan park from the failed park (both ids/outcomes-only).
+        metadata: { taskId: "FN-8141", blockedBy: ["FN-8145"], hasReason: true, parkedAs: "failed" },
       }),
     );
     const auditCall = store.recordRunAuditEvent.mock.calls[0][0];
     expect(JSON.stringify(auditCall.metadata)).not.toContain("secret blocker prose");
+  });
+
+  it("parks a dependency-free block as needs-replan (auto-replan), never as an alarming failed badge", async () => {
+    /*
+    FNXC:HonestBlockedExit 2026-08-01-01:45 (operator report — FN-8634):
+    No blockedBy = nothing external to wait for; the recovery is a replan, which the overseer was
+    already performing AFTER the failed badge alarmed the operator. Reverting the auto-replan park
+    fails this test (status returns to "failed" with a BLOCKED error).
+    */
+    const { store, tool } = await setup();
+
+    await tool.execute("id", { outcome: "blocked", reason: "requirements contradict each other" });
+
+    const patch = store.updateTask.mock.calls.find(([, p]: [string, Record<string, unknown>]) => "status" in p)?.[1] as Record<string, unknown>;
+    expect(patch.status).toBe("needs-replan");
+    expect(patch.error).toBeNull();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutationType: "task:execution-blocked-parked",
+        metadata: expect.objectContaining({ parkedAs: "auto-replan", blockedBy: [] }),
+      }),
+    );
   });
 
   it("leaves steps in their true statuses (no auto-done, no auto-skip)", async () => {

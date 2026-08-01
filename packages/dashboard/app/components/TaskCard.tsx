@@ -51,7 +51,7 @@ import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTas
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
-import { getTaskStatusBadgeLabel, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -345,8 +345,8 @@ status mapper retains its ellipsis-bearing output for ListView and other non-car
 Only strip a terminal Unicode ellipsis after the shared mapper resolves one of the active
 merge statuses so non-merge labels, status routing, and localization remain unchanged.
 */
-function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string): string {
-  const label = getTaskStatusBadgeLabel(status, t, workflowStepLabel);
+function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string, context?: TaskStatusBadgeContext): string {
+  const label = getTaskStatusBadgeLabel(status, t, workflowStepLabel, context);
   return ACTIVE_MERGE_STATUSES.has(status) && label.endsWith("…") ? label.slice(0, -1) : label;
 }
 
@@ -3392,7 +3392,7 @@ function TaskCardComponent({
           ? t("tasks.needsInput", "Needs input")
           : isTransientPlannerActive
             ? t("tasks.statusPlanning", "Planning")
-            : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
+            : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in

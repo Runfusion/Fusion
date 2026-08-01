@@ -17105,20 +17105,54 @@ export class TaskExecutor {
           const mergedDependencies = blockedByIds.length > 0
             ? Array.from(new Set([...(blockedTask.dependencies ?? []), ...blockedByIds]))
             : undefined;
-          await store.updateTask(taskId, {
-            status: "failed",
-            error: parkError,
-            paused: false,
-            pausedByAgentId: null,
-            ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
-          }, this.getRunContextFor(taskId));
+          /*
+          FNXC:HonestBlockedExit 2026-08-01-01:40 (operator: FN-8634 "shouldn't show a failed badge"):
+          When `blockedBy` is EMPTY there is nothing external to wait for — the block is a defect in
+          the PLAN (contradictory requirements, impossible step), and the designed recovery is a
+          replan, which the planner overseer was already performing after the alarm: park failed →
+          overseer "stage=executor signal=failed" → steer to replan. Skip the alarm: park directly
+          as `needs-replan` (the graph's durable replan signal) with the BLOCKED reason in the log,
+          and move to the replan column so triage re-admits it. A blocked exit WITH dependencies
+          keeps the failed park — waiting on other tasks is a real park an operator may act on.
+          The run-audit event fires for both shapes (`parkedAs` discriminates, ids/outcomes-only).
+          */
+          const autoReplanPark = blockedByIds.length === 0;
+          if (autoReplanPark) {
+            const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
+            await store.logEntry(
+              taskId,
+              `${parkError} — no blocking dependencies recorded; parking for automatic replan in ${replanColumn} (steps preserved)`,
+              undefined,
+              this.getRunContextFor(taskId),
+            );
+            this.workflowLifecycleMovesInFlight.add(taskId);
+            try {
+              await moveTaskToReplanColumn(this.store, { id: taskId, column: blockedTask.column }, replanColumn);
+            } finally {
+              this.workflowLifecycleMovesInFlight.delete(taskId);
+            }
+            await store.updateTask(taskId, {
+              status: "needs-replan",
+              error: null,
+              paused: false,
+              pausedByAgentId: null,
+            }, this.getRunContextFor(taskId));
+          } else {
+            await store.updateTask(taskId, {
+              status: "failed",
+              error: parkError,
+              paused: false,
+              pausedByAgentId: null,
+              ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
+            }, this.getRunContextFor(taskId));
 
-          await store.logEntry(
-            taskId,
-            `${parkError}${blockedByIds.length > 0 ? ` — recorded dependencies: ${blockedByIds.join(", ")}` : ""} — parked failed (honest blocked exit; steps preserved)`,
-            undefined,
-            this.getRunContextFor(taskId),
-          );
+            await store.logEntry(
+              taskId,
+              `${parkError} — recorded dependencies: ${blockedByIds.join(", ")} — parked failed (honest blocked exit; steps preserved)`,
+              undefined,
+              this.getRunContextFor(taskId),
+            );
+          }
           await this.store.recordRunAuditEvent?.({
             taskId,
             agentId: "executor",
@@ -17130,15 +17164,18 @@ export class TaskExecutor {
               taskId,
               blockedBy: blockedByIds,
               hasReason: true,
+              parkedAs: autoReplanPark ? "auto-replan" : "failed",
             },
           });
           await this.persistTokenUsage(taskId);
-          executorLog.log(`⛔ ${taskId} parked failed via blocked exit${blockedByIds.length > 0 ? ` (blockedBy: ${blockedByIds.join(", ")})` : ""}`);
+          executorLog.log(`⛔ ${taskId} ${autoReplanPark ? "parked for automatic replan via blocked exit (no dependencies)" : `parked failed via blocked exit (blockedBy: ${blockedByIds.join(", ")})`}`);
 
           return {
             content: [{
               type: "text" as const,
-              text: `Task parked as blocked (failed). ${blockedByIds.length > 0 ? `Recorded ${blockedByIds.length} blocking dependency(ies); it will requeue once they complete. ` : ""}Steps left in their true statuses; no completion recorded.`,
+              text: autoReplanPark
+                ? "Task parked as blocked with no blocking dependencies — queued for automatic replan so the plan can resolve the conflict. Steps left in their true statuses; no completion recorded."
+                : `Task parked as blocked (failed). Recorded ${blockedByIds.length} blocking dependency(ies); it will requeue once they complete. Steps left in their true statuses; no completion recorded.`,
             }],
             details: {},
           };

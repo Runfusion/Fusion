@@ -25,7 +25,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
-import { getTaskStatusBadgeLabel, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, hasTaskStatusBadge , type TaskStatusBadgeContext} from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
@@ -71,9 +71,9 @@ type SortField = "title" | "status" | "column" | "retries";
 FNXC:MergeQueue 2026-07-15-10:45:
 List status column used to print raw engine statuses (landing/reviewing). Share the board badge mapper so list and card never diverge.
 */
-function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string): string {
+function getTaskStatusLabel(status: string, t: TFunction<"app">, workflowStepLabel?: string, context?: TaskStatusBadgeContext): string {
   if (status === "awaiting-approval") return t("tasks.awaitingApproval", "Awaiting Approval");
-  return getTaskStatusBadgeLabel(status, t, workflowStepLabel);
+  return getTaskStatusBadgeLabel(status, t, workflowStepLabel, context);
 }
 type SortDirection = "asc" | "desc";
 
@@ -3082,7 +3082,7 @@ export function ListView({
                             ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                             : isTransientPlannerActive
                               ? t("tasks.statusPlanning", "Planning")
-                              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
+                              : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task, getTaskColumnFlags(task));
                           const hasProgress = taskProgress.hasProgress;
@@ -3349,7 +3349,7 @@ export function ListView({
                               ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
                               : isTransientPlannerActive
                                 ? t("tasks.statusPlanning", "Planning")
-                                : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task));
+                                : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
                             const isDragging = draggingTaskId === task.id;
 
                             return (
