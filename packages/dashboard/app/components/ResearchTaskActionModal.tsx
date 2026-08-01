@@ -65,6 +65,20 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     return `${finding.heading || t("research.defaultFindingHeading", "Research finding")} — ${firstSentence}`.trim();
   }, [finding.content, finding.heading, t]);
 
+  /*
+  FNXC:ResearchTaskModal 2026-08-01-00:41 (an operator's typed title was wiped when board workflows resolved):
+  These two jobs were one effect, and its dependency list carried `isArchivedColumn` for the fetch's
+  sake. `isArchivedColumn` is a `useMemo` over `boardWorkflows` from `useBoardWorkflows()`, so its
+  identity changes every time that hook resolves or revalidates — and each change re-ran the whole
+  effect, calling `setTitle`/`setDescription`/`setPriority`/`setTaskId` over whatever the operator had
+  already typed. Opening the modal and typing before the workflows settled silently reverted the form
+  to its defaults.
+
+  Split so the reset depends only on what the reset is derived from, and the fetch keeps the
+  dependency it actually needs. Same class as
+  `docs/solutions/ui-bugs/skill-autocomplete-highlight-reset-on-swr-revalidation.md`: user input reset
+  by an async revalidation the user cannot see.
+  */
   useEffect(() => {
     if (!open) return;
     setAttachExport(false);
@@ -72,29 +86,30 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     setDescription(preview);
     setPriority("normal");
     setTaskId("");
+  }, [open, mode, finding.heading, preview, run.title]);
 
-    if (mode === "enrich") {
-      setLoadingTasks(true);
-      void fetchTasks(50, 0, projectId)
-        /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-11:45 (u12 — the history, kept short because it is CONVERTED now):
-        This guard was sized twice and declined twice, each time on a cost that turned out to be wrong.
-        Recorded because both wrong answers are instructive, not to relitigate them:
+  useEffect(() => {
+    if (!open || mode !== "enrich") return;
+    setLoadingTasks(true);
+    void fetchTasks(50, 0, projectId)
+      /*
+      FNXC:WorkflowResolvedColumns 2026-07-31-11:45 (u12 — the history, kept short because it is CONVERTED now):
+      This guard was sized twice and declined twice, each time on a cost that turned out to be wrong.
+      Recorded because both wrong answers are instructive, not to relitigate them:
 
-        1. "Needs a data-fetch change" — reasoning about `columnFlagsByTaskId`, a per-TASK map built
-           from board-resident rows. Correct that such a map cannot help (archived rows are exactly
-           what a board map omits), but this guard asks a per-COLUMN question, so it never needed one.
-        2. "Needs prop threading, MainContent -> ResearchView -> here" — correct that the answer is
-           column-keyed, wrong about where it lives. `ListView` builds `columnFlagsById` inline, which
-           made it look like the owner; the data is `useBoardWorkflows`, callable from here directly.
+      1. "Needs a data-fetch change" — reasoning about `columnFlagsByTaskId`, a per-TASK map built
+         from board-resident rows. Correct that such a map cannot help (archived rows are exactly
+         what a board map omits), but this guard asks a per-COLUMN question, so it never needed one.
+      2. "Needs prop threading, MainContent -> ResearchView -> here" — correct that the answer is
+         column-keyed, wrong about where it lives. `ListView` builds `columnFlagsById` inline, which
+         made it look like the owner; the data is `useBoardWorkflows`, callable from here directly.
 
-        The guard was real either way: on a renamed board `archived` matched nothing, so filed-away
-        tasks stayed in this picker and an operator could attach findings to work they had archived.
-        */
-        .then((rows) => setTasks(rows.filter((task) => !isArchivedColumn(task.column))))
-        .finally(() => setLoadingTasks(false));
-    }
-  }, [open, mode, projectId, finding.heading, preview, run.title, isArchivedColumn]);
+      The guard was real either way: on a renamed board `archived` matched nothing, so filed-away
+      tasks stayed in this picker and an operator could attach findings to work they had archived.
+      */
+      .then((rows) => setTasks(rows.filter((task) => !isArchivedColumn(task.column))))
+      .finally(() => setLoadingTasks(false));
+  }, [open, mode, projectId, isArchivedColumn]);
 
   if (!open) return null;
 
