@@ -34,8 +34,11 @@ export type BlockedExitClassification = {
 };
 
 const TASK_ID_RE = /^[A-Z][A-Z0-9]*-\d+$/i;
-/** Bare PR refs: pr:2398, pr#2398, pr-2398, #2398, PR-2398 (not FN-#### task ids). */
-const PR_REF_RE = /^(?:pr[:#\-]|#|PR-)(\d+)$/i;
+/**
+ * FNXC:ExecutionBlockClassification 2026-08-01-18:45:
+ * Bare PR blockers accept pr:2398, pr#2398, pr-2398, #2398, and PR-2398 while excluding FN-#### task IDs. Keep the hyphen last in the character class so ESLint does not require an unnecessary escape.
+ */
+const PR_REF_RE = /^(?:pr[:#-]|#|PR-)(\d+)$/i;
 const PR_IN_TEXT_RE = /\bPR\s*#?\s*(\d+)\b/gi;
 const CLAIM_REASON_RE =
   /check-file-claimed|actively claimed|file[- ]claim|claimed by (?:open )?pr|open pr\s*#?\s*\d+|collision policy|claimed paths?|file claims?/i;
