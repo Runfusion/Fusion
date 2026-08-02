@@ -8548,7 +8548,10 @@
     "awaitingApprovalTitle": "",
     "statusReplan": "重新规划",
     "refinesOf": "",
-    "refinesOfTitle": ""
+    "refinesOfTitle": "",
+    "revertedTasks": "",
+    "revertedResolutionActions": "",
+    "revise": ""
   },
   "terminal": {
     "arrowKeysLabel": "",
