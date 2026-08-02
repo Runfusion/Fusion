@@ -971,6 +971,22 @@ describe("TaskChatTab", () => {
     expect(screen.getByText("ok")).toBeVisible();
   });
 
+  it("shows the complete long task activity payload after expanding its tool group", async () => {
+    const user = userEvent.setup();
+    const longCommand = `bash ${"argument ".repeat(12)}TASK_ACTIVITY_COMMAND_SUFFIX`;
+    const longResult = `result\n${"output ".repeat(45)}TASK_ACTIVITY_RESULT_SUFFIX`;
+    mockLogs([
+      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: longCommand }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: longResult }),
+    ]);
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    await user.click(screen.getByText("1 tool call"));
+    const invocation = screen.getByTestId("task-chat-tool-invocation");
+    expect(invocation).toHaveTextContent("TASK_ACTIVITY_COMMAND_SUFFIX");
+    expect(invocation).toHaveTextContent("TASK_ACTIVITY_RESULT_SUFFIX");
+  });
+
   it("shows Bash tool duration in the expanded invocation and omits legacy timing labels", async () => {
     const user = userEvent.setup();
     mockLogs([
@@ -3015,7 +3031,7 @@ describe("TaskChatTab", () => {
     const thinkingRule = getCssRuleBlock(compactThinkingCss, ".task-chat-thinking");
     const thinkingSummaryRule = getCssRuleBlock(getCssAfter(css, ".task-chat-thinking {\n  border-color"), ".task-chat-thinking-summary");
     const thinkingBodyRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap: var(--space-xs);\n  padding: 0 var(--space-xs) var(--space-xs);\n}"), ".task-chat-thinking-body");
-    const toolDetailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
+    const toolDetailRule = getCssRuleBlock(readFileSync(resolve(__dirname, "../ToolCallDetails.css"), "utf8"), ".tool-call-details-value");
     const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
     const mobileStandardBlockRule = getCssRuleBlock(mobileCss, ".task-chat-entry,\n  .task-chat-tool-group");
     const mobileThinkingRule = getCssRuleBlock(getCssAfter(mobileCss, ".task-chat-thinking {\n    padding"), ".task-chat-thinking");
@@ -3035,8 +3051,8 @@ describe("TaskChatTab", () => {
     expect(thinkingBodyRule).toContain("padding: 0 var(--space-sm) var(--space-sm)");
     expect(toolEntryRule).toContain("box-sizing: border-box");
     expect(toolEntryRule).toContain("padding: var(--space-sm)");
-    expect(toolDetailRule).toContain("box-sizing: border-box");
-    expect(toolDetailRule).toContain("padding: var(--space-xs)");
+    expect(toolDetailRule).toContain("max-inline-size: 100%");
+    expect(toolDetailRule).toContain("overflow-x: auto");
     expect(mobileStandardBlockRule).toContain("padding: var(--space-sm)");
     expect(mobileThinkingRule).toContain("padding: var(--space-xs)");
     expect(mobileToolEntryRule).toContain("padding: var(--space-xs)");
@@ -3094,8 +3110,9 @@ describe("TaskChatTab", () => {
     const entriesRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap"), ".task-chat-tool-group-entries");
     const entryRule = getCssRuleBlock(css, ".task-chat-tool-entry");
     const kickerRule = getCssRuleBlock(css, ".task-chat-entry-kicker");
-    const detailLabelRule = getCssRuleBlock(css, ".task-chat-tool-detail-label");
-    const detailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
+    const detailCss = readFileSync(resolve(__dirname, "../ToolCallDetails.css"), "utf8");
+    const detailLabelRule = getCssRuleBlock(detailCss, ".tool-call-details-label");
+    const detailRule = getCssRuleBlock(detailCss, ".tool-call-details-value");
     const chatSummaryRule = getCssRuleBlock(chatCss, ".chat-tool-calls-group-summary");
     const chatNamesRule = getCssRuleBlock(chatCss, ".chat-tool-calls-names");
     const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
@@ -3125,10 +3142,10 @@ describe("TaskChatTab", () => {
     for (const [selector, readableToolTextRule] of [
       [".task-chat-tool-group-summary", summaryRule],
       [".task-chat-entry-kicker", kickerRule],
-      [".task-chat-tool-detail-label", detailLabelRule],
-      [".task-chat-tool-detail", detailRule],
+      [".tool-call-details-label", detailLabelRule],
+      [".tool-call-details-value", detailRule],
     ] as const) {
-      expect(readableToolTextRule, `${selector} uses readable tool-call typography`).toContain(READABLE_TASK_TOOL_FONT_SIZE);
+      expect(readableToolTextRule, `${selector} uses tokenized tool-call typography`).toMatch(/font-size: var\(--(?:space-md|font-size-xs)\)/);
       expect(readableToolTextRule, `${selector} does not restore the too-small calc`).not.toContain(TOO_SMALL_TASK_TOOL_FONT_SIZE);
     }
     expect(chatSummaryRule).toContain("padding: var(--space-xs)");

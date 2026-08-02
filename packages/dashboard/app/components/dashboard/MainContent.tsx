@@ -847,6 +847,7 @@ export function MainContent({
             onArchiveTask={archiveTask}
             onUnarchiveTask={unarchiveTask}
             onRevertTask={revertTask}
+            onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
             onDeleteTask={deleteTask}
             onArchiveAllDone={archiveAllDone}
             onLoadArchivedTasks={loadArchivedTasks}
@@ -900,6 +901,7 @@ export function MainContent({
               onOpenDetail={(value) => openTaskDetailInMainPanel(value, "chat")}
               onMoveTask={moveTask}
               onDeleteTask={deleteTask}
+              onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
               onResetTask={resetTask}
@@ -962,6 +964,7 @@ export function MainContent({
           onArchiveTask={archiveTask}
           onUnarchiveTask={unarchiveTask}
           onRevertTask={revertTask}
+          onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
           onDeleteTask={deleteTask}
           onArchiveAllDone={archiveAllDone}
           onLoadArchivedTasks={loadArchivedTasks}
@@ -997,6 +1000,7 @@ export function MainContent({
         onMoveTask={moveTask}
         onRetryTask={retryTask}
         onDeleteTask={deleteTask}
+        onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
         onPauseTask={pauseTask}
         onUnpauseTask={unpauseTask}
         onArchiveTask={archiveTask}

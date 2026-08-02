@@ -199,6 +199,28 @@ describe("FloatingWindow", () => {
     expect(mobileTaskDetailBody).toContain("margin-inline-end: 0;");
     expect(cssRulesForClass(desktopAppCss, "floating-window--task-detail").some((rule) => rule.includes("floating-window__body"))).toBe(false);
 
+    /*
+    FNXC:ModalTouchGeometry 2026-08-01-03:48:
+    Tablet contract: ALL tablet-mode floating windows zero the FN-8015 gutter (it read as a
+    too-big uneven right border in Task Detail popups and the floating terminal — third
+    recurrence of the right-padding bug because tablet renders through FloatingWindow, not
+    `.modal-overlay`). Touch never grabs scrollbar thumbs, so the desktop hot-zone conflict
+    does not apply. GitHubImport relied on the gutter as its right inset and must compensate
+    under the same class.
+    */
+    const tabletBody = cssRuleContaining(
+      floatingWindowCss,
+      ".floating-window--tablet-viewport .floating-window__body",
+      "margin-inline-end",
+    );
+    expect(tabletBody).toContain("margin-inline-end: 0;");
+    const tabletGitHubImportPanel = cssRuleContaining(
+      allAppCss,
+      ".floating-window--tablet-viewport .github-import-detail-panel",
+      "padding-inline-end",
+    );
+    expect(tabletGitHubImportPanel).toContain("padding-inline-end: var(--space-lg);");
+
     // Headerless and chat variants replace only body overflow; the inherited gutter remains intact for their inner scrollers.
     expect(cssRuleFor(floatingWindowCss, ".floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
     expect(cssRuleFor(floatingWindowCss, ".floating-window--chat.floating-window--headerless .floating-window__body")).toContain("overflow: hidden;");
@@ -224,6 +246,32 @@ describe("FloatingWindow", () => {
 
     const phoneBlock = mediaBlockFor(floatingWindowCss, "(max-width: 767.98px)");
     expect(cssRuleFor(phoneBlock, ".floating-window--task-detail .floating-window__resize-handle")).toContain("display: none;");
+  });
+
+  /*
+  FNXC:ModalTouchGeometry 2026-08-01-03:48:
+  Tablet MODE is its own styling marker, distinct from `--touch-geometry`: a non-touch window
+  at tablet widths must still receive `floating-window--tablet-viewport` so the FN-8015 gutter zeroing
+  applies everywhere the app classifies the viewport as tablet.
+  */
+  it("marks tablet-mode windows with floating-window--tablet-viewport even without touch", () => {
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      matches: query === "(min-width: 769px) and (max-width: 1024px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    render(
+      <FloatingWindow windowKey="tablet-mode" title="Tablet" onClose={() => {}}>
+        <div>tablet body</div>
+      </FloatingWindow>
+    );
+    const panel = screen.getByTestId("floating-window-tablet-mode");
+    expect(panel.className).toContain("floating-window--tablet-viewport");
   });
 
   it("keeps task-detail long content clear of right handles while preserving short-content right-edge resize", () => {

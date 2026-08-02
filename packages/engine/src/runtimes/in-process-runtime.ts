@@ -53,6 +53,8 @@ import { runtimeLog } from "../logger.js";
 import { getActiveNotificationService } from "../util/notifier.js";
 import { StuckTaskDetector } from "../healing/stuck-task-detector.js";
 import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
+import { CredentialInstanceRotator } from "../credential-instance-rotation.js";
+import { createFusionAuthStorage } from "../auth/auth-storage.js";
 import { SelfHealingManager, VALIDATOR_RUN_STALE_MAX_AGE_MS } from "../self-healing.js";
 import { RestartRecoveryCoordinator } from "../healing/restart-recovery-coordinator.js";
 import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
@@ -66,6 +68,11 @@ import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation } from "../plan-review-continuation.js";
+import {
+  persistedTopLevelAgentTaskIdsFromStore,
+  projectAdmissionCoordinator,
+  resolveActiveTaskCapacityLimit,
+} from "../concurrency/concurrency.js";
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-14:40 (fleet — long-tail fallback arms):
@@ -365,7 +372,9 @@ export interface DuePlanningContinuationDrainDeps {
   ) => Promise<void>;
   /** `item` is passed only so the caller's failure log can keep naming the work
    *  item verbatim; the extraction is otherwise a byte-for-byte body move. */
-  dispatch: (task: Task, item: WorkflowWorkItem) => void;
+  /** Return false when shared capacity rejected this item; later FIFO items
+   *  cannot fit either, so the bounded pass stops without repeating snapshots. */
+  dispatch: (task: Task, item: WorkflowWorkItem) => boolean | void | Promise<boolean | void>;
   nowMs: () => number;
   warn: (message: string) => void;
 }
@@ -420,8 +429,120 @@ export async function drainDuePlanningContinuations(
     const deferral = resolveParkedContinuationDeferral(resolved, deps.nowMs());
     if (deferral) await deps.defer(deferral);
     if (resolved.kind !== "actionable") continue;
-    deps.dispatch(resolved.task, resolved.item);
+    if (await deps.dispatch(resolved.task, resolved.item) === false) break;
   }
+}
+
+const planningContinuationRuns = new Set<string>();
+
+export async function admitPlanningContinuation(input: {
+  store: TaskStore;
+  projectId: string;
+  task: Task;
+  item: WorkflowWorkItem;
+  dispatch: () => Promise<void>;
+}): Promise<boolean> {
+  const runKey = `${input.projectId}:${input.task.id}`;
+  // A task owns one top-level slot regardless of how many durable continuation
+  // rows point at it. Treat a duplicate due row as already handled; admitting it
+  // would attach two releasers to one task-keyed coordinator reservation.
+  if (planningContinuationRuns.has(runKey)) return true;
+  const settings = await input.store.getSettings();
+  let selected = false;
+  let duplicateHandled = false;
+  const loadClaimSnapshot = async (): Promise<{ count: number; ids: string[] }> => {
+    /*
+    FNXC:WorkflowContinuationCapacity 2026-08-01-06:20:
+    A dependency-cleared task continuation can resume directly in a same-column Plan Review node.
+    That path does not cross the scheduler-owned hold→WIP boundary, so dispatching it directly let
+    the new reviewer become a tenth live task while maxWorktrees was nine. Count the exact canonical
+    live population (including pending workflow-step leases) and enter through the shared project
+    coordinator before the continuation starts. Full rows are intentional here: slim task snapshots
+    are not a contract for workflowStepResults, while a pending optional-step lease is a live agent.
+    */
+    const tasks = await input.store.listTasks({ slim: false, includeArchived: false });
+    const ids = await persistedTopLevelAgentTaskIdsFromStore(input.store, tasks);
+    return { count: ids.length, ids };
+  };
+  // Resuming another node of an already-live task is a same-slot handoff, not a
+  // new admission. Check only this fully hydrated task here; the project-wide
+  // snapshot belongs inside the serialized coordinator drain below.
+  const taskAlreadyActive = (await persistedTopLevelAgentTaskIdsFromStore(input.store, [input.task]))
+    .includes(input.task.id);
+  if (taskAlreadyActive) {
+    void input.dispatch().catch(() => {});
+    return true;
+  }
+  // This snapshot is intentionally created lazily inside the coordinator drain.
+  // A prior lane may have been finishing its own handoff before this task's
+  // turn; a pre-drain project snapshot can admit into its newly occupied slot.
+  let admissionSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
+  const getAdmissionSnapshot = () => admissionSnapshot ??= loadClaimSnapshot();
+  await projectAdmissionCoordinator.admitNext({
+    projectId: input.projectId,
+    maxConcurrent: resolveActiveTaskCapacityLimit({
+      maxConcurrent: settings.maxConcurrent ?? 2,
+      maxWorktrees: settings.maxWorktrees ?? 4,
+      worktreeLimitEnabled: settings.worktreeLimitEnabled,
+    }),
+    claimed: async () => (await getAdmissionSnapshot()).count,
+    claimedTaskIds: async () => (await getAdmissionSnapshot()).ids,
+    refresh: async () => [{
+      taskId: input.task.id,
+      projectId: input.projectId,
+      lane: "execute",
+      createdAt: input.item.createdAt ?? input.task.createdAt,
+      start: async () => {
+        // The preflight above is only a fast path. This serialized check is the
+        // ownership authority when concurrent drains race the same durable row.
+        if (planningContinuationRuns.has(runKey)) {
+          duplicateHandled = true;
+          // The coordinator's task-keyed Set already contains the ORIGINAL
+          // run's reservation. Accept this no-op candidate so its decline path
+          // cannot release capacity owned by that still-running workflow.
+          return true;
+        }
+        selected = true;
+        planningContinuationRuns.add(runKey);
+        // Keep the coordinator reservation for the whole resumed run. The task
+        // can remain canonically inactive until its first workflow node writes a
+        // pending lease; releasing at executor entry recreates the over-cap gap.
+        let run: Promise<void>;
+        try {
+          run = input.dispatch();
+        } catch (error) {
+          planningContinuationRuns.delete(runKey);
+          throw error;
+        }
+        void run
+          .finally(() => {
+            planningContinuationRuns.delete(runKey);
+            projectAdmissionCoordinator.releaseReservation(input.task.id);
+          })
+          .catch(() => {});
+      },
+    }],
+  });
+  return selected || duplicateHandled;
+}
+
+export function createPlanningContinuationDispatcher(input: {
+  store: TaskStore;
+  projectId: string;
+  execute: (task: Task) => Promise<void>;
+  onError?: (task: Task, item: WorkflowWorkItem, error: unknown) => void;
+}): (task: Task, item: WorkflowWorkItem) => Promise<boolean> {
+  return (task, item) => admitPlanningContinuation({
+    store: input.store,
+    projectId: input.projectId,
+    task,
+    item,
+    dispatch: async () => {
+      await input.execute(task).catch((error) => {
+        input.onError?.(task, item, error);
+      });
+    },
+  });
 }
 
 /**
@@ -594,6 +715,8 @@ export class InProcessRuntime
    */
   private cliAgentRuntime?: BootstrappedCliAgentRuntime;
   private usageLimitPauser?: UsageLimitPauser;
+  /** One runtime-owned cooldown map keeps executor and recovery paths coherent. */
+  private credentialRotator?: CredentialInstanceRotator;
   /** FNXC:PlanReviewLease 2026-07-26-20:42: cluster node id stamped onto review-gate leases; undefined until start() resolves it, or if resolution fails. */
   private localNodeId?: string;
   private selfHealingManager?: SelfHealingManager;
@@ -700,6 +823,7 @@ export class InProcessRuntime
         // InProcessRuntime.start(). When the factory returns a backend result,
         // the engine owns the result's shutdown() for process teardown.
         createTaskStoreForBackend,
+        buildConsumerId,
         createProjectScopedPluginMcpProvider,
         registerTaskDeleteNoticeMailbox,
       } = await import("@fusion/core");
@@ -710,6 +834,8 @@ export class InProcessRuntime
         const backendBoot = await createTaskStoreForBackend({
           rootDir: this.config.workingDirectory,
           projectId: this.config.projectId,
+          /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: the engine owns this store, so its role-only identity is restart-stable and never derives from boot state. */
+          consumerId: buildConsumerId("engine"),
           onMigrationProgress: this.config.onMigrationProgress,
         });
         // FNXC:PostgresFinalCutover 2026-07-14-17:20: Engine runtimes must fail
@@ -725,7 +851,27 @@ export class InProcessRuntime
       FNXC:ProviderRateLimitIsolation 2026-07-19-19:10:
       Every project runtime owns one usage-limit coordinator and shares it across executor, triage, reviewer, and merger surfaces. Runtime isolation replaced the old dashboard-level construction site; constructing it here prevents a silently undefined pauser while keeping a provider outage local to the affected project/task.
       */
-      this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore);
+      this.credentialRotator ??= new CredentialInstanceRotator({
+        instanceSource: createFusionAuthStorage(),
+        // FNXC:CredentialInstanceRotation 2026-08-01-11:05:
+        // Rotation evidence is emitted through the runtime-owned audit seam. Metadata
+        // is supplied by the rotator as ids/counts/outcomes only; audit failures stay
+        // non-fatal so an observability outage cannot prevent rate-limit recovery.
+        recordRunAuditEvent: async (mutationType, metadata) => {
+          await this.taskStore.recordRunAuditEvent?.({
+            taskId: typeof metadata.taskId === "string" ? metadata.taskId : undefined,
+            agentId: typeof metadata.agentId === "string" ? metadata.agentId : "runtime",
+            runId: generateSyntheticRunId("credential-instance-rotation", typeof metadata.taskId === "string" ? metadata.taskId : String(metadata.providerId ?? "unknown")),
+            domain: "database",
+            mutationType,
+            target: String(metadata.providerId ?? "unknown"),
+            metadata,
+          });
+        },
+      });
+      this.usageLimitPauser ??= new UsageLimitPauser(this.taskStore, {
+        credentialRotator: this.credentialRotator,
+      });
 
       // Initialize MessageStore early so TaskExecutor receives send_message capability.
       // FNXC:RuntimeSatelliteAsync 2026-06-24-12:45:
@@ -1137,6 +1283,7 @@ export class InProcessRuntime
         getLocalNodeId: () => this.localNodeId,
         pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
+        credentialRotator: this.credentialRotator,
         stuckTaskDetector: this.stuckTaskDetector,
         cliAgentRuntime: this.cliAgentRuntime?.bundle,
         pluginRunner: this.pluginRunner,
@@ -1267,6 +1414,7 @@ export class InProcessRuntime
           reflectionStore: reflectionStoreForService,
           reflectionService,
           selfImproveService,
+          credentialRotator: this.credentialRotator,
           snapshotManager: autoClaimSnapshotManager,
           onMissed: (agentId, reason) => {
             runtimeLog.warn(`Agent ${agentId} missed heartbeat: ${reason}`);
@@ -1411,7 +1559,12 @@ export class InProcessRuntime
           acquirePlanningWorktree: (taskId) => this.executor.ensureTaskWorktreeForPlanning(taskId),
           onSpecifyStart: (t) => {
             this.recordActivity();
-            runtimeLog.log(`Specifying ${t.id}...`);
+            /*
+            FNXC:EngineDiagnostics 2026-08-01-18:11:
+            Duplicate of triage's richer `Specifying ${id}: ${title}` planLog line. Keep this
+            short runtime echo on debug (FUSION_DEBUG=runtime) so planning start is not double-logged.
+            */
+            runtimeLog.debug(`Specifying ${t.id}...`);
           },
           onSpecifyComplete: (t, report) => {
             // Activity is recorded for EVERY outcome: a planning session ran either
@@ -1594,6 +1747,12 @@ export class InProcessRuntime
 
       // 8. Set up event forwarding from TaskStore
       this.setupEventForwarding();
+      /*
+      FNXC:CrossProcessDeleteObservation 2026-08-01-13:03:
+      Engine-owned stores do not call watch(), so runtime startup owns durable delete observation.
+      Start only after its bridge is attached so the initial poll cannot lose a cross-process delete.
+      */
+      await this.taskStore.startTaskDeletedOutboxConsumer();
 
       const startupSettings = await this.taskStore.getSettings();
       if (startupSettings.globalPause || startupSettings.enginePaused) {
@@ -2354,11 +2513,14 @@ export class InProcessRuntime
         },
         cancelOrphan: (item, reason) => this.cancelOrphanedWorkflowWorkItem(item, reason),
         defer: (deferral) => this.deferParkedWorkflowWorkItem(deferral),
-        dispatch: (task, item) => {
-          void this.executor.execute(task).catch((error) => {
+        dispatch: createPlanningContinuationDispatcher({
+          store: this.taskStore,
+          projectId: this.taskStore.getRootDir(),
+          execute: (task) => this.executor.execute(task),
+          onError: (_task, item, error) => {
             runtimeLog.error(`Workflow continuation ${item.id} failed:`, error);
-          });
-        },
+          },
+        }),
         nowMs: () => Date.now(),
         warn: (message) => runtimeLog.warn(message),
       });
@@ -2472,6 +2634,7 @@ export class InProcessRuntime
    */
   setUsageLimitPauser(pauser: UsageLimitPauser): void {
     this.usageLimitPauser = pauser;
+    pauser.setCredentialRotator(this.credentialRotator);
   }
 
   /**
@@ -2524,8 +2687,12 @@ export class InProcessRuntime
       this.emit("task:updated", task);
     });
 
-    // Forward task:deleted events
-    this.taskStore.on("task:deleted", (task: Task, meta?: { githubIssueAction?: GithubIssueAction }) => {
+    /*
+    FNXC:CrossProcessDeleteObservation 2026-08-01-12:02:
+    Preserve observed outbox provenance through the runtime bridge. Downstream project and IPC
+    bridges must distinguish cross-process deletion delivery without re-running writer effects.
+    */
+    this.taskStore.on("task:deleted", (task: Task, meta?: { githubIssueAction?: GithubIssueAction; observed?: boolean; outboxEventId?: string }) => {
       this.recordActivity();
       this.emit("task:deleted", task, meta);
     });

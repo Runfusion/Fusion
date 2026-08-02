@@ -1,7 +1,7 @@
 import { createLogger } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-github-tracking-state");
-import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
+import type { GithubIssueAction, GlobalSettings, ProjectSettings, Task, TaskDeleteClosureContext, TaskStore } from "@fusion/core";
 import { columnsWithFlag, declaresAnyLifecycleTrait, resolveWorkflowIrForTask } from "@fusion/core";
 import { GitHubClient } from "./github.js";
 import { resolveGithubTrackingAuth } from "./github-auth.js";
@@ -139,11 +139,59 @@ type GitHubIssueActionEvent = {
   error?: string;
 };
 
+type TaskDeletedMeta = {
+  githubIssueAction?: GithubIssueAction;
+  closureContext?: TaskDeleteClosureContext;
+  observed?: boolean;
+};
+
+type SplitCommentLog = (message: string, details: string) => Promise<void>;
+
+/*
+FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
+A split-close posts exactly one explanation immediately before exactly one close for each issue.
+Both source and tracking paths call this single helper; a comment failure is logged but deliberately
+never blocks the close, preserving the existing lifecycle outcome even when GitHub commenting fails.
+A close retry must never replay this helper because GitHub can accept a comment before returning a
+transient failure, so the comment is deliberately attempted once.
+*/
+async function postSplitCommentBeforeClose(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  number: number,
+  taskId: string,
+  closureContext: TaskDeleteClosureContext | undefined,
+  resolvedAction: GithubIssueAction | "close",
+  alreadyClosed: boolean,
+  log: SplitCommentLog,
+): Promise<void> {
+  if (closureContext?.kind !== "split-into-subtasks" || resolvedAction !== "close" || alreadyClosed
+    || !owner || !repo || !Number.isInteger(number) || number <= 0) return;
+
+  const body = `This issue was imported as Fusion task ${taskId}, which has been broken down into subtasks: ${closureContext.childTaskIds.join(", ")}. Closing this issue; work continues in those tasks.`;
+  try {
+    await client.commentOnIssue(owner, repo, number, body);
+    await log("Posted GitHub source issue split comment", `${owner}/${repo}#${number}`);
+  } catch (error) {
+    await log("Failed to post GitHub source issue split comment", error instanceof Error ? error.message : String(error));
+  }
+}
+
+function sourceMatchesTrackingIssue(task: Task, owner: string, repo: string, number: number): boolean {
+  const sourceIssue = task.sourceIssue;
+  if (sourceIssue?.provider !== "github" || !Number.isInteger(sourceIssue.issueNumber)) return false;
+  const [sourceOwner, sourceRepo, extra] = sourceIssue.repository.split("/");
+  return !extra && sourceOwner?.toLowerCase() === owner.toLowerCase()
+    && sourceRepo?.toLowerCase() === repo.toLowerCase()
+    && sourceIssue.issueNumber === number;
+}
+
 export class GitHubTrackingStateService {
   private readonly defaultStore: TaskStore;
   private readonly listeners = new Map<TaskStore, {
     onTaskMoved: (event: TaskMovedEvent) => void;
-    onTaskDeleted: (task: Task, meta?: { githubIssueAction?: GithubIssueAction }) => void;
+    onTaskDeleted: (task: Task, meta?: TaskDeletedMeta) => void;
   }>();
   private started = false;
 
@@ -173,7 +221,7 @@ export class GitHubTrackingStateService {
     const onTaskMoved = (event: TaskMovedEvent): void => {
       void this.handleTaskMoved(store, event);
     };
-    const onTaskDeleted = (task: Task, meta?: { githubIssueAction?: GithubIssueAction }): void => {
+    const onTaskDeleted = (task: Task, meta?: TaskDeletedMeta): void => {
       void this.handleTaskDeleted(store, task, meta);
     };
     this.listeners.set(store, { onTaskMoved, onTaskDeleted });
@@ -358,7 +406,7 @@ export class GitHubTrackingStateService {
     }
   }
 
-  private async handleSourceIssueDelete(store: TaskStore, task: Task, meta?: { githubIssueAction?: GithubIssueAction }): Promise<void> {
+  private async handleSourceIssueDelete(store: TaskStore, task: Task, meta?: TaskDeletedMeta): Promise<void> {
     const sourceIssue = task.sourceIssue;
     if (sourceIssue?.provider !== "github") {
       return;
@@ -449,6 +497,10 @@ export class GitHubTrackingStateService {
         return;
       }
 
+      await postSplitCommentBeforeClose(
+        client, owner, repo, number, task.id, meta?.closureContext, resolvedAction, false,
+        (message, details) => this.safeLogDeletedTaskEntry(store, task.id, message, details),
+      );
       const closeIssue = async () => {
         // Source-imported issues map to completed work, so closure reason is "completed".
         await client.setIssueState(owner, repo, number, "closed", "completed");
@@ -473,22 +525,33 @@ export class GitHubTrackingStateService {
     }
   }
 
-  private async handleTaskDeleted(store: TaskStore, task: Task, meta?: { githubIssueAction?: GithubIssueAction }): Promise<void> {
+  private async handleTaskDeleted(store: TaskStore, task: Task, meta?: TaskDeletedMeta): Promise<void> {
+    /*
+    FNXC:CrossProcessDeleteObservation 2026-08-01-13:03:
+    Durable observers replay committed deletes at least once. GitHub close/delete/comment actions are
+    writer-owned side effects, so observed notifications are bridge-only and must never invoke them.
+    */
+    if (meta?.observed) return;
     if (task.githubTracking?.enabled !== true) {
       await this.handleSourceIssueDelete(store, task, meta);
       return;
     }
 
     const issue = task.githubTracking.issue;
-    if (!issue) {
+    if (!issue || !issue.owner || !issue.repo || !Number.isInteger(issue.number) || issue.number <= 0) {
+      await this.handleSourceIssueDelete(store, task, meta);
       return;
     }
-
     const { owner, repo, number } = issue;
-    if (!owner || !repo || !number) {
-      return;
-    }
 
+    /*
+    FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
+    Tracking owns an identical source issue, including its split comment; otherwise each distinct
+    issue receives one comment then one close. The finally block reaches the source path even when
+    tracking metadata, auth, or a tracking mutation fails, preventing the old early-return strand.
+    */
+    const trackingOwnsSourceIssue = sourceMatchesTrackingIssue(task, owner, repo, number);
+    try {
     const githubIssueAction = meta?.githubIssueAction ?? "auto";
     if (githubIssueAction === "leave") {
       await this.safeLogDeletedTaskEntry(store, task.id, "Left linked GitHub tracking issue unchanged on task delete", `${owner}/${repo}#${number}`);
@@ -549,6 +612,10 @@ export class GitHubTrackingStateService {
         return;
       }
 
+      await postSplitCommentBeforeClose(
+        client, owner, repo, number, task.id, meta?.closureContext, githubIssueAction === "auto" ? "close" : githubIssueAction, false,
+        (message, details) => this.safeLogDeletedTaskEntry(store, task.id, message, details),
+      );
       const closeIssue = async () => {
         await client.setIssueState(owner, repo, number, "closed", "not_planned");
       };
@@ -569,6 +636,11 @@ export class GitHubTrackingStateService {
       const message = err instanceof Error ? err.message : String(err);
       this.emitGitHubIssueAction(store, { taskId: task.id, action: "close", owner, repo, number, outcome: "failed", error: message });
       await this.safeLogDeletedTaskEntry(store, task.id, "Failed to close linked GitHub tracking issue", message);
+    }
+    } finally {
+      if (!trackingOwnsSourceIssue) {
+        await this.handleSourceIssueDelete(store, task, meta);
+      }
     }
   }
 }

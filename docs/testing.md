@@ -132,17 +132,16 @@ netted — a wrong classification stays visible instead of silently moving the b
 `scripts/lib/lifecycle-column-census-baseline.json`:
 
 - a **rise** fails hard — that is the ratchet's purpose, "no new guards";
-- a **drop** TIGHTENS the baseline automatically, reports what it lowered, and exits 0.
+- a **drop** reports that the baseline can be tightened and exits 0 without writing it.
 
-<!-- FNXC:LifecycleColumnCensus 2026-08-01-03:05: the drop behaviour was a hard failure and is not any more,
-because the drop is almost never the failing author's to fix. Eleven files dropped in one merge wave, none of
-those PRs re-recorded, and none of their authors did anything wrong; measured three times since CI began
-gating this. A permanently-red gate is a bigger hole than a stale allowance, because it gets ignored and then
-nothing is guarded at all. -->
-The tightened file must be **committed** — in CI the write is discarded with the runner, which is why the gate
-goes green rather than silently passing a stale allowance. `--strict --exact` restores hard failure on a drop,
-for the end state where the count is pinned and any divergence is a real event. `--strict --update-baseline`
-re-records unconditionally and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
+<!-- FNXC:LifecycleColumnCensus 2026-08-01-23:23: Plain strict verification must stay read-only. Drops often
+come from another merge and should not redden the gate, but a check that rewrites the baseline turns every
+reader into an uncredited author. `--exact` catches drift at the pinned end state; explicit baseline recording
+keeps the diff attributable to the change that reviewed it. -->
+A dropped baseline must be **deliberately re-recorded and committed** with
+`--strict --update-baseline`. `--strict --exact` restores hard failure on a drop, for the end state where the
+count is pinned and any divergence is a real event. `--strict --update-baseline` re-records unconditionally
+and prints `ACCEPTED RISES`, which is the only way to record a rise deliberately.
 
 The regression suite is `packages/engine/src/__tests__/lifecycle-column-census.test.ts`. It pins
 each form the census must catch (all six ids, non-`column` locals, single quotes, negation,
@@ -208,6 +207,21 @@ wrapper or recombine the jsdom-heavy app/API projects, because the old combined 
 was SIGKILLed by heap pressure under workspace worker budgeting. The top-level
 `pretest` artifact bootstrap runs once before the orchestrator; lane subprocesses must
 not re-run `scripts/ensure-test-artifacts.mjs`.
+
+Use the exact aggregate command below to attempt all 15 app/API lanes, including after
+one or more lanes fail:
+
+```bash
+pnpm --filter @fusion/dashboard test -- --all
+```
+
+pnpm forwards that invocation as `-- --all`; the quality runner deliberately removes
+only the leading package-script separator and still rejects genuine unknown options.
+`--no-fail-fast` is an equivalent aggregate alias. Without either alias, the default is
+fail-fast for quick local feedback: remaining lanes are reported as **NOT RUN** with
+**UNKNOWN** status, never as passing. Aggregate mode attempts every lane exactly once;
+any failed or signal-terminated lane keeps the command nonzero and is named in the
+final failure summary. It must never print an all-passed summary when any lane failed.
 
 <!-- FNXC:TestInfrastructure 2026-06-21-12:21: FN-6854 applies the dashboard heap-runner pattern to the engine affected-package lane because a wide `vitest --changed` fan-out selected hundreds of real-git-heavy engine files and could be OS-SIGKILLed by heap pressure before Vitest returned a verdict. Keep the engine lane isolated, heap-capped, and lower-worker rather than raising concurrency or widening timeouts.
 
@@ -337,6 +351,8 @@ The CI job uses `fetch-depth: 0` because these tests run real git operations.
 
 Flaky tests are quarantined ON SIGHT and deleted on a 2-week clock. This is written policy with minimal mechanics — deliberately no loader module, no automation (see the AGENTS.md standing rule "Flaky Tests Are Quarantined on Sight").
 
+Quarantine is the default when a sighting is reproducible enough to justify evicting a file's coverage. The only exception is the narrow first-sighting record authority in AGENTS.md: a high-value file may be recorded in the [observed suite-only flakes register](solutions/test-failures/suite-only-flakes-observed-register.md) instead (`docs/solutions/test-failures/suite-only-flakes-observed-register.md`). A second sighting of a registered flake moves it to the ledger plus matching Vitest `exclude` in one lockstep commit.
+
 **To quarantine a test** (a test that failed without a corresponding real bug in the change), in one commit:
 
 1. Add an entry to `scripts/lib/test-quarantine.json`:
@@ -356,6 +372,16 @@ Flags:
 - `--strict` exits 1 when any entry is expired or near-deadline, for opt-in local or project-specific gates only. Do not wire this into `pretest`, `test:gate`, or other default blocking lanes without an explicit policy change.
 
 **Rescue** (before the clock runs out) requires both: evidence the test catches real regressions, and a root-cause fix for the flake. Stabilization passes — widened timeouts, retries, loosened assertions — are appeasement, not rescue, and are banned (for agents especially).
+
+### Validate before excluding and preserve timeout budgets
+
+Capture **full runner output** before recording or filing a ledger entry—for example, tee it to a file. Never pipe a dot reporter through `tail`: the summary remains but the `FAIL` identity lines needed for evidence are truncated.
+
+Validate a quarantine-bound file **before** adding its exclusion. The dashboard quarantine array is spread into every dashboard project exclude, so even an explicitly named CLI file is suppressed afterward; no CLI flag removes a configured exclusion. The only local route back to validation is an uncommitted removal of both lockstep entries. Hoisting expensive real-dependency construction into a reusable per-file `beforeAll` is a valid structural rescue, but it inherits the hook timeout and does not by itself fix a duration-driven flake. Do not widen a timeout under a “deliberate budget” framing without an owner-approved policy exception; FN-8647 and [#3245](https://github.com/Runfusion/Fusion/issues/3245) document this distinction.
+
+When proving that a quarantine change did not alter the budget, inspect the **staged** diff before the final lockstep commit and fail nonzero on any added **or removed** config `testTimeout`, `hookTimeout`, or `teardownTimeout` line—removal falls back to a runner default. Then parse the resulting test source rather than applying a line-wise diff regex: any expression in a hook's second or case's third timeout position is forbidden regardless of its shape (`15 * 1000`, a bare identifier, or a cast all count). Resolve calls through a `vitest` import alias map and namespace bindings; reject local rebinding and computed access outright. Rebinding detection must scan the whole initializer/assignment RHS, not one root identifier, so container forms such as `const [h] = [beforeAll]`, object/conditional/sequence wrappers, and element access are caught while direct invocation callee positions are skipped.
+
+Inspect options objects recursively through inline object-literal spreads. Reject every non-inline spread and every computed option key; identifier-spread immutability/dataflow proofs are unsound under direct and alias mutation. An out-of-tree guard must resolve TypeScript from the repository CWD with `createRequire(path.join(process.cwd(), "package.json"))`; an unrunnable guard is a hard failure. For a non-collection check, classify Vitest's status and no-files diagnostic first, then parse only the JSON test-file list: the diagnostic itself echoes the requested path.
 
 ### Vitest timeout-appeasement guard
 
@@ -606,6 +632,12 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 - Integration tests exercising real SQLite, real worker pool, or spawned processes.
 - Lean core/engine unit tests with low mock burden.
 
+## Test isolation for module-singleton state
+
+<!-- FNXC:ConcurrencyAdmission 2026-08-01-06:57: Module-singleton admission state can survive mocked lane starts and unstopped processors, silently consuming capacity in later tests. FN-8671 fixes that root cause without quarantine: stop tracked owners first, then clear shared state in a finally block and assert the result through read-only inspection seams. -->
+
+When a test owns a process-wide singleton that has asynchronous owners (timers, processors, or lane starts), use the same teardown in `beforeEach` and `afterEach`: await every tracked owner’s `stop()` with `Promise.allSettled`, then clear all shared state in a `finally` block. Do not clear first: a pending stop or callback can repopulate the singleton after the apparent reset. Test reset mutators establish cleanup; read-only inspection seams must prove reservations, mutex/draining state, registrations, and companion module-global slots are actually empty. Fix the isolation seam at the root rather than adding retries, wider timeouts, weakened assertions, or a quarantine entry.
+
 ## Standing Rule: Do Not Add Slow Tests (FN-5048)
 
 - Default new tests to narrow seams, in-memory fakes, shared harnesses, and targeted assertions.
@@ -613,6 +645,7 @@ Prefer `it.each` over copy-pasted `it()` blocks. When trimming, keep: first case
 - Prefer fake timers over real polling/time waits (FN-2707 pattern: advance timers inside `act(...)`, restore with `afterEach(() => vi.useRealTimers())`).
 - Do **not** mask slowness by raising worker/concurrency knobs (`FUSION_TEST_TOTAL_WORKERS`, `FUSION_TEST_CONCURRENCY`, `VITEST_MAX_WORKERS`, workspace concurrency settings).
 - Do **not** add net-new real-network calls, real-`setTimeout` polling loops, or mock-the-world component shells when a narrower seam exists.
+- Real Pi SDK catalog tests in the engine package must use `src/__tests__/_model-runtime-fixture.ts`: warm its shared runtime in `beforeAll` and request a fresh registry rather than constructing `ModelRuntime` inside timed test bodies.
 - Use the canonical taxonomy in **What NOT to write** and **What TO keep unconditionally** when deciding trim vs keep.
 - See `docs/test-speed-audit-FN-5048.md` for the measured baseline offender list and optimization priorities.
 

@@ -1,4 +1,7 @@
 /*
+FNXC:MobileTabDiscard 2026-08-02-03:10:
+The quarantine rescue fixes its off-by-one root cause with one fake system clock installed before every fixture. Exact epoch assertions remain required: tolerance, retries, or real-clock reads would conceal a hydration-freshness regression.
+
 FNXC:MobileTabDiscard 2026-07-26-14:26:
 Regression coverage for the freshness half of the mobile tab-discard restore.
 
@@ -14,7 +17,7 @@ render, not just after a fetch. Asserted against real localStorage and the real 
 a mocked cache is what let the missing `savedAt` plumbing hide.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { Task } from "@fusion/core";
 import { useTasks } from "../useTasks";
 import * as api from "../../api";
@@ -102,7 +105,16 @@ function seedSnapshot(tasks: Task[], ageMs: number): number {
   return savedAt;
 }
 
+/** Flush the resolved fetch promise without advancing the controlled system clock. */
+async function flushAsyncUpdates(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-07-30T12:00:00.000Z"));
   sseHarness.subscriptions.length = 0;
   MockEventSource.instances = [];
   (globalThis as unknown as { EventSource: unknown }).EventSource = MockEventSource;
@@ -186,9 +198,8 @@ describe("useTasks hydration freshness (dataAsOfMs)", () => {
     const { result } = renderHook(() => useTasks({ projectId: PROJECT_ID }));
     expect(result.current.lastFetchTimeMs).toBe(savedAt);
 
-    await waitFor(() => {
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-NEW"]);
-    });
+    await flushAsyncUpdates();
+    expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-NEW"]);
     expect(result.current.lastFetchTimeMs).toBeGreaterThan(savedAt);
   });
 
@@ -220,9 +231,8 @@ describe("useTasks hydration freshness (dataAsOfMs)", () => {
 
     rerender({ projectId: otherProjectId });
 
-    await waitFor(() => {
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-B"]);
-    });
+    await flushAsyncUpdates();
+    expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-B"]);
     expect(result.current.lastFetchTimeMs).toBe(otherSavedAt);
   });
 });
@@ -294,13 +304,11 @@ describe("useTasks freshness clock vs single-row live updates", () => {
     mockFetchTasks.mockResolvedValue([createInProgressTask("FN-CONFIRMED", Date.now())]);
 
     const { result } = renderHook(() => useTasks({ projectId: PROJECT_ID }));
-    await waitFor(() => {
-      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-CONFIRMED"]);
-    });
+    await flushAsyncUpdates();
+    expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-CONFIRMED"]);
     const confirmedAt = result.current.lastFetchTimeMs;
     expect(confirmedAt).toBeDefined();
 
-    vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(Date.now() + 5 * 60_000);
     emitSse("task:updated", createInProgressTask("FN-CONFIRMED", Date.now()));
 

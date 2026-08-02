@@ -49,11 +49,14 @@ That is also why the two arms share one helper and one settle constant rather th
 apart. If this ever flakes, the control fails first and says so — the fix is the quarantine ledger,
 never a larger number here.
 
-CHARACTERIZATION, NOT ENDORSEMENT. The renamed expectation below asserts the WRONG-but-current
-behaviour deliberately. When the sync read is replaced (see the PR body for why the obvious `await`
-is not free — these run inside synchronous `task:moved`/`task:updated` listeners and an added await
-reorders handlers against a synchronous emitter), this is the test that turns red and tells you the
-operator-visible outcome moved.
+REGRESSION, NOT CHARACTERIZATION. The renamed expectation now pins the corrected outcome: the
+asynchronous resolver finds dependents in the workflow's real hold column, so the renamed and default
+boards both clear `blockedBy` in the same settle window.
+
+FNXC:WorkflowResolvedColumns 2026-08-01-05:01:
+FN-8656 applies the same async fallback to the await-safe `task:moved` arms. Its synchronous prologue
+still consumes emitter lanes over legacy defaults, preserving event ordering; this file continues to
+pin the live-store dependency invariant for lane-less or forwarded payloads.
 
 LANE. `.pg.test.ts`, skipped via `pgDescribe` when no PostgreSQL is reachable, so the merge gate is
 unaffected. Throwaway per-file database; never port 4040.

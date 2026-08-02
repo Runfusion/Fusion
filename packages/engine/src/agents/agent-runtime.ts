@@ -15,7 +15,7 @@
  */
 
 import type { AgentSession, SessionManager, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { PermanentAgentGatingContext, ResolvedMcpServerDefinition } from "@fusion/core";
+import type { PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition } from "@fusion/core";
 import type { SkillSelectionContext } from "../cli-runtime/skill-resolver.js";
 import type { FallbackModelUsedPayload } from "../pi.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
@@ -103,6 +103,13 @@ export interface AgentRuntimeOptions {
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5") */
   defaultModelId?: string;
+  /*
+  FNXC:ProviderAuth 2026-08-01-08:10:
+  Session creation carries the already-resolved credential ref rather than a raw id so audit and the credential store cannot drift if a provider default changes mid-startup.
+  */
+  resolvedCredentialInstance?: ProviderInstanceRef;
+  /** Informational operator-requested instance id; the concrete ref above is authoritative. */
+  credentialInstanceId?: string;
   /** Optional fallback model provider for retryable errors */
   fallbackProvider?: string;
   /** Optional fallback model ID */

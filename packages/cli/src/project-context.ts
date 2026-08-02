@@ -5,7 +5,7 @@
  * for operating on tasks across multiple registered projects.
  */
 
-import { createTaskStoreForBackend, type AsyncDataLayer, type RegisteredProject, type TaskStore, CentralCore, GlobalSettingsStore, hasProjectIdentity, isValidSqliteDatabaseFile } from "@fusion/core";
+import { buildConsumerId, createTaskStoreForBackend, type AsyncDataLayer, type RegisteredProject, type TaskStore, CentralCore, GlobalSettingsStore, hasProjectIdentity, isValidSqliteDatabaseFile } from "@fusion/core";
 import { resolve, dirname, basename } from "node:path";
 
 /** Project context for CLI operations */
@@ -351,7 +351,12 @@ export async function createLocalStore(
   // catch-fallbacks (task/pr/backup/memory-backup/branch-group/mcp) boot their
   // cwd-rooted store through the same factory instead of constructing a legacy
   // SQLite TaskStore directly (its runtime throws in backend mode).
-  const boot = await createTaskStoreForBackend({ rootDir: projectPath, globalSettingsDir });
+  const boot = await createTaskStoreForBackend({
+    rootDir: projectPath,
+    globalSettingsDir,
+    /* FNXC:CrossProcessDeleteObservation 2026-08-01-11:39: CLI owns its factory-created store, so role-only identity is restart-stable. */
+    consumerId: buildConsumerId("cli"),
+  });
   /* FNXC:PostgresCliLifecycle 2026-07-14-18:07: CLI project contexts return only TaskStore, so retain the factory owner handle in a WeakMap and release it whenever closeProjectStore closes that context. */
   storeOwners.set(boot.taskStore, { backendShutdown: boot.shutdown });
   return boot.taskStore;

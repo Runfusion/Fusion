@@ -1,6 +1,15 @@
 // @vitest-environment node
 
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const workspaceRoot = resolve(__dirname, "../../../..");
+const fixtureRunnerPath = join(__dirname, "quality-runner-fixture.mjs");
 
 interface QualityLane {
   name: string;
@@ -17,6 +26,7 @@ interface LaneResult {
 
 interface RunQualityTestsModule {
   qualityLanes: QualityLane[];
+  parseArgs(argv: string[]): { group: "all" | "app" | "api"; list: boolean; allLanes: boolean };
   resolveConcurrency(env?: Record<string, string | undefined>): number;
   runQualityTests(options?: {
     failFast?: boolean;
@@ -131,6 +141,84 @@ describe("dashboard quality orchestrator", () => {
 
     expect(launched).toEqual(["one"]);
     expect(result).toMatchObject({ ok: false, skipped: 2 });
+  });
+
+  it("parses direct and pnpm-forwarded aggregate aliases while rejecting genuine unknown arguments", async () => {
+    const { parseArgs } = await loadModule();
+
+    expect(parseArgs([])).toEqual({ group: "all", list: false, allLanes: false });
+    expect(parseArgs(["--all"])).toEqual({ group: "all", list: false, allLanes: true });
+    expect(parseArgs(["--no-fail-fast"])).toEqual({ group: "all", list: false, allLanes: true });
+    expect(parseArgs(["--", "--all"])).toEqual({ group: "all", list: false, allLanes: true });
+    expect(parseArgs(["--", "--no-fail-fast"])).toEqual({ group: "all", list: false, allLanes: true });
+    expect(parseArgs(["--group", "app", "--list"])).toEqual({ group: "app", list: true, allLanes: false });
+    expect(() => parseArgs(["--", "--not-a-quality-option"])).toThrow("Unknown argument: --not-a-quality-option");
+  });
+
+  it.each(["--all", "--no-fail-fast"])("runs package aggregate alias %s through all 15 lanes without hiding failures", async (aggregateAlias) => {
+    const { qualityLanes } = await loadModule();
+    const temporaryDirectory = mkdtempSync(join(tmpdir(), "fn-8714-quality-runner-"));
+    const laneLogPath = join(temporaryDirectory, "lanes.log");
+
+    try {
+      const result = spawnSync("pnpm", ["--filter", "@fusion/dashboard", "test", "--", aggregateAlias], {
+        cwd: workspaceRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          npm_config_ignore_scripts: "true",
+          FUSION_DASHBOARD_TEST_CONCURRENCY: "1",
+          FUSION_DASHBOARD_QUALITY_TEST_MODE: "1",
+          FUSION_DASHBOARD_QUALITY_RUNNER: fixtureRunnerPath,
+          FUSION_DASHBOARD_QUALITY_LANE_LOG: laneLogPath,
+          FUSION_DASHBOARD_QUALITY_FAIL_PROJECTS: "dashboard-app-quality-foundation-api,dashboard-api-quality",
+        },
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      const startedLanes = [...output.matchAll(/^\[dashboard-quality\] start ([^:]+:[^:]+):/gm)].map((match) => match[1]);
+      const launchedProjects = existsSync(laneLogPath) ? readFileSync(laneLogPath, "utf8").trim().split("\n") : [];
+
+      expect(result.status, output).toBe(1);
+      expect(output).not.toContain("Unknown argument: --");
+      expect(startedLanes).toEqual(qualityLanes.map((qualityLane) => qualityLane.name));
+      expect(new Set(startedLanes).size).toBe(15);
+      expect(launchedProjects).toHaveLength(15);
+      expect(output).toContain("failed lane(s): app:foundation-api, api:curated");
+      expect(output).not.toContain("NOT RUN");
+      expect(output).not.toContain("all 15 lane(s) passed");
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the no-argument package command fail-fast and labels unrun lanes unknown", async () => {
+    const temporaryDirectory = mkdtempSync(join(tmpdir(), "fn-8714-default-quality-runner-"));
+    const laneLogPath = join(temporaryDirectory, "lanes.log");
+
+    try {
+      const result = spawnSync("pnpm", ["--filter", "@fusion/dashboard", "test"], {
+        cwd: workspaceRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          npm_config_ignore_scripts: "true",
+          FUSION_DASHBOARD_TEST_CONCURRENCY: "1",
+          FUSION_DASHBOARD_QUALITY_TEST_MODE: "1",
+          FUSION_DASHBOARD_QUALITY_RUNNER: fixtureRunnerPath,
+          FUSION_DASHBOARD_QUALITY_LANE_LOG: laneLogPath,
+          FUSION_DASHBOARD_QUALITY_FAIL_PROJECTS: "dashboard-app-quality-foundation-api",
+        },
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      const launchedProjects = readFileSync(laneLogPath, "utf8").trim().split("\n");
+
+      expect(result.status, output).toBe(1);
+      expect(launchedProjects).toEqual(["dashboard-app-quality-foundation-api"]);
+      expect(output).toContain("14 lane(s) were NOT RUN after the first failure — their status is UNKNOWN, not passing.");
+      expect(output).not.toContain("all 1 lane(s) passed");
+    } finally {
+      rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 
   it("failFast:false runs EVERY lane and reports every failure, not just the first", async () => {

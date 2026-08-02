@@ -1,6 +1,17 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../taskActivity";
+
+/*
+FNXC:TaskActivity 2026-08-01-17:53:
+Operator requirement: card activity chrome (and the lane counts derived from it) must never show
+more work than the engine's actual live-agent population. The positive arm of isTaskAgentActive is
+now exactly the shared isRunningAgentTask predicate used by footer Running and project admission,
+so the former render-only extras — needs-replan REVISING chrome, the fresh planner-log window,
+ACTIVE_STATUSES in arbitrary columns — no longer glow: they described cards that hold no
+concurrency slot, and summing lane headers exceeded the concurrency cap (10 glowing cards under a
+9-slot limit read as a capacity breach).
+*/
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -32,53 +43,50 @@ function taskWithRunningWorkflowStep(overrides: Partial<Task> = {}): Task {
 }
 
 describe("isTaskAgentActive", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("uses the canonical set for every active phase", () => {
+  it("keeps the canonical phase vocabulary for lock policy without gating glow on it", () => {
+    // ACTIVE_STATUSES remains the model/routing lock vocabulary; glow no longer unions it.
     expect([...ACTIVE_STATUSES]).toEqual([
       "planning", "researching", "executing", "finalizing", "merging", "merging-pr", "merging-fix", "reviewing", "landing",
     ]);
-    for (const status of ACTIVE_STATUSES) {
-      expect(isTaskAgentActive(makeTask({ status }))).toBe(true);
-    }
   });
 
-  it("recognizes an in-progress task and status-null running workflow step", () => {
+  it("glows only where the shared Running predicate holds a slot", () => {
+    // planning is live in any non-terminal column.
+    expect(isTaskAgentActive(makeTask({ status: "planning" }))).toBe(true);
+    // Merge-pipeline statuses are live only in the review/merge lane.
+    expect(isTaskAgentActive(makeTask({ column: "in-review", status: "merging" }))).toBe(true);
+    expect(isTaskAgentActive(makeTask({ column: "triage", status: "merging" }))).toBe(false);
+    // A stale execution status outside the WIP lane holds no slot and must not glow.
+    expect(isTaskAgentActive(makeTask({ column: "triage", status: "executing" }))).toBe(false);
+    // WIP membership is live regardless of status.
+    expect(isTaskAgentActive(makeTask({ column: "in-progress", status: "executing" }))).toBe(true);
+  });
+
+  it("recognizes an in-progress task and status-null pending gate lease", () => {
     expect(isTaskAgentActive(makeTask({ column: "in-progress" }))).toBe(true);
     expect(isTaskAgentActive(taskWithRunningWorkflowStep())).toBe(true);
   });
 
-  it("keeps durable replan cards active without changing lock statuses", () => {
+  it("does not glow durable replan parks — they hold no concurrency slot", () => {
     expect(ACTIVE_STATUSES.has("needs-replan")).toBe(false);
-    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "triage" }))).toBe(true);
-    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "todo" }))).toBe(true);
+    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "triage" }))).toBe(false);
+    expect(isTaskAgentActive(makeTask({ status: "needs-replan", column: "todo" }))).toBe(false);
   });
 
-  it("does not treat a status-null task without a running item as active", () => {
+  it("does not treat a status-null intake task as active", () => {
     expect(isTaskAgentActive(makeTask())).toBe(false);
   });
 
-  it("uses a fresh client-only planner log signal for a status-null triage card", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-28T12:00:30.000Z"));
-
+  it("does not glow on a fresh planner log without an authoritative live status", () => {
+    // The FN-8300 client-only fresh-log window is removed: a log line is not a slot.
     expect(isTaskAgentActive(makeTask({
-      recentAgentActivityAt: "2026-07-28T12:00:00.000Z",
-    }))).toBe(true);
-    expect(isTaskAgentActive(makeTask({
-      recentAgentActivityAt: "2026-07-28T11:59:00.000Z",
+      recentAgentActivityAt: new Date().toISOString(),
     }))).toBe(false);
-  });
-
-  it("extends fresh planner activity to plan-in-place todo replans", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-22T09:25:30.000Z"));
-
     expect(isTaskAgentActive(makeTask({
       column: "todo",
       status: "needs-replan",
-      recentAgentActivityAt: "2026-07-22T09:25:00.000Z",
-    }))).toBe(true);
+      recentAgentActivityAt: new Date().toISOString(),
+    }))).toBe(false);
   });
 
   it.each([
@@ -108,7 +116,9 @@ describe("isTaskAgentActive", () => {
     ["paused replan", makeTask({ status: "needs-replan", paused: true, recentAgentActivityAt: new Date().toISOString() }), {}],
     ["failed replan", makeTask({ status: "failed", recentAgentActivityAt: new Date().toISOString() }), {}],
     ["done-column replan", makeTask({ column: "done", status: "needs-replan", recentAgentActivityAt: new Date().toISOString() }), {}],
-  ] as const)("rejects %s before running workflow activity", (_name, task, options) => {
+    ["paused planning", makeTask({ status: "planning", paused: true }), {}],
+    ["globally paused WIP", makeTask({ column: "in-progress" }), { globalPaused: true }],
+  ] as const)("rejects %s before running-agent evaluation", (_name, task, options) => {
     expect(isTaskAgentActive(task, options)).toBe(false);
   });
 });

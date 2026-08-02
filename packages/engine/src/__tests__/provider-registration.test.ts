@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { seedDashboardProviders } from "../auth/provider-registration.js";
 import { registerCustomProviders } from "../auth/custom-provider-registry.js";
+import { createInMemoryModelRegistry, warmSharedModelRuntime } from "./_model-runtime-fixture.js";
 
 /*
 FNXC:ProviderRegistration 2026-07-07-00:00:
@@ -34,15 +34,6 @@ function makeAuthStorage() {
     list: vi.fn(() => Object.keys(credentials)),
     getApiKey: vi.fn(async (provider: string) => credentials[provider]?.key),
   } as any;
-}
-
-async function createInMemoryModelRegistry(): Promise<ModelRegistry> {
-  const runtime = await ModelRuntime.create({
-    credentials: { read: async () => undefined, list: async () => [], modify: async (_id, fn) => fn(undefined), delete: async () => undefined },
-    modelsPath: null,
-    allowModelNetwork: false,
-  });
-  return new ModelRegistry(runtime);
 }
 
 function makeModelRegistry() {
@@ -94,6 +85,10 @@ function makeStore(initialCustomProviders?: CustomProvider[]) {
   };
 }
 
+beforeAll(async () => {
+  await warmSharedModelRuntime();
+});
+
 const customProvider = (overrides: Partial<CustomProvider> = {}): CustomProvider => ({
   id: "550e8400-e29b-41d4-a716-446655440000",
   name: "Acme AI",
@@ -142,6 +137,22 @@ describe("seedDashboardProviders", () => {
       contextWindow: 1_048_576,
       maxTokens: 131_072,
     });
+  });
+
+  it("hands each real registry an isolated custom-provider catalog", async () => {
+    const provider = customProvider({ id: "isolation-provider-id", name: "Fixture Isolation Provider" });
+    const registryA = await createInMemoryModelRegistry();
+    registryA.registerProvider(customProviderRegistryKey(provider, [provider]), {
+      baseUrl: provider.baseUrl,
+      api: "openai-completions",
+      apiKey: provider.apiKey,
+      models: [{ id: "acme-1", name: "Acme Model 1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 16384 }],
+    });
+
+    const registryB = await createInMemoryModelRegistry();
+
+    expect(registryB.find("fixture-isolation-provider", "acme-1")).toBeUndefined();
+    expect(registryB.find("kimi-coding", "k3")).toMatchObject({ provider: "kimi-coding", id: "k3" });
   });
 
   it("registers one custom provider alongside built-ins", async () => {

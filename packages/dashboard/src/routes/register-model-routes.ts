@@ -152,6 +152,82 @@ async function getConfiguredProviderNames(authStorage?: AuthStorageLike): Promis
   return providers;
 }
 
+type ProviderCredential = { type?: unknown } | null | undefined;
+
+/**
+ * Return the models which today's configured-provider gate would advertise for a
+ * concrete credential kind. `undefined` means that the existing gate has no
+ * per-instance distinction for this provider, so callers must not invent one.
+ */
+function getAdvertisedModelIdsForCredential(
+  providerId: string,
+  credential: ProviderCredential,
+  models: Array<{ provider: string; id: string }>,
+  apiKeyProviderIds: Set<string>,
+  oauthProviderIds: Set<string>,
+): Set<string> | undefined {
+  const modelProviderId = toModelProviderId(providerId);
+  const providerModels = new Set(models.filter(model => model.provider === modelProviderId).map(model => model.id));
+  if (providerModels.size === 0) return new Set();
+
+  // Direct Anthropic intentionally accepts both of its existing auth kinds.
+  if (modelProviderId === ANTHROPIC_PROVIDER_ID) {
+    return credential?.type === "api_key" || credential?.type === "oauth" ? providerModels : new Set();
+  }
+  if (apiKeyProviderIds.has(providerId)) {
+    return credential?.type === "api_key" ? providerModels : new Set();
+  }
+  if (oauthProviderIds.has(providerId)) {
+    return credential?.type === "oauth" ? providerModels : new Set();
+  }
+  return undefined;
+}
+
+/*
+FNXC:ProviderAuth 2026-08-01-08:39:
+Expose instance availability beside the catalog rather than copying every model per credential. Reuse the existing API-key/OAuth configured-provider gate to derive only real default-versus-instance deltas; an arbitrary stored field or a network probe would fabricate availability data.
+*/
+function getProviderInstances(
+  authStorage: AuthStorageLike | undefined,
+  advertisedProviders: Iterable<string>,
+  models: Array<{ provider: string; id: string }>,
+): Record<string, { instances: Array<{ id: string; isDefault: boolean; unavailableModelIds?: string[] }> }> | undefined {
+  if (!authStorage?.listInstances) return undefined;
+  const result: Record<string, { instances: Array<{ id: string; isDefault: boolean; unavailableModelIds?: string[] }> }> = {};
+  const apiKeyProviderIds = new Set((authStorage.getApiKeyProviders?.() ?? []).map(provider => provider.id));
+  const oauthProviderIds = new Set((authStorage.getOAuthProviders?.() ?? []).map(provider => provider.id));
+  const providerIds = new Set([...advertisedProviders, ...models.map(model => model.provider)]);
+  for (const modelProviderId of providerIds) {
+    const providerId = modelProviderId === ANTHROPIC_PROVIDER_ID ? ANTHROPIC_PROVIDER_ID : modelProviderId;
+    try {
+      const defaultRef = authStorage.getDefaultInstance?.(providerId);
+      const refs = authStorage.listInstances(providerId);
+      if (refs.length === 0) continue;
+      const defaultCredential = defaultRef && authStorage.getInstance?.(defaultRef);
+      const defaultModelIds = getAdvertisedModelIdsForCredential(
+        providerId, defaultCredential, models, apiKeyProviderIds, oauthProviderIds,
+      );
+      const instances = refs.map(ref => {
+        const instanceModelIds = getAdvertisedModelIdsForCredential(
+          providerId, authStorage.getInstance?.(ref), models, apiKeyProviderIds, oauthProviderIds,
+        );
+        const unavailableModelIds = defaultModelIds && instanceModelIds
+          ? [...defaultModelIds].filter(modelId => !instanceModelIds.has(modelId))
+          : [];
+        return {
+          id: ref.instanceId,
+          isDefault: defaultRef?.instanceId === ref.instanceId,
+          ...(unavailableModelIds.length > 0 ? { unavailableModelIds } : {}),
+        };
+      });
+      result[modelProviderId] = { instances };
+    } catch {
+      // A corrupt provider entry must not make the shared model catalog unavailable.
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, options, store, runtimeLogger } = ctx;
 
@@ -490,6 +566,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         configuredProviders.add(customProviderRegistryKey(provider, customProviders));
       }
       models = models.filter((m) => configuredProviders.has(m.provider));
+      const providerInstances = getProviderInstances(options?.authStorage, configuredProviders, models);
 
       res.json({
         models,
@@ -497,6 +574,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         favoriteModels,
         ...defaultModelResponse,
         ...resolvedPlanningModelResponse,
+        ...(providerInstances ? { providerInstances } : {}),
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

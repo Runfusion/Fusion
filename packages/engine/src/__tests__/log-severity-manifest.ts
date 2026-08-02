@@ -86,4 +86,15 @@ export const logSeverityManifest: SeverityManifestEntry[] = [
   { pkg: "dashboard", file: "terminal-service.ts", anchor: "Working directory does not exist: ${cwd}", priorSeverity: "warn", severity: "debug" },
   { pkg: "dashboard", file: "terminal-service.ts", anchor: "terminalLog.debug(`Session ${sessionId} not found`);", priorSeverity: "warn", severity: "debug" },
   { pkg: "dashboard", file: "terminal-service.ts", anchor: "Session ${sessionId} not found for resize", priorSeverity: "warn", severity: "debug" },
+  /*
+  FNXC:EngineDiagnostics 2026-08-01-18:11:
+  TUI flood demotions from operator log review. Anchors must share a source line with
+  `.debug(` (manifest is line-scoped). Multi-line sessionLog.debug setups, Tracking-task
+  triple sites, and zero-recovery gates are pinned in the spam-contract suite instead.
+  */
+  { pkg: "engine", file: "triage.ts", anchor: "planLog.debug(`${task.id}: planning in ${leanPlanning ? \"fast\" : \"standard\"} mode`)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "session-token-usage.ts", anchor: "cacheMetricsLog.debug(JSON.stringify({", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "tokenCacheMetricsLog.debug(JSON.stringify({", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "runtimes/in-process-runtime.ts", anchor: "runtimeLog.debug(`Specifying ${t.id}...`)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "triage.ts", anchor: "planLog.debug(`${taskId}: failed to read PROMPT.md during ${context} (${promptPath}): ${msg}`)", priorSeverity: "warn", severity: "debug" },
 ];

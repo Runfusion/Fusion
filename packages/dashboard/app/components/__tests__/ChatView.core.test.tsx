@@ -575,6 +575,28 @@ describe("ChatView", () => {
     expect(preview).toHaveTextContent("result: contents");
   });
 
+  it("keeps long persisted tool arguments and results complete after expansion", async () => {
+    const longCommand = "pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/ChatView.core.test.tsx --reporter=dot --final-command-suffix";
+    const longResult = `first line\n${"output ".repeat(40)}FINAL_TOOL_RESULT_SUFFIX`;
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [{
+        id: "msg-long-tool", sessionId: "session-001", role: "assistant", content: "I used bash", createdAt: "2026-04-08T00:01:00.000Z",
+        toolCalls: [{ toolName: "bash", args: { command: longCommand }, result: longResult, isError: false, status: "completed" }],
+      }],
+    });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const details = document.querySelector(".chat-tool-call") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await userEvent.click(details.querySelector("summary") as HTMLElement);
+    expect(details.open).toBe(true);
+    expect(details).toHaveTextContent(longCommand);
+    expect(details).toHaveTextContent("FINAL_TOOL_RESULT_SUFFIX");
+    expect(details.querySelector(".chat-tool-call-preview")).toHaveTextContent("…");
+  });
+
   it("renders streaming tool calls", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -894,6 +916,8 @@ describe("ChatView", () => {
     await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
     expect(screen.getByText("read, edit, bash, grep, write, +1 more")).toBeInTheDocument();
+    // Tool events with no available arguments or result remain readable but are not dead disclosures.
+    expect(document.querySelectorAll(".chat-tool-call details")).toHaveLength(0);
   });
 
   it("running tool calls show running indicator", async () => {

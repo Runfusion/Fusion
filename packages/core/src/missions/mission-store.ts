@@ -359,6 +359,7 @@ interface ValidatorRunRow {
   implementationAttempt: number | null;
   validatorAttempt: number | null;
   taskId: string | null;
+  inputFingerprint: string | null;
   summary: string | null;
   blockedReason: string | null;
   startedAt: string;
@@ -664,6 +665,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       implementationAttempt: row.implementationAttempt ?? 0,
       validatorAttempt: row.validatorAttempt ?? 0,
       taskId: row.taskId || undefined,
+      inputFingerprint: row.inputFingerprint || undefined,
       summary: row.summary || undefined,
       blockedReason: row.blockedReason || undefined,
       startedAt: row.startedAt,
@@ -2761,7 +2763,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * @returns The created validator run
    * @throws Error if feature not found
    */
-  startValidatorRun(featureId: string, triggerType?: string, taskId?: string): MissionValidatorRun {
+  startValidatorRun(featureId: string, triggerType?: string, taskId?: string, inputFingerprint?: string): MissionValidatorRun {
     const feature = this.getFeature(featureId);
     if (!feature) {
       throw new Error(`Feature ${featureId} not found`);
@@ -2794,6 +2796,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       implementationAttempt: feature.implementationAttemptCount ?? 0,
       validatorAttempt: newValidatorAttemptCount,
       taskId,
+      inputFingerprint,
       startedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -2802,8 +2805,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
     this.db.transaction(() => {
       // Insert the validator run
       this.db.prepare(`
-        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, triggerType, implementationAttempt, validatorAttempt, taskId, startedAt, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO mission_validator_runs (id, featureId, milestoneId, sliceId, status, triggerType, implementationAttempt, validatorAttempt, taskId, inputFingerprint, startedAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         run.id,
         run.featureId,
@@ -2814,6 +2817,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
         run.implementationAttempt,
         run.validatorAttempt,
         run.taskId ?? null,
+        run.inputFingerprint ?? null,
         run.startedAt,
         run.createdAt,
         run.updatedAt,

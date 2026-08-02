@@ -55,33 +55,40 @@ describe("accumulateSessionTokenUsage", () => {
   });
 
   it("writes initial token usage and emits cache metrics log", async () => {
+    const prevDebug = process.env.FUSION_DEBUG;
+    process.env.FUSION_DEBUG = "token-cache-metrics";
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = createStore(undefined);
-    const session = createSession({ tokens: { input: 100, output: 30, cacheRead: 5, cacheWrite: 2 } });
+    try {
+      const store = createStore(undefined);
+      const session = createSession({ tokens: { input: 100, output: 30, cacheRead: 5, cacheWrite: 2 } });
 
-    await accumulateSessionTokenUsage(store, "FN-1", session, { agentId: "agent-1", role: "reviewer" });
+      await accumulateSessionTokenUsage(store, "FN-1", session, { agentId: "agent-1", role: "reviewer" });
 
-    expect(store.updateTask).toHaveBeenCalledTimes(1);
-    const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
-    expect(call.tokenUsage).toMatchObject({
-      inputTokens: 100,
-      outputTokens: 30,
-      cachedTokens: 5,
-      cacheWriteTokens: 2,
-      totalTokens: 137,
-    });
-    const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
-    expect(cacheLogCall).toBeTruthy();
-    const payload = JSON.parse(String(cacheLogCall?.[0] ?? "").replace(/^.*\[token-cache-metrics\]\s*/, ""));
-    expect(payload).toMatchObject({
-      taskId: "FN-1",
-      agentId: "agent-1",
-      role: "reviewer",
-      inputTokens: 100,
-      cachedTokens: 5,
-      cacheWriteTokens: 2,
-      hitRatio: computeCacheHitRatio(100, 5),
-    });
+      expect(store.updateTask).toHaveBeenCalledTimes(1);
+      const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
+      expect(call.tokenUsage).toMatchObject({
+        inputTokens: 100,
+        outputTokens: 30,
+        cachedTokens: 5,
+        cacheWriteTokens: 2,
+        totalTokens: 137,
+      });
+      const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
+      expect(cacheLogCall).toBeTruthy();
+      const payload = JSON.parse(String(cacheLogCall?.[0] ?? "").replace(/^.*\[token-cache-metrics\]\s*/, ""));
+      expect(payload).toMatchObject({
+        taskId: "FN-1",
+        agentId: "agent-1",
+        role: "reviewer",
+        inputTokens: 100,
+        cachedTokens: 5,
+        cacheWriteTokens: 2,
+        hitRatio: computeCacheHitRatio(100, 5),
+      });
+    } finally {
+      if (prevDebug === undefined) delete process.env.FUSION_DEBUG;
+      else process.env.FUSION_DEBUG = prevDebug;
+    }
   });
 
   it("uses an explicit task-start baseline to exclude resumed-session lifetime tokens", async () => {
@@ -220,23 +227,30 @@ describe("accumulateSessionTokenUsage", () => {
   });
 
   it("emits token-cache-metrics log when executor persists non-zero delta", async () => {
+    const prevDebug = process.env.FUSION_DEBUG;
+    process.env.FUSION_DEBUG = "token-cache-metrics";
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = createStore(undefined);
-    const executor = Object.create(TaskExecutor.prototype) as any;
-    executor.store = store;
-    executor.tokenUsageBaselines = new Map();
-    executor.activeSessions = new Map();
-    executor.currentRunContexts = new Map();
+    try {
+      const store = createStore(undefined);
+      const executor = Object.create(TaskExecutor.prototype) as any;
+      executor.store = store;
+      executor.tokenUsageBaselines = new Map();
+      executor.activeSessions = new Map();
+      executor.currentRunContexts = new Map();
 
-    await executor.persistTokenUsage("FN-1", {
-      getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }),
-      model: { provider: "mock", id: "scripted" },
-    });
+      await executor.persistTokenUsage("FN-1", {
+        getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }),
+        model: { provider: "mock", id: "scripted" },
+      });
 
-    const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
-    expect(cacheLogCall).toBeTruthy();
-    const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
-    expect(call.tokenUsage).toMatchObject({ modelProvider: "mock", modelId: "scripted" });
+      const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
+      expect(cacheLogCall).toBeTruthy();
+      const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
+      expect(call.tokenUsage).toMatchObject({ modelProvider: "mock", modelId: "scripted" });
+    } finally {
+      if (prevDebug === undefined) delete process.env.FUSION_DEBUG;
+      else process.env.FUSION_DEBUG = prevDebug;
+    }
   });
 
   it("enforces soft and hard budgets through the real persist helper exactly once", async () => {

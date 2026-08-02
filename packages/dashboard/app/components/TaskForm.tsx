@@ -97,10 +97,16 @@ export interface TaskFormProps {
   onPriorityChange?: (value: TaskPriority) => void;
   executorModel: string;
   onExecutorModelChange: (value: string, meta?: TaskFormValueChangeMeta) => void;
+  credentialInstanceId?: string;
+  onCredentialInstanceIdChange?: (value: string) => void;
   validatorModel: string;
   onValidatorModelChange: (value: string, meta?: TaskFormValueChangeMeta) => void;
+  validatorCredentialInstanceId?: string;
+  onValidatorCredentialInstanceIdChange?: (value: string) => void;
   planningModel?: string;
   onPlanningModelChange?: (value: string) => void;
+  planningCredentialInstanceId?: string;
+  onPlanningCredentialInstanceIdChange?: (value: string) => void;
   thinkingLevel?: string;
   onThinkingLevelChange?: (value: string) => void;
   /*
@@ -216,10 +222,16 @@ export function TaskForm({
   onPriorityChange,
   executorModel,
   onExecutorModelChange,
+  credentialInstanceId,
+  onCredentialInstanceIdChange,
   validatorModel,
   onValidatorModelChange,
+  validatorCredentialInstanceId,
+  onValidatorCredentialInstanceIdChange,
   planningModel,
   onPlanningModelChange,
+  planningCredentialInstanceId,
+  onPlanningCredentialInstanceIdChange,
   thinkingLevel,
   onThinkingLevelChange,
   plannerOversightLevel,
@@ -1571,6 +1583,8 @@ export function TaskForm({
                 thinkingLevel={thinkingLevel || ""}
                 onThinkingLevelChange={onThinkingLevelChange ? (value) => onThinkingLevelChange(value) : undefined}
                 defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
+                credentialInstanceId={credentialInstanceId}
+                onCredentialInstanceChange={onCredentialInstanceIdChange}
               />
             </div>
             <div className="model-select-row">
@@ -1591,6 +1605,8 @@ export function TaskForm({
                 onToggleFavorite={handleToggleFavorite}
                 favoriteModels={favoriteModels}
                 onToggleModelFavorite={handleToggleModelFavorite}
+                credentialInstanceId={validatorCredentialInstanceId}
+                onCredentialInstanceChange={onValidatorCredentialInstanceIdChange}
               />
             </div>
             {onPlanningModelChange && (
@@ -1611,6 +1627,8 @@ export function TaskForm({
                   onToggleFavorite={handleToggleFavorite}
                   favoriteModels={favoriteModels}
                   onToggleModelFavorite={handleToggleModelFavorite}
+                  credentialInstanceId={planningCredentialInstanceId}
+                  onCredentialInstanceChange={onPlanningCredentialInstanceIdChange}
                 />
               </div>
             )}

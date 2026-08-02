@@ -29,6 +29,7 @@ describe("computeFixedMenuPosition", () => {
 
     expect(position.openUpward).toBe(false);
     expect(position.top).toBe(baseTrigger.bottom + 4);
+    expect(position.bottom).toBeNull();
     expect(position.left).toBe(baseTrigger.left);
     expect(position.width).toBe(280);
     expect(position.maxHeight).toBe(320);
@@ -47,8 +48,8 @@ describe("computeFixedMenuPosition", () => {
     });
 
     expect(position.openUpward).toBe(true);
-    // Menu bottom edge is gap above the trigger; top = trigger.top - gap - maxHeight.
-    expect(position.top + position.maxHeight).toBe(trigger.top - 4);
+    expect(position.top).toBeNull();
+    expect(position.bottom).toBe(600 - trigger.top + 4);
     expect(position.maxHeight).toBeLessThanOrEqual(320);
     expect(position.maxHeight).toBeGreaterThan(0);
   });
@@ -73,10 +74,9 @@ describe("computeFixedMenuPosition", () => {
     // Old math floored maxHeight to 200 and clamped top to verticalPadding (16), detaching the menu.
     expect(position.openUpward).toBe(true);
     expect(position.maxHeight).toBe(130);
-    expect(position.top).toBe(trigger.top - gap - position.maxHeight);
-    expect(position.top).toBe(16); // verticalPadding
-    // Still attached: menu bottom + gap === trigger top
-    expect(position.top + position.maxHeight + gap).toBe(trigger.top);
+    expect(position.top).toBeNull();
+    // The CSS bottom offset is height-independent, even when maxHeight shrinks.
+    expect(position.bottom).toBe(viewportHeight - trigger.top + gap);
   });
 
   it("shrinks maxHeight when opening downward into a short viewport instead of lifting top off the trigger", () => {

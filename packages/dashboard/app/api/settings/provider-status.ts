@@ -6,8 +6,21 @@
 import { api } from "../client/client.js";
 import type { FetchOptions } from "../client/client.js";
 import { dedupe } from "../client/dedupe.js";
-
 // --- Auth API ---
+
+/*
+FNXC:ProviderAuth 2026-08-01-06:25:
+The browser bundle cannot import the runtime core helper, so this mirrors its constrained instance-id
+grammar solely to generate opaque client ids. Labels are never part of identity or generation.
+*/
+const isValidProviderInstanceId = (value: unknown): value is string => typeof value === "string"
+  && value.length > 0 && value.length <= 64 && !/\s/.test(value)
+  && !value.includes("[") && !value.includes("]");
+
+/** Browser-safe counterpart of the core auth.json key grammar for local UI state only. */
+export function formatProviderInstanceKey(ref: { providerId: string; instanceId: string }): string {
+  return ref.instanceId === "default" ? ref.providerId : `${ref.providerId}[${ref.instanceId}]`;
+}
 
 /** OAuth provider with current authentication status */
 export interface AuthProvider {
@@ -39,6 +52,19 @@ export interface AuthProvider {
    */
   type?: "oauth" | "api_key" | "cli";
   /** Masked hint of the stored API key (first 3 + bullets + last 4 chars) */
+  keyHint?: string;
+  /** Credential instance described by the top-level status fields. */
+  instanceId?: string;
+  instances?: ProviderCredentialInstance[];
+}
+
+export interface ProviderCredentialInstance {
+  instanceId: string;
+  label?: string;
+  isDefault: boolean;
+  authenticated: boolean;
+  expired?: boolean;
+  type?: "oauth" | "api_key";
   keyHint?: string;
 }
 
@@ -751,20 +777,31 @@ export interface GitCliStatus {
 }
 
 /** Fetch authentication status for all OAuth providers */
-export function fetchAuthStatus(options?: FetchOptions): Promise<{
+/*
+FNXC:ProviderAuth 2026-08-01-06:11:
+Targeted status requests must dedupe by provider and instance, not a global key, or concurrent
+account rows can receive each other's status payload. The zero-argument request retains its URL.
+*/
+export function fetchAuthStatus(options?: FetchOptions & { provider?: string; instance?: string }): Promise<{
   providers: AuthProvider[];
   ghCli?: { available: boolean; authenticated: boolean };
   gitCli?: GitCliStatus;
 }> {
-  return dedupe("/auth/status", () => api<{
+  const params = new URLSearchParams();
+  if (options?.provider) params.set("provider", options.provider);
+  if (options?.instance?.trim()) params.set("instance", options.instance.trim());
+  const query = params.toString();
+  const url = query ? `/auth/status?${query}` : "/auth/status";
+  const key = `${options?.provider ?? "*"}::${options?.instance?.trim() || "default"}`;
+  return dedupe(`/auth/status:${key}`, () => api<{
     providers: AuthProvider[];
     ghCli?: { available: boolean; authenticated: boolean };
     gitCli?: GitCliStatus;
-  }>("/auth/status"), options);
+  }>(url), options);
 }
 
 /** Initiate OAuth login for a provider. Returns the auth URL to open in a new tab. */
-export function loginProvider(provider: string): Promise<{
+export function loginProvider(provider: string, instance?: string, label?: string): Promise<{
   url: string;
   instructions?: string;
   manualCode?: ManualOAuthCodeInfo;
@@ -777,36 +814,36 @@ export function loginProvider(provider: string): Promise<{
     deviceCode?: OAuthDeviceCodeInfo;
   }>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ provider, origin: window.location.origin }),
+    body: JSON.stringify({ provider, origin: window.location.origin, ...(instance ? { instance } : {}), ...(label ? { label } : {}) }),
   });
 }
 
 /** Submit a pasted OAuth callback URL or authorization code for an active login. */
-export function submitProviderManualCode(provider: string, code: string): Promise<{ success: boolean; submitted: boolean }> {
+export function submitProviderManualCode(provider: string, code: string, instance?: string): Promise<{ success: boolean; submitted: boolean }> {
   return api<{ success: boolean; submitted: boolean }>("/auth/manual-code", {
     method: "POST",
-    body: JSON.stringify({ provider, code }),
+    body: JSON.stringify({ provider, code, ...(instance ? { instance } : {}) }),
   });
 }
 
 /** Logout from a provider, removing stored credentials. */
-export function logoutProvider(provider: string): Promise<{ success: boolean }> {
+export function logoutProvider(provider: string, instance?: string): Promise<{ success: boolean }> {
   return api<{ success: boolean }>("/auth/logout", {
     method: "POST",
-    body: JSON.stringify({ provider }),
+    body: JSON.stringify({ provider, ...(instance ? { instance } : {}) }),
   });
 }
 
 /** Cancel an in-progress OAuth login attempt for a provider. */
-export function cancelProviderLogin(provider: string): Promise<{ success: boolean; cancelled: boolean }> {
+export function cancelProviderLogin(provider: string, instance?: string): Promise<{ success: boolean; cancelled: boolean }> {
   return api<{ success: boolean; cancelled: boolean }>("/auth/cancel", {
     method: "POST",
-    body: JSON.stringify({ provider }),
+    body: JSON.stringify({ provider, ...(instance ? { instance } : {}) }),
   });
 }
 
 /** Save an API key for an API-key-backed provider. */
-export function saveApiKey(provider: string, apiKey: string): Promise<{
+export function saveApiKey(provider: string, apiKey: string, instance?: string, label?: string): Promise<{
   success: boolean;
   modelsRefreshed?: number;
   refreshReason?: string;
@@ -819,15 +856,40 @@ export function saveApiKey(provider: string, apiKey: string): Promise<{
     refreshError?: string;
   }>("/auth/api-key", {
     method: "POST",
-    body: JSON.stringify({ provider, apiKey }),
+    body: JSON.stringify({ provider, apiKey, ...(instance ? { instance } : {}), ...(label ? { label } : {}) }),
   });
 }
 
 /** Remove an API key for an API-key-backed provider. */
-export function clearApiKey(provider: string): Promise<{ success: boolean }> {
+export function clearApiKey(provider: string, instance?: string): Promise<{ success: boolean }> {
   return api<{ success: boolean }>("/auth/api-key", {
     method: "DELETE",
-    body: JSON.stringify({ provider }),
+    body: JSON.stringify({ provider, ...(instance ? { instance } : {}) }),
   });
+}
+
+/** Generates opaque client-side account ids; labels are deliberately not identifiers. */
+export function newProviderInstanceId(knownInstanceIds: Iterable<string> = []): string {
+  const known = new Set(knownInstanceIds);
+  for (;;) {
+    const random = globalThis.crypto?.getRandomValues
+      ? Array.from(globalThis.crypto.getRandomValues(new Uint32Array(2))).map((part) => part.toString(36)).join("")
+      : Math.random().toString(36).slice(2);
+    const id = `acct-${random}`.slice(0, 64);
+    if (isValidProviderInstanceId(id) && !known.has(id)) return id;
+  }
+}
+
+export function listProviderInstances(provider: string): Promise<{ instances: ProviderCredentialInstance[] }> {
+  return api(`/auth/providers/${encodeURIComponent(provider)}/instances`);
+}
+export function renameProviderInstance(provider: string, instance: string, label: string): Promise<{ success: boolean }> {
+  return api(`/auth/providers/${encodeURIComponent(provider)}/instances/${encodeURIComponent(instance)}/rename`, { method: "POST", body: JSON.stringify({ label }) });
+}
+export function setProviderDefaultInstance(provider: string, instance: string): Promise<{ success: boolean }> {
+  return api(`/auth/providers/${encodeURIComponent(provider)}/default-instance`, { method: "POST", body: JSON.stringify({ instance }) });
+}
+export function removeProviderInstance(provider: string, instance: string): Promise<{ success: boolean }> {
+  return api(`/auth/providers/${encodeURIComponent(provider)}/instances/${encodeURIComponent(instance)}`, { method: "DELETE" });
 }
 

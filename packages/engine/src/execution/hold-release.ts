@@ -47,6 +47,7 @@ import {
   TransitionRejectionError,
   resolveWorkflowIrForTask,
   isUnplannedSeedPrompt,
+  isDuplicateRedirectOnlyPrompt,
   isWorkflowOptionalGroupEnabled,
   resolveEffectiveAutoMerge,
   isTaskBlockedOnApproval,
@@ -265,6 +266,12 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
     // isUnplannedSeedPrompt also matches the refineTask seed shape (no task-id prefix),
     // so an unplanned refinement promoted out of a manual intake is held for planning
     // instead of releasing into execution with a feedback-only prompt.
+    /*
+    FNXC:DuplicateIntake 2026-08-01-19:24:
+    A DUPLICATE-only PROMPT is unplanned for execution (FN-8704). Hold capacity release
+    until triage writes a real plan — filesystem validation is the twin of this check.
+    */
+    if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
     return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
   } catch {
     // Missing prompt is handled by filesystem validation elsewhere; do not block on it here.

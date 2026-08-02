@@ -88,6 +88,7 @@ import {
   fetchAssertions,
   createAssertion,
   updateAssertion,
+  deleteAssertion,
   linkFeatureToAssertion,
   unlinkFeatureFromAssertion,
   fetchFeaturesForAssertion,
@@ -193,6 +194,25 @@ const validationStateColors: Record<string, { bg: string; text: string }> = {
 };
 
 const featureRetryBudgetMax = 3;
+
+/**
+ * FNXC:MilestoneValidationFreshness 2026-08-01-20:42:
+ * Every rollup and telemetry response for a milestone shares this request generation. Only the newest request may update a badge, including when the newest legitimate state regresses to failed.
+ */
+export class MilestoneValidationFreshnessCoordinator {
+  private readonly generations = new Map<string, number>();
+
+  begin(milestoneId: string): number {
+    const generation = (this.generations.get(milestoneId) ?? 0) + 1;
+    this.generations.set(milestoneId, generation);
+    return generation;
+  }
+
+  isCurrent(milestoneId: string, generation: number): boolean {
+    return this.generations.get(milestoneId) === generation;
+  }
+}
+
 const missionInterviewListStatuses: ReadonlySet<AiSessionSummary["status"]> = new Set([
   "generating",
   "awaiting_input",
@@ -940,7 +960,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [isActive, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError]);
 
   // Delete confirmation
-  const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string } | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<{ type: string; id: string; milestoneId?: string } | null>(null);
 
   // Assertion panel state
   const [assertionsByMilestone, setAssertionsByMilestone] = useState<Map<string, MissionContractAssertion[]>>(new Map());
@@ -985,6 +1005,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const missionsRef = useRef<MissionWithSummary[]>([]);
   const selectedMissionRef = useRef<MissionWithHierarchy | null>(null);
   const selectedMilestoneIdRef = useRef<string | null>(null);
+  // FNXC:MilestoneValidationFreshness 2026-08-01-20:42: Rollup and telemetry responses share one per-milestone generation so an older request cannot restore a repaired failed badge, while a newer failure remains valid.
+  const validationRequestGenerationRef = useRef(new MilestoneValidationFreshnessCoordinator());
   const activeTabRef = useRef<"structure" | "activity">("structure");
   const eventsFilterRef = useRef<"all" | "errors" | "state_changes" | "tasks" | "slices" | "autopilot">("all");
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -1021,6 +1043,27 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   selectedMilestoneIdRef.current = selectedMilestoneId;
   activeTabRef.current = activeTab;
   eventsFilterRef.current = eventsFilter;
+
+  const beginValidationRequest = useCallback((milestoneId: string): number =>
+    validationRequestGenerationRef.current.begin(milestoneId), []);
+
+  const isCurrentValidationRequest = useCallback((milestoneId: string, generation: number): boolean =>
+    validationRequestGenerationRef.current.isCurrent(milestoneId, generation), []);
+
+  const loadValidationRollup = useCallback(async (milestoneId: string) => {
+    const generation = beginValidationRequest(milestoneId);
+    try {
+      const rollup = await fetchMilestoneValidation(milestoneId, projectId);
+      if (!isCurrentValidationRequest(milestoneId, generation)) return;
+      setValidationRollupByMilestone((prev) => {
+        const next = new Map(prev);
+        next.set(milestoneId, rollup);
+        return next;
+      });
+    } catch {
+      // Silently fail
+    }
+  }, [beginValidationRequest, isCurrentValidationRequest, projectId]);
 
   const scrollActivityToLatest = useCallback((behavior: ScrollBehavior = "auto") => {
     const endNode = activityEventsEndRef.current;
@@ -1151,13 +1194,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
         // Load assertions and validation rollup for the selected milestone.
         void loadAssertionsForMilestone(nextSelectedMilestoneId);
-        fetchMilestoneValidation(nextSelectedMilestoneId, projectId).then((rollup) => {
-          setValidationRollupByMilestone((prev) => {
-            const next = new Map(prev);
-            next.set(nextSelectedMilestoneId, rollup);
-            return next;
-          });
-        }).catch(() => { /* silently fail */ });
+        void loadValidationRollup(nextSelectedMilestoneId);
       } else {
         setSelectedMilestoneId(null);
         setValidationTelemetry(null);
@@ -1168,7 +1205,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     } finally {
       setDetailLoading(false);
     }
-  }, [addToast, loadAssertionsForMilestone, projectId]);
+  }, [addToast, loadAssertionsForMilestone, loadValidationRollup, projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1212,15 +1249,23 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
 
     let cancelled = false;
+    const generation = beginValidationRequest(selectedMilestoneId);
     setValidationTelemetry(null);
 
     fetchMilestoneValidationTelemetry(selectedMilestoneId, projectId)
       .then((telemetry) => {
-        if (cancelled) {
+        if (cancelled || !isCurrentValidationRequest(selectedMilestoneId, generation)) {
           return;
         }
         if (!isMilestoneValidationTelemetry(telemetry)) {
           setValidationTelemetry(null);
+          /*
+          FNXC:MilestoneValidationFreshness 2026-08-01-21:17:
+          Telemetry is optional, but its request still supersedes every shared badge writer.
+          Renew the authoritative rollup when telemetry is absent so the discarded older rollup
+          cannot leave a repaired milestone's previous failed badge in the map.
+          */
+          void loadValidationRollup(selectedMilestoneId);
           return;
         }
 
@@ -1232,15 +1277,16 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         });
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && isCurrentValidationRequest(selectedMilestoneId, generation)) {
           setValidationTelemetry(null);
+          void loadValidationRollup(selectedMilestoneId);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isActive, selectedMilestoneId, projectId]);
+  }, [beginValidationRequest, isActive, isCurrentValidationRequest, loadValidationRollup, selectedMilestoneId, projectId]);
 
   useEffect(() => {
     setValidationRoundsExpanded(true);
@@ -1262,10 +1308,17 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     if (!milestoneId || milestoneId !== selectedMilestoneIdRef.current) {
       return;
     }
+    const generation = beginValidationRequest(milestoneId);
 
     void fetchMilestoneValidationTelemetry(milestoneId, projectId)
       .then((telemetry) => {
-        if (selectedMilestoneIdRef.current !== milestoneId || !isMilestoneValidationTelemetry(telemetry)) {
+        if (selectedMilestoneIdRef.current !== milestoneId
+          || !isCurrentValidationRequest(milestoneId, generation)) {
+          return;
+        }
+        if (!isMilestoneValidationTelemetry(telemetry)) {
+          setValidationTelemetry(null);
+          void loadValidationRollup(milestoneId);
           return;
         }
         setValidationTelemetry(telemetry);
@@ -1276,9 +1329,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         });
       })
       .catch(() => {
-        // Silently fail - telemetry is supplemental
+        // Telemetry is supplemental, but the shared generation requires a fresh rollup fallback.
+        if (selectedMilestoneIdRef.current === milestoneId
+          && isCurrentValidationRequest(milestoneId, generation)) {
+          setValidationTelemetry(null);
+          void loadValidationRollup(milestoneId);
+        }
       });
-  }, [projectId]);
+  }, [beginValidationRequest, isCurrentValidationRequest, loadValidationRollup, projectId]);
 
   const loadMissionEvents = useCallback(async (
     missionId: string,
@@ -1907,19 +1965,13 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.add(milestoneId);
         // Load assertions and validation rollup when expanding milestone
         void loadAssertionsForMilestone(milestoneId);
-        fetchMilestoneValidation(milestoneId, projectId).then((rollup) => {
-          setValidationRollupByMilestone((prev) => {
-            const next = new Map(prev);
-            next.set(milestoneId, rollup);
-            return next;
-          });
-        }).catch(() => { /* silently fail */ });
+        void loadValidationRollup(milestoneId);
       } else {
         next.delete(milestoneId);
       }
       return next;
     });
-  }, [loadAssertionsForMilestone, projectId]);
+  }, [loadAssertionsForMilestone, loadValidationRollup]);
 
   // Slice handlers
   const handleCreateSlice = useCallback((milestoneId: string) => {
@@ -2175,19 +2227,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // ── Assertion handlers ──
 
-  const loadValidationRollup = useCallback(async (milestoneId: string) => {
-    try {
-      const rollup = await fetchMilestoneValidation(milestoneId, projectId);
-      setValidationRollupByMilestone((prev) => {
-        const next = new Map(prev);
-        next.set(milestoneId, rollup);
-        return next;
-      });
-    } catch {
-      // Silently fail
-    }
-  }, [projectId]);
-
   const handleCreateAssertion = useCallback(async (milestoneId: string) => {
     if (!assertionForm.title.trim() || !assertionForm.assertion.trim()) {
       addToast(t("missions.assertionFieldsRequired", "Title and assertion text are required"), "error");
@@ -2211,6 +2250,14 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       setSaving(false);
     }
   }, [assertionForm, addToast, loadAssertionsForMilestone, loadValidationRollup, projectId]);
+
+  const handleDeleteAssertion = useCallback(async (assertionId: string, milestoneId: string) => {
+    await deleteAssertion(assertionId, projectId);
+    addToast(t("missions.assertionDeleted", "Assertion deleted"), "success");
+    await loadAssertionsForMilestone(milestoneId);
+    await loadValidationRollup(milestoneId);
+    setDeleteConfirmId(null);
+  }, [addToast, loadAssertionsForMilestone, loadValidationRollup, projectId]);
 
   const handleEditAssertion = useCallback((assertion: MissionContractAssertion) => {
     setEditingAssertionId(assertion.id);
@@ -4065,8 +4112,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                         </button>
                                         <button
                                           className="mission-icon-btn mission-icon-btn--danger"
-                                          onClick={() => setDeleteConfirmId({ type: "assertion", id: assertion.id })}
+                                          onClick={() => setDeleteConfirmId({ type: "assertion", id: assertion.id, milestoneId: milestone.id })}
                                           title={t("missions.deleteAssertion", "Delete assertion")}
+                                          aria-label={t("missions.deleteAssertion", "Delete assertion")}
                                         >
                                           <Trash2 size={14} />
                                         </button>
@@ -4975,6 +5023,30 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     );
   };
 
+  /*
+  FNXC:MissionAssertions 2026-08-01-19:44:
+  Every deleteConfirmId type must dispatch a deletion, and the shared confirmation panel must surface rejected requests. Assertion deletion is an operator recovery path for validation failures, so a silent no-op would leave stale rollups unrepairable.
+  */
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirmId) return;
+
+    try {
+      if (deleteConfirmId.type === "milestone") {
+        await handleDeleteMilestone(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "slice") {
+        await handleDeleteSlice(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "feature") {
+        await handleDeleteFeature(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "assertion" && deleteConfirmId.milestoneId) {
+        await handleDeleteAssertion(deleteConfirmId.id, deleteConfirmId.milestoneId);
+      } else if (deleteConfirmId.type === "interview_draft") {
+        await handleDiscardInterviewSession(deleteConfirmId.id);
+      }
+    } catch (err) {
+      addToast(getErrorMessage(err) || t("missions.deleteFailed", "Failed to delete item"), "error");
+    }
+  }, [addToast, deleteConfirmId, handleDeleteAssertion, handleDeleteFeature, handleDeleteMilestone, handleDeleteSlice, handleDiscardInterviewSession, t]);
+
   const renderDeleteConfirmPanel = () => {
     if (deleteConfirmId?.type === "mission") {
       return null;
@@ -4992,18 +5064,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           <div className="mission-confirm-panel__actions">
             <button
               className="mission-btn mission-btn--danger"
-              onClick={async () => {
-                if (!deleteConfirmId) return;
-                if (deleteConfirmId.type === "milestone") {
-                  await handleDeleteMilestone(deleteConfirmId.id);
-                } else if (deleteConfirmId.type === "slice") {
-                  await handleDeleteSlice(deleteConfirmId.id);
-                } else if (deleteConfirmId.type === "feature") {
-                  await handleDeleteFeature(deleteConfirmId.id);
-                } else if (deleteConfirmId.type === "interview_draft") {
-                  await handleDiscardInterviewSession(deleteConfirmId.id);
-                }
-              }}
+              onClick={() => { void handleConfirmDelete(); }}
             >
               {isInterviewDraftDelete ? t("missions.discardButton", "Discard") : t("missions.deleteButton", "Delete")}
             </button>

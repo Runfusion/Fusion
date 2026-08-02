@@ -62,17 +62,25 @@ describe("TaskCard on the U11 merged planning column", () => {
   test — matching a word that also appears in chrome.
   */
 
-  it("reads as agent-active from fresh planner activity on the merged column", () => {
+  it("reads as agent-active from a live planning status on the merged column", () => {
     /*
-    FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile):
-    `isTaskAgentActive`'s planner-lane clause needs this card's column traits. Without
-    them it falls back to the legacy ids, and a status-null card on the merged lane reads
-    IDLE — pulsing Planning state gone, optional-gate activity suppressed, column header
-    undercounting executing work. Threading ListView alone left the board cards broken.
-
-    REVERT CHECK: drop `columnFlags` from TaskCard's `isTaskAgentActive` call and this
-    fails — the pulsing class disappears because the card is in `todo`, not `triage`.
+    FNXC:TaskActivity 2026-08-01-17:53:
+    Activity chrome now follows the shared live-agent predicate: a `planning` status card
+    glows on the merged lane, while fresh planner logs alone no longer do (a log line is
+    not a concurrency slot, and lane counts must never exceed the live-agent population).
     */
+    const { container } = render(
+      <TaskCard
+        task={planningTask({ status: "planning" } as Partial<Task>)}
+        taskColumnFlags={MERGED_PLANNING_FLAGS}
+        onOpenDetail={() => {}}
+        addToast={() => {}}
+      />,
+    );
+    expect(container.querySelector(".pulsing")).not.toBeNull();
+  });
+
+  it("does NOT read as agent-active from fresh planner logs alone", () => {
     const { container } = render(
       <TaskCard
         task={planningTask({ recentAgentActivityAt: new Date().toISOString() } as Partial<Task>)}
@@ -81,7 +89,7 @@ describe("TaskCard on the U11 merged planning column", () => {
         addToast={() => {}}
       />,
     );
-    expect(container.querySelector(".pulsing")).not.toBeNull();
+    expect(container.querySelector(".pulsing")).toBeNull();
   });
 
   it("does NOT offer Start on the merged column, which auto-triages", () => {

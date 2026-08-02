@@ -62,6 +62,7 @@ vi.mock("../../hooks/useToast", () => ({
 const noop = () => {};
 const resolvedChipHeightPattern = /^(var\(--card-chip-height\)|22px)$/;
 const centeredIdNudgePattern = /^translateY\(calc\(var\(--space-xs\) \/ 4\)\)$/;
+const centeredSizeBadgeOffset = "transform: translateY(calc((var(--space-xs) * 3) / 4));";
 
 function expectSharedHeaderBaseline(container: HTMLElement) {
   const header = container.querySelector(".card-header") as HTMLElement;
@@ -193,9 +194,10 @@ function expectSizeBadgeAfterTaskId(container: HTMLElement, expected: boolean) {
   expect(sizeStyles.alignItems).toBe("center");
   expect(sizeStyles.alignSelf).toBe("flex-start");
   expect(sizeStyles.lineHeight).toBe("1");
-  expect(sizeStyles.height).toMatch(resolvedChipHeightPattern);
-  expect(sizeStyles.minHeight).toMatch(resolvedChipHeightPattern);
-  expect(sizeStyles.maxHeight).toMatch(resolvedChipHeightPattern);
+  expect(sizeStyles.height).toBe("auto");
+  expect(sizeStyles.minHeight).toBe("auto");
+  expect(sizeStyles.maxHeight).toBe("none");
+  expect(sizeStyles.transform).toBe("translateY(calc((var(--space-xs) * 3) / 4))");
   expect(sizeBadge!.parentElement).toBe(header);
   expect(cardId.nextElementSibling).toBe(sizeBadge);
   expect(actions?.contains(sizeBadge)).toBe(false);
@@ -280,6 +282,60 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(badgeStyles.minWidth).toBe("0px");
     expect(header?.contains(headerBadges)).toBe(true);
     expect(container.querySelector(".card-header-actions")).toBeNull();
+  });
+
+  it.each([
+    ["fast alone", { priority: "normal", plannerOversightLevel: "off" }],
+    ["fast with priority", { priority: "urgent", plannerOversightLevel: "off" }],
+    ["fast with oversight", { priority: "normal", plannerOversightLevel: "steer" }],
+    ["fast with priority and oversight", { priority: "urgent", plannerOversightLevel: "steer" }],
+  ] as const)("keeps %s beside a queued-to-plan status chip in the shared wrap context", (_name, meta) => {
+    const { container: queuedContainer } = render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          status: undefined,
+          steps: [],
+          executionMode: "fast",
+          ...meta,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const headerBadges = queuedContainer.querySelector(".card-header-badges") as HTMLElement;
+    const statusBadge = queuedContainer.querySelector(".card-status-badge") as HTMLElement;
+    const metaBadges = queuedContainer.querySelector('[data-testid="card-meta-badges"]') as HTMLElement;
+    const fastBadge = queuedContainer.querySelector(".card-execution-mode-badge") as HTMLElement;
+
+    expect(headerBadges).toBeTruthy();
+    expect(statusBadge).toHaveTextContent("Queued to plan");
+    expect(metaBadges).toBeTruthy();
+    expect(fastBadge).toBeTruthy();
+    expect(metaBadges.parentElement).toBe(headerBadges);
+    expect(headerBadges.contains(statusBadge)).toBe(true);
+    expect(headerBadges.contains(fastBadge)).toBe(true);
+    expect(getComputedStyle(metaBadges).display).toBe("contents");
+    expect(getComputedStyle(fastBadge).flexShrink).toBe("0");
+    const priorityBadge = queuedContainer.querySelector(".card-priority-badge") as HTMLElement | null;
+    if (priorityBadge) expect(getComputedStyle(priorityBadge).flexShrink).toBe("0");
+  });
+
+  it("keeps the layout-transparent meta wrapper contract in the mobile badge context", () => {
+    const mobileSection = getCssBlocks(loadedCss, "max-width: 768px").join("\n");
+
+    expectCssRuleToContain(loadedCss, ".card-meta-badges", "display: contents;");
+    expectCssRuleToContain(mobileSection, ".card-header-badges", "gap: calc(var(--space-xs) / 2);");
+    expect(mobileSection).not.toMatch(/\.card-meta-badges\s*\{/);
+  });
+
+  it("keeps right-side breathing room around queued reason icons at tablet widths", () => {
+    expectCssRuleToContain(
+      loadedCss,
+      ".card-status-badge--queued-with-reason",
+      "padding-inline-end: var(--space-xs);",
+    );
   });
 
   it("places a fast-mode size badge after the task id before wrapping header badges", () => {
@@ -535,17 +591,25 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     const mobileSection = getCssBlocks(loadedCss, "max-width: 768px").join("\n");
     const shortLandscapeSection = getCssBlocks(loadedCss, "max-height: 480px").join("\n");
 
+    /*
+     * FNXC:TaskCardLayout 2026-08-01-06:46 (FN-8675):
+     * The direct size chip retains intrinsic badge dimensions for FN-8665 parity, then uses this
+     * token-derived offset to occupy the same first-row centerline as chips centered by the group.
+     * Check every responsive section because jsdom does not evaluate media queries during render.
+     */
     expect(sizeBadgeRule).toContain("align-self: flex-start;");
     expect(sizeBadgeRule).toContain("box-sizing: border-box;");
-    expect(sizeBadgeRule).toContain("height: var(--card-chip-height);");
-    expect(sizeBadgeRule).toContain("min-height: var(--card-chip-height);");
-    expect(sizeBadgeRule).toContain("max-height: var(--card-chip-height);");
+    expect(sizeBadgeRule).toContain(centeredSizeBadgeOffset);
     expect(sizeBadgeRule).not.toContain("align-self: center;");
+    for (const declaration of ["\n  height:", "\n  min-height:", "\n  max-height:"]) {
+      expectCssRuleNotToContain(loadedCss, ".card-size-badge", declaration);
+    }
     for (const section of [mobileSection, shortLandscapeSection]) {
       expectCssRuleToContain(section, ".card-size-badge", "align-self: flex-start;");
-      expectCssRuleToContain(section, ".card-size-badge", "height: var(--card-chip-height-mobile);");
-      expectCssRuleToContain(section, ".card-size-badge", "min-height: var(--card-chip-height-mobile);");
-      expectCssRuleToContain(section, ".card-size-badge", "max-height: var(--card-chip-height-mobile);");
+      expectCssRuleToContain(section, ".card-size-badge", centeredSizeBadgeOffset);
+      for (const declaration of ["\n  height:", "\n  min-height:", "\n  max-height:"]) {
+        expectCssRuleNotToContain(section, ".card-size-badge", declaration);
+      }
     }
   });
 

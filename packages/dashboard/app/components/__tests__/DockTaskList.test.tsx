@@ -11,7 +11,7 @@ The mock records each TaskCard mount so tests can assert row identity stability:
 const { taskCardMountLog } = vi.hoisted(() => ({ taskCardMountLog: [] as string[] }));
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: ({ task, onOpenDetail, onDeleteTask, disableDrag }: { task: Task | TaskDetail; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; disableDrag?: boolean }) => {
+  TaskCard: ({ task, taskColumnFlags, onOpenDetail, onDeleteTask, onReviseTask, disableDrag }: { task: Task | TaskDetail; taskColumnFlags?: { complete?: boolean }; onOpenDetail: (task: Task | TaskDetail) => void; onDeleteTask?: (id: string) => Promise<Task>; onReviseTask?: (task: Task) => void; disableDrag?: boolean }) => {
     useEffect(() => {
       taskCardMountLog.push(task.id);
     }, []);
@@ -21,9 +21,11 @@ vi.mock("../TaskCard", () => ({
         data-testid={`mock-task-card-${task.id}`}
         data-disable-drag={String(disableDrag)}
         data-has-delete={String(Boolean(onDeleteTask))}
+        data-complete={String(taskColumnFlags?.complete === true)}
         onClick={() => onOpenDetail(task)}
       >
         {task.title ?? task.id}
+        {onReviseTask ? <span data-testid={`mock-task-card-revise-${task.id}`} onClick={(event) => { event.stopPropagation(); onReviseTask(task as Task); }}>Revise</span> : null}
       </button>
     );
   },
@@ -177,6 +179,31 @@ describe("DockTaskList", () => {
   FNXC:RightDockTasks 2026-06-28-18:42:
   Empty right-dock task states must distinguish a truly empty list from a list whose only rows are completed or archived, so the compact panel never renders blank and the Show Done affordance remains reachable when completed rows exist.
   */
+  it("routes dock reverted cards through resolved column flags and revise", () => {
+    const reverted = {
+      ...makeTask("FN-REVERTED", "Cancelled task", "shipped"),
+      description: "first line\nsecond line",
+      sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+    } as Task;
+    const onReviseTask = vi.fn();
+
+    render(
+      <DockTaskList
+        tasks={[reverted]}
+        columnFlagsByTaskId={new Map([[reverted.id, { complete: true }]])}
+        onOpenTask={vi.fn()}
+        onDeleteTask={vi.fn()}
+        onReviseTask={onReviseTask}
+        addToast={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("dock-reverted-tasks")).toBeInTheDocument();
+    expect(screen.getByTestId("mock-task-card-FN-REVERTED")).toHaveAttribute("data-complete", "true");
+    fireEvent.click(screen.getByTestId("mock-task-card-revise-FN-REVERTED"));
+    expect(onReviseTask).toHaveBeenCalledWith(reverted);
+  });
+
   it("renders distinct empty states for no tasks, only done tasks, and only archived tasks", () => {
     const { rerender } = render(<DockTaskList tasks={[]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
 

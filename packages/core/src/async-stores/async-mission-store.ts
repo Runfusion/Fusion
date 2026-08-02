@@ -11,7 +11,7 @@ const severityAuditLog = createLogger("core-async-mission-store");
  * events; reusable SQL and row mapping live in async-mission-store-queries.ts.
  */
 import { EventEmitter } from "node:events";
-import { and, eq, inArray, sql, notInArray} from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import { FEATURE_LOOP_TRANSITIONS, normalizeMissionAssertionType, renderValidationCause } from "../missions/mission-types.js";
@@ -21,6 +21,8 @@ import type {
   Slice,
   MissionFeature,
   MissionValidatorRun,
+  ValidatorRunAdmission,
+  ValidatorRunAdmissionInput,
   MissionAssertionFailureRecord,
   MissionFeatureLoopSnapshot,
   MissionCreateInput,
@@ -136,6 +138,7 @@ import {
   linkFeatureToAssertion,
   unlinkFeatureFromAssertion,
   createValidatorRun,
+  rowToValidatorRun,
   getValidatorRun,
   listValidatorRunsByFeature,
   listStaleRunningValidatorRuns,
@@ -1471,7 +1474,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ VALIDATOR RUNS ════════════════
-  async startValidatorRun(featureId: string, triggerType?: string, taskId?: string): Promise<MissionValidatorRun> {
+  async startValidatorRun(featureId: string, triggerType?: string, taskId?: string, inputFingerprint?: string): Promise<MissionValidatorRun> {
     const feature = await getFeature(this.db, featureId);
     if (!feature) throw new Error(`Feature ${featureId} not found`);
     const slice = await getSlice(this.db, feature.sliceId);
@@ -1490,6 +1493,7 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       implementationAttempt: feature.implementationAttemptCount ?? 0,
       validatorAttempt: newValidatorAttemptCount,
       taskId,
+      inputFingerprint,
       startedAt: now,
       createdAt: now,
       updatedAt: now,
@@ -1502,6 +1506,63 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       loopState: "validating",
     });
     return run;
+  }
+
+  /**
+   * Atomically admit or suppress an automatic validator dispatch. The feature
+   * row lock serializes one project+feature+fingerprint decision without
+   * holding a database transaction while a model session executes.
+   */
+  async admitValidatorRun(featureId: string, input: ValidatorRunAdmissionInput): Promise<ValidatorRunAdmission> {
+    return this.layer.transactionImmediate(async (tx) => {
+      const locked = await tx.select().from(schema.project.missionFeatures).where(and(
+        eq(schema.project.missionFeatures.projectId, missionProjectId()),
+        eq(schema.project.missionFeatures.id, featureId),
+      )).for("update");
+      const feature = locked[0] ? await getFeature(tx, featureId) : undefined;
+      if (!feature) throw new Error(`Feature ${featureId} not found`);
+      const rows = await tx.select().from(schema.project.missionValidatorRuns).where(and(
+        eq(schema.project.missionValidatorRuns.projectId, missionProjectId()),
+        eq(schema.project.missionValidatorRuns.featureId, featureId),
+        eq(schema.project.missionValidatorRuns.inputFingerprint, input.inputFingerprint),
+      )).orderBy(desc(schema.project.missionValidatorRuns.completedAt), desc(schema.project.missionValidatorRuns.startedAt), desc(schema.project.missionValidatorRuns.createdAt), desc(schema.project.missionValidatorRuns.id)).for("update");
+      const runs = rows.map((row) => rowToValidatorRun(row as never));
+      const running = runs.find((run) => run.status === "running");
+      const terminal = runs.find((run) => run.status === "passed" || run.status === "failed");
+      const failed = runs.filter((run) => run.status === "failed");
+      const slice = await getSlice(tx, feature.sliceId);
+      const milestone = slice ? await getMilestone(tx, slice.milestoneId) : undefined;
+      const mission = milestone ? await getMission(tx, milestone.missionId) : undefined;
+      const append = async (outcome: ValidatorRunAdmission["outcome"], run?: MissionValidatorRun, stuck = false) => {
+        if (!mission) return;
+        const seq = (await getMaxEventSeq(tx)) + 1;
+        await insertMissionEvent(tx, { id: this.generateId("ME"), missionId: mission.id, eventType: "warning", description: "validation memoized", metadata: { outcome, featureId, fingerprint: input.inputFingerprint, ...(run ? { runId: run.id } : {}) }, timestamp: new Date().toISOString(), seq });
+        if (stuck) await insertMissionEvent(tx, { id: this.generateId("ME"), missionId: mission.id, eventType: "warning", description: "validation-stuck", metadata: { featureId, fingerprint: input.inputFingerprint, ...(run ? { runId: run.id } : {}) }, timestamp: new Date().toISOString(), seq: seq + 1 });
+      };
+      if (running) { await append("running", running); return { outcome: "running", run: running }; }
+      if (terminal?.status === "passed" && input.reusePass) {
+        await updateFeature(tx, { ...feature, status: "done", loopState: "passed", lastValidatorStatus: "passed", lastValidatorRunId: terminal.id, updatedAt: new Date().toISOString() });
+        await append("reuse-pass", terminal);
+        return { outcome: "reuse-pass", run: terminal };
+      }
+      if (failed.length >= input.failureBudget) {
+        const alreadyBlocked = feature.loopState === "blocked" && feature.validationBudgetFingerprint === input.inputFingerprint;
+        const latest = terminal?.status === "failed" ? terminal : failed[0];
+        if (!alreadyBlocked) await updateFeature(tx, { ...feature, loopState: "blocked", validationBudgetFingerprint: input.inputFingerprint, validationBudgetRunId: latest?.id, validationBudgetBlockedAt: new Date().toISOString(), lastValidatorRunId: latest?.id ?? feature.lastValidatorRunId, lastValidatorStatus: "failed", updatedAt: new Date().toISOString() });
+        await append("budget-exhausted", latest, !alreadyBlocked);
+        return { outcome: "budget-exhausted", run: latest };
+      }
+      if (!slice || !milestone) throw new Error(`Feature ${featureId} has incomplete hierarchy`);
+      const now = new Date().toISOString();
+      const run: MissionValidatorRun = { id: this.generateId("VR"), featureId, milestoneId: milestone.id, sliceId: slice.id, status: "running", triggerType: "task_completion", implementationAttempt: feature.implementationAttemptCount ?? 0, validatorAttempt: (feature.validatorAttemptCount ?? 0) + 1, taskId: input.taskId, inputFingerprint: input.inputFingerprint, startedAt: now, createdAt: now, updatedAt: now };
+      await createValidatorRun(tx, run);
+      // FNXC:MissionValidation 2026-08-01-16:40:
+      // Starting a changed fingerprint reopens only the FN-8694 budget block.
+      // Clear every companion field so a later ordinary block cannot be mistaken
+      // for the exhausted fingerprint that admission has just superseded.
+      await updateFeature(tx, { ...feature, validatorAttemptCount: run.validatorAttempt, lastValidatorRunId: run.id, loopState: "validating", validationBudgetFingerprint: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetFingerprint, validationBudgetRunId: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetRunId, validationBudgetBlockedAt: feature.validationBudgetFingerprint !== input.inputFingerprint ? undefined : feature.validationBudgetBlockedAt, updatedAt: now });
+      return { outcome: "start", run };
+    });
   }
 
   async getValidatorRun(id: string): Promise<MissionValidatorRun | undefined> {
@@ -1897,38 +1958,38 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
 
   // ════════════════ CONTRACT ASSERTIONS ════════════════
   async addContractAssertion(milestoneId: string, input: ContractAssertionCreateInput): Promise<MissionContractAssertion> {
-    const milestone = await getMilestone(this.db, milestoneId);
-    if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
     const origin = input.origin ?? "authored";
-    const existing = await listContractAssertions(this.db, milestoneId);
-    if (origin === "derived_milestone_acceptance"
-      && existing.some((assertion) => assertion.origin === "derived_milestone_acceptance")) {
-      /*
-      FNXC:MissionValidation 2026-07-23-17:20:
-      Reject duplicate canonical provenance before insert; PostgreSQL also
-      enforces this at rest, while authored/imported rows stay non-unique.
-      */
-      throw new Error(`Milestone ${milestoneId} already has a derived milestone acceptance assertion`);
-    }
-    const now = new Date().toISOString();
-    const orderIndex = existing.length > 0 ? Math.max(...existing.map((a) => a.orderIndex)) + 1 : 0;
-    const assertion: MissionContractAssertion = {
-      id: this.generateId("CA"),
-      milestoneId,
-      sourceFeatureId: input.sourceFeatureId,
-      scope: input.scope ?? "feature",
-      origin,
-      title: input.title,
-      assertion: input.assertion,
-      status: input.status || "pending",
-      type: normalizeMissionAssertionType(input.type),
-      orderIndex,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const created = await createContractAssertion(this.db, assertion);
+    const created = await this.mutateMilestoneAssertions(milestoneId, async (tx) => {
+      const milestone = await getMilestone(tx, milestoneId);
+      if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
+      const existing = await listContractAssertions(tx, milestoneId);
+      if (origin === "derived_milestone_acceptance"
+        && existing.some((assertion) => assertion.origin === "derived_milestone_acceptance")) {
+        /*
+        FNXC:MissionValidation 2026-07-23-17:20:
+        Reject duplicate canonical provenance before insert; PostgreSQL also
+        enforces this at rest, while authored/imported rows stay non-unique.
+        */
+        throw new Error(`Milestone ${milestoneId} already has a derived milestone acceptance assertion`);
+      }
+      const now = new Date().toISOString();
+      const orderIndex = existing.length > 0 ? Math.max(...existing.map((a) => a.orderIndex)) + 1 : 0;
+      return createContractAssertion(tx, {
+        id: this.generateId("CA"),
+        milestoneId,
+        sourceFeatureId: input.sourceFeatureId,
+        scope: input.scope ?? "feature",
+        origin,
+        title: input.title,
+        assertion: input.assertion,
+        status: input.status || "pending",
+        type: normalizeMissionAssertionType(input.type),
+        orderIndex,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
     this.emit("assertion:created", created);
-    await this.recomputeMilestoneValidation(milestoneId);
     return created;
   }
 
@@ -1943,26 +2004,32 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   async updateContractAssertion(id: string, updates: ContractAssertionUpdateInput): Promise<MissionContractAssertion> {
     const assertion = await getContractAssertion(this.db, id);
     if (!assertion) throw new Error(`Assertion ${id} not found`);
-    const updated: MissionContractAssertion = {
-      ...assertion,
-      title: updates.title ?? assertion.title,
-      assertion: updates.assertion ?? assertion.assertion,
-      status: updates.status ?? assertion.status,
-      updatedAt: new Date().toISOString(),
-    };
-    await updateContractAssertion(this.db, updated);
+    const updated = await this.mutateMilestoneAssertions(assertion.milestoneId, async (tx) => {
+      const current = await getContractAssertion(tx, id);
+      if (!current) throw new Error(`Assertion ${id} not found`);
+      const next: MissionContractAssertion = {
+        ...current,
+        title: updates.title ?? current.title,
+        assertion: updates.assertion ?? current.assertion,
+        status: updates.status ?? current.status,
+        updatedAt: new Date().toISOString(),
+      };
+      await updateContractAssertion(tx, next);
+      return next;
+    });
     this.emit("assertion:updated", updated);
-    await this.recomputeMilestoneValidation(updated.milestoneId);
     return updated;
   }
 
   async deleteContractAssertion(id: string): Promise<void> {
     const assertion = await getContractAssertion(this.db, id);
     if (!assertion) throw new Error(`Assertion ${id} not found`);
-    const milestoneId = assertion.milestoneId;
-    await deleteContractAssertion(this.db, id);
+    await this.mutateMilestoneAssertions(assertion.milestoneId, async (tx) => {
+      const current = await getContractAssertion(tx, id);
+      if (!current) throw new Error(`Assertion ${id} not found`);
+      await deleteContractAssertion(tx, id);
+    });
     this.emit("assertion:deleted", id);
-    await this.recomputeMilestoneValidation(milestoneId);
   }
 
   async reorderContractAssertions(milestoneId: string, orderedIds: string[]): Promise<void> {
@@ -1988,8 +2055,8 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(`Feature ${featureId} is already linked to assertion ${assertionId}`);
     }
     await linkFeatureToAssertion(this.db, featureId, assertionId, new Date().toISOString());
-    this.emit("assertion:linked", { featureId, assertionId });
     await this.recomputeMilestoneValidation(assertion.milestoneId);
+    this.emit("assertion:linked", { featureId, assertionId });
   }
 
   async unlinkFeatureFromAssertion(featureId: string, assertionId: string): Promise<void> {
@@ -1997,9 +2064,9 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
       throw new Error(`Feature ${featureId} is not linked to assertion ${assertionId}`);
     }
     await unlinkFeatureFromAssertion(this.db, featureId, assertionId);
-    this.emit("assertion:unlinked", { featureId, assertionId });
     const assertion = await getContractAssertion(this.db, assertionId);
     if (assertion) await this.recomputeMilestoneValidation(assertion.milestoneId);
+    this.emit("assertion:unlinked", { featureId, assertionId });
   }
 
   async listAssertionsForFeature(featureId: string): Promise<MissionContractAssertion[]> {
@@ -2098,15 +2165,15 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   // ════════════════ VALIDATION ROLLUP ════════════════
-  async getMilestoneValidationRollup(milestoneId: string): Promise<MilestoneValidationRollup> {
-    const milestone = await getMilestone(this.db, milestoneId);
+  async getMilestoneValidationRollup(milestoneId: string, handle: QueryHandle = this.db): Promise<MilestoneValidationRollup> {
+    const milestone = await getMilestone(handle, milestoneId);
     if (!milestone) throw new Error(`Milestone ${milestoneId} not found`);
-    const assertions = await listContractAssertions(this.db, milestoneId);
+    const assertions = await listContractAssertions(handle, milestoneId);
     const totalAssertions = assertions.length;
     const proseOnMilestone = (milestone.acceptanceCriteria ?? "").trim().length > 0;
     const [milestoneFeatures, linkedAssertionIds] = await Promise.all([
-      listFeaturesForMilestone(this.db, milestoneId),
-      listLinkedAssertionIds(this.db, assertions.map((assertion) => assertion.id)),
+      listFeaturesForMilestone(handle, milestoneId),
+      listLinkedAssertionIds(handle, assertions.map((assertion) => assertion.id)),
     ]);
     const proseOnFeatures = milestoneFeatures.some((feature) => (feature.acceptanceCriteria ?? "").trim().length > 0);
     const hasProseButNoAssertions = totalAssertions === 0 && (proseOnMilestone || proseOnFeatures);
@@ -2435,10 +2502,38 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
     if (mission && mission.status !== newStatus) await this.updateMission(missionId, { status: newStatus });
   }
 
+  /*
+  FNXC:MilestoneValidationReconciliation 2026-08-01-20:42:
+  Assertion mutations must persist the authoritative current rollup before they publish refresh events. This keeps an operator repair or final-failure deletion from exposing a stale failed milestone state to SSE consumers.
+  */
   private async recomputeMilestoneValidation(milestoneId: string): Promise<void> {
-    const rollup = await this.getMilestoneValidationRollup(milestoneId);
-    await updateMilestoneValidationState(this.db, milestoneId, rollup.state);
+    await this.mutateMilestoneAssertions(milestoneId, async () => undefined);
+  }
+
+  /*
+  FNXC:MilestoneValidationReconciliation 2026-08-01-21:02:
+  Assertion writes and their denormalized milestone rollup share one project-scoped
+  advisory transaction lock. PostgreSQL READ COMMITTED alone permits two repairs to
+  publish snapshots in reverse order; the lock makes the committed current rollup
+  the only state emitted to dashboard refresh consumers.
+  */
+  private async mutateMilestoneAssertions<T>(
+    milestoneId: string,
+    mutation: (tx: QueryHandle) => Promise<T>,
+  ): Promise<T> {
+    let result!: T;
+    let rollup!: MilestoneValidationRollup;
+    await this.layer.transactionImmediate(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+        CONCAT('mission-validation:', COALESCE(NULLIF(current_setting('fusion.project_id', true), ''), '__legacy_unscoped__'), ':', CAST(${milestoneId} AS text)),
+        0
+      ))`);
+      result = await mutation(tx);
+      rollup = await this.getMilestoneValidationRollup(milestoneId, tx);
+      await updateMilestoneValidationState(tx, milestoneId, rollup.state);
+    });
     this.emit("milestone:validation:updated", { milestoneId, state: rollup.state, rollup });
+    return result;
   }
 
   private deriveFeatureAssertion(feature: MissionFeature): { assertionText: string; textSource: MissionAssertionTextSource } {
@@ -2520,5 +2615,9 @@ export async function updateMilestoneValidationState(
   await handle
     .update(schema.project.milestones)
     .set({ validationState: state, updatedAt: new Date().toISOString() })
-    .where(eq(schema.project.milestones.id, milestoneId));
+    // FNXC:MilestoneValidationReconciliation 2026-08-01-20:42: Shared PostgreSQL milestone IDs must never let one project's validation repair overwrite another project's rollup.
+    .where(and(
+      eq(schema.project.milestones.projectId, missionProjectId()),
+      eq(schema.project.milestones.id, milestoneId),
+    ));
 }

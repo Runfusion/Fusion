@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectModelsSection } from "../ProjectModelsSection";
@@ -25,7 +26,7 @@ vi.mock("../../../../api", async (importOriginal) => {
 });
 
 vi.mock("../../../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ id, label, value, onChange, showThinkingLevel, thinkingLevel, onThinkingLevelChange, defaultThinkingLevel }: {
+  CustomModelDropdown: ({ id, label, value, onChange, showThinkingLevel, thinkingLevel, onThinkingLevelChange, defaultThinkingLevel, credentialInstanceId, onCredentialInstanceChange }: {
     id?: string;
     label: string;
     value?: string;
@@ -34,10 +35,13 @@ vi.mock("../../../CustomModelDropdown", () => ({
     thinkingLevel?: string;
     onThinkingLevelChange?: (value: string) => void;
     defaultThinkingLevel?: string;
+    credentialInstanceId?: string;
+    onCredentialInstanceChange?: (value: string) => void;
   }) => (
     <div data-testid={`mock-model-host-${id ?? label}`} data-value={value ?? ""} data-default-thinking={defaultThinkingLevel ?? ""}>
       <button type="button" data-testid={`mock-model-dropdown-${id ?? label}`} onClick={() => onChange?.("anthropic/claude-sonnet-4-5")}>{label}</button>
       {showThinkingLevel ? <button type="button" data-testid={`mock-thinking-${id ?? label}`} onClick={() => onThinkingLevelChange?.(thinkingLevel ? "" : "high")}>thinking:{thinkingLevel || "inherit"}</button> : null}
+      {onCredentialInstanceChange ? <><button type="button" data-testid={`mock-instance-${id ?? label}`} onClick={() => onCredentialInstanceChange("backup")}>instance:{credentialInstanceId || "default"}</button><button type="button" data-testid={`mock-instance-default-${id ?? label}`} onClick={() => onCredentialInstanceChange("")}>default instance</button></> : null}
     </div>
   ),
 }));
@@ -189,4 +193,31 @@ describe("ProjectModelsSection Chat default settings", () => {
       chatDefaultThinkingLevel: undefined,
     });
   });
+  it("round-trips a project lane credential instance and clears it with Default", async () => {
+    const user = userEvent.setup();
+    const lane = {
+      laneId: "merger",
+      label: "Merger Model",
+      globalProviderKey: "mergerGlobalProvider",
+      globalModelKey: "mergerGlobalModelId",
+      projectProviderKey: "mergerProvider",
+      projectModelKey: "mergerModelId",
+      helperText: "",
+      fallbackOrder: "",
+    } as ProjectModelsSectionModelProps["modelLanes"][number];
+    const laneModels = { ...models, modelLanes: [lane] };
+    let latestForm: SettingsFormState = { mergerProvider: "anthropic", mergerModelId: "claude-sonnet-4-5" } as SettingsFormState;
+    function Host() {
+      const [form, setForm] = useState(latestForm);
+      latestForm = form;
+      return <ProjectModelsSection form={form} setForm={setForm} models={laneModels} projectId="project-1" addToast={vi.fn()} />;
+    }
+    render(<Host />);
+
+    await user.click(screen.getByTestId("mock-instance-mergerModel"));
+    expect(latestForm.mergerCredentialInstanceId).toBe("backup");
+    await user.click(screen.getByTestId("mock-instance-default-mergerModel"));
+    expect(latestForm.mergerCredentialInstanceId).toBeUndefined();
+  });
+
 });

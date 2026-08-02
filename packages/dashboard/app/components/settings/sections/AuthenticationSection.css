@@ -1,0 +1,13 @@
+/*
+FNXC:ProviderAuth 2026-08-01-06:25:
+Credential instance actions remain compact within the existing provider card and wrap on a narrow
+Settings modal so account controls stay reachable without introducing a second card system.
+*/
+.auth-instance-controls { display: flex; flex-direction: column; gap: var(--space-sm); margin-top: var(--space-sm); }
+.auth-instance-list { display: flex; flex-direction: column; gap: var(--space-xs); }
+.auth-instance-row, .auth-instance-pending { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); }
+.auth-instance-row > span { flex: 1; min-width: 0; }
+@media (max-width: 768px) {
+  .auth-instance-row, .auth-instance-pending { align-items: stretch; }
+  .auth-instance-row > .btn, .auth-instance-pending > .btn { flex: 1; }
+}

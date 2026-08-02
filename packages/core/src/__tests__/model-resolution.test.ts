@@ -601,3 +601,40 @@ describe("model-resolution", () => {
     expect(applyTestModeOverrides(resolved, {})).toEqual(resolved);
   });
 });
+
+describe("credential instance selection", () => {
+  it("carries the winning pair's instance without mixing a losing tier", () => {
+    expect(resolveExecutionSettingsModel({
+      executionProvider: "project-provider",
+      executionModelId: "project-model",
+      executionCredentialInstanceId: "project-instance",
+      executionGlobalProvider: "global-provider",
+      executionGlobalModelId: "global-model",
+      executionGlobalCredentialInstanceId: "global-instance",
+    })).toEqual({ provider: "project-provider", modelId: "project-model", credentialInstanceId: "project-instance" });
+
+    expect(resolveExecutionSettingsModel({
+      executionProvider: "project-provider",
+      executionModelId: "project-model",
+      executionGlobalCredentialInstanceId: "losing-instance",
+    })).toEqual({ provider: "project-provider", modelId: "project-model" });
+  });
+
+  it("carries workflow, fallback, and task credential instances with their complete pairs", () => {
+    expect(resolvePlanningSettingsModel({
+      selectedWorkflowModelLanes: {
+        planningProvider: "workflow-provider",
+        planningModelId: "workflow-model",
+        planningCredentialInstanceId: "workflow-instance",
+      },
+    })).toEqual({ provider: "workflow-provider", modelId: "workflow-model", credentialInstanceId: "workflow-instance" });
+    expect(resolveValidatorFallbackModel({
+      validatorFallbackProvider: "fallback-provider",
+      validatorFallbackModelId: "fallback-model",
+      validatorFallbackCredentialInstanceId: "fallback-instance",
+    })).toEqual({ provider: "fallback-provider", modelId: "fallback-model", credentialInstanceId: "fallback-instance" });
+    expect(resolveTaskExecutionModel({
+      modelProvider: "task-provider", modelId: "task-model", credentialInstanceId: "task-instance",
+    })).toEqual({ provider: "task-provider", modelId: "task-model", credentialInstanceId: "task-instance" });
+  });
+});

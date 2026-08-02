@@ -19,6 +19,7 @@ import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
 import { THINKING_LEVELS } from "../types.js";
 import { resolveColumnFlags } from "./trait-registry.js";
+import { isValidProviderInstanceId } from "../provider-instance.js";
 // Side-effect import: registers the built-in traits so `resolveColumnFlags`
 // resolves the built-in `merge-blocker`/`intake` flags during save-time
 // validation (U2). Custom/plugin traits that set the same flags resolve too.
@@ -940,6 +941,22 @@ function validateStepReviewRouting(
   }
 }
 
+/*
+ * FNXC:CredentialInstanceSelection 2026-08-01-05:43:
+ * Workflow model overrides may persist an optional credential-instance id but this data-only slice
+ * never consumes it at runtime. Validate authoring input recursively before the graph can persist.
+ */
+function validateCredentialInstanceIdConfig(nodes: WorkflowIrNode[]): void {
+  for (const node of nodes) {
+    const value = node.config?.credentialInstanceId;
+    if (value !== undefined && (typeof value !== "string" || !isValidProviderInstanceId(value))) {
+      throw new WorkflowIrError(`Workflow node '${node.id}' credentialInstanceId must be a valid string when present`);
+    }
+    const templateNodes = (node.config as { template?: { nodes?: unknown } } | undefined)?.template?.nodes;
+    if (Array.isArray(templateNodes)) validateCredentialInstanceIdConfig(templateNodes as WorkflowIrNode[]);
+  }
+}
+
 function validateThinkingLevelConfig(nodes: WorkflowIrNode[]): void {
   for (const node of nodes) {
     const value = node.config?.thinkingLevel;
@@ -1701,6 +1718,7 @@ function validateV2(ir: WorkflowIrV2): void {
   const topLevelIds = new Set(ir.nodes.map((n) => n.id));
   validateStepExecutePlacement(ir.nodes);
   validateThinkingLevelConfig(ir.nodes);
+  validateCredentialInstanceIdConfig(ir.nodes);
   for (const node of ir.nodes) {
     if (node.kind === "foreach") validateForeach(node, topLevelIds, columnIds);
     if (node.kind === "loop") validateLoop(node, topLevelIds, columnIds);

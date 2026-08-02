@@ -190,6 +190,64 @@ describe("TaskDetailModal Summary tab", () => {
     expect(screen.queryByTestId("task-summary-token-cost-section")).toBeNull();
   });
 
+  it("keeps populated token costs in a locally scrollable real table across data states", () => {
+    const twoModelUsage = tokenUsage({
+      inputTokens: 300,
+      outputTokens: 150,
+      totalTokens: 450,
+      perModel: [
+        {
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-6",
+          inputTokens: 200,
+          outputTokens: 100,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 300,
+          firstUsedAt: "2026-01-01T00:00:00Z",
+          lastUsedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          modelProvider: "openai",
+          modelId: "gpt-4o-mini",
+          inputTokens: 100,
+          outputTokens: 50,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 150,
+          firstUsedAt: "2026-01-01T00:00:00Z",
+          lastUsedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    const view = render(<TaskSummaryTab task={doneTask({ tokenUsage: twoModelUsage })} />);
+    const section = screen.getByTestId("task-summary-token-cost-section");
+    const wrapper = section.querySelector<HTMLElement>(".task-summary-token-table-wrap");
+    const table = wrapper?.querySelector<HTMLTableElement>("table.task-summary-token-table");
+
+    expect(wrapper).toBeTruthy();
+    expect(table).toBeTruthy();
+    expect(table?.tagName).toBe("TABLE");
+    expect(wrapper?.contains(table ?? null)).toBe(true);
+    for (const heading of ["Model", "Input", "Output", "Cached", "Total", "Cost"]) {
+      expect(within(table!).getByRole("columnheader", { name: heading })).toBeTruthy();
+    }
+    expect(table?.querySelector("tfoot")).toBeTruthy();
+    expect(screen.getAllByTestId("task-summary-token-row")).toHaveLength(2);
+
+    const css = readDashboardStylesSource();
+    expect(css).toMatch(/\.task-summary-tab\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/s);
+    expect(css).toMatch(/\.task-summary-section\s*\{[^}]*min-width:\s*0;[^}]*max-width:\s*100%;/s);
+    expect(css).toMatch(/\.task-summary-token-table-wrap\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s);
+
+    view.rerender(<TaskSummaryTab task={doneTask({ tokenUsage: { ...twoModelUsage, perModel: [twoModelUsage.perModel![0]] } })} />);
+    expect(screen.getAllByTestId("task-summary-token-row")).toHaveLength(1);
+    expect(screen.getByTestId("task-summary-token-cost-section").querySelector("table.task-summary-token-table")).toBeTruthy();
+
+    view.rerender(<TaskSummaryTab task={doneTask({ tokenUsage: undefined })} />);
+    expect(screen.queryByTestId("task-summary-token-cost-section")).toBeNull();
+  });
+
   it("renders multi-model token counts with priced, unpriced, and unavailable total cost states", () => {
     render(
       <TaskSummaryTab
@@ -450,7 +508,7 @@ describe("TaskDetailModal Summary tab", () => {
     expect(mobileTokenBlock).not.toContain(".task-summary-token-table-wrap");
     expect(mobileTokenBlock).not.toContain("overflow-x: visible");
     expect(mobileTokenBlock).not.toContain(".task-summary-token-table td::before");
-    expect(mobileTokenBlock).not.toContain("min-width: 0");
+    expect(tokenTableRule).not.toContain("min-width: 0");
     expect(css).toContain("var(--color-warning)");
     expect(css).not.toMatch(/task-summary-token[^{}]*#[0-9a-fA-F]{3,8}/);
   });

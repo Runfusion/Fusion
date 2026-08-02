@@ -103,3 +103,19 @@ export function buildDeleteCallerAuditFields(
     callerTaskId: auditContext?.taskId ?? null,
   };
 }
+
+/**
+ * FNXC:GitHubSourceIssueSplitClose 2026-08-01-09:24:
+ * A split-close audit row records the closed-vocabulary reason and child task ids, never the
+ * explanatory GitHub comment prose. Omission deliberately returns no fields so ordinary deletes
+ * retain their existing audit shape.
+ */
+export function buildDeleteClosureAuditFields(
+  closureContext: import("./types.js").TaskDeleteClosureContext | undefined,
+): Record<string, unknown> {
+  if (!closureContext || closureContext.kind !== "split-into-subtasks") return {};
+  return {
+    closureKind: closureContext.kind,
+    closureChildTaskIds: closureContext.childTaskIds,
+  };
+}

@@ -134,6 +134,31 @@ describe("TriageProcessor planning wake (immediate poll on move)", () => {
     }
   });
 
+  /*
+  FNXC:WorkflowEvents 2026-08-01-07:21:
+  Renamed planner lanes are authoritative only when task:updated carries cache-warmed metadata.
+  A cold cache or runtime bridge is unknown, so it must retain the builtin literal fallback instead
+  of synchronously resolving PostgreSQL's default workflow.
+  */
+  it("uses payload lanes for renamed wake columns and keeps absent metadata on the legacy fallback", async () => {
+    const { store, emit } = createEventedStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+    processor.start();
+    const poll = vi.spyOn(processor as any, "poll").mockResolvedValue(undefined);
+
+    emit("task:updated", createTask({ id: "FN-RENAMED-WAKE", column: "drafting" }), {
+      lanes: { hold: "drafting", intake: "inbox" },
+    });
+    await settleWake();
+    expect(poll).toHaveBeenCalledTimes(1);
+
+    poll.mockClear();
+    emit("task:updated", createTask({ id: "FN-UNKNOWN-RENAMED", column: "drafting" }));
+    await settleWake();
+    expect(poll).not.toHaveBeenCalled();
+    processor.stop();
+  });
+
   it("coalesces a burst of moves into a single poll", async () => {
     const { store, emit } = createEventedStore();
     const processor = new TriageProcessor(store, "/tmp/root");

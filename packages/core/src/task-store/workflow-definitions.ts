@@ -558,56 +558,32 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
 }
 
 export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
-    const updatedAt = new Date().toISOString();
-    /*
-    FNXC:PostgresCutover 2026-07-04-00:00:
-    Backend-mode upsert of the task_workflow_selection row via async Drizzle (taskId is the primary key). stepIds is stored as a JSONB array.
-    */
-        const layer = store.asyncLayer!;
-    /*
-    FNXC:SqliteDualPathCleanup 2026-07-26-15:00:
-    Selection upsert must include projectId — PK is (projectId, taskId) and the authoritative read pins projectId.
-    */
-    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
-    /*
-    FNXC:WorkflowCapacity 2026-07-28-18:05 (PR #2499 review — cross-process race):
-    The selection write now runs in a transaction that first takes the per-task
-    advisory lock, because the in-transaction capacity gate in `moves.ts` reads this
-    row and enforces a limit against it. Without a lock BOTH sides take, the gate
-    could read the selection, this write could land, and the move would commit the
-    task under a workflow whose pool was never the one checked.
-
-    `selectTaskWorkflow` already wraps this call in `store.withTaskLock`, which is
-    an IN-PROCESS mutex — it serializes one TaskStore instance and gives nothing
-    across nodes. Multi-node is several nodes against one central PostgreSQL
-    database, so the cross-process window is a supported deployment shape.
-
-    Acquisition order is advisory-lock-then-row-write on both sides, so the two
-    paths cannot deadlock against each other.
-    */
-    await layer.transactionImmediate(async (tx) => {
-      await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
-      await tx
-        .insert(schema.project.taskWorkflowSelection)
-        .values({ projectId, taskId, workflowId, stepIds, updatedAt })
-        .onConflictDoUpdate({
-          target: [
-            schema.project.taskWorkflowSelection.projectId,
-            schema.project.taskWorkflowSelection.taskId,
-          ],
-          set: { workflowId, stepIds, updatedAt },
-        });
-    });
-    return;
+  const updatedAt = new Date().toISOString();
+  /* FNXC:PostgresCutover 2026-07-04-00:00: backend selection writes use async Drizzle. */
+  const layer = store.asyncLayer!;
+  /* FNXC:SqliteDualPathCleanup 2026-07-26-15:00: selection identity is project-scoped. */
+  const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+  /* FNXC:WorkflowCapacity 2026-07-28-18:05: take the cross-node advisory lock before the selection write. */
+  await layer.transactionImmediate(async (tx) => {
+    await acquireTaskAdvisoryXactLock(tx, projectId, taskId);
+    await tx
+      .insert(schema.project.taskWorkflowSelection)
+      .values({ projectId, taskId, workflowId, stepIds, updatedAt })
+      .onConflictDoUpdate({
+        target: [
+          schema.project.taskWorkflowSelection.projectId,
+          schema.project.taskWorkflowSelection.taskId,
+        ],
+        set: { workflowId, stepIds, updatedAt },
+      });
+  });
+  store.laneCache.invalidate(taskId);
 }
 
 export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
-    /*
-    FNXC:PostgresCutover 2026-07-04-00:00:
-    Backend-mode delete reuses purgeTaskWorkflowSelectionRowsAsyncImpl (read stepIds, delete workflow_steps children, delete the selection row) so PG stays in lockstep with the SQLite path.
-    */
-        await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
-    return;
+  /* FNXC:PostgresCutover 2026-07-04-00:00: materialized selection deletion also removes child steps. */
+  await purgeTaskWorkflowSelectionRowsAsyncImpl(store, taskId);
+  store.laneCache.invalidate(taskId);
 }
 
 export function purgeTaskWorkflowSelectionRowsImpl(store: TaskStore, taskId: string): void {
@@ -663,6 +639,7 @@ export async function purgeTaskWorkflowSelectionRowsAsyncImpl(store: TaskStore, 
   }
   await layer.db.delete(schema.project.taskWorkflowSelection).where(eq(schema.project.taskWorkflowSelection.taskId, taskId));
   store.workflowStepsCache = null;
+  store.laneCache.invalidate(taskId);
 }
 
 export async function cleanupOrphanedMaterializedStepsImpl(store: TaskStore, stepIds: string[] | undefined): Promise<void> {

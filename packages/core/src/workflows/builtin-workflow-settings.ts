@@ -208,6 +208,11 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
   // workflow settings. `reflectionEnabled` is kept because executor.ts reads it
   // (gate for reflection tools).
 
+  /*
+   * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+   * Workflow lanes persist optional credential-instance ids beside their provider/model pairs.
+   * Values are validated at write time and remain inert until runtime credential resolution.
+   */
   // ── Per-phase model lanes ──────────────────────────────────────────────
   // Legacy defaults are all `undefined`; `default` is omitted so resolution
   // falls through to the global lane / project default (KTD-7).
@@ -223,6 +228,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Execution provider",
     type: "string",
     description: "Provider for the execution phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "executionCredentialInstanceId",
+    name: "Execution credential instance",
+    type: "string",
+    description: "Optional credential instance for the execution model pair.",
   },
   {
     id: "executionModelId",
@@ -249,6 +260,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     description: "Fallback provider for the execution phase.",
   },
   {
+    id: "executionFallbackCredentialInstanceId",
+    name: "Execution fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the execution fallback model pair.",
+  },
+  {
     id: "executionFallbackModelId",
     name: "Executor fallback model",
     type: "string",
@@ -268,6 +285,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     description: "Provider for the planning phase. Empty falls through to the global lane.",
   },
   {
+    id: "planningCredentialInstanceId",
+    name: "Planning credential instance",
+    type: "string",
+    description: "Optional credential instance for the planning model pair.",
+  },
+  {
     id: "planningModelId",
     name: "Planning model",
     type: "string",
@@ -285,6 +308,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Planning fallback provider",
     type: "string",
     description: "Fallback provider for the planning phase.",
+  },
+  {
+    id: "planningFallbackCredentialInstanceId",
+    name: "Planning fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the planning fallback model pair.",
   },
   {
     id: "planningFallbackModelId",
@@ -310,6 +339,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     description: "Provider for the validation phase. Empty falls through to the global lane.",
   },
   {
+    id: "validatorCredentialInstanceId",
+    name: "Validator credential instance",
+    type: "string",
+    description: "Optional credential instance for the validator model pair.",
+  },
+  {
     id: "validatorModelId",
     name: "Validator model",
     type: "string",
@@ -327,6 +362,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Validator fallback provider",
     type: "string",
     description: "Fallback provider for the validation phase.",
+  },
+  {
+    id: "validatorFallbackCredentialInstanceId",
+    name: "Validator fallback credential instance",
+    type: "string",
+    description: "Optional credential instance for the validator fallback model pair.",
   },
   {
     id: "validatorFallbackModelId",

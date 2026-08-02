@@ -149,3 +149,25 @@ next person does not start by trying to add \`await\` and conclude the codebase 
 
 Each consequence needs its sync call path made async, which is a real slice per site. This document
 is the finding; the fixes are follow-ups. #2593 fixed only the one that was mine.
+
+## Cached emitter-carried answers for synchronous lifecycle listeners (FN-8658)
+
+`TaskStore` owns a bounded, short-TTL `TaskLaneCache`. Paths that already resolve a task workflow
+warm it with `toTaskMoveLanes`; the central `TaskStore.emit` seam attaches that cached answer as the
+optional second argument of `task:updated`. The seam performs only a synchronous Map lookup, so hot
+update emitters add neither an IR resolution nor a database query. Local workflow-selection writes
+invalidate entries and TTL bounds staleness after another PostgreSQL node changes a selection.
+
+`undefined` means **unknown**, never default or legacy. Subscribers must keep their literal fallback
+when `meta?.lanes` is absent rather than consult the default-only sync resolver. That preserves
+one-argument listener compatibility while synchronous scheduler and triage edge-trigger handlers can
+handle renamed lanes correctly when metadata is present.
+
+Runtime/process bridge emitters (`project-manager`, `hybrid-executor`, and the in-process,
+child-process, and remote-node runtimes) deliberately DROP this optional metadata. They emit from
+their own EventEmitter rather than a TaskStore; forwarding would widen serialized bridge contracts,
+while absent metadata is safe because listeners retain their fallback.
+`task-updated-lanes-emit-surfaces.test.ts` exhaustively ratchets core emitters and
+`task-updated-lanes-engine-emit-surfaces.test.ts` classifies engine emitters; extend those explicit
+tables if a new `task:updated` emitter is added. `task-updated-lanes-bridge-compat.test.ts` pins the
+DROP bridge compatibility contract.

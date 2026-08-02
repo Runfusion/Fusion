@@ -140,19 +140,19 @@ describe("agent skills flow - full integration", () => {
     expect(overrideResult.skills).toHaveLength(1);
     expect(overrideResult.skills[0].name).toBe("review");
 
-    // Step 9: Verify warning diagnostic for disabled lint skill
-    const disabledLintWarning = overrideResult.diagnostics.find(d =>
+    // Step 9: Intentional exclusion is an info diagnostic (debug-gated), not a warning
+    const disabledLintDiagnostic = overrideResult.diagnostics.find(d =>
       d.message.includes("disabled") && d.message.includes("lint")
     );
-    expect(disabledLintWarning).toBeDefined();
-    expect(disabledLintWarning?.type).toBe("warning");
+    expect(disabledLintDiagnostic).toBeDefined();
+    expect(disabledLintDiagnostic?.type).toBe("info");
 
-    // Step 10: Verify structured logger warning was called with disabled skill warning
-    const loggedMessages = mockPiLog.warn.mock.calls.map(c => c[0] as string);
-    const hasDisabledLintWarning = loggedMessages.some(m =>
+    // Step 10: Emission goes to piLog.debug, not warn
+    const loggedMessages = mockPiLog.debug.mock.calls.map(c => c[0] as string);
+    const hasDisabledLintNotice = loggedMessages.some(m =>
       m.includes("disabled") && m.includes("lint")
     );
-    expect(hasDisabledLintWarning).toBe(true);
+    expect(hasDisabledLintNotice).toBe(true);
   });
 
   it("flow with no exclusion pattern - both review and lint requested", async () => {

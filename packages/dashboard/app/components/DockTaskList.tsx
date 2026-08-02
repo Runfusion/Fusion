@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { isArchivedColumnRole, isCompleteColumnRole } from "../utils/columnRoles";
+import { partitionRevertedTasks } from "../utils/taskRevert";
 import type { GithubIssueAction, Task, TaskDetail } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { TaskCard } from "./TaskCard";
@@ -11,6 +12,7 @@ export interface DockTaskListProps {
   tasks: Array<Task | TaskDetail>;
   projectId?: string;
   onOpenTask?: (task: Task | TaskDetail) => void;
+  onReviseTask?: (task: Task) => void;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   addToast?: (message: string, type?: ToastType) => void;
   prAuthAvailable?: boolean;
@@ -41,6 +43,7 @@ export function DockTaskList({ columnFlagsByTaskId,
   projectId,
   onOpenTask,
   onDeleteTask,
+  onReviseTask,
   addToast = () => {},
   prAuthAvailable = false,
   autoMergeEnabled = false,
@@ -66,13 +69,21 @@ export function DockTaskList({ columnFlagsByTaskId,
     const flags = columnFlagsByTaskId?.get(task.id);
     return { complete: isCompleteColumnRole(flags, task.column), archived: isArchivedColumnRole(flags, task.column) };
   }, [columnFlagsByTaskId]);
-  const doneTasks = useMemo(() => tasks.filter((task) => isTerminal(task).complete), [tasks, isTerminal]);
+  /*
+  FNXC:TaskRevert 2026-08-01-20:06:
+  Resolution cards must receive the task's resolved traits, not legacy column names.
+  A custom complete column otherwise hides the reverted treatment and its Delete and
+  Revise actions in the dock even though the same task is correctly partitioned here.
+  */
+  const revertedTasks = useMemo(() => partitionRevertedTasks(tasks as Task[]).reverted, [tasks]);
+  const doneTasks = useMemo(() => tasks.filter((task) => isTerminal(task).complete && !revertedTasks.some((reverted) => reverted.id === task.id)), [tasks, isTerminal, revertedTasks]);
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     const roles = isTerminal(task);
     if (roles.archived) return false;
+    if (revertedTasks.some((reverted) => reverted.id === task.id)) return false;
     if (roles.complete) return showDone;
     return true;
-  }), [showDone, tasks, isTerminal]);
+  }), [showDone, tasks, isTerminal, revertedTasks]);
   const hasDoneTasks = doneTasks.length > 0;
   const isEmpty = visibleTasks.length === 0;
   const emptyTitle = tasks.length === 0 ? "No tasks yet" : "No active tasks";
@@ -97,6 +108,12 @@ export function DockTaskList({ columnFlagsByTaskId,
           </button>
         </div>
       ) : null}
+      {revertedTasks.length > 0 && (
+        <section className="dock-task-list__reverted" aria-label="Reverted Tasks" data-testid="dock-reverted-tasks">
+          <h3>Reverted Tasks</h3>
+          {revertedTasks.map((task) => <TaskCard key={`reverted-${task.id}`} task={task} taskColumnFlags={columnFlagsByTaskId?.get(task.id)} projectId={projectId} onOpenDetail={handleOpenTask} onDeleteTask={onDeleteTask} onReviseTask={onReviseTask} addToast={addToast} disableDrag />)}
+        </section>
+      )}
       {isEmpty ? (
         <div className="dock-task-list__empty" data-testid="dock-task-list-empty">
           <p className="dock-task-list__empty-title">{emptyTitle}</p>

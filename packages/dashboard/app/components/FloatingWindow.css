@@ -482,11 +482,35 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
     margin-inline-end: 0;
   }
 
+  /*
+  FNXC:GitHubImport 2026-08-02-02:47:
+  FN-8722 makes the standalone GitHub Import host follow the full width-or-height
+  sheet contract. Its shared body gutter exists only to clear desktop resize handles;
+  once this predicate hides those handles, retaining the gutter shifts every shell
+  region left. Do not broaden this rule to embedded Import Tasks or the independent
+  detail window, and keep non-short tablet/desktop resize clearance intact.
+  */
+  .floating-window--github-import .floating-window__body {
+    margin-inline-end: 0;
+  }
+
   .floating-window--task-detail .task-detail-content--embedded,
   .floating-window--task-detail .task-detail-content--embedded > .modal-header {
     border-radius: 0;
     cursor: default;
     touch-action: auto;
+  }
+}
+
+@media (max-width: 767.98px) {
+  /*
+  FNXC:GitManagerMobileSpacing 2026-08-01-19:10:
+  FN-8702 keeps the shared desktop resize-handle clearance for tablet and desktop windows.
+  A standalone Git Manager phone sheet hides those handles, so only below the strict 768px
+  boundary its body clears the obsolete inline-end gutter and aligns its header and close control.
+  */
+  .floating-window--git-manager .floating-window__body {
+    margin-inline-end: 0;
   }
 }
 
@@ -537,6 +561,22 @@ FN-8015 / issue #2140 requires every shared FloatingWindow caller to keep its ho
   min-height: 0;
   margin-inline-end: var(--space-lg);
   overflow: auto;
+}
+
+/*
+FNXC:ModalTouchGeometry 2026-08-01-03:48:
+Tablet windows drop FN-8015's inline-end scrollbar gutter. On tablet the gutter reads as a
+too-big, uneven right border inside Task Detail popups and the floating terminal (the inner
+surfaces already carry their own symmetric padding), and the mouse conflict FN-8015 solves —
+grabbing a hosted scrollbar thumb versus the east resize hot zone — does not apply to touch
+input, which never grabs scrollbar thumbs. This keys on tablet MODE (`.floating-window--tablet-viewport`,
+set from `useViewportMode()`), not `--touch-geometry`, so a non-touch window at tablet widths
+gets the same symmetric inset the operator sees on an iPad. Desktop keeps the FN-8015 gutter.
+Callers that relied on the gutter as their right inset must compensate under the same class
+(see `.github-import-detail-panel`).
+*/
+.floating-window--tablet-viewport .floating-window__body {
+  margin-inline-end: 0;
 }
 
 .floating-window__body > * {

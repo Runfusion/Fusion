@@ -58,6 +58,8 @@ export { rateLimit, RATE_LIMITS, type RateLimitOptions } from "./rate-limit.js";
 export { GitHubPollingService, type GitHubPollingServiceOptions, type TaskWatchInput, type WatchedBadgeType } from "./github-poll.js";
 export { GitHubIssueCommentService, DEFAULT_COMMENT_TEMPLATE } from "./github-issue-comment.js";
 export { GitHubSourceIssueCloseService } from "./github-source-issue-close.js";
+export { GitLabSplitCloseService, buildGitLabSplitCloseNote, postGitLabSplitNoteBeforeClose, type GitLabSplitNoteResult } from "./gitlab-split-close.js";
+export { GitLabDeleteCloseService, decideGitLabDeleteAction, type GitLabDeleteAction } from "./gitlab-delete-close.js";
 export {
   upsertKnowledgePageAsync,
   queryKnowledgePagesAsync,

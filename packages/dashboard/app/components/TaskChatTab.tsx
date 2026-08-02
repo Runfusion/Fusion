@@ -21,6 +21,7 @@ import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
 import { clampChatInputHeight, resolveChatInputOverflowY } from "../utils/chatInputAutosize";
 import { formatAgentLogTimingLabels, markdownComponents } from "./AgentLogViewer";
+import { ToolCallDetails } from "./ToolCallDetails";
 import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import "./TaskChatTab.css";
 
@@ -476,7 +477,14 @@ function TaskChatToolEntry({ entry }: { entry: AgentLogEntry }) {
         <TaskChatTimestamp timestamp={entry.timestamp} label="Tool entry timestamp" />
       </div>
       <div className="task-chat-entry-text">{entry.text}</div>
-      {entry.detail ? <pre className="task-chat-tool-detail">{linkifyFilePaths(entry.detail)}</pre> : null}
+      <ToolCallDetails
+        className="task-chat-tool-detail-block"
+        resultValue={entry.detail}
+        argumentsLabel={t("taskChat.arguments", "Arguments")}
+        resultLabel=""
+        resultIsError={entry.type === "tool_error"}
+        renderValue={linkifyFilePaths}
+      />
     </article>
   );
 }
@@ -522,18 +530,15 @@ function TaskChatToolInvocation({ row }: { row: Extract<TaskChatToolGroupRow, { 
         <TaskChatTimestamp timestamp={completion?.timestamp ?? row.call.timestamp} label="Tool invocation timestamp" />
       </div>
       <div className="task-chat-entry-text">{row.call.text}</div>
-      {row.call.detail ? (
-        <div className="task-chat-tool-detail-block">
-          <div className="task-chat-tool-detail-label">{t("taskChat.arguments", "Arguments")}</div>
-          <pre className="task-chat-tool-detail">{linkifyFilePaths(row.call.detail)}</pre>
-        </div>
-      ) : null}
-      {completion?.detail ? (
-        <div className="task-chat-tool-detail-block">
-          <div className="task-chat-tool-detail-label">{completion.type === "tool_error" ? t("taskChat.error", "Error") : t("taskChat.result", "Result")}</div>
-          <pre className="task-chat-tool-detail">{linkifyFilePaths(completion.detail)}</pre>
-        </div>
-      ) : null}
+      <ToolCallDetails
+        className="task-chat-tool-detail-block"
+        argumentsValue={row.call.detail}
+        resultValue={completion?.detail}
+        argumentsLabel={t("taskChat.arguments", "Arguments")}
+        resultLabel={completion?.type === "tool_error" ? t("taskChat.error", "Error") : t("taskChat.result", "Result")}
+        resultIsError={completion?.type === "tool_error"}
+        renderValue={linkifyFilePaths}
+      />
     </article>
   );
 }

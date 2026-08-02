@@ -961,6 +961,7 @@ export function MailboxView({
                   <MailboxMessageContent
                     content={msg.content}
                     className="mailbox-conversation-msg-body"
+                    onOpenTask={onOpenTask}
                   />
                   <MailboxRelatedWorkLink
                     metadata={msg.metadata}
@@ -995,6 +996,7 @@ export function MailboxView({
               content={selectedMessage.content}
               className="mailbox-message-body"
               testId="mailbox-message-body"
+              onOpenTask={onOpenTask}
             />
             <MailboxRelatedWorkLink
               metadata={selectedMessage.metadata}

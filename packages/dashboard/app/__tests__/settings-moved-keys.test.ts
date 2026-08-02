@@ -47,6 +47,8 @@ const SURFACE_FILES = [
 const PRESET_NESTED_KEYS = new Set([
   "validatorProvider",
   "validatorModelId",
+  // FNXC:SettingsCredentialInstance 2026-08-01-17:06: Validator instance selection is valid only inside a model preset; the form-read guard remains active for its workflow-owned top-level setting.
+  "validatorCredentialInstanceId",
 ]);
 
 describe("SettingsModal moved-key removal sweep", () => {

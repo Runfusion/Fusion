@@ -8,7 +8,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
+import {TaskStore} from "../store.js";
 import {resolveEntryColumnId} from "../workflows/workflow-reconciliation.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import * as schema from "../postgres/schema/index.js";

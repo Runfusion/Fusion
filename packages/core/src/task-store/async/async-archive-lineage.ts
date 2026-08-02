@@ -322,6 +322,11 @@ export async function restoreTaskFromArchive(
         .update(schema.project.tasks)
         .set({
           deletedAt: null,
+          /*
+          FNXC:TaskStoreArchiveLineage 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
+          Restore exposes the durable row before the caller's validated move out of the archive state.
+          This is a physical transition sentinel, not the custom workflow's archived lane id.
+          */
           column: "archived",
           updatedAt: now,
         })

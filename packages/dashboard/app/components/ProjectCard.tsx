@@ -16,6 +16,8 @@ export interface ProjectCardProps {
   onResume: (project: RegisteredProject) => void;
   onRemove: (project: RegisteredProject) => void;
   availabilityMappings?: Array<ProjectNodeAvailability & { displayName: string }>;
+  /** Health is being fetched, while project navigation and controls remain available. */
+  healthLoading?: boolean;
   isLoading?: boolean;
 }
 
@@ -62,7 +64,8 @@ function areProjectCardPropsEqual(previous: ProjectCardProps, next: ProjectCardP
   if (previous.project.path !== next.project.path) return false;
   if (previous.project.lastActivityAt !== next.project.lastActivityAt) return false;
   if (previous.isLoading !== next.isLoading) return false;
-  
+  if (previous.healthLoading !== next.healthLoading) return false;
+
   // Compare health
   const prevHealth = previous.health;
   const nextHealth = next.health;
@@ -101,6 +104,7 @@ function ProjectCardInner({
   onResume,
   onRemove,
   availabilityMappings = [],
+  healthLoading = false,
   isLoading = false,
 }: ProjectCardProps) {
   const { t } = useTranslation("app");
@@ -205,7 +209,11 @@ function ProjectCardInner({
         )}
         {!health && (
           <div className="project-card-metric project-card-metric-empty">
-            <span className="project-card-metric-label">{t("projectCard.noHealthData", "No health data available")}</span>
+            <span className="project-card-metric-label">
+              {healthLoading
+                ? t("projectCard.healthLoading", "Loading health metrics")
+                : t("projectCard.noHealthData", "No health data available")}
+            </span>
           </div>
         )}
       </div>

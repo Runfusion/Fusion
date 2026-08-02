@@ -34,6 +34,24 @@ export function isTaskReverted(sourceMetadata: Task["sourceMetadata"] | undefine
   return typeof sourceMetadata?.revertedAt === "string" && sourceMetadata.revertedAt.trim().length > 0;
 }
 
+/**
+ * FNXC:TaskRevert 2026-08-01-19:51:
+ * A successful revert is not completed work. Keep its persisted column intact for
+ * provenance, but partition it out of ordinary completed collections so every host
+ * can expose one consistent resolution path instead of silently losing the task.
+ */
+export function partitionRevertedTasks<T extends Task>(tasks: readonly T[]): { normal: T[]; reverted: T[] } {
+  const normal: T[] = [];
+  const reverted: T[] = [];
+  const seen = new Set<string>();
+  for (const task of tasks) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    (isTaskReverted(task.sourceMetadata) ? reverted : normal).push(task);
+  }
+  return { normal, reverted };
+}
+
 export function getRevertOfId(
   sourceMetadata: Task["sourceMetadata"] | undefined,
   sourceParentTaskId?: string | null,

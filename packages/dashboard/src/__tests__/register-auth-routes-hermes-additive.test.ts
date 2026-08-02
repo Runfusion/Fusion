@@ -1,4 +1,7 @@
 /*
+FNXC:ProviderAuth 2026-08-01-19:10:
+FN-8713 requires auth-status direct-handler fixtures with no `query` to behave like an empty Express query. A well-formed requested credential instance that is absent must report only that provider as unauthenticated, never borrow its default or sibling credential.
+
 FNXC:ProviderAuth 2026-07-07-08:20:
 FN-7630 (GitHub #1931) item 3 coordination: the Hermes Runtime connection
 must never CAUSE the /api/auth/status provider surface to shrink. The
@@ -15,7 +18,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { Router } from "express";
 import { registerAuthRoutes } from "../routes/register-auth-routes.js";
 
-function setup(oauthProviders: Array<{ id: string; name: string }>, apiKeyProviders: Array<{ id: string; name: string }>) {
+function setup(
+  oauthProviders: Array<{ id: string; name: string }>,
+  apiKeyProviders: Array<{ id: string; name: string }>,
+  authStorageOverrides: Record<string, unknown> = {},
+) {
   const getHandlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const postHandlers = new Map<string, unknown>();
   const router = {
@@ -36,6 +43,7 @@ function setup(oauthProviders: Array<{ id: string; name: string }>, apiKeyProvid
     hasAuth: vi.fn(() => false),
     hasApiKey: vi.fn(() => false),
     get: vi.fn(() => undefined),
+    ...authStorageOverrides,
   };
 
   const rethrowAsApiError = (err: unknown) => {
@@ -58,10 +66,17 @@ function setup(oauthProviders: Array<{ id: string; name: string }>, apiKeyProvid
   return { handler: getHandlers.get("/auth/status")!, authStorage };
 }
 
-async function callStatus(handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) {
+async function callStatus(
+  handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>,
+  req: unknown = { headers: {} },
+) {
   const json = vi.fn();
-  await handler({ headers: {} }, { json });
-  return json.mock.calls[0][0] as { providers: Array<{ id: string; name: string }> };
+  await handler(req, { json });
+  return json.mock.calls[0][0] as {
+    providers: Array<{ id: string; name: string; authenticated: boolean; instanceId?: string; instances?: unknown[] }>;
+    ghCli: { available: boolean; authenticated: boolean };
+    gitCli: { available: boolean };
+  };
 }
 
 describe("FN-7630: Hermes runtime additive — /api/auth/status", () => {
@@ -104,5 +119,49 @@ describe("FN-7630: Hermes runtime additive — /api/auth/status", () => {
       expect(withoutHermes.providers.some((p) => p.id === id)).toBe(true);
       expect(withHermes.providers.some((p) => p.id === id)).toBe(true);
     }
+  });
+
+  it("treats omitted or empty query data as no selection while valid and dangling targets stay isolated", async () => {
+    const { handler } = setup(
+      [{ id: "github-copilot", name: "GitHub Copilot" }],
+      [{ id: "openai", name: "OpenAI" }],
+      {
+        hasApiKey: vi.fn(() => true),
+        getDefaultInstance: vi.fn((providerId: string) => providerId === "openai"
+          ? { providerId, instanceId: "default" }
+          : undefined),
+        listInstances: vi.fn((providerId: string) => providerId === "openai"
+          ? [{ providerId, instanceId: "default" }, { providerId, instanceId: "work" }]
+          : []),
+        getInstance: vi.fn((ref: { providerId: string; instanceId: string }) => ref.providerId === "openai" && ["default", "work"].includes(ref.instanceId)
+          ? { type: "api_key", key: ref.instanceId === "work" ? "sk-work-12345678" : "sk-default-87654321" }
+          : undefined),
+      },
+    );
+
+    for (const query of [undefined, {}, { provider: undefined, instance: undefined }, { provider: "openai", instance: "  " }]) {
+      const response = await callStatus(handler, query === undefined ? { headers: {} } : { headers: {}, query });
+      expect(response.providers.map((provider) => provider.id)).toEqual(expect.arrayContaining(["github-copilot", "openai"]));
+      expect(response.ghCli).toEqual(expect.objectContaining({ available: expect.any(Boolean) }));
+      expect(response.gitCli).toEqual(expect.objectContaining({ available: expect.any(Boolean) }));
+    }
+
+    const defaultTarget = await callStatus(handler, { headers: {}, query: { provider: "openai", instance: "default" } });
+    expect(defaultTarget.providers.find((provider) => provider.id === "openai")).toMatchObject({ authenticated: true, instanceId: "default" });
+
+    const validTarget = await callStatus(handler, { headers: {}, query: { provider: "openai", instance: "work" } });
+    expect(validTarget.providers.find((provider) => provider.id === "openai")).toMatchObject({ authenticated: true, instanceId: "work" });
+    expect(validTarget.providers.find((provider) => provider.id === "github-copilot")).toMatchObject({ authenticated: false });
+
+    const danglingTarget = await callStatus(handler, { headers: {}, query: { provider: "openai", instance: "missing" } });
+    expect(danglingTarget.providers.find((provider) => provider.id === "openai")).toMatchObject({
+      authenticated: false,
+      instanceId: "missing",
+      instances: [],
+    });
+    expect(danglingTarget.providers.find((provider) => provider.id === "github-copilot")).toMatchObject({ authenticated: false });
+
+    await expect(callStatus(handler, { headers: {}, query: { instance: "work" } })).rejects.toThrow("instance requires provider");
+    await expect(callStatus(handler, { headers: {}, query: { provider: "openai", instance: "invalid instance" } })).rejects.toThrow("instance must be a valid provider instance id");
   });
 });

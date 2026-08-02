@@ -53,6 +53,16 @@ function renamedIr(): WorkflowIr {
   } as unknown as WorkflowIr;
 }
 
+/*
+FNXC:WorkflowResolvedColumns 2026-08-01-05:01:
+With no `resolveTaskWorkflowIrSync` fixture, this exact command first produced 3 failed / 9 passed:
+renamed-hold wake, renamed-hold dependency lookup, and second complete-trait terminal handling. After
+FN-8656 moved await-safe scheduler arms to the async resolver, it produces 12 passed / 0 failed:
+`pnpm --filter @fusion/engine exec vitest run src/__tests__/scheduler-renamed-hold-events.test.ts --silent=passed-only --reporter=dot`.
+
+The lane-less emits below are intentional. Reverting those arms to the sync resolver restores the
+same three failures, proving the async fallback rather than a supplied payload resolves this fixture.
+*/
 function createStore(tasks: Record<string, unknown>[] = [], ir: WorkflowIr = renamedIr()) {
   const listeners = new Map<string, ((payload: unknown) => void)[]>();
   const selection = { workflowId: WF, stepIds: [] };
@@ -76,16 +86,6 @@ function createStore(tasks: Record<string, unknown>[] = [], ir: WorkflowIr = ren
     getTaskWorkflowSelection: vi.fn(() => selection),
     getTaskWorkflowSelectionAsync: vi.fn(async () => selection),
     getWorkflowDefinition: vi.fn(async () => ({ ir })),
-    /*
-    FNXC:WorkflowResolvedColumns 2026-08-01-02:07 MASKING:
-    Deleting the renamed-IR sync fixture and running
-    `pnpm --filter @fusion/engine exec vitest run src/__tests__/scheduler-renamed-hold-events.test.ts --silent=passed-only --reporter=dot`
-    produced 3 failed / 9 passed: renamed-hold wake, dependency lookup, and second-terminal tests.
-    The fake already supplies the authoritative async selection and IR readers, so this is not an
-    incomplete fake; synchronous scheduler listeners are inert on renamed boards in production.
-    Keep this logic fixture explicit while FN-8656 restructures the synchronous listener safely.
-    */
-    resolveTaskWorkflowIrSync: vi.fn(() => ir),
   } as unknown as TaskStore;
 
   return {

@@ -946,6 +946,7 @@ export function MailboxModal({
                         <MailboxMessageContent
                           content={msg.content}
                           className="mailbox-conversation-msg-body"
+                          onOpenTask={onOpenTask}
                         />
                         <MailboxRelatedWorkLink
                           metadata={msg.metadata}
@@ -986,6 +987,7 @@ export function MailboxModal({
                     content={selectedMessage.content}
                     className="mailbox-message-body"
                     testId="mailbox-message-body"
+                    onOpenTask={onOpenTask}
                   />
                   <MailboxRelatedWorkLink
                     metadata={selectedMessage.metadata}

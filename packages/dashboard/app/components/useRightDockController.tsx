@@ -231,6 +231,13 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     DockTaskList rows must open through the controller's ordinary right-dock task route, not TaskCard's canonical full task modal. Thread one controller-level handler into registry render props so both compact and expanded Tasks lists share popup-setting routing and setting-off dock-detail behavior.
     */
     onOpenTaskInDock: openTaskFromDockList,
+    /*
+    FNXC:TaskRevert 2026-08-01-20:06:
+    Dock resolution uses the same New Task prefill owner as every other surface.
+    Keeping this callback in registry props lets compact and expanded dock hosts revise
+    the exact source description without introducing a second draft state.
+    */
+    onReviseTask: (task: Task | TaskDetail) => input.onSendSelectionToTask(task.description),
     onDeleteTask: input.onDeleteTask,
     onOpenDetail: input.openDetailTask,
     onSendSelectionToTask: input.onSendSelectionToTask,
@@ -256,6 +263,8 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onRequestClose={closeDockTask}
       onOpenDetail={(value) => input.openDetailTask(value, "chat")}
       onMoveTask={input.onMoveTask}
+      /* FNXC:TaskRevert 2026-08-01-20:27: Right-dock task detail uses the shared New Task draft recovery for reverted tasks. */
+      onReviseTask={(task) => input.onSendSelectionToTask(task.description)}
       onDeleteTask={input.onDeleteTask}
       onArchiveTask={input.onArchiveTask}
       onRevertTask={input.onRevertTask}

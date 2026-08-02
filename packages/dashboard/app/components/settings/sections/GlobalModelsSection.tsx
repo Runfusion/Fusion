@@ -17,6 +17,18 @@ function toCommaSeparatedInput(values?: string[]): string {
 function fromCommaSeparatedInput(value: string): string[] {
     return value.split(",").map((item) => item.trim()).filter((item) => item.length > 0);
 }
+/*
+FNXC:SettingsCredentialInstance 2026-08-01-10:19:
+Each global model lane persists its credential instance alongside its provider/model pair. Clearing either the model or the instance must remove the override so runtime resolution returns to the provider default rather than retaining an orphaned credential choice.
+*/
+const GLOBAL_LANE_CREDENTIAL_INSTANCE_KEYS: Partial<Record<string, keyof Settings>> = {
+    execution: "executionGlobalCredentialInstanceId",
+    planning: "planningGlobalCredentialInstanceId",
+    validator: "validatorGlobalCredentialInstanceId",
+    merger: "mergerGlobalCredentialInstanceId",
+    summarization: "titleSummarizerGlobalCredentialInstanceId",
+    "import-translate": "importTranslateGlobalCredentialInstanceId",
+};
 export interface GlobalModelsSectionProps extends SectionBaseProps {
     availableModels: ModelInfo[];
     modelsLoading: boolean;
@@ -55,7 +67,7 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
             </div>
             <CustomModelDropdown id="defaultModel" label="Default Model" models={availableModels} value={selectedValue} onChange={(val) => {
                 if (!val) {
-                    setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined }));
+                    setForm((f) => ({ ...f, defaultProvider: undefined, defaultModelId: undefined, defaultCredentialInstanceId: undefined }));
                 }
                 else {
                     const slashIdx = val.indexOf("/");
@@ -63,9 +75,11 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                         ...f,
                         defaultProvider: val.slice(0, slashIdx),
                         defaultModelId: val.slice(slashIdx + 1),
+                        // FNXC:ModelDropdown 2026-08-01-10:45: A provider/model change invalidates its credential-instance companion; preserve stale ids only during passive rendering, never across an explicit selection.
+                        defaultCredentialInstanceId: undefined,
                     }));
                 }
-            }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
+            }} credentialInstanceId={form.defaultCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, defaultCredentialInstanceId: instanceId || undefined }))} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
           </div>
 
           <div className="form-group">
@@ -76,7 +90,7 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
             {/* FNXC:Settings-ThinkingLevel 2026-07-10-12:00: Global fallback model selection owns its own thinking-level companion (`fallbackThinkingLevel`). Clearing the fallback picker must clear the companion value so null-as-delete reset parity matches the per-lane model pickers. */}
             <CustomModelDropdown id="fallbackModel" label="Fallback Model" models={availableModels} value={form.fallbackProvider && form.fallbackModelId ? `${form.fallbackProvider}/${form.fallbackModelId}` : ""} onChange={(val) => {
                 if (!val) {
-                    setForm((f) => ({ ...f, fallbackProvider: undefined, fallbackModelId: undefined, fallbackThinkingLevel: undefined }));
+                    setForm((f) => ({ ...f, fallbackProvider: undefined, fallbackModelId: undefined, fallbackThinkingLevel: undefined, fallbackCredentialInstanceId: undefined }));
                 }
                 else {
                     const slashIdx = val.indexOf("/");
@@ -84,9 +98,11 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                         ...f,
                         fallbackProvider: val.slice(0, slashIdx),
                         fallbackModelId: val.slice(slashIdx + 1),
+                        // FNXC:ModelDropdown 2026-08-01-10:45: Explicit model selection clears the prior provider's credential-instance override.
+                        fallbackCredentialInstanceId: undefined,
                     }));
                 }
-            }} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={(() => {
+            }} credentialInstanceId={form.fallbackCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, fallbackCredentialInstanceId: instanceId || undefined }))} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={(() => {
                 const selectedModel = availableModels.find((m) => m.provider === form.fallbackProvider && m.id === form.fallbackModelId);
                 return selectedModel ? Boolean(selectedModel.reasoning) : true;
             })()} thinkingLevel={form.fallbackThinkingLevel || ""} onThinkingLevelChange={(level) => setForm((f) => ({ ...f, fallbackThinkingLevel: (level as ThinkingLevel) || undefined }))} defaultThinkingLevel={form.defaultThinkingLevel}/>
@@ -129,6 +145,8 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                 const model = form[lane.globalModelKey as keyof Settings] as string | undefined;
                 const value = provider && model ? `${provider}/${model}` : "";
                 const thinkingValue = getLaneThinkingValue(lane);
+                const credentialInstanceKey = GLOBAL_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId];
+                const credentialInstanceId = credentialInstanceKey ? form[credentialInstanceKey] as string | undefined : undefined;
                 return (<div className="form-group" key={`global-${lane.laneId}`}>
                 {/* FNXC:SettingsHelp 2026-07-15-21:40: A global lane row is plain label + picker + one help string (unlike the project lanes, which add an inherited/override badge and a resolved fallback chain), so its helper text hangs off the shared "?" like every other row in this section. */}
                 <div className="settings-field-label-row">
@@ -141,6 +159,7 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                                 ...f,
                                 [lane.globalProviderKey]: undefined,
                                 [lane.globalModelKey]: undefined,
+                                ...(credentialInstanceKey ? { [credentialInstanceKey]: undefined } : {}),
                             }));
                             resetLaneThinkingValue(lane);
                             return;
@@ -150,8 +169,10 @@ export function GlobalModelsSection({ form, setForm, availableModels, modelsLoad
                             ...f,
                             [lane.globalProviderKey]: selected.slice(0, slashIdx),
                             [lane.globalModelKey]: selected.slice(slashIdx + 1),
+                            // FNXC:ModelDropdown 2026-08-01-10:45: Lane selections cannot carry an instance override from the previously chosen provider.
+                            ...(credentialInstanceKey ? { [credentialInstanceKey]: undefined } : {}),
                         }));
-                    }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
+                    }} credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={credentialInstanceKey ? (instanceId) => setForm((f) => ({ ...f, [credentialInstanceKey]: instanceId || undefined })) : undefined} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
               </div>);
             })}
         </>)}

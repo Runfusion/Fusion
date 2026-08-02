@@ -3,6 +3,7 @@ import {
   computeBlockerFanoutMap,
   compareTasksByPriorityThenAgeAndId,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
+  nonExecutableDuplicateRedirectReason,
   type TaskStore,
   type Task,
   type MissionStore,
@@ -16,18 +17,19 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  computeTopLevelConcurrencyClaimedFromStore,
   dropPreHeldExecutorSlot,
-  hasPreHeldExecutorSlot,
   projectAdmissionCoordinator,
+  persistedTopLevelAgentTaskIdsFromStore,
   recoverIdleSemaphoreLeakCandidate,
   registerPreHeldExecutorSlot,
+  resolveActiveTaskCapacityLimit,
   type AgentSemaphore,
 } from "./concurrency/concurrency.js";
 import { planTaskWorktreePath, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./merge/pr-monitor.js";
 import { reconcileMissionFeatureState } from "./missions/mission-feature-sync.js";
+import { resolveDedicatedPlannerColumnsForTask, resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
 import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
 import { resolveEffectiveNode, type EffectiveNode } from "./project/effective-node.js";
 import { applyUnavailableNodePolicy, decideOwningNodeHandoff } from "./project/node-routing-policy.js";
@@ -39,13 +41,15 @@ import { StaleTaskReporter } from "./healing/stale-task-reporter.js";
 import { BacklogPressureReporter } from "./scheduling/backlog-pressure-reporter.js";
 import { UnlinkedMissionsAdvisoryReporter } from "./missions/unlinked-missions-advisory-reporter.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
-import { DEFAULT_WORKFLOW_POOL_ID, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, TaskMoveLanes, columnsWithFlag, isCompleteColumnRole, isReviewColumnRole, isTerminalColumnRole, isWipColumnRole, resolveLifecycleColumns, resolveProjectColumnsForRoles, resolveWorktreeCapacityLimit, ColumnRoleTraitFlags} from "@fusion/core";
-import { resolveDedicatedPlannerColumnsForTask, resolvePlannerLanesForTask } from "./planner-lane-resolution.js";
+import type { TaskMoveLanes } from "@fusion/core";
+import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
+import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
 import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./execution/hold-release.js";
 import { moveTaskToReplanColumn } from "./execution/replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./agents/task-agent-sync.js";
 import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./missions/mission-symbol-admission.js";
+import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 const SYMBOL_LOCK_LEASE_MS = 10 * 60_000;
 
@@ -472,20 +476,36 @@ Deferring them by a microtask changes nothing observable.
 
 Same fail-soft legacy default as its sync twin, so an unresolvable workflow behaves exactly as before.
 */
+const LEGACY_PARKED_COLUMNS = {
+  hold: "todo",
+  intake: "triage",
+  wip: "in-progress",
+  review: "in-review",
+  complete: "done",
+  archived: "archived",
+  terminal: new Set(["done", "archived"]),
+};
+
 async function resolveTaskParkedColumns(store: TaskStore, taskId: string): Promise<{ hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string>; wake: ReadonlySet<string> }> {
-  const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
   try {
-    const l = resolveLifecycleColumns(await resolveWorkflowIrForTask(store, taskId));
-    const complete = l?.complete ?? legacy.complete;
-    const archived = l?.archived ?? legacy.archived;
+    const ir = await resolveWorkflowIrForTask(store, taskId);
+    const l = resolveLifecycleColumns(ir);
+    const complete = l?.complete ?? LEGACY_PARKED_COLUMNS.complete;
+    const archived = l?.archived ?? LEGACY_PARKED_COLUMNS.archived;
     return {
-      hold: l?.hold ?? legacy.hold,
-      intake: l?.intake ?? legacy.intake,
-      wip: l?.wip ?? legacy.wip,
-      review: l?.review ?? legacy.review,
+      hold: l?.hold ?? LEGACY_PARKED_COLUMNS.hold,
+      intake: l?.intake ?? LEGACY_PARKED_COLUMNS.intake,
+      wip: l?.wip ?? LEGACY_PARKED_COLUMNS.wip,
+      review: l?.review ?? LEGACY_PARKED_COLUMNS.review,
       complete,
       archived,
-      terminal: new Set([complete, archived]),
+      terminal: new Set([
+        ...LEGACY_PARKED_COLUMNS.terminal,
+        ...columnsWithFlag(ir, "complete"),
+        ...columnsWithFlag(ir, "archived"),
+        complete,
+        archived,
+      ]),
       /*
       FNXC:WorkflowResolvedColumns 2026-07-31-06:35 (fleet):
       The wake set UNIONS the legacy ids rather than replacing them, and that is load-bearing rather
@@ -497,34 +517,14 @@ async function resolveTaskParkedColumns(store: TaskStore, taskId: string): Promi
       A resolved conversion must be a superset of what it replaces, or it is a behaviour change wearing
       a vocabulary change's clothes.
       */
-      wake: new Set([l?.hold ?? legacy.hold, l?.intake ?? legacy.intake, legacy.hold, legacy.intake]),
+      wake: new Set([l?.hold ?? LEGACY_PARKED_COLUMNS.hold, l?.intake ?? LEGACY_PARKED_COLUMNS.intake, LEGACY_PARKED_COLUMNS.hold, LEGACY_PARKED_COLUMNS.intake]),
     };
   } catch {
     return {
-      ...legacy,
-      terminal: new Set([legacy.complete, legacy.archived]),
-      wake: new Set([legacy.hold, legacy.intake]),
+      ...LEGACY_PARKED_COLUMNS,
+      terminal: new Set(LEGACY_PARKED_COLUMNS.terminal),
+      wake: new Set([LEGACY_PARKED_COLUMNS.hold, LEGACY_PARKED_COLUMNS.intake]),
     };
-  }
-}
-
-function resolveTaskParkedColumnsSync(store: TaskStore, taskId: string): { hold: string; intake: string; wip: string; review: string; complete: string; archived: string; terminal: ReadonlySet<string> } {
-  const legacy = { hold: "todo", intake: "triage", wip: "in-progress", review: "in-review", complete: "done", archived: "archived" };
-  const legacyTerminal: ReadonlySet<string> = new Set([legacy.complete, legacy.archived]);
-  try {
-    const ir = store.resolveTaskWorkflowIrSync(taskId);
-    const l = resolveLifecycleColumns(ir);
-    return {
-      hold: l?.hold ?? legacy.hold,
-      intake: l?.intake ?? legacy.intake,
-      wip: l?.wip ?? legacy.wip,
-      review: l?.review ?? legacy.review,
-      complete: l?.complete ?? legacy.complete,
-      archived: l?.archived ?? legacy.archived,
-      terminal: new Set([...legacyTerminal, ...columnsWithFlag(ir, "complete"), ...columnsWithFlag(ir, "archived")]),
-    };
-  } catch {
-    return { ...legacy, terminal: legacyTerminal };
   }
 }
 
@@ -563,6 +563,13 @@ export function shouldHoldActiveFileScopeLease(
   scheduler-renamed-wip-file-scope-lease.test.ts.
   */
   if (task.paused || task.userPaused) return false;
+  /*
+  FNXC:OverlapScheduling 2026-08-01-19:22:
+  A failed park is not live work. Review already dropped status:"failed"; WIP must too, or a
+  stranded failed in-progress card keeps its file-scope lease and serializes unrelated todos
+  while consuming no real agent (same class as the capacity-holder fix in isRunningAgentTask).
+  */
+  if (task.status === "failed") return false;
   /*
   DELIBERATE-LITERAL — the documented default for an unconverted caller, reviewed 2026-07-30-20:40.
   Both scheduler call sites now pass the resolved answer, so these defaults are dead on the
@@ -699,8 +706,7 @@ function computeConcurrencyGateDiagnostic(params: {
    * semaphore gate uses this instead of only in-progress agentSlots.
    */
   topLevelClaimedSlots?: number;
-  /** FNXC:WorkflowScheduling 2026-07-31-23:50: every live worktree holder (wip + planning/review
-   *  lanes), so the maxWorktrees holders diagnostic names who actually occupies the slots. */
+  /** FNXC:WorktreeCapacity 2026-08-01-04:38: active task ids occupying worktree-capacity slots. */
   worktreeHolderTaskIds?: string[];
   /** U6: additive per-column capacity gates (flag-ON only). Omitted → the legacy
    *  three-gate report is byte-identical. */
@@ -888,66 +894,7 @@ export interface SchedulerOptions {
  * itself is also refreshed: if `pollIntervalMs` differs from the active
  * timer, the `setInterval` is transparently restarted.
  */
-/*
-FNXC:WorktreeCapacity 2026-08-01-00:45:
-THE WORKTREE-CAPACITY HOLDER SET, behind a seam so its arithmetic can be pinned.
-
-Two live defects came out of these few lines and neither had behavioural coverage. Measured by the
-author of #3262: blinding the terminal predicate to `false` leaves all 22 scheduler suites green.
-
-  UNDER-COUNT admits work over the cap. The commit that added this gate reports maxWorktrees=4 with
-  four planning sessions holding worktrees and a fifth admitted, because the ledger counted WIP cards
-  only and never learned to count planners.
-
-  OVER-COUNT self-deadlocks. A planned Ready card RETAINS its planning worktree for execution reuse,
-  so counting it as a holder blocked its own release: 2 wip + 3 idle-held = 5/4 and the first unpause
-  released 2 of 4 slots' worth of work.
-
-The two errors are not symmetric — under-counting breaks the cap, over-counting only starves dispatch
-— so both directions are pinned rather than just the one that reads as "safe".
-
-Extracted rather than tested in place because the call site is inside `schedule()`, which a unit test
-has no business standing up (same reasoning as `scheduler-load-lane-union.test.ts`).
-*/
-export function nonWipWorktreeHolderIdsOf(
-  tasks: readonly Task[],
-  wipTaskIds: readonly string[],
-  isTerminalColumnTask: (task: Task) => boolean,
-): string[] {
-  const wipTaskIdSet = new Set(wipTaskIds);
-  return tasks
-    .filter((task) => !wipTaskIdSet.has(task.id)
-      && !isTerminalColumnTask(task)
-      && typeof task.worktree === "string" && task.worktree.length > 0)
-    .map((task) => task.id);
-}
-
-/**
- * Slots a candidate must clear to dispatch. A candidate that ALREADY holds a worktree subtracts its
- * own slot: on release the slot TRANSFERS (it executes in the same worktree) rather than adding.
- */
-export function effectiveActiveWorktrees(reservedWorktreeSlots: number, candidateHoldsWorktree: boolean): number {
-  return reservedWorktreeSlots - (candidateHoldsWorktree ? 1 : 0);
-}
-
-/**
- * FNXC:WorktreeCapacity 2026-08-01-01:05:
- * The two ledger MUTATIONS, named so they can be pinned alongside the totals they modify.
- *
- * `reserveWorktreeOnDispatch` is the exact counterpart of `effectiveActiveWorktrees`: a candidate
- * that already holds a worktree reuses it, so dispatch TRANSFERS the slot rather than adding one.
- * The two must agree — subtracting for the gate but incrementing anyway would leak a slot per
- * dispatch until the cap wedged.
- *
- * `releaseReservedSlot` carries the floor. A failed dispatch gives its slot back, and the
- * `Math.max(0, …)` is what stops a double-release from handing out capacity that does not exist —
- * a negative reserved count reads as free slots to every later comparison in the loop.
- */
-export function reserveWorktreeOnDispatch(reservedWorktreeSlots: number, candidateHoldsWorktree: boolean): number {
-  return candidateHoldsWorktree ? reservedWorktreeSlots : reservedWorktreeSlots + 1;
-}
-
-export function releaseReservedSlot(reservedSlots: number): number {
+function releaseReservedSlot(reservedSlots: number): number {
   return Math.max(0, reservedSlots - 1);
 }
 
@@ -1035,8 +982,9 @@ export class Scheduler {
         .map((task) => ({
           taskId: task.id,
           projectId,
+          lane: "execute",
           createdAt: task.createdAt,
-          reserve: () => { if (this.options.semaphore) registerPreHeldExecutorSlot(task.id); },
+          reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
           start: async () => {
             this.coordinatorReadyTasks.delete(task.id);
             this.coordinatorAdmittedTaskIds.add(task.id);
@@ -1090,43 +1038,22 @@ export class Scheduler {
      * Also handles mission auto-advance: when a linked task completes,
      * update feature status and potentially activate next pending slice.
      */
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-20:10 (fleet — why the arms below are still literals):
-
-    The ten `from`/`to` comparisons here are real backlog, deliberately left counted. The blocker is
-    ordering, not effort: this handler is `async` but its PROLOGUE is not — there is no `await`
-    between this line and the terminal-blocker branch (~55 lines down), so the snapshot invalidation,
-    PR-monitor start/stop, mission hand-off and failed-task tracking all run in the SAME TICK as the
-    emitter. Hoisting a resolution to convert those arms turns the prologue into a microtask and
-    reorders this listener against every other synchronous `task:moved` subscriber. That is the
-    hazard `resolveTaskParkedColumnsSync` exists to avoid — verified, not assumed.
-
-    Lazy resolution inside a branch does not help (the CONDITION needs the lanes). A sync superset
-    prefilter does not either: it needs a predicate that cannot wrongly EXCLUDE on an unknown
-    vocabulary, and a renamed board's terminal id is unknown by construction.
-
-    Unblocking it means either auditing every `task:moved` emitter/subscriber for prologue-ordering
-    dependence and then converting all ten together, or — preferred, since it removes the class
-    rather than one instance — having the emitter carry the resolved lanes on the event payload so
-    no listener resolves at all.
-    */
     this.store.on("task:moved", async ({ task, from, to, source, lanes }) => {
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-21:00 (fleet):
-      PREFER the lanes the emitter resolved. The sync resolver below is inert in production — it
-      answers with the DEFAULT workflow under PostgreSQL — so before this it made every lane guard in
-      this listener behave exactly as the literal it replaced.
+      FNXC:WorkflowResolvedColumns 2026-08-01-05:01:
+      The synchronous prologue must remain in the emitter tick: snapshot invalidation, PR monitor
+      transitions, mission hand-off, and failure tracking are ordered by
+      `scheduler-auto-claim-invalidation.test.ts`. It therefore reads emitter-carried lanes over
+      legacy defaults without awaiting. The two SQLite polling-replica emitters that carry no lanes
+      retain that legacy behavior; PostgreSQL emitters carry lanes.
 
-      Resolving here instead was not an option: this listener's synchronous prologue is load-bearing
-      (`snapshotManager.invalidate` is asserted to run before the emit returns), and an await ahead of
-      it fails `scheduler-auto-claim-invalidation.test.ts`. Reading the answer off the payload keeps
-      the prologue synchronous AND makes the guard correct.
-
-      The sync path stays as the fallback for emit sites that cannot resolve. It is no better than it
-      was, but it is no worse, and it is now the exception rather than the rule.
+      Every later arm is already behind an await, so it resolves the task's workflow asynchronously
+      instead of consulting the production-inert sync resolver. This covers forwarded or lane-less
+      payloads without changing synchronous ordering. Terminal remains a membership union so a second
+      complete-trait column reconciles dependents too.
       */
-      const parked = mergeParkedColumns(resolveTaskParkedColumnsSync(this.store, task.id), lanes);
+      const parked = mergeParkedColumns(LEGACY_PARKED_COLUMNS, lanes);
       if (from === parked.hold || to === parked.hold) {
         this.options.snapshotManager?.invalidate(`task:moved:${from}->${to}`);
       }
@@ -1176,14 +1103,16 @@ export class Scheduler {
         }
       }
 
+      const resolvedParked = mergeParkedColumns(await resolveTaskParkedColumns(this.store, task.id), lanes);
+
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
       // blocker reconciliation when a potential blocker reaches a terminal completion column.
       // Invariant: blockedBy must reference a *current* unresolved blocker, else be null.
-      if (parked.terminal.has(to)) {
+      if (resolvedParked.terminal.has(to)) {
         try {
           const settings = await this.store.getSettings();
           if (!settings.globalPause && !settings.enginePaused) {
-            const todoTasks = await this.store.listTasks({ column: parked.hold, slim: true });
+            const todoTasks = await this.store.listTasks({ column: resolvedParked.hold, slim: true });
             /* One IR cache for the whole reconciliation, per the caller-owned-cache contract. */
             const dependencySatisfactionIrCache = new Map<string, WorkflowIr>();
             for (const dependent of todoTasks) {
@@ -1252,13 +1181,13 @@ export class Scheduler {
         }
       }
 
-      if (from === parked.wip && to === parked.hold) {
+      if (from === resolvedParked.wip && to === resolvedParked.hold) {
         if (source === "engine") {
           this.recentEngineTodoRequeues.set(task.id, task.columnMovedAt ?? new Date().toISOString());
         } else {
           this.recentEngineTodoRequeues.delete(task.id);
         }
-      } else if (to === parked.review || parked.terminal.has(to)) {
+      } else if (to === resolvedParked.review || resolvedParked.terminal.has(to)) {
         this.recentEngineTodoRequeues.delete(task.id);
         if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
           void this.store.updateTask(task.id, {
@@ -1275,7 +1204,7 @@ export class Scheduler {
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
-      if (parked.terminal.has(to) || to === parked.hold) {
+      if (resolvedParked.terminal.has(to) || to === resolvedParked.hold) {
         schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
@@ -1285,7 +1214,7 @@ export class Scheduler {
      * PR Monitoring: Start monitoring when PR is linked to an in-review task.
      * Also detects task-level unpause transitions and triggers immediate scheduling.
      */
-    this.store.on("task:updated", (task) => {
+    this.store.on("task:updated", (task, meta) => {
       const nextFingerprint = computeAutoClaimFingerprint(task);
       const previousFingerprint = this.lastAutoClaimFingerprint.get(task.id);
       if (!previousFingerprint || previousFingerprint !== nextFingerprint) {
@@ -1293,51 +1222,17 @@ export class Scheduler {
         this.options.snapshotManager?.invalidate("task:updated");
       }
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-23:58 (FLAGGED AND LEFT COUNTED — do NOT convert with
-      `resolveTaskParkedColumnsSync`):
-      This literal and the `in-review` one further down are the two the sync-lane pass did not take,
-      and nothing in this file said why. Converting them the way the other ten were converted would
-      make them INERT, not fixed: `getTaskWorkflowSelectionImpl` returns `undefined` unconditionally
-      under PostgreSQL, so `resolveTaskWorkflowIrSync` always answers with the DEFAULT builtin IR and
-      every lane it yields is the legacy id (proved in `postgres/sync-workflow-ir-is-always-default.pg.test.ts`;
-      `check-inert-sync-lane-conversions` baselines the twenty guards already in that state here).
-
-      They stay literal and COUNTED, which is the honest state: an unconverted literal is at least
-      visible to the census, while an inert conversion leaves the backlog and takes the evidence with
-      it. Both live in a synchronous `task:updated` listener, so the async resolver is unavailable
-      without reordering this handler against every other subscriber.
-
-      FNXC:WorkflowResolvedColumns 2026-07-31-23:59 (THE REASON CHANGED — #3128 made async resolution
-      available here, so "it would be inert" is no longer why these two stay):
-      #3128 converted the rest of this listener by deferring the resolve into `void (async () => ...)`
-      blocks, which reach the ASYNC resolver and are genuinely correct. So the sync-resolver argument
-      above no longer explains these two. The real reason is the one #3128's own note states, three
-      branches down:
-
-        "The `planningTaskIds.delete` stays SYNCHRONOUS — it is the edge-trigger bookkeeping, and
-         deferring it would let a second update re-enter this branch."
-
-      Both remaining literals are that case:
-        - `failedTaskIds.add` below is edge-trigger bookkeeping raced against `moveTask` clearing the
-          failure metadata — the comment on it says so. Deferring the add can miss that window.
-        - the PR-monitoring guard further down gates `prMonitor.getTrackedPrs()` /
-          `startMonitoring()`, where `tracked.has(task.id)` IS the re-entrance guard. Move the lane
-          answer behind an await and two updates for the same task can both pass that check before
-          either starts, double-starting a monitor.
-
-      LEFT COUNTED, both of them: an unconverted literal is visible to the census, and marking these
-      exempt would assert the code is fine when it is blocked.
-
-      So these are not waiting on a resolver. They are waiting on somewhere to put the answer that is
-      not behind an await — the emitter-carried `lanes` that #3109 added to `task:moved` would do it,
-      and extending that to `task:updated` is measured as expensive rather than impossible
-      (`sync-workflow-ir-second-blocker.test.ts`: 26 emit sites against 7, on the hottest write path).
+      FNXC:WorkflowEvents 2026-08-01-07:14:
+      TaskStore decorates `task:updated` with its cache-warmed lanes, letting the failure and PR
+      edge-trigger guards remain synchronous on renamed boards. A missing payload is unknown, not a
+      legacy claim, so its fallback stays literal instead of consulting PostgreSQL's default-only sync
+      resolver; that preserves existing bridge and cold-cache behaviour without reordering listeners.
       */
+      const eventLanes = meta?.lanes;
+      // DELIBERATE-LITERAL — absent event metadata is unknown, so the legacy wip fallback stays explicit.
       // Track mission failure signals before moveTask clears failure metadata.
       if (task.sliceId && task.status === "failed") {
-        /* DELIBERATE-LITERAL — see the note above: converting this needs the async resolver on the
-         hottest write path (26 emit sites against 7, measured), not a signature change here. */
-      if (task.column === "in-progress") this.failedTaskIds.add(task.id);
+        if (eventLanes ? task.column === eventLanes.wip : task.column === "in-progress") this.failedTaskIds.add(task.id);
         /*
         FNXC:MissionReconciliation 2026-08-01-00:00:
         In-place failure parks do not emit task:moved, but they release the
@@ -1420,14 +1315,8 @@ export class Scheduler {
       }
 
       if (!this.options.prMonitor) return;
-      /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: the second of the two honest literals. NOT
-         because a conversion would be inert — #3128 made the async resolver reachable in this
-         listener — but because `tracked.has(task.id)` below is a re-entrance guard, and moving this
-         answer behind an await lets two updates for the same task both pass it and double-start a
-         monitor. LEFT COUNTED. See the fuller note on the mission-failure guard above. */
-      /* DELIBERATE-LITERAL — see the note directly above: an await here lets two updates for the
-         same task both pass the `tracked.has` re-entrance guard and double-start a monitor. */
-      if (task.column !== "in-review") return;
+      // DELIBERATE-LITERAL — runtime bridges drop lanes; never replace this unknown fallback with the sync resolver.
+      if (eventLanes ? task.column !== eventLanes.review : task.column !== "in-review") return;
       if (!task.prInfo) return;
 
       // Check if we're already monitoring this task
@@ -1582,6 +1471,15 @@ export class Scheduler {
       const content = await readFile(promptPath, "utf-8");
       if (!content || content.trim().length === 0) {
         return { valid: false, reason: "missing or empty PROMPT.md" };
+      }
+      /*
+      FNXC:DuplicateIntake 2026-08-01-19:24:
+      Non-empty is not enough: a sole `DUPLICATE: FN-####` line is a triage redirect, not a
+      plan. Admitting it (FN-8704) fails the graph at `parse` and parks failed WIP in a loop.
+      */
+      const duplicateOnly = nonExecutableDuplicateRedirectReason(content);
+      if (duplicateOnly) {
+        return { valid: false, reason: duplicateOnly };
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1859,7 +1757,7 @@ export class Scheduler {
       which reads as unparked and clears a live agent's link. That invariant, not
       the conversion, is what the agent-link tests pin.
       */
-      const rollbackParked = resolveTaskParkedColumnsSync(this.store, taskId);
+      const rollbackParked = await resolveTaskParkedColumns(this.store, taskId);
       const proof = evaluateParkedAgentTaskLink({
         agent,
         linkedTask: { column: rollbackParked.hold } as Pick<Task, "column">,
@@ -2210,6 +2108,11 @@ export class Scheduler {
         worktreeLimitEnabled: settings.worktreeLimitEnabled,
       });
       const maxConcurrent = settings.maxConcurrent ?? this.options.maxConcurrent ?? 2;
+      const activeTaskLimit = resolveActiveTaskCapacityLimit({
+        maxConcurrent,
+        maxWorktrees: settings.maxWorktrees ?? this.options.maxWorktrees ?? 4,
+        worktreeLimitEnabled: settings.worktreeLimitEnabled,
+      });
       /*
       FNXC:WorkflowScheduling 2026-07-19-02:35 (U4/KTD-9):
       Count active WIP reservations by the `wip` trait, not the literal
@@ -2282,67 +2185,26 @@ export class Scheduler {
       */
       const isReviewColumnTask = (task: Task): boolean =>
         isReviewColumnRole(columnFlagsForTask(task), task.column);
-      const wipTaskIds = tasks.filter(isWipColumnTask).map((task) => task.id);
       /*
-      FNXC:WorkflowScheduling 2026-07-31-23:50 (maxWorktrees counted only WIP — live board breach):
-      Under plan-in-place EVERY lane's live card holds a real worktree — planning runs in the task
-      worktree (triage.ts) and review/merge keeps it — but this ledger counted WIP cards only. The
-      protection that used to catch the difference was the GLOBAL SEMAPHORE gate, whose FNXC below
-      says exactly this ("must include every live top-level agent holder (planning triage and active
-      in-review), otherwise the hold/release sweep can admit an executor on top of a full planner
-      fleet"); the two-number capacity model deleted the semaphore, and this gate never learned to
-      count planners. Observed live: maxWorktrees=4, four planning sessions each holding a worktree,
-      and a replan dispatch admitted as the FIFTH worktree because the gate read used=0/4.
-
-      Count every non-terminal task that HOLDS a worktree (`task.worktree` set) in addition to WIP
-      membership — wip cards without a worktree yet still reserve (they are about to acquire), and
-      terminal lanes are excluded because their retained worktrees are cleanup-owned, not capacity.
+      FNXC:ConcurrencyIndicators 2026-08-01-19:22:
+      Failed WIP is not a live holder (isRunningAgentTask). Keep the WIP id list aligned so
+      diagnostic maxConcurrent holders and any WIP-only arithmetic do not re-count stranded failed
+      parks that the worktree ledger already excludes.
       */
+      const wipTaskIds = tasks
+        .filter((task) => isWipColumnTask(task) && task.status !== "failed")
+        .map((task) => task.id);
       /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-20:55 (u12 — the ratchet caught this, correctly):
-      DELIBERATE-LITERAL — the unresolvable-workflow default. The trait path above is the real answer;
-      this arm is reached only when `columnFlagsForTask` returns undefined, i.e. the task's workflow
-      could not be read at all, and it then gives the same answer the pre-trait code gave.
-
-      Recorded rather than converted because there is nothing to convert TO: a task with no readable
-      workflow has no resolved lane, and treating it as non-terminal would count a finished card's
-      retained worktree against live capacity — the opposite of what the surrounding fix does.
-
-      Marker sits in the DECLARATION's leading comments, not inline: markers are read from a node's
-      leading comments, so a mid-expression one attaches to the wrong node and is silently ignored.
+      FNXC:WorktreeCapacity 2026-08-01-04:38 (inactive retained-worktree capacity inversion):
+      Worktree capacity is a LIVE-TASK budget, not a count of directories retained on disk. The
+      dashboard showed seven active tasks against maxWorktrees=9, but two dependency-blocked queued
+      cards retained worktree paths. Counting those inactive paths filled the ledger and prevented
+      the dependency-free roots from starting. Use the canonical enriched running-agent predicate
+      shared with the board; planning, WIP, and active review count, while queued/paused/terminal
+      tasks do not. Same-sweep reservations below keep newly released tasks visible immediately.
       */
-      /*
-      FNXC:WorkflowResolvedColumns 2026-08-01-10:05 (fleet — correcting "nothing to convert TO"):
-      There is: `isTerminalColumnRole` in core is this predicate, term for term. With flags it reads
-      `flags.complete === true || flags.archived === true`; without them it falls back to the legacy
-      complete/archived ids — the same two arms written out below, verified against `column-roles.ts`.
-
-      Its own doc-comment names this exact case: it exists "because the pattern
-      `column !== \"done\" && column !== \"archived\"` is the single most repeated shape in the backlog"
-      and "keeps callers from re-deriving it and from accidentally dropping one half."
-
-      The DELIBERATE reasoning above is otherwise correct and kept: the undefined-flags arm is a live
-      path and treating an unreadable workflow as non-terminal would count a finished card's retained
-      worktree against live capacity. That argument is about the FALLBACK's existence, not about where
-      the predicate lives — and the shared helper carries the identical fallback.
-
-      Second time in this file: `isWipColumnTask` two lines up records that it was itself once "a
-      hand-rolled copy of `isWipColumnRole`".
-      */
-      const isTerminalColumnTask = (task: Task): boolean =>
-        isTerminalColumnRole(columnFlagsForTask(task), task.column);
-      const nonWipWorktreeHolderIds = nonWipWorktreeHolderIdsOf(tasks, wipTaskIds, isTerminalColumnTask);
-      /*
-      FNXC:WorkflowScheduling 2026-07-31-01:05 (self-deadlock in the widened ledger, observed live):
-      A planned Ready card RETAINS its planning worktree for execution reuse, so counting it as a
-      holder must not block ITS OWN release — on release the slot TRANSFERS (the card executes in
-      the same worktree), it does not add. Without this exclusion the first unpause released only
-      2 of 4 slots' worth of work: the two remaining Ready cards were gated out by the very
-      worktrees they would reuse (2 wip + 3 idle-held = 5/4). Candidates in this set subtract
-      their own slot from the gate and skip the dispatch increment.
-      */
-      const nonWipWorktreeHolderIdSet = new Set(nonWipWorktreeHolderIds);
-      let reservedWorktreeSlots = wipTaskIds.length + nonWipWorktreeHolderIds.length;
+      const activeWorktreeTaskIds = await persistedTopLevelAgentTaskIdsFromStore(this.store, tasks);
+      let reservedWorktreeSlots = activeWorktreeTaskIds.length;
       let reservedConcurrentSlots = wipTaskIds.length;
       const inProgressTaskIds = wipTaskIds;
       const dispatchPrepByTaskId = new Map<string, {
@@ -2503,12 +2365,41 @@ export class Scheduler {
           const validation = await this.validateTaskFilesystem(task.id);
           if (!validation.valid) {
             schedulerLog.warn(`Task ${task.id} filesystem validation failed: ${validation.reason}`);
-            // See the FNXC:WorkflowScheduling 2026-07-13-11:25 note in the legacy loop: the
-            // status write is what makes triage rediscover a card whose replan column equals
-            // its current column.
+            /*
+            FNXC:WorkflowScheduling 2026-08-01-18:47:
+            Missing/empty PROMPT used to rebound with unbounded needs-replan writes (FN-8704
+            storm twin). Share the planning recovery budget: backoff while attempts remain,
+            then park failed so a broken task dir cannot spin forever. The status write is
+            still what makes triage rediscover a card whose replan column equals its current column.
+            */
             const replanColumn = await moveTaskToReplanColumn(this.store, task);
-            await this.store.updateTask(task.id, { status: "needs-replan" });
-            await this.store.logEntry(task.id, `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed`, validation.reason);
+            const decision = computeRecoveryDecision({
+              recoveryRetryCount: task.recoveryRetryCount,
+              nextRecoveryAt: task.nextRecoveryAt,
+            });
+            if (!decision.shouldRetry) {
+              const error = `REQUIRED_ARTIFACT_RECOVERY_EXHAUSTED: filesystem validation failed (${validation.reason}) after ${MAX_RECOVERY_RETRIES} automatic planning retries.`;
+              await this.store.updateTask(task.id, {
+                status: "failed",
+                error,
+                recoveryRetryCount: null,
+                nextRecoveryAt: null,
+              });
+              await this.store.logEntry(task.id, error, validation.reason);
+              return null;
+            }
+            const attempt = decision.nextState.recoveryRetryCount ?? MAX_RECOVERY_RETRIES;
+            await this.store.updateTask(task.id, {
+              status: "needs-replan",
+              error: null,
+              recoveryRetryCount: decision.nextState.recoveryRetryCount,
+              nextRecoveryAt: decision.nextState.nextRecoveryAt,
+            });
+            await this.store.logEntry(
+              task.id,
+              `Task rebounded to ${replanColumn} for re-specification — filesystem validation failed (attempt ${attempt}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)})`,
+              validation.reason,
+            );
             return null;
           }
 
@@ -2949,125 +2840,167 @@ export class Scheduler {
             }
           }
 
-          const topLevelClaimedSlots = await computeTopLevelConcurrencyClaimedFromStore({
-            store: this.store,
-            tasks,
-          });
-          const candidateHoldsWorktree = nonWipWorktreeHolderIdSet.has(task.id);
           const concurrencyDiagnostic = computeConcurrencyGateDiagnostic({
             agentSlots: reservedConcurrentSlots,
             maxConcurrent,
-            activeWorktrees: effectiveActiveWorktrees(reservedWorktreeSlots, candidateHoldsWorktree),
+            activeWorktrees: reservedWorktreeSlots,
             maxWorktrees,
-            worktreeHolderTaskIds: [...inProgressTaskIds, ...nonWipWorktreeHolderIds],
+            worktreeHolderTaskIds: [...activeWorktreeTaskIds, ...dispatchPrepByTaskId.keys()],
             semaphore: this.options.semaphore,
             inProgressTaskIds,
-            topLevelClaimedSlots,
+            topLevelClaimedSlots: reservedWorktreeSlots,
           });
           /*
-          FNXC:WorkflowScheduling 2026-06-23-20:58:
-          The workflow hold/release sweep is the only todo pickup path, so it must honor the same maxConcurrent, maxWorktrees, and shared semaphore pressure before releasing a task to in-progress.
-
-          FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-          Preflight is no longer non-mutating for the shared semaphore: tryAcquire reserves a real slot before the move so triage cannot fill the global cap while this card is already counted as an in-progress runner. On move failure the reservation is released; on success the pre-held slot is transferred to the executor/graph run.
+          The sweep diagnostic is intentionally descriptive only. Worktree preparation can outlive
+          a holder, so using this older snapshot as an admission gate strands queued cards even after
+          capacity frees. The serialized fresh reservation below is the sole capacity authority; the
+          diagnostic remains available to explain a rejection from that authoritative check.
           */
-          if (concurrencyDiagnostic.available <= 0) {
-            if (reservedScope) {
-              activeScopes.delete(task.id);
-              activeScopeColumns.delete(task.id);
-            }
-            const reason = formatConcurrencyLimitReason(concurrencyDiagnostic);
-            await this.store.updateTask(task.id, { status: "queued" });
-            await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
-            return null;
-          }
 
-          const sem = this.options.semaphore;
-          const coordinatorReserved = hasPreHeldExecutorSlot(task.id);
-          if (sem && !coordinatorReserved && !sem.tryAcquire()) {
+          /*
+          FNXC:WorktreeCapacity 2026-08-01-04:38:
+          Serialize the workflow scheduler's direct hold release with planning and merge admission.
+          All three lanes count the same active population, so independent snapshots must not each
+          claim the final slot. The reservation remains until the executor observes the persisted
+          WIP row and takes the handoff.
+          */
+          let finalClaimSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
+          const getFinalClaimSnapshot = () => finalClaimSnapshot ??= (async () => {
+            /*
+            FNXC:WorkflowContinuationCapacity 2026-08-01-07:10:
+            Worktree preparation and startup recovery can make the sweep's original task list stale
+            before this serialized admission point. A planner that became live after that snapshot
+            was absent from `activeWorktreeTaskIds`; once its handoff reservation transferred to the
+            durable planning status, the coordinator could no longer see either claim and admitted a
+            tenth active task against maxWorktrees=9. Re-read full rows lazily inside the coordinator
+            drain so pending workflow-step leases and every newly durable lane holder participate in
+            the final decision. Same-sweep transient starts remain covered by coordinator reservations.
+            */
+            const liveTasks = await this.store.listTasks({ slim: false, includeArchived: false });
+            const ids = await persistedTopLevelAgentTaskIdsFromStore(this.store, liveTasks);
+            return { count: ids.length, ids };
+          })();
+          let projectSlotReserved = false;
+          await projectAdmissionCoordinator.admitNext({
+            projectId: this.store.getRootDir(),
+            maxConcurrent: activeTaskLimit,
+            claimed: async () => (await getFinalClaimSnapshot()).count,
+            claimedTaskIds: async () => (await getFinalClaimSnapshot()).ids,
+            semaphore: this.options.semaphore,
+            refresh: async () => [{
+              taskId: task.id,
+              projectId: this.store.getRootDir(),
+              lane: "execute",
+              createdAt: task.createdAt,
+              reserve: () => registerPreHeldExecutorSlot(task.id, this.options.semaphore !== undefined),
+              start: async () => {
+                projectSlotReserved = true;
+                return true;
+              },
+            }],
+          });
+          if (!projectSlotReserved) {
             if (reservedScope) {
               activeScopes.delete(task.id);
               activeScopeColumns.delete(task.id);
             }
+            const bindingGate: ConcurrencyGateName = maxWorktrees !== null && maxWorktrees <= maxConcurrent
+              ? "maxWorktrees"
+              : "maxConcurrent";
             const reason = formatConcurrencyLimitReason({
               ...concurrencyDiagnostic,
               available: 0,
-              bindingGates: [...new Set([...concurrencyDiagnostic.bindingGates, "semaphore" as const])],
+              bindingGates: [...new Set([...concurrencyDiagnostic.bindingGates, bindingGate])],
             });
             await this.store.updateTask(task.id, { status: "queued" });
-            await this.logDispatchQueuedReason(task.id, reason, formatConcurrencyLimitMemoKey(concurrencyDiagnostic));
+            await this.logDispatchQueuedReason(task.id, reason);
             return null;
           }
-          if (sem && !coordinatorReserved) {
-            registerPreHeldExecutorSlot(task.id);
-          }
+
+          // admitNext acquired and registered the host slot atomically with the
+          // project reservation, so this handoff cannot bypass review candidates.
+          const sem = this.options.semaphore;
 
           let acquiredSymbols: string[] | undefined;
-          if (missionAdmission.kind === "symbol-lock") {
+          try {
+            if (missionAdmission.kind === "symbol-lock") {
             /*
             FNXC:MissionSymbolAdmission 2026-07-31-12:00:
             Acquire after all capacity gates and immediately before hold release;
             the reservation release path below returns this lock if moveTask
             rejects, while a successful move transfers ownership to the task.
             */
-            const lockResult = await this.store.acquireSymbolLocks(
-              missionAdmission.symbols,
-              { ownerTaskId: task.id, missionId: freshTask.missionId, featureId: missionAdmission.feature.id, agentId: "scheduler" },
-              SYMBOL_LOCK_LEASE_MS,
-            );
-            if (!lockResult.acquired) {
-              if (dropPreHeldExecutorSlot(task.id)) sem?.release();
-              if (reservedScope) {
-                activeScopes.delete(task.id);
-                activeScopeColumns.delete(task.id);
-              }
-              const conflict = lockResult.conflicts[0];
-              await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
-              await this.logDispatchQueuedReason(
-                task.id,
-                `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
+              const lockResult = await this.store.acquireSymbolLocks(
+                missionAdmission.symbols,
+                { ownerTaskId: task.id, missionId: freshTask.missionId, featureId: missionAdmission.feature.id, agentId: "scheduler" },
+                SYMBOL_LOCK_LEASE_MS,
               );
-              return null;
+              if (!lockResult.acquired) {
+                if (dropPreHeldExecutorSlot(task.id)) sem?.release();
+                if (reservedScope) {
+                  activeScopes.delete(task.id);
+                  activeScopeColumns.delete(task.id);
+                }
+                const conflict = lockResult.conflicts[0];
+                await this.store.updateTask(task.id, { status: "queued", blockedBy: null, overlapBlockedBy: null });
+                await this.logDispatchQueuedReason(
+                  task.id,
+                  `queued — symbol contention: symbol=${conflict?.symbolKey ?? "unknown"} holder=${conflict?.ownerTaskId ?? "unknown"}`,
+                );
+                return null;
+              }
+              acquiredSymbols = missionAdmission.symbols;
+              await this.store.logEntry(task.id, `symbol-lock admission acquired: ${missionAdmission.symbols.join(", ")}`);
             }
-            acquiredSymbols = missionAdmission.symbols;
-            await this.store.logEntry(task.id, `symbol-lock admission acquired: ${missionAdmission.symbols.join(", ")}`);
+
+            dispatchPrepByTaskId.set(task.id, {
+              baseBranch: this.resolveBaseBranch(freshTask, tasks, isReviewColumnTask),
+              dispatchStormCount: nextDispatchStormCount,
+              dispatchTimestamp,
+              effectiveNodeId: effectiveNode.nodeId ?? null,
+              effectiveNodeSource: effectiveNode.source,
+              task: freshTask,
+            });
+
+            reservedWorktreeSlots += 1;
+            reservedConcurrentSlots += 1;
+            let released = false;
+            return {
+              release: () => {
+                if (released) return;
+                released = true;
+                if (reservedScope) {
+                  activeScopes.delete(task.id);
+                  activeScopeColumns.delete(task.id);
+                }
+                reservedWorktreeSlots = releaseReservedSlot(reservedWorktreeSlots);
+                reservedConcurrentSlots = releaseReservedSlot(reservedConcurrentSlots);
+                dispatchPrepByTaskId.delete(task.id);
+                if (dropPreHeldExecutorSlot(task.id)) sem?.release();
+                if (acquiredSymbols) {
+                  void this.store.releaseSymbolLocks(acquiredSymbols, task.id);
+                }
+              },
+            };
+          } catch (error) {
+            if (dropPreHeldExecutorSlot(task.id)) sem?.release();
+            if (reservedScope) {
+              activeScopes.delete(task.id);
+              activeScopeColumns.delete(task.id);
+            }
+            if (acquiredSymbols) {
+              await this.store.releaseSymbolLocks(acquiredSymbols, task.id).catch(() => undefined);
+            }
+            throw error;
           }
-
-          dispatchPrepByTaskId.set(task.id, {
-            baseBranch: this.resolveBaseBranch(freshTask, tasks, isReviewColumnTask),
-            dispatchStormCount: nextDispatchStormCount,
-            dispatchTimestamp,
-            effectiveNodeId: effectiveNode.nodeId ?? null,
-            effectiveNodeSource: effectiveNode.source,
-            task: freshTask,
-          });
-
-          // Transfer, not addition, for a candidate that already holds its worktree.
-          reservedWorktreeSlots = reserveWorktreeOnDispatch(reservedWorktreeSlots, candidateHoldsWorktree);
-          reservedConcurrentSlots += 1;
-          let released = false;
-          return {
-            release: () => {
-              if (released) return;
-              released = true;
-              if (reservedScope) {
-                activeScopes.delete(task.id);
-                activeScopeColumns.delete(task.id);
-              }
-              reservedWorktreeSlots = releaseReservedSlot(reservedWorktreeSlots);
-              reservedConcurrentSlots = releaseReservedSlot(reservedConcurrentSlots);
-              dispatchPrepByTaskId.delete(task.id);
-              if (dropPreHeldExecutorSlot(task.id)) sem?.release();
-              if (acquiredSymbols) {
-                void this.store.releaseSymbolLocks(acquiredSymbols, task.id);
-              }
-            },
-          };
         },
         allocateWorktree: (task, reservedNames) =>
           this.planWorktreePath(task, settings.worktreeNaming, reservedNames, settings),
       });
       for (const taskId of result.released) {
+        // The authoritative move has made this task visible to canonical live-task
+        // counting; the transient project reservation no longer needs to bridge it.
+        projectAdmissionCoordinator.releaseReservation(taskId);
         const prep = dispatchPrepByTaskId.get(taskId);
         if (!prep) continue;
         /*

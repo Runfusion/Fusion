@@ -43,6 +43,7 @@ import { copyConfiguredWorktreeFiles, type WorktreeCopyFileResult } from "./work
 import { resolveCapturedBaseCommitSha } from "../execution/base-commit-capture.js";
 import { resolveIntegrationBranch } from "../merge/integration-branch.js";
 import { activeSessionRegistry, type ActiveSessionRegistry } from "../agents/active-session-registry.js";
+import { refreshReusedWorktreeBase, type WorktreeBaseRefreshResult } from "../worktree-base-refresh.js";
 
 const execAsync = promisify(exec);
 
@@ -81,6 +82,8 @@ export interface AcquireTaskWorktreeOptions {
   }>;
   taskEnv?: NodeJS.ProcessEnv;
   backend?: WorktreeBackend;
+  /** Execution callers opt in; planning, review, and merge reuse remain unchanged. */
+  refreshStaleBase?: boolean;
 }
 
 export interface AcquireTaskWorktreeResult {
@@ -93,6 +96,15 @@ export interface AcquireTaskWorktreeResult {
     existingTipSha?: string;
     strandedCommitCount?: number;
   };
+  baseRefresh?: WorktreeBaseRefreshResult;
+}
+
+/** A typed refresh refusal: callers must park before creating a coding session. */
+export class WorktreeBaseRefreshError extends Error {
+  constructor(public readonly refresh: WorktreeBaseRefreshResult) {
+    super(`Worktree base refresh blocked execution: ${refresh.kind}`);
+    this.name = "WorktreeBaseRefreshError";
+  }
 }
 
 type InitCommandResult = Awaited<ReturnType<NonNullable<AcquireTaskWorktreeOptions["runConfiguredCommand"]>>>;
@@ -201,6 +213,16 @@ async function pinnedWorktreeBranchMatches(rootDir: string, worktreePath: string
 
 export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Promise<AcquireTaskWorktreeResult> {
   const { task, rootDir, store, settings, pool, logger, audit, runContext, createWorktree, runConfiguredCommand, runInitCommand, taskEnv, secretsStore } = opts;
+  const refreshExistingWorktree = async (path: string): Promise<WorktreeBaseRefreshResult | undefined> => {
+    if (!opts.refreshStaleBase) return undefined;
+    const refresh = await refreshReusedWorktreeBase({ task, rootDir, worktreePath: path, store, settings, audit, logger });
+    if (!refresh.executionSafe) {
+      await audit?.git({ type: refresh.kind === "stale-base-conflict" ? "worktree:base-refresh-conflict" : "worktree:base-refresh-blocked", target: path, metadata: { taskId: task.id, outcome: refresh.kind } });
+      await store.logEntry(task.id, `Worktree base refresh blocked execution (${refresh.kind})`, refresh.detail, runContext);
+      throw new WorktreeBaseRefreshError(refresh);
+    }
+    return refresh;
+  };
   const notifyFallback = async (op: WorktrunkOpName, stderr?: string) => {
     await store.logEntry(task.id, `Worktrunk ${op} failed; continuing with native worktree backend (${stderr ?? "no stderr"})`, undefined, runContext);
   };
@@ -550,7 +572,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       logger,
       runContext,
     });
-    return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true });
+    const baseRefresh = await refreshExistingWorktree(path);
+    return guardAcquisitionReturn({ worktreePath: path, branch: resumedBranch, source, hydrated, isResume: true, baseRefresh });
   };
 
   /*
@@ -674,7 +697,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
       runContext,
     });
     // FN-4912: resume path reuses the prior on-disk .env (and its fingerprint sidecar). Rewrite is owned by the next fresh acquisition.
-    return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true });
+    const baseRefresh = await refreshExistingWorktree(worktreePath);
+    return guardAcquisitionReturn({ worktreePath, branch: resumedBranch, source: "existing", hydrated, isResume: true, baseRefresh });
   }
 
   if (!isResume && pool && settings.recycleWorktrees) {

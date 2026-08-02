@@ -54,9 +54,9 @@ export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, li
     const columns = [
       "id", "lineageId", "title", "description", "priority", "\"column\"", "status", "size", "reviewLevel", "currentStep",
       "worktree", "blockedBy", "overlapBlockedBy", "paused", "pausedReason", "userPaused", "baseBranch", "branch", "autoMerge", "autoMergeProvenance", "executionStartBranch", "baseCommitSha",
-      "modelPresetId", "modelProvider", "modelId",
-      "validatorModelProvider", "validatorModelId",
-      "planningModelProvider", "planningModelId", "mergerModelProvider", "mergerModelId",
+      "modelPresetId", "modelProvider", "credentialInstanceId", "modelId",
+      "validatorModelProvider", "validatorCredentialInstanceId", "validatorModelId",
+      "planningModelProvider", "planningCredentialInstanceId", "planningModelId", "mergerModelProvider", "mergerCredentialInstanceId", "mergerModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "resumeLimboCount", "executeRequeueLoopCount", "graphResumeRetryCount", "consecutiveToolFailureRetryCount", "executorEscalationAttempted", "toolFailureDetectorLogCursor", "toolFailureRetryExhaustedAuditEmitted", "resumeLimboTipSha", "resumeLimboStepSignature", "executeRequeueLoopSignature", "postReviewFixCount", "planReviewReplanCount", "recoveryRetryCount", "taskDoneRetryCount", "bulkCompletionRefusalAt", "worktreeSessionRetryCount", "completionHandoffLimboRecoveryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "mergeTransientRetryCount", "branchConflictRecoveryCount", "reviewerContextRetryCount", "reviewerFallbackRetryCount", "nextRecoveryAt",
       // FNXC:WorkflowIrPin 2026-07-19-03:10 (U9b / KTD-3 + KTD-8): this projection is a SECOND
       // copy of the slim column list (see getTaskSelectClauseImpl2). The IR pin, its node entry,
@@ -380,6 +380,12 @@ export async function updateTaskAtomicImpl(store: TaskStore, id: string, updater
     });
   }
 
+/*
+FNXC:TaskWedgeNotifications 2026-08-01-15:35:
+Resolution changes only the active episode status. The PostgreSQL compare-and-set
+merges that field into the existing JSON, preserving per-reason cooldown stamps so
+resolving X or notifying Y cannot reopen X's live spam window.
+*/
 export async function resolveTaskWedgeNotificationEpisodeImpl(
   store: TaskStore,
   id: string,
@@ -1205,6 +1211,7 @@ export async function listApprovedCliAutonomyAdaptersImpl(store: TaskStore): Pro
 
 export async function closeImpl(store: TaskStore): Promise<void> {
     store.closing = true;
+    await store.stopTaskDeletedOutboxConsumer();
     if (store.deferredTaskCreatedWork.size > 0) {
       await Promise.allSettled([...store.deferredTaskCreatedWork]);
     }

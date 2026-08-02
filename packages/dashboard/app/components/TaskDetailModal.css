@@ -1,4 +1,15 @@
 /* === Detail Modal === */
+/*
+FNXC:TaskDetailLayout 2026-08-01-04:23:
+SHELL NAMING MAP — read before fixing any Task Detail inset/padding bug. "Task Detail modal"
+is ONE surface with THREE shells, and only one of them lives in this file's `.modal-overlay`
+rules: (1) the fixed desktop modal (`.modal-overlay` + `.modal.task-detail-modal`, this file),
+(2) the tablet popup and desktop pop-out (FloatingWindow.css — class floating-window--task-detail,
+whose shared body element owns the FN-8015 inline-end gutter and the tablet-viewport zeroing),
+and (3) the mobile full-screen sheet. The right-
+padding bug recurred across FN-8630, FN-8634, and the 2026-08-01 tablet fix precisely because
+fixes landed only in shell (1) while the reporter was looking at shell (2).
+*/
 .task-detail-content {
   display: flex;
   flex-direction: column;
@@ -2372,12 +2383,16 @@ The done-task Summary tab is a scrollable overview composed from existing detail
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .task-summary-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  min-width: 0;
+  max-width: 100%;
   padding: var(--space-lg);
   background: var(--card);
   border: var(--btn-border-width) solid var(--border);
@@ -2456,9 +2471,14 @@ The desktop table needs a token-scale min-width and non-anywhere model-name wrap
 
 FNXC:TaskDetailSummaryTokenCost 2026-07-11-00:00:
 Mobile per-model breakdowns must stay real tables and scroll horizontally inside .task-summary-token-table-wrap, matching the Command Center .cc-table-wrap pattern. Do not stack rows into cards; side-by-side model token/cost columns are the user-facing scan path.
+
+FNXC:TaskDetailSummaryTab 2026-08-01-07:15:
+Mobile token/cost scrolling requires min-width: 0 containment through the Summary flex ancestors. Overflow-x alone cannot shrink an intrinsically wide table's flex/grid child, so the wrapper must own horizontal overflow rather than widening the detail body.
 */
 .task-summary-token-table-wrap {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
 }
 
@@ -3714,6 +3734,20 @@ Reuse the near-duplicate banner layout; replan-cap escalations use a stronger wa
   margin: 0;
   color: var(--text);
   line-height: 1.45;
+}
+
+.detail-plan-approval-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+@media (max-width: 768px) {
+  .detail-plan-approval-banner__actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 .detail-near-duplicate-banner__header {

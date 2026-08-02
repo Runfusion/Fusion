@@ -23,6 +23,7 @@
  * (transient-error retry, failure marking, etc.) is unaffected.
  */
 
+import type { ProviderInstanceRef } from "@fusion/core";
 import { isUsageLimitError } from "./usage-limit-detector.js";
 import { isTransientAuthCredentialError } from "./transient-error-detector.js";
 
@@ -64,6 +65,16 @@ export interface RateLimitRetryOptions {
    * re-throws the last error immediately. Essential for paused / cancelled tasks.
    */
   signal?: AbortSignal;
+  /**
+   * Optional credential-instance reroute. The finite RotationEvent behind
+   * nextInstance owns boundedness; candidateCount is diagnostics only.
+   */
+  rotation?: {
+    providerId: string;
+    currentInstanceId?: string;
+    candidateCount?: number;
+    nextInstance(error: unknown): Promise<ProviderInstanceRef | undefined>;
+  };
 }
 
 /**
@@ -100,6 +111,7 @@ export async function withRateLimitRetry<T>(
     maxDelayMs = 120_000,
     onRetry,
     signal,
+    rotation,
   } = options;
 
   let lastError: Error | undefined;
@@ -140,14 +152,24 @@ export async function withRateLimitRetry<T>(
         continue;
       }
 
+      /*
+      FNXC:CredentialInstanceRotation 2026-08-01-06:21:
+      Abort remains the first usage-limit short-circuit: cancellation never asks a
+      credential rotator to reroute or enters backoff. A successful rotation retries
+      immediately and decrements the loop counter like transient-auth recovery, so
+      using another configured account does not consume the existing rate-limit budget.
+      RotationEvent owns the finite offered-once bound; this wrapper intentionally
+      keeps no cap, and an always-undefined hook is indistinguishable from no hook.
+      */
+      if (signal?.aborted) throw lastError;
+      if (rotation && await rotation.nextInstance(error)) {
+        attempt--;
+        continue;
+      }
+
       // FNXC:ProviderRateLimitIsolation 2026-07-21-18:00: exhaustion parks only
       // the affected provider-routed task instead of stopping the project.
       if (attempt >= maxRetries) {
-        throw lastError;
-      }
-
-      // Check abort before sleeping
-      if (signal?.aborted) {
         throw lastError;
       }
 

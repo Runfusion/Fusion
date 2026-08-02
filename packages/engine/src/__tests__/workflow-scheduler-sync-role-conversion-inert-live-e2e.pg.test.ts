@@ -7,6 +7,12 @@ the ten `task:moved` / `task:updated` handler arms by widening `resolveTaskParke
 `parked.complete` / `parked.archived` / `parked.wip`. The census fell by ten. The behaviour did not
 change at all, on any board.
 
+FNXC:WorkflowLifecycleColumns 2026-08-01-05:01:
+FN-8656 deletes that scheduler helper and removes every scheduler call site. This file remains the
+live PostgreSQL proof that the sync resolver itself is inert, but it no longer claims a scheduler arm
+consumes its result; the scheduler's await-safe arms now resolve asynchronously and its prologue uses
+emitter lanes.
+
 The reason is one line inside that helper:
 
     const l = resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(taskId));
@@ -73,7 +79,7 @@ import {
 import { resolveLifecycleColumns } from "../../../core/src/workflow-lifecycle-traits.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
-pgDescribe("scheduler sync-role conversion (#3051) against a live store", () => {
+pgDescribe("sync workflow-role resolution remains inert without scheduler consumers", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
     prefix: "fusion_sched_syncrole",
   });

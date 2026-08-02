@@ -19,6 +19,19 @@ description updates, replaced only a prefix while leaving the old suffix — dup
 corrupting PROMPT.md. Section bounds use HTML markers when present, else only known
 structural PROMPT headings (Mission, File Scope, Steps, …), so embedded H2s stay inside
 the Original Description body.
+
+FNXC:OriginalDescriptionInPrompt 2026-08-01-05:18:
+Custom workflow plan-node sections are first-class: hygiene must neither swallow nor reorder them.
+For an unmarked section, precedence is: (1) an empty description ends at the first following H2;
+(2a) full normalized positional alignment ends at the first H2 at/after the aligned body; (2b) a
+non-empty matching prefix does the same only when its unmatched description suffix has no H2; (2c)
+a prefix whose unmatched suffix contains an H2 is unsafe and falls through because that next document
+H2 may be embedded operator prose, so terminating there would truncate the operator body; (2d) no
+alignment also falls through; (3) those failure cases retain the allowlist-priority (not document-order)
+tiebreak; (4) no selected heading runs to end-of-document. Heading-title evidence is not primary: a
+custom heading can also appear in operator prose and title skipping would destroy that section. Empty
+operator text has no embedded-H2 risk, so it bypasses the allowlist. INSERT has no body to align and
+therefore changed from allowlist-preferred placement to anchoring before the first document H2.
 */
 
 export const ORIGINAL_DESCRIPTION_HEADING = "## Original Description";
@@ -83,7 +96,7 @@ export function applyOriginalDescription(
   }
 
   const wantedBody = (originalDescription ?? "").trimEnd();
-  const existingBody = extractOriginalDescriptionBody(promptMarkdown);
+  const existingBody = extractOriginalDescriptionBody(promptMarkdown, originalDescription);
   // Idempotent when the section already carries the exact operator text.
   if (existingBody !== null && existingBody.trimEnd() === wantedBody) {
     // Still rewrite when markers are missing so later updates stay H2-safe.
@@ -94,14 +107,17 @@ export function applyOriginalDescription(
 
   const section = buildOriginalDescriptionSection(originalDescription);
   if (existingBody !== null || hasOriginalDescriptionHeading(promptMarkdown)) {
-    return replaceOriginalDescriptionSection(promptMarkdown, section);
+    return replaceOriginalDescriptionSection(promptMarkdown, section, originalDescription);
   }
   return insertOriginalDescriptionNearTop(promptMarkdown, section);
 }
 
 /** Returns the body under `## Original Description`, or null when the section is absent. */
-export function extractOriginalDescriptionBody(content: string): string | null {
-  const range = findOriginalDescriptionRange(content);
+export function extractOriginalDescriptionBody(
+  content: string,
+  originalDescription?: string,
+): string | null {
+  const range = findOriginalDescriptionRange(content, originalDescription);
   if (!range) {
     return null;
   }
@@ -121,10 +137,11 @@ function hasOriginalDescriptionMarkers(content: string): boolean {
 
 /**
  * Absolute [start, end) range of the Original Description section and its body text.
- * Prefer HTML markers; fall back to the next known structural PROMPT heading.
+ * Prefer HTML markers; otherwise align the known operator body before using legacy structure.
  */
 function findOriginalDescriptionRange(
   content: string,
+  originalDescription?: string,
 ): { sectionStart: number; sectionEnd: number; body: string } | null {
   const match = content.match(/^##\s+Original Description\s*$/m);
   if (!match || match.index === undefined) {
@@ -153,12 +170,12 @@ function findOriginalDescriptionRange(
     return { sectionStart, sectionEnd: absoluteEnd, body };
   }
 
-  // Unmarked (planner-written): end at preferred following structural heading.
-  const structuralOffset = findPreferredSectionTerminatorOffset(afterHeader);
+  // Unmarked planner output: preserve arbitrary custom H2 sections after the aligned body.
+  const terminatorOffset = findUnmarkedSectionTerminatorOffset(afterHeader, originalDescription);
   const sectionEnd =
-    structuralOffset === -1 ? content.length : headerEnd + structuralOffset;
+    terminatorOffset === -1 ? content.length : headerEnd + terminatorOffset;
   const body = afterHeader
-    .slice(0, structuralOffset === -1 ? undefined : structuralOffset)
+    .slice(0, terminatorOffset === -1 ? undefined : terminatorOffset)
     .replace(/^\n+/, "")
     .trimEnd();
   return { sectionStart, sectionEnd, body };
@@ -180,8 +197,93 @@ function findPreferredSectionTerminatorOffset(text: string): number {
   return -1;
 }
 
-function replaceOriginalDescriptionSection(content: string, section: string): string {
-  const range = findOriginalDescriptionRange(content);
+type NormalizedLine = { value: string; endOffset: number };
+
+/**
+ * Normalize markdown lines for body alignment while retaining each normalized line's source end.
+ * Blank runs coalesce so harmless planner formatting does not defeat alignment.
+ */
+function normalizeLines(content: string): NormalizedLine[] {
+  const lines: NormalizedLine[] = [];
+  let offset = 0;
+  let pendingBlank: NormalizedLine | undefined;
+
+  while (offset < content.length) {
+    const newline = content.indexOf("\n", offset);
+    const lineEnd = newline === -1 ? content.length : newline;
+    const rawLine = content.slice(offset, lineEnd).replace(/\r$/, "");
+    const nextOffset = newline === -1 ? content.length : newline + 1;
+    const line = { value: rawLine.trim(), endOffset: nextOffset };
+
+    if (!line.value) {
+      // Leading/trailing blanks are discarded; interior runs become one blank line.
+      if (lines.length > 0) pendingBlank = line;
+    } else {
+      if (pendingBlank) lines.push(pendingBlank);
+      pendingBlank = undefined;
+      lines.push(line);
+    }
+    offset = nextOffset;
+  }
+
+  return lines;
+}
+
+function isH2Heading(line: string): boolean {
+  return /^##\s+\S.*$/.test(line);
+}
+
+function findFirstH2AtOrAfter(text: string, offset: number): number {
+  const candidates = /^##\s+\S.*$/gm;
+  for (const match of text.matchAll(candidates)) {
+    if (match.index !== undefined && match.index >= offset) return match.index;
+  }
+  return -1;
+}
+
+/**
+ * Find an unmarked section boundary using the operator body before legacy heading tiebreaks.
+ */
+function findUnmarkedSectionTerminatorOffset(
+  text: string,
+  originalDescription?: string,
+): number {
+  const descriptionLines = normalizeLines(originalDescription ?? "");
+  if (descriptionLines.length === 0) {
+    return findFirstH2AtOrAfter(text, 0);
+  }
+
+  const documentLines = normalizeLines(text);
+  let matched = 0;
+  while (
+    matched < descriptionLines.length &&
+    matched < documentLines.length &&
+    descriptionLines[matched].value === documentLines[matched].value
+  ) {
+    matched += 1;
+  }
+
+  const unmatchedDescriptionHasH2 = descriptionLines
+    .slice(matched)
+    .some((line) => isH2Heading(line.value));
+  const alignmentIsSafe = matched === descriptionLines.length ||
+    (matched > 0 && !unmatchedDescriptionHasH2);
+  if (alignmentIsSafe) {
+    const alignEnd = documentLines[matched - 1].endOffset;
+    return findFirstH2AtOrAfter(text, alignEnd);
+  }
+
+  // Preserve historical allowlist-priority behavior only when alignment cannot prove a boundary.
+  const preferredOffset = findPreferredSectionTerminatorOffset(text);
+  return preferredOffset !== -1 ? preferredOffset : findFirstH2AtOrAfter(text, 0);
+}
+
+function replaceOriginalDescriptionSection(
+  content: string,
+  section: string,
+  originalDescription?: string,
+): string {
+  const range = findOriginalDescriptionRange(content, originalDescription);
   if (!range) {
     return content;
   }
@@ -197,17 +299,10 @@ function replaceOriginalDescriptionSection(content: string, section: string): st
 }
 
 /**
- * Insert before the preferred following structural section so the block sits under
- * title/metadata. Unknown H2s are ignored. Falls back to the first H2, then append.
+ * Insert before the first structural H2 so custom sections retain their document order.
+ * There is no existing body here, so range alignment deliberately does not apply.
  */
 function insertOriginalDescriptionNearTop(content: string, section: string): string {
-  const structuralOffset = findPreferredSectionTerminatorOffset(content);
-  if (structuralOffset !== -1) {
-    const before = content.slice(0, structuralOffset).trimEnd();
-    const after = content.slice(structuralOffset);
-    return `${before}\n\n${section.trimEnd()}\n\n${after}`;
-  }
-
   const firstH2 = content.search(/^##\s+/m);
   if (firstH2 !== -1) {
     const before = content.slice(0, firstH2).trimEnd();

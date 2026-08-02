@@ -122,16 +122,18 @@ describe("column-role decisions are invariant under column RENAMING (U12 evidenc
     fallback here reports planning work as idle board-wide — the failure that motivated the
     `taskActivity` conversion, and one that throws nothing.
     */
-    const recent = new Date(Date.now() - 5_000).toISOString();
+    // FNXC:TaskActivity 2026-08-01-17:53: glow now requires the authoritative `planning`
+    // status (the slot-holding signal); the client-only fresh-log window is removed so lane
+    // counts can never exceed the live-agent population.
     const verdicts = LINEAGES.map((lineage) =>
       isTaskAgentActive(
-        mkTask({ id: "FN-2", column: lineage.columnId, recentAgentActivityAt: recent } as never),
+        mkTask({ id: "FN-2", column: lineage.columnId, status: "planning" } as never),
         { columnFlags: PRE_IMPLEMENTATION_TRAITS as never },
       ),
     );
 
     expect(new Set(verdicts).size).toBe(1);
-    // Non-vacuous: fresh planner activity on a pre-implementation card IS active.
+    // Non-vacuous: a live planning card on a pre-implementation lane IS active.
     expect(verdicts[0]).toBe(true);
   });
 
@@ -140,7 +142,8 @@ describe("column-role decisions are invariant under column RENAMING (U12 evidenc
     Without this, the case above would pass for a predicate hardwired to `true`. Both
     verdicts must be unanimous AND opposite each other for the invariance to mean anything.
     */
-    const stale = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // A status-null waiting card (even with recent planner logs) holds no slot: inactive.
+    const stale = new Date(Date.now() - 5_000).toISOString();
     const verdicts = LINEAGES.map((lineage) =>
       isTaskAgentActive(
         mkTask({ id: "FN-3", column: lineage.columnId, recentAgentActivityAt: stale } as never),

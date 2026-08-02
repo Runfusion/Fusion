@@ -199,12 +199,16 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | "merger" | null>(null);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
+  const [credentialInstanceId, setCredentialInstanceId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
+  const [validatorCredentialInstanceId, setValidatorCredentialInstanceId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [planningCredentialInstanceId, setPlanningCredentialInstanceId] = useState<string | undefined>(undefined);
   const [mergerProvider, setMergerProvider] = useState<string | undefined>(undefined);
   const [mergerModelId, setMergerModelId] = useState<string | undefined>(undefined);
+  const [mergerCredentialInstanceId, setMergerCredentialInstanceId] = useState<string | undefined>(undefined);
   /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: inline quick-entry bar carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
   const [validatorThinkingLevel, setValidatorThinkingLevel] = useState<string>("");
@@ -221,14 +225,20 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const nodePickerPortalRef = useRef<HTMLDivElement>(null);
   const priorityPickerRef = useRef<HTMLDivElement>(null);
   const priorityPickerPortalRef = useRef<HTMLDivElement>(null);
-  const [agentPickerPosition, setAgentPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
-  const [nodePickerPosition, setNodePickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
-  const [priorityPickerPosition, setPriorityPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
-  const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  /*
+  FNXC:QuickAddMenuAnchor 2026-08-01-07:11:
+  Preserve both shared-helper vertical anchors in Quick Add state. Portal styles must use `bottom`
+  with `top: auto` upward, because a natural-height menu cannot remain attached when top is derived
+  from its independent max-height scroll cap.
+  */
+  const [agentPickerPosition, setAgentPickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
+  const [nodePickerPosition, setNodePickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
+  const [priorityPickerPosition, setPriorityPickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
+  const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   // Dependency dropdown portal refs and state
   const depTriggerRef = useRef<HTMLButtonElement>(null);
   const depDropdownPortalRef = useRef<HTMLDivElement>(null);
-  const [depDropdownPosition, setDepDropdownPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  const [depDropdownPosition, setDepDropdownPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   const [portalRoot] = useState<HTMLElement | null>(() =>
     typeof document !== "undefined" ? document.body : null,
   );
@@ -236,7 +246,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const workflowPickerRef = useRef<HTMLDivElement>(null);
   const workflowTriggerRef = useRef<HTMLButtonElement>(null);
   const workflowPickerPortalRef = useRef<HTMLDivElement>(null);
-  const [workflowPickerPosition, setWorkflowPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  const [workflowPickerPosition, setWorkflowPickerPosition] = useState<{ top: number | null; bottom: number | null; left: number; width: number; maxHeight?: number } | null>(null);
   const previousWorkflowDefaultRef = useRef<{ workflowId: string | null | undefined; defaultWorkflowId: string | null | undefined }>({ workflowId, defaultWorkflowId });
   const [showWorkflowPicker, setShowWorkflowPicker] = useState(false);
   /*
@@ -675,12 +685,16 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     setPriorityPickerPosition(null);
     setExecutorProvider(undefined);
     setExecutorModelId(undefined);
+    setCredentialInstanceId(undefined);
     setValidatorProvider(undefined);
     setValidatorModelId(undefined);
+    setValidatorCredentialInstanceId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setPlanningCredentialInstanceId(undefined);
     setMergerProvider(undefined);
     setMergerModelId(undefined);
+    setMergerCredentialInstanceId(undefined);
     setThinkingLevel("");
     setValidatorThinkingLevel("");
     setPlanningThinkingLevel("");
@@ -811,12 +825,16 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
         modelPresetId: selectedPresetId,
         modelProvider: hasExecutorOverride ? executorProvider : undefined,
         modelId: hasExecutorOverride ? executorModelId : undefined,
+        ...(hasExecutorOverride && credentialInstanceId ? { credentialInstanceId } : {}),
         validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
+        ...(hasValidatorOverride && validatorCredentialInstanceId ? { validatorCredentialInstanceId } : {}),
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        ...(hasPlanningOverride && planningCredentialInstanceId ? { planningCredentialInstanceId } : {}),
         mergerModelProvider: hasMergerOverride ? mergerProvider : undefined,
         mergerModelId: hasMergerOverride ? mergerModelId : undefined,
+        ...(hasMergerOverride && mergerCredentialInstanceId ? { mergerCredentialInstanceId } : {}),
         validatorThinkingLevel: validatorThinkingLevel !== "" ? (validatorThinkingLevel as ThinkingLevel) : undefined,
         planningThinkingLevel: planningThinkingLevel !== "" ? (planningThinkingLevel as ThinkingLevel) : undefined,
         mergerThinkingLevel: mergerThinkingLevel !== "" ? (mergerThinkingLevel as ThinkingLevel) : undefined,
@@ -895,12 +913,16 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     hasExecutorOverride,
     executorProvider,
     executorModelId,
+    credentialInstanceId,
     hasValidatorOverride,
     validatorProvider,
     validatorModelId,
+    validatorCredentialInstanceId,
     hasPlanningOverride,
     planningProvider,
     planningModelId,
+    planningCredentialInstanceId,
+    mergerCredentialInstanceId,
     thinkingLevel,
     enabledOptionalStepIds,
     isFastMode,
@@ -1106,9 +1128,9 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   /*
   FNXC:QuickAddDepsMenu 2026-07-25-12:00:
   All Quick Add portaled menus (Deps, Models, workflow, agent, node, priority) share anchor-first
-  layout-viewport positioning. Mixing visualViewport offsets with getBoundingClientRect, or clamping
-  top away from the trigger to preserve a min height floor, made Deps (and siblings) float too high
-  and unattached when free space was tight.
+  layout-viewport positioning. Mixing visualViewport offsets with getBoundingClientRect, or deriving
+  upward `top` from a height cap, made short menus float too high; upward portals consume `bottom`
+  and `top: auto` so their rendered bottom remains attached regardless of content height.
   */
   const updateModelMenuPosition = useCallback(() => {
     const trigger = modelTriggerRef.current;
@@ -1136,6 +1158,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setModelMenuPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1173,6 +1196,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setWorkflowPickerPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1206,6 +1230,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setDepDropdownPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1238,6 +1263,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setAgentPickerPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1270,6 +1296,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setNodePickerPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1292,6 +1319,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
     });
     setPriorityPickerPosition({
       top: position.top,
+      bottom: position.bottom,
       left: position.left,
       width: position.width,
       maxHeight: position.maxHeight,
@@ -1450,18 +1478,21 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
+    setPlanningCredentialInstanceId(undefined);
     setPlanningProvider(next.provider);
     setPlanningModelId(next.modelId);
   }, []);
 
   const handleExecutorChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
+    setCredentialInstanceId(undefined);
     setExecutorProvider(next.provider);
     setExecutorModelId(next.modelId);
   }, []);
 
   const handleValidatorChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
+    setValidatorCredentialInstanceId(undefined);
     setValidatorProvider(next.provider);
     setValidatorModelId(next.modelId);
   }, []);
@@ -1469,6 +1500,7 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
   const handleThinkingLevelChange = useCallback((value: string) => setThinkingLevel(value), []);
   const handleMergerModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
+    setMergerCredentialInstanceId(undefined);
     setMergerProvider(next.provider);
     setMergerModelId(next.modelId);
   }, []);
@@ -1801,7 +1833,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     data-testid="quick-entry-workflow-menu"
                     style={{
                       position: "fixed",
-                      top: `${workflowPickerPosition.top}px`,
+                      top: workflowPickerPosition.bottom === null ? `${workflowPickerPosition.top}px` : "auto",
+                      bottom: workflowPickerPosition.bottom === null ? undefined : `${workflowPickerPosition.bottom}px`,
                       left: `${workflowPickerPosition.left}px`,
                       width: `${workflowPickerPosition.width}px`,
                       maxHeight: workflowPickerPosition.maxHeight ? `${workflowPickerPosition.maxHeight}px` : undefined,
@@ -1929,7 +1962,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   onMouseDown={(e) => e.preventDefault()}
                   style={{
                     position: "fixed",
-                    top: `${depDropdownPosition.top}px`,
+                    top: depDropdownPosition.bottom === null ? `${depDropdownPosition.top}px` : "auto",
+                    bottom: depDropdownPosition.bottom === null ? undefined : `${depDropdownPosition.bottom}px`,
                     left: `${depDropdownPosition.left}px`,
                     width: `${depDropdownPosition.width}px`,
                     maxHeight: depDropdownPosition.maxHeight ? `${depDropdownPosition.maxHeight}px` : undefined,
@@ -2032,7 +2066,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 onMouseDown={(e) => e.preventDefault()}
                 style={{
                   position: "fixed",
-                  top: `${nodePickerPosition.top}px`,
+                  top: nodePickerPosition.bottom === null ? `${nodePickerPosition.top}px` : "auto",
+                  bottom: nodePickerPosition.bottom === null ? undefined : `${nodePickerPosition.bottom}px`,
                   left: `${nodePickerPosition.left}px`,
                   width: `${nodePickerPosition.width}px`,
                   maxHeight: nodePickerPosition.maxHeight ? `${nodePickerPosition.maxHeight}px` : undefined,
@@ -2108,7 +2143,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                 onMouseDown={(e) => e.preventDefault()}
                 style={{
                   position: "fixed",
-                  top: `${agentPickerPosition.top}px`,
+                  top: agentPickerPosition.bottom === null ? `${agentPickerPosition.top}px` : "auto",
+                  bottom: agentPickerPosition.bottom === null ? undefined : `${agentPickerPosition.bottom}px`,
                   left: `${agentPickerPosition.left}px`,
                   width: `${agentPickerPosition.width}px`,
                   maxHeight: agentPickerPosition.maxHeight ? `${agentPickerPosition.maxHeight}px` : undefined,
@@ -2293,7 +2329,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                   onMouseDown={(e) => e.preventDefault()}
                   style={{
                     position: "fixed",
-                    top: `${priorityPickerPosition.top}px`,
+                    top: priorityPickerPosition.bottom === null ? `${priorityPickerPosition.top}px` : "auto",
+                    bottom: priorityPickerPosition.bottom === null ? undefined : `${priorityPickerPosition.bottom}px`,
                     left: `${priorityPickerPosition.left}px`,
                     width: `${priorityPickerPosition.width}px`,
                     maxHeight: priorityPickerPosition.maxHeight ? `${priorityPickerPosition.maxHeight}px` : undefined,
@@ -2369,7 +2406,8 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
               data-testid="model-nested-menu"
               style={{
                 position: "fixed",
-                top: `${modelMenuPosition.top}px`,
+                top: modelMenuPosition.bottom === null ? `${modelMenuPosition.top}px` : "auto",
+                bottom: modelMenuPosition.bottom === null ? undefined : `${modelMenuPosition.bottom}px`,
                 left: `${modelMenuPosition.left}px`,
                 width: `${modelMenuPosition.width}px`,
                 maxHeight: modelMenuPosition.maxHeight ? `${modelMenuPosition.maxHeight}px` : undefined,
@@ -2480,6 +2518,14 @@ export function QuickEntryBox({ onCreate, onMoveTask, addToast, tasks = [], avai
                     thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : activeModelSubmenu === "plan" ? planningThinkingLevel : activeModelSubmenu === "validator" ? validatorThinkingLevel : mergerThinkingLevel}
                     onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : activeModelSubmenu === "plan" ? setPlanningThinkingLevel : activeModelSubmenu === "validator" ? setValidatorThinkingLevel : setMergerThinkingLevel}
                     defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
+                    credentialInstanceId={activeModelSubmenu === "plan" ? planningCredentialInstanceId : activeModelSubmenu === "executor" ? credentialInstanceId : activeModelSubmenu === "validator" ? validatorCredentialInstanceId : mergerCredentialInstanceId}
+                    onCredentialInstanceChange={(instanceId) => {
+                      const next = instanceId || undefined;
+                      if (activeModelSubmenu === "plan") setPlanningCredentialInstanceId(next);
+                      else if (activeModelSubmenu === "executor") setCredentialInstanceId(next);
+                      else if (activeModelSubmenu === "validator") setValidatorCredentialInstanceId(next);
+                      else setMergerCredentialInstanceId(next);
+                    }}
                   />
                   {modelsError && (
                     <div className="model-submenu-error">

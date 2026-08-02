@@ -361,6 +361,8 @@ export interface GlobalSettings {
    *  Must be set together with `defaultModelId`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
   defaultProvider?: string;
+  /** Optional credential instance for `defaultProvider`. Persisted but inert until runtime credential resolution. */
+  defaultCredentialInstanceId?: string;
   /** Default AI model ID within the provider (e.g. `"claude-sonnet-4-5"`).
    *  Must be set together with `defaultProvider`. When both are undefined,
    *  the engine uses pi's automatic model resolution. */
@@ -406,6 +408,8 @@ export interface GlobalSettings {
    *  transient provider-side issues such as rate limits or overloaded capacity.
    *  Must be set together with `fallbackModelId`. */
   fallbackProvider?: string;
+  /** Optional credential instance for `fallbackProvider`. Persisted but inert until runtime credential resolution. */
+  fallbackCredentialInstanceId?: string;
   /** Fallback AI model ID used with `fallbackProvider` when the primary default
    *  model fails due to transient provider-side issues such as rate limits or
    *  overloaded capacity. Must be set together with `fallbackProvider`. */
@@ -683,6 +687,8 @@ export interface GlobalSettings {
    *  Must be set together with `executionGlobalModelId`. Falls back to
    *  `defaultProvider`/`defaultModelId` when undefined. */
   executionGlobalProvider?: string;
+  /** Optional credential instance for `executionGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  executionGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for task execution.
    *  Must be set together with `executionGlobalProvider`. */
   executionGlobalModelId?: string;
@@ -691,6 +697,8 @@ export interface GlobalSettings {
    *  Must be set together with `planningGlobalModelId`. Falls back to
    *  `defaultProvider`/`defaultModelId` when undefined. */
   planningGlobalProvider?: string;
+  /** Optional credential instance for `planningGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  planningGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for planning/triage.
    *  Must be set together with `planningGlobalProvider`. */
   planningGlobalModelId?: string;
@@ -699,6 +707,8 @@ export interface GlobalSettings {
    *  Must be set together with `validatorGlobalModelId`. Falls back to
    *  `defaultProvider`/`defaultModelId` when undefined. */
   validatorGlobalProvider?: string;
+  /** Optional credential instance for `validatorGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  validatorGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for validator/reviewer.
    *  Must be set together with `validatorGlobalProvider`. */
   validatorGlobalModelId?: string;
@@ -707,6 +717,8 @@ export interface GlobalSettings {
    *  Must be set together with `titleSummarizerGlobalModelId`. Falls back to
    *  `defaultProvider`/`defaultModelId` when undefined. */
   titleSummarizerGlobalProvider?: string;
+  /** Optional credential instance for `titleSummarizerGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  titleSummarizerGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for title summarization.
    *  Must be set together with `titleSummarizerGlobalProvider`. */
   titleSummarizerGlobalModelId?: string;
@@ -718,6 +730,8 @@ export interface GlobalSettings {
    *  Must be set together with `mergerGlobalModelId`. Falls back to
    *  `defaultProvider`/`defaultModelId` when undefined. */
   mergerGlobalProvider?: string;
+  /** Optional credential instance for `mergerGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  mergerGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for merger agent sessions.
    *  Must be set together with `mergerGlobalProvider`. */
   mergerGlobalModelId?: string;
@@ -729,6 +743,8 @@ export interface GlobalSettings {
    *  Must be set together with `importTranslateGlobalModelId`. Falls back to the
    *  summarization lane, then `defaultProvider`/`defaultModelId`. */
   importTranslateGlobalProvider?: string;
+  /** Optional credential instance for `importTranslateGlobalProvider`. Persisted but inert until runtime credential resolution. */
+  importTranslateGlobalCredentialInstanceId?: string;
   /** Global baseline AI model ID for import auto-translation.
    *  Must be set together with `importTranslateGlobalProvider`. */
   importTranslateGlobalModelId?: string;
@@ -1452,6 +1468,8 @@ export interface ProjectSettings {
    *  Must be set together with `planningModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
   planningProvider?: string;
+  /** Optional credential instance for `planningProvider`. Persisted but inert until runtime credential resolution. */
+  planningCredentialInstanceId?: string;
   /** AI model ID for planning/triage (specification) agent.
    *  Must be set together with `planningProvider`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
@@ -1459,6 +1477,8 @@ export interface ProjectSettings {
   /** Fallback model provider for planning/triage. When unset, falls back to the
    *  global fallback model. Must be set together with `planningFallbackModelId`. */
   planningFallbackProvider?: string;
+  /** Optional credential instance for `planningFallbackProvider`. Persisted but inert until runtime credential resolution. */
+  planningFallbackCredentialInstanceId?: string;
   /** Fallback model ID for planning/triage. When unset, falls back to the
    *  global fallback model. Must be set together with `planningFallbackProvider`. */
   planningFallbackModelId?: string;
@@ -1469,6 +1489,8 @@ export interface ProjectSettings {
    *  for all lanes that don't have their own explicit project override.
    *  Must be set together with `defaultModelIdOverride`. */
   defaultProviderOverride?: string;
+  /** Optional credential instance for `defaultProviderOverride`; persisted but inert until runtime resolution. */
+  defaultCredentialInstanceIdOverride?: string;
   /** Project-level override for the base default AI model ID.
    *  Must be set together with `defaultProviderOverride`. */
   defaultModelIdOverride?: string;
@@ -1500,6 +1522,8 @@ export interface ProjectSettings {
    *  `defaultProviderOverride`/`defaultModelIdOverride` or
    *  `defaultProvider`/`defaultModelId` when undefined. */
   executionProvider?: string;
+  /** Optional credential instance for `executionProvider`. Persisted but inert until runtime credential resolution. */
+  executionCredentialInstanceId?: string;
   /** Project-level AI model ID for task execution.
    *  Must be set together with `executionProvider`. */
   executionModelId?: string;
@@ -1512,6 +1536,8 @@ export interface ProjectSettings {
    */
   /** Workflow fallback provider for executor sessions. Must pair with `executionFallbackModelId`; resolves before the shared global fallback pair. */
   executionFallbackProvider?: string;
+  /** Optional credential instance for `executionFallbackProvider`. Persisted but inert until runtime credential resolution. */
+  executionFallbackCredentialInstanceId?: string;
   /** Workflow fallback model ID for executor sessions. Must pair with `executionFallbackProvider`; resolves before the shared global fallback pair. */
   executionFallbackModelId?: string;
   /** Workflow executor-fallback thinking override. Inherits shared fallback thinking, then executor primary thinking. */
@@ -1522,6 +1548,8 @@ export interface ProjectSettings {
    *  Must be set together with `validatorModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
   validatorProvider?: string;
+  /** Optional credential instance for `validatorProvider`. Persisted but inert until runtime credential resolution. */
+  validatorCredentialInstanceId?: string;
   /** AI model ID for validator/reviewer agent.
    *  Must be set together with `validatorProvider`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
@@ -1530,6 +1558,8 @@ export interface ProjectSettings {
    *  the global fallback model. Must be set together with
    *  `validatorFallbackModelId`. */
   validatorFallbackProvider?: string;
+  /** Optional credential instance for `validatorFallbackProvider`. Persisted but inert until runtime credential resolution. */
+  validatorFallbackCredentialInstanceId?: string;
   /** Fallback model ID for validator/reviewer. When unset, falls back to the
    *  global fallback model. Must be set together with `validatorFallbackProvider`. */
   validatorFallbackModelId?: string;
@@ -2068,6 +2098,8 @@ export interface ProjectSettings {
    *  Must be set together with `titleSummarizerModelId`. Falls back to planningProvider,
    *  then defaultProvider if not specified. */
   titleSummarizerProvider?: string;
+  /** Optional credential instance for `titleSummarizerProvider`. Persisted but inert until runtime credential resolution. */
+  titleSummarizerCredentialInstanceId?: string;
   /** AI model ID for title summarization (when autoSummarizeTitles is enabled).
    *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
    *  then defaultModelId if not specified. */
@@ -2082,6 +2114,8 @@ export interface ProjectSettings {
    *  Must be set together with `mergerModelId`. Falls back to
    *  `mergerGlobalProvider`/`mergerGlobalModelId`, then project/global default. */
   mergerProvider?: string;
+  /** Optional credential instance for `mergerProvider`. Persisted but inert until runtime credential resolution. */
+  mergerCredentialInstanceId?: string;
   /** Project AI model ID for merger agent sessions.
    *  Must be set together with `mergerProvider`. */
   mergerModelId?: string;
@@ -2095,6 +2129,8 @@ export interface ProjectSettings {
    *  Must be set together with `mergerFallbackModelId`. Resolves before the global
    *  `fallbackProvider`/`fallbackModelId` pair. */
   mergerFallbackProvider?: string;
+  /** Optional credential instance for `mergerFallbackProvider`. Persisted but inert until runtime credential resolution. */
+  mergerFallbackCredentialInstanceId?: string;
   /** Project fallback AI model ID for merger agent sessions.
    *  Must be set together with `mergerFallbackProvider`. */
   mergerFallbackModelId?: string;
@@ -2110,6 +2146,8 @@ export interface ProjectSettings {
    *  `importTranslateGlobalProvider`/`importTranslateGlobalModelId`, then the
    *  summarization lane, then project/global default. */
   importTranslateProvider?: string;
+  /** Optional credential instance for `importTranslateProvider`. Persisted but inert until runtime credential resolution. */
+  importTranslateCredentialInstanceId?: string;
   /** Project AI model ID for import auto-translation.
    *  Must be set together with `importTranslateProvider`. */
   importTranslateModelId?: string;
@@ -2130,6 +2168,8 @@ export interface ProjectSettings {
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */
   titleSummarizerFallbackProvider?: string;
+  /** Optional credential instance for `titleSummarizerFallbackProvider`; persisted but inert until runtime credential resolution. */
+  titleSummarizerFallbackCredentialInstanceId?: string;
   /** Fallback model ID for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackProvider`. */

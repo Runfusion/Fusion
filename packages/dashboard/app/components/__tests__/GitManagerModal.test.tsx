@@ -3712,6 +3712,11 @@ describe("GitManagerModal", () => {
   });
 
   describe("CSS regression coverage", () => {
+    /*
+    FNXC:GitManagerMobileSpacing 2026-08-01-19:10:
+    FN-8702 makes Git Manager's standalone sheet rules strictly phone-only. These source
+    assertions protect the 767.98px selector boundary while Chromium verifies the resulting geometry.
+    */
     it("includes remotes layout selectors and mobile rules", () => {
       const css = loadAllAppCss();
       expect(css).toContain(".gm-remotes-layout");
@@ -3719,7 +3724,7 @@ describe("GitManagerModal", () => {
       expect(css).toContain(".gm-remote-detail");
       expect(css).toContain(".gm-remote-sync-card");
       expect(css).toContain(".gm-remote-detail-card");
-      expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-remotes-layout[\s\S]*?\.gm-remote-selector[\s\S]*?\}/);
+      expect(css).toMatch(/@media[^{]*\(max-width: 767\.98px\)[^{]*\{[\s\S]*?\.gm-remotes-layout[\s\S]*?\.gm-remote-selector[\s\S]*?\}/);
     });
 
     it("keeps remotes-specific status/surface styles tokenized", () => {
@@ -3733,24 +3738,24 @@ describe("GitManagerModal", () => {
     it("includes mobile wrapping rules for changes file rows and section actions", () => {
       const css = loadAllAppCss();
 
-      expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?flex:\s*1 1 100%;/);
-      expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-item\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?flex-wrap:\s*wrap;/);
-      expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section\s*\{[\s\S]*?max-width:\s*100%;/);
+      expect(css).toMatch(/@media[^{]*\(max-width: 767\.98px\)[^{]*\{[\s\S]*?\.gm-file-section-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?flex:\s*1 1 100%;/);
+      expect(css).toMatch(/@media[^{]*\(max-width: 767\.98px\)[^{]*\{[\s\S]*?\.gm-file-item\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?flex-wrap:\s*wrap;/);
+      expect(css).toMatch(/@media[^{]*\(max-width: 767\.98px\)[^{]*\{[\s\S]*?\.gm-file-section\s*\{[\s\S]*?max-width:\s*100%;/);
     });
 
     it("includes commit target and worktree actions in modal mobile and embedded narrow layouts", () => {
       const css = loadAllAppCss();
-      const mobile768 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*768px\)[^{]*\{/g).join("\n");
+      const phone767 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*767\.98px\)[^{]*\{/g).join("\n");
       const embeddedNarrow = getMediaBlocks(css, /@container\s+gm-embedded\s+\(max-width:\s*560px\)\s*\{/g).join("\n");
 
       expect(css).toContain(".gm-commit-target");
       expect(css).toContain(".gm-worktree-actions");
-      expect(mobile768).toContain(".gm-commit-target select");
-      expect(mobile768).toContain(".gm-worktree-actions .btn");
+      expect(phone767).toContain(".gm-commit-target select");
+      expect(phone767).toContain(".gm-worktree-actions .btn");
       expect(embeddedNarrow).toContain(".gm-modal--embedded .gm-commit-target select");
       expect(embeddedNarrow).toContain(".gm-modal--embedded .gm-worktree-actions .btn");
 
-      const mobileTargetRules = getRuleBlocks(mobile768, ".gm-commit-target,\n  .gm-commit-target select,\n  .gm-commit-controls .gm-search-box");
+      const mobileTargetRules = getRuleBlocks(phone767, ".gm-commit-target,\n  .gm-commit-target select,\n  .gm-commit-controls .gm-search-box");
       expect(mobileTargetRules).toHaveLength(1);
       expect(mobileTargetRules[0]).toContain("width: 100%;");
       const embeddedTargetRules = getRuleBlocks(embeddedNarrow, ".gm-modal--embedded .gm-commit-target,\n  .gm-modal--embedded .gm-commit-target select,\n  .gm-modal--embedded .gm-commit-controls .gm-search-box");
@@ -3758,12 +3763,12 @@ describe("GitManagerModal", () => {
       expect(embeddedTargetRules[0]).toContain("width: 100%;");
     });
 
-    it("keeps the mobile Git Manager tab strip non-shrinking at 768px and 720px breakpoints", () => {
+    it("keeps the mobile Git Manager tab strip non-shrinking below 768px and at 720px", () => {
       const css = loadAllAppCss();
-      const mobile768 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*768px\)[^{]*\{/g).join("\n");
+      const phone767 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*767\.98px\)[^{]*\{/g).join("\n");
       const mobile720 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*720px\)[^{]*\{/g).join("\n");
 
-      const sidebarRules = getRuleBlocks(mobile768, ".gm-sidebar");
+      const sidebarRules = getRuleBlocks(phone767, ".gm-sidebar");
       expect(sidebarRules).toHaveLength(1);
       expect(sidebarRules[0]).toContain("flex: 0 0 auto;");
       expect(sidebarRules[0]).toContain("min-height: calc(var(--space-2xl) + var(--space-md));");
@@ -3774,13 +3779,13 @@ describe("GitManagerModal", () => {
       expect(sidebarRules[0]).toContain("-webkit-overflow-scrolling: touch;");
       expect(sidebarRules[0]).toContain("overscroll-behavior-x: contain;");
 
-      const navItemRules = getRuleBlocks(mobile768, ".gm-nav-item");
+      const navItemRules = getRuleBlocks(phone767, ".gm-nav-item");
       expect(navItemRules).toHaveLength(1);
       // Mobile tabs are compact ICON-ONLY in one scrolling row: non-shrinking via flex:0 0 auto + intrinsic width:auto (overrides the base .gm-nav-item width:100% that otherwise made one tab fill the row).
       expect(navItemRules[0]).toContain("flex: 0 0 auto;");
       expect(navItemRules[0]).toContain("width: auto;");
 
-      const refreshRules = getRuleBlocks(mobile768, ".gm-nav-refresh");
+      const refreshRules = getRuleBlocks(phone767, ".gm-nav-refresh");
       expect(refreshRules).toHaveLength(1);
       expect(refreshRules[0]).toContain("flex: 0 0 auto;");
       expect(refreshRules[0]).toContain("width: auto;");

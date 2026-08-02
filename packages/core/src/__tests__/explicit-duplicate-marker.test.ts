@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { parseExplicitDuplicateMarker, parseDuplicateMarkerFromSessionText } from "../duplicates/explicit-duplicate-marker.js";
+import {
+  parseExplicitDuplicateMarker,
+  parseDuplicateMarkerFromSessionText,
+  isDuplicateRedirectOnlyPrompt,
+  nonExecutableDuplicateRedirectReason,
+} from "../duplicates/explicit-duplicate-marker.js";
 
 const FULL_PROMPT = `# Task: FN-5211 - Example
 
@@ -66,6 +71,13 @@ describe("parseExplicitDuplicateMarker", () => {
 
   it("rejects non-FN identifiers", () => {
     expect(parseExplicitDuplicateMarker("DUPLICATE: NOT-1234")).toBeNull();
+  });
+
+  it("flags duplicate-only content as non-executable for dispatch", () => {
+    expect(isDuplicateRedirectOnlyPrompt("DUPLICATE: FN-8676")).toBe(true);
+    expect(nonExecutableDuplicateRedirectReason("DUPLICATE: FN-8676")).toContain("FN-8676");
+    expect(isDuplicateRedirectOnlyPrompt(FULL_PROMPT)).toBe(false);
+    expect(nonExecutableDuplicateRedirectReason(FULL_PROMPT)).toBeNull();
   });
 });
 

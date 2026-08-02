@@ -1448,6 +1448,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
       "legacy" — so a listener keeps its own fallback rather than being handed a wrong answer.
       */
       const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+      store.laneCache.set(task.id, lanes);
       store.emit("task:moved", { task, from: fromColumn, to: toColumn, source: moveSource, lanes });
       /*
       FNXC:WorkflowEvents 2026-07-27-11:45 (U3 / R5, R6):

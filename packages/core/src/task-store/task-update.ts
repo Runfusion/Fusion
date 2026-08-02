@@ -19,16 +19,23 @@ import {validateCustomFieldPatch, CustomFieldRejectionError} from "../tasks/task
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {validateNodeOverrideChange, resolveNodeOverrideLanes} from "../mesh/node-override-guard.js";
+import {isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../tasks/task-title-id-drift.js";
 import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
-import {isTaskTerminalNodeIdAsync} from "../workflows/workflow-ir-resolver.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub, rewriteHeadingLine, rewriteMissionSection} from "../task-store/comments.js";
 import {applyOriginalDescription} from "../tasks/original-description-policy.js";
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
+import {assertValidProviderInstanceId} from "../provider-instance.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
+  /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
+  for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
+    const value = (updates as Record<string, unknown>)[key];
+    if (value !== undefined && value !== null) assertValidProviderInstanceId(value);
+  }
+
     {
       if (updates.dependencies !== undefined) {
         await store.assertNoDependencyCycle(
@@ -223,6 +230,25 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.status = undefined;
       } else if (updates.status !== undefined) {
         task.status = updates.status;
+      }
+      /*
+      FNXC:PlanApproval 2026-08-01-04:39:
+      `awaitingApprovalReason` was persisted (persistence.ts) and serialized (serialization.ts)
+      but never applied by this field-by-field merge, so EVERY writer silently lost it — the
+      executor's Plan Review replan-cap park (`plan-review-replan-cap`) and the triage manual
+      gate's explicit null-clear both no-oped, and FN-8647's non-converging Plan Review loop
+      surfaced on the board as a generic "needs approval" with no explanation. Merge it like the
+      other nullable fields (null clears), and auto-clear the stored reason whenever a status
+      write moves the task OFF `awaiting-approval` without the caller addressing the reason, so
+      an approved/replanned card can never carry a stale escalation reason into its next park.
+      */
+      const reasonUpdate = (updates as Record<string, unknown>).awaitingApprovalReason;
+      if (reasonUpdate === null) {
+        task.awaitingApprovalReason = undefined;
+      } else if (reasonUpdate !== undefined) {
+        task.awaitingApprovalReason = reasonUpdate as Task["awaitingApprovalReason"];
+      } else if (updates.status !== undefined && updates.status !== "awaiting-approval") {
+        task.awaitingApprovalReason = undefined;
       }
       if (updates.blockedBy === null) {
         task.blockedBy = undefined;
@@ -624,6 +650,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.modelProvider !== undefined) {
         task.modelProvider = updates.modelProvider;
       }
+      if (updates.credentialInstanceId === null) {
+        task.credentialInstanceId = undefined;
+      } else if (updates.credentialInstanceId !== undefined) {
+        task.credentialInstanceId = updates.credentialInstanceId;
+      }
       if (updates.modelId === null) {
         task.modelId = undefined;
       } else if (updates.modelId !== undefined) {
@@ -633,6 +664,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.validatorModelProvider = undefined;
       } else if (updates.validatorModelProvider !== undefined) {
         task.validatorModelProvider = updates.validatorModelProvider;
+      }
+      if (updates.validatorCredentialInstanceId === null) {
+        task.validatorCredentialInstanceId = undefined;
+      } else if (updates.validatorCredentialInstanceId !== undefined) {
+        task.validatorCredentialInstanceId = updates.validatorCredentialInstanceId;
       }
       if (updates.validatorModelId === null) {
         task.validatorModelId = undefined;
@@ -644,6 +680,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.planningModelProvider !== undefined) {
         task.planningModelProvider = updates.planningModelProvider;
       }
+      if (updates.planningCredentialInstanceId === null) {
+        task.planningCredentialInstanceId = undefined;
+      } else if (updates.planningCredentialInstanceId !== undefined) {
+        task.planningCredentialInstanceId = updates.planningCredentialInstanceId;
+      }
       if (updates.planningModelId === null) {
         task.planningModelId = undefined;
       } else if (updates.planningModelId !== undefined) {
@@ -651,6 +692,8 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       }
       if (updates.mergerModelProvider === null) task.mergerModelProvider = undefined;
       else if (updates.mergerModelProvider !== undefined) task.mergerModelProvider = updates.mergerModelProvider;
+      if (updates.mergerCredentialInstanceId === null) task.mergerCredentialInstanceId = undefined;
+      else if (updates.mergerCredentialInstanceId !== undefined) task.mergerCredentialInstanceId = updates.mergerCredentialInstanceId;
       if (updates.mergerModelId === null) task.mergerModelId = undefined;
       else if (updates.mergerModelId !== undefined) task.mergerModelId = updates.mergerModelId;
       if (updates.validatorThinkingLevel === null) {
@@ -968,6 +1011,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
            PostgreSQL. So these two paths kept the pre-#3109 behaviour while the listeners read as
            resolved. */
         const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, id).catch(() => undefined));
+        store.laneCache.set(task.id, lanes);
         store.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine", lanes });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);

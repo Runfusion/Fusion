@@ -24,6 +24,11 @@ PostgreSQL (`docs/multi-project.md`), so a node-local sync cache of the selectio
 another node writes one — confidently wrong, which is worse than today's uniformly-wrong default.
 All three are proved and kept honest by `sync-workflow-ir-second-blocker.test.ts`.
 
+FNXC:WorkflowLifecycleColumns 2026-08-01-05:01:
+FN-8656 removed `scheduler.ts` from this list. Its synchronous `task:moved` prologue now consumes
+emitter lanes over legacy defaults, while its post-await arms and agent-link rollback resolve lanes
+asynchronously. Keeping the old exception would hide a reintroduced inert scheduler read.
+
 That makes it the most dangerous tool in this conversion program. A guard written as
 
     resolveLifecycleColumns(store.resolveTaskWorkflowIrSync(id))?.hold
@@ -65,11 +70,6 @@ const ALLOWED_CALL_SITES: ReadonlyMap<string, string> = new Map([
       + "the six: it returns `resolvedFromWorkflow: true` whenever an IR came back, so on a renamed "
       + "board a caller branching on that flag is told the lanes are workflow-resolved while being "
       + "handed the DEFAULT ones.",
-  ],
-  [
-    "packages/engine/src/scheduler.ts",
-    "`resolveTaskParkedColumnsSync`, called from synchronous `task:moved` / `task:updated` listeners "
-      + "where introducing an await would reorder handlers against a synchronous emitter.",
   ],
 ]);
 

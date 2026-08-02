@@ -11,6 +11,7 @@
  */
 
 import type { Task, TaskStore } from "@fusion/core";
+import type { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: `agentType` is an AGENT ROLE, not a column.
 // The planner lane is named `triage` and keeps that name; only the COLUMN was removed by U11.
 import { PLANNER_AGENT_ROLE, resolveTaskLifecycleColumns, type WorkflowIr } from "@fusion/core";
@@ -80,7 +81,15 @@ export function checkSessionError(session: { state: { errorMessage?: string; err
 }
 
 export class UsageLimitPauser {
-  constructor(private store: TaskStore) {}
+  constructor(
+    private store: TaskStore,
+    private readonly options: { credentialRotator?: CredentialInstanceRotator } = {},
+  ) {}
+
+  /** Rebinds an externally supplied pauser to the runtime-owned cooldown map. */
+  setCredentialRotator(credentialRotator: CredentialInstanceRotator | undefined): void {
+    (this.options as { credentialRotator?: CredentialInstanceRotator }).credentialRotator = credentialRotator;
+  }
 
   private normalizeProviderId(provider: string): string {
     return provider.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -96,6 +105,13 @@ export class UsageLimitPauser {
     if (!providerId) return 0;
 
     const pausedReason = `provider-rate-limit:${providerId}`;
+    /*
+    FNXC:CredentialInstanceRotation 2026-08-01-06:21:
+    Provider recovery clears the runtime-shared, process-local cooldown hint before
+    resuming existing rate-limit parks. Parking remains the fallback after rotation,
+    and remains the first response for a single configured instance.
+    */
+    this.options.credentialRotator?.clearCooldowns(providerId);
     // FNXC:ArchitectureHotPath 2026-07-22-17:20: listTasks() must be explicit about payload shape (architecture-hot-paths contract). Recovery only reads scalar pause fields, so request slim rows to avoid loading heavy log/steps/comments for every task.
     const tasks = await this.store.listTasks({ slim: true });
     const recoverableTasks = tasks.filter((task) =>

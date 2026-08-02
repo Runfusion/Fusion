@@ -20,7 +20,7 @@ REVERT CHECK, measured (both run):
 Both pass on the DEFAULT vocabulary before and after, which is the point of running both.
 */
 import { describe, expect, it, vi } from "vitest";
-import type { NotificationProvider, Settings, Task, WorkflowIr } from "@fusion/core";
+import type { NotificationProvider, Settings, Task, TaskMoveLanes, WorkflowIr } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "../../__tests__/_workflow-vocabulary-fixture.js";
 import { flushAsyncHandlers } from "../../__tests__/_flush-async-handlers.js";
@@ -30,6 +30,7 @@ vi.mock("../../logger.js", () => ({
 }));
 
 type MovedListener = (data: { task: Task; from: string; to: string }) => void;
+type UpdatedListener = (task: Task, meta?: { lanes?: TaskMoveLanes }) => void;
 
 /**
  * A store that resolves a real workflow IR, so `resolveTaskLifecycleColumns` returns the vocabulary
@@ -54,16 +55,20 @@ function fixture(vocab: Vocabulary) {
   does carry merge orchestration, which is why this is a gap on custom boards and not a live outage.
   */
   const ir: WorkflowIr = lifecycleIr(vocab, "notif-lifecycle", { mergeOrchestration: true });
-  const listeners = new Set<MovedListener>();
+  const movedListeners = new Set<MovedListener>();
+  const updatedListeners = new Set<UpdatedListener>();
   const store = {
     getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test" }) as Settings,
     getTaskWorkflowSelection: () => ({ workflowId: "notif-lifecycle", stepIds: [] }),
     getWorkflowDefinition: async (id: string) => (id === "notif-lifecycle" ? { ir } : undefined),
-    on: (event: string, listener: MovedListener) => {
-      if (event === "task:moved") listeners.add(listener);
+    on: (event: string, listener: MovedListener | UpdatedListener) => {
+      if (event === "task:moved") movedListeners.add(listener as MovedListener);
+      if (event === "task:updated") updatedListeners.add(listener as UpdatedListener);
     },
     off: () => undefined,
-    emitMoved: (data: { task: Task; from: string; to: string }) => listeners.forEach((l) => l(data)),
+    emitMoved: (data: { task: Task; from: string; to: string }) => movedListeners.forEach((listener) => listener(data)),
+    emitUpdated: (updatedTask: Task, meta?: { lanes?: TaskMoveLanes }) =>
+      updatedListeners.forEach((listener) => listener(updatedTask, meta)),
   };
 
   const sendNotification = vi.fn(async () => ({ success: true, providerId: "test" }));
@@ -135,6 +140,75 @@ describe("notification lifecycle guards resolve columns by ROLE, not by id", () 
       await service.stop();
     });
   }
+
+  it("classifies a manual merge hold from emitter-carried renamed review lanes synchronously", async () => {
+    const { store, service, sendNotification, task } = fixture(RENAMED_VOCAB);
+    await service.start();
+
+    store.emitUpdated(
+      task({ column: RENAMED_VOCAB.review, paused: true, pausedReason: "manual-hold", status: "in-review" }),
+      { lanes: { review: RENAMED_VOCAB.review } },
+    );
+
+    // No promise turn: the synchronous listener must classify before its queued wedge work runs.
+    expect(sendNotification).toHaveBeenCalledWith(
+      "workflow-notify",
+      expect.objectContaining({
+        taskId: "FN-9001",
+        metadata: expect.objectContaining({
+          notificationKind: "manual_merge_hold",
+          notificationDedupeKey: "workflow-transition:FN-9001:manual-merge-hold",
+        }),
+      }),
+    );
+    await service.stop();
+  });
+
+  it("keeps absent or blank review lanes on the existing in-review fallback", async () => {
+    const { store, service, sendNotification, task } = fixture(RENAMED_VOCAB);
+    await service.start();
+
+    const held = (column: string) => task({ column, paused: true, pausedReason: "manual-hold", status: "in-review" });
+    store.emitUpdated(held(RENAMED_VOCAB.review));
+    store.emitUpdated(held(RENAMED_VOCAB.review), { lanes: { review: "" } });
+    store.emitUpdated(held("in-review"));
+    store.emitUpdated(held("in-review"), { lanes: { review: "" } });
+    await flushAsyncHandlers();
+
+    // Only the default-lane holds notify; absent and blank metadata are unknown rather than renamed.
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith("workflow-notify", expect.anything());
+    await service.stop();
+  });
+
+  it("preserves marker, failed, and dedupe behavior independently of lane metadata", async () => {
+    const { store, service, sendNotification, task } = fixture(RENAMED_VOCAB);
+    await service.start();
+
+    const marker = {
+      kind: "manual-merge-hold" as const,
+      transitionId: "marker-hold",
+      column: RENAMED_VOCAB.review,
+      createdAt: "2026-08-01T07:44:00.000Z",
+    };
+    store.emitUpdated(task({ id: "FN-marker", column: RENAMED_VOCAB.review, status: "in-review", workflowTransitionNotification: marker }));
+    store.emitUpdated(task({ id: "FN-failed", column: RENAMED_VOCAB.review, status: "failed", paused: true, pausedReason: "manual-hold" }), { lanes: { review: RENAMED_VOCAB.review } });
+    const duplicate = task({ id: "FN-duplicate", column: RENAMED_VOCAB.review, status: "in-review", paused: true, pausedReason: "manual-hold" });
+    store.emitUpdated(duplicate, { lanes: { review: RENAMED_VOCAB.review } });
+    store.emitUpdated(duplicate, { lanes: { review: RENAMED_VOCAB.review } });
+    await flushAsyncHandlers();
+
+    expect(sendNotification).toHaveBeenCalledTimes(2);
+    expect(sendNotification).toHaveBeenCalledWith(
+      "workflow-notify",
+      expect.objectContaining({ taskId: "FN-marker", metadata: expect.objectContaining({ notificationDedupeKey: "workflow-transition:FN-marker:marker-hold" }) }),
+    );
+    expect(sendNotification).toHaveBeenCalledWith(
+      "workflow-notify",
+      expect.objectContaining({ taskId: "FN-duplicate", metadata: expect.objectContaining({ notificationDedupeKey: "workflow-transition:FN-duplicate:manual-merge-hold" }) }),
+    );
+    await service.stop();
+  });
 
   it("does not dispatch for a move into a lane that plays no notable role", async () => {
     /*

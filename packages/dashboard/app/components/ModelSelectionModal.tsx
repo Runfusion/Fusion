@@ -22,6 +22,15 @@ interface ModelSelectionModalProps {
   onValidatorChange: (value: string) => void;
   onPlanningChange?: (value: string) => void;
   onMergerChange?: (value: string) => void;
+  /** Optional persisted instance overrides for task model lanes. */
+  credentialInstanceId?: string;
+  validatorCredentialInstanceId?: string;
+  planningCredentialInstanceId?: string;
+  mergerCredentialInstanceId?: string;
+  onCredentialInstanceChange?: (value: string) => void;
+  onValidatorCredentialInstanceChange?: (value: string) => void;
+  onPlanningCredentialInstanceChange?: (value: string) => void;
+  onMergerCredentialInstanceChange?: (value: string) => void;
   mergerThinkingLevel?: string;
   onMergerThinkingLevelChange?: (value: string) => void;
   validatorThinkingLevel?: string;
@@ -77,6 +86,14 @@ export function ModelSelectionModal({
   onValidatorChange,
   onPlanningChange,
   onMergerChange,
+  credentialInstanceId = "",
+  validatorCredentialInstanceId = "",
+  planningCredentialInstanceId = "",
+  mergerCredentialInstanceId = "",
+  onCredentialInstanceChange,
+  onValidatorCredentialInstanceChange,
+  onPlanningCredentialInstanceChange,
+  onMergerCredentialInstanceChange,
   mergerThinkingLevel = "",
   onMergerThinkingLevelChange,
   validatorThinkingLevel = "",
@@ -288,6 +305,8 @@ export function ModelSelectionModal({
                           onToggleModelFavorite={onToggleModelFavorite}
                           thinkingLevel={planningThinkingLevel}
                           onThinkingLevelChange={onPlanningThinkingLevelChange}
+                          credentialInstanceId={planningCredentialInstanceId}
+                          onCredentialInstanceChange={onPlanningCredentialInstanceChange}
                           defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                         />
                       </div>
@@ -318,6 +337,8 @@ export function ModelSelectionModal({
                         onToggleModelFavorite={onToggleModelFavorite}
                         thinkingLevel={thinkingLevel}
                         onThinkingLevelChange={onThinkingLevelChange}
+                        credentialInstanceId={credentialInstanceId}
+                        onCredentialInstanceChange={onCredentialInstanceChange}
                         defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                       />
                     </div>
@@ -326,7 +347,7 @@ export function ModelSelectionModal({
                   {onMergerChange ? <div className="task-detail-section"><div className="inline-create-model-row">
                     <label htmlFor="model-selection-merger" className="inline-create-model-label">{t("tasks.mergerModel", "Merger Model")}</label>
                     <span className={`model-badge ${hasMergerOverride ? "model-badge-custom" : "model-badge-default"}`}>{getModelBadgeLabel(models, mergerValue, t)}</span>
-                    <CustomModelDropdown id="model-selection-merger" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={onMergerChange} models={models} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} thinkingLevel={mergerThinkingLevel} onThinkingLevelChange={onMergerThinkingLevelChange} defaultThinkingLevel={defaultThinkingLevel ?? "off"} />
+                    <CustomModelDropdown id="model-selection-merger" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={onMergerChange} models={models} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} thinkingLevel={mergerThinkingLevel} onThinkingLevelChange={onMergerThinkingLevelChange} credentialInstanceId={mergerCredentialInstanceId} onCredentialInstanceChange={onMergerCredentialInstanceChange} defaultThinkingLevel={defaultThinkingLevel ?? "off"} />
                   </div></div> : null}
 
                   <div className="task-detail-section">
@@ -353,6 +374,8 @@ export function ModelSelectionModal({
                         onToggleModelFavorite={onToggleModelFavorite}
                         thinkingLevel={validatorThinkingLevel}
                         onThinkingLevelChange={onValidatorThinkingLevelChange}
+                        credentialInstanceId={validatorCredentialInstanceId}
+                        onCredentialInstanceChange={onValidatorCredentialInstanceChange}
                         defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                       />
                     </div>

@@ -49,7 +49,7 @@ vi.mock("../logger.js", () => ({
   })),
 }));
 
-vi.mock("../agents/agent-session-helpers.js", async (importOriginal) => {
+vi.mock("../agent-session-helpers.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../agents/agent-session-helpers.js")>();
   return {
     ...actual,
@@ -70,7 +70,7 @@ function resetMockSession() {
 
 // Import AFTER vi.mock so the mock is applied
 import { createResolvedAgentSession } from "../agents/agent-session-helpers.js";
-import { MissionExecutionLoop, loopLog } from "../missions/mission-execution-loop.js";
+import { MissionExecutionLoop, loopLog, fingerprintMissionValidationInput } from "../missions/mission-execution-loop.js";
 
 // ── Mock Factories ──────────────────────────────────────────────────────────
 
@@ -229,8 +229,8 @@ function createMockMissionStore() {
     }),
 
     // Validator run methods
-    startValidatorRun: vi.fn((featureId: string, _triggerType?: string, _taskId?: string) => {
-      const run = createMockValidatorRun({ featureId });
+    startValidatorRun: vi.fn((featureId: string, _triggerType?: string, _taskId?: string, inputFingerprint?: string) => {
+      const run = createMockValidatorRun({ featureId, inputFingerprint });
       validatorRuns.set(run.id, run);
       return run;
     }),
@@ -523,6 +523,13 @@ function initGitRepo(): string {
 }
 
 describe("MissionExecutionLoop", () => {
+  it("uses canonical UTF-8 tuple hashing for delimiter-bearing and Unicode validator inputs", () => {
+    const baseline = fingerprintMissionValidationInput("sha|one", "provider", "model", "system|π", "user|日本語");
+    expect(baseline).toMatch(/^[a-f0-9]{64}$/);
+    expect(baseline).toBe(fingerprintMissionValidationInput("sha|one", "provider", "model", "system|π", "user|日本語"));
+    expect(baseline).not.toBe(fingerprintMissionValidationInput("sha", "one|provider", "model", "system|π", "user|日本語"));
+    expect(baseline).not.toBe(fingerprintMissionValidationInput("sha|one", "provider", "other", "system|π", "user|日本語"));
+  });
   let loop: MissionExecutionLoop;
   let missionStore: ReturnType<typeof createMockMissionStore>;
   let taskStore: ReturnType<typeof createMockTaskStore>;
@@ -657,6 +664,56 @@ describe("MissionExecutionLoop", () => {
 
       expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-STRAND", "task_completion");
       expect(result.recoveredCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("passes the budget-block recovery checkout into its single validation execution", async () => {
+      const mission = createMockMission({ id: "M-BUDGET", status: "active" });
+      missionStore._setMission(mission);
+      const slice = createMockSlice({ id: "SL-BUDGET", milestoneId: "MS-001", status: "active" });
+      const blocked = createMockFeature({
+        id: "F-BUDGET",
+        sliceId: slice.id,
+        taskId: "FN-BUDGET",
+        status: "done",
+        loopState: "blocked",
+        validationBudgetFingerprint: "previous-fingerprint",
+      });
+      (missionStore as any)._addFeatureWithManagedAssertion(blocked);
+      wireHierarchy(slice, [missionStore.getFeature(blocked.id) as MissionFeature]);
+      taskStore._setTask({
+        id: "FN-BUDGET", title: "Budget task", description: "d", log: [], column: "done",
+        mergeDetails: { commitSha: "landed-budget-sha" },
+      } as any);
+      taskStore.getSettings.mockResolvedValue({
+        missionStaleThresholdMs: 600_000,
+        missionMaxTaskRetries: 3,
+        defaultProvider: "memo-provider",
+        defaultModelId: "memo-model",
+      });
+      const dispose = vi.fn().mockResolvedValue(undefined);
+      const materialize = vi.fn().mockResolvedValue({ dir: "/inspection/budget", dispose });
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/ambient-root",
+        checkoutMaterializer: { materialize, assertSourceClean: vi.fn() },
+      });
+      loop.start();
+      const runFeatureValidation = vi.spyOn(loop as any, "runFeatureValidation").mockResolvedValue(undefined);
+
+      await loop.recoverActiveMissions();
+
+      expect(materialize).toHaveBeenCalledWith("/ambient-root", "landed-budget-sha");
+      const budgetRecoveryCall = runFeatureValidation.mock.calls.find(
+        ([candidate, prepared]) => candidate.id === blocked.id && prepared,
+      );
+      expect(budgetRecoveryCall?.[1]).toEqual(expect.objectContaining({
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        checkout: expect.objectContaining({ dir: "/inspection/budget" }),
+      }));
+      // The real execution path owns this checkout; the stub releases it here.
+      await budgetRecoveryCall![1].checkout.dispose();
+      expect(dispose).toHaveBeenCalledOnce();
     });
 
     it("leaves an already-validated done feature untouched", async () => {
@@ -1146,13 +1203,20 @@ describe("MissionExecutionLoop", () => {
         rootDir: "/tmp",
       });
 
-      const prompt = (loop as any).buildValidationPrompt(feature, assertions, milestone);
-      const systemPrompt = (loop as any).buildValidationSystemPrompt(feature, assertions, "Task context", milestone);
+      const prompt = (loop as any).buildValidationPrompt(feature, assertions, "feature");
+      const milestonePrompt = (loop as any).buildValidationPrompt(feature, assertions, "milestone");
+      const systemPrompt = (loop as any).buildValidationSystemPrompt(feature, assertions, "Task context", "feature");
 
       expect(prompt).not.toContain("Milestone pass bar text");
       expect(prompt).toContain("only the following linked feature contract assertions");
+      expect(milestonePrompt).toContain("only the following milestone-scoped contract assertions");
+      for (const assertion of assertions) {
+        expect(prompt).toContain(`[${assertion.id}]`);
+        expect(milestonePrompt).toContain(`[${assertion.id}]`);
+      }
       expect(systemPrompt).not.toContain("Milestone pass bar text");
       expect(systemPrompt).toContain("linked feature contract assertions");
+      expect(systemPrompt).toContain("The bracketed assertion ID shown for that assertion in the user message");
     });
 
     it("does NOT create a board task for single-feature validation", async () => {
@@ -1591,10 +1655,199 @@ describe("MissionExecutionLoop", () => {
     });
   });
 
+  // ── Validation assertion identity contract ─────────────────────────────────
+
+  describe("validation assertion identity contract", () => {
+    function createValidatorLoop() {
+      return new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+    }
+
+    it("keeps correctly keyed and legacy passed-only results canonical", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(2);
+      const results = (validatorLoop as any).extractAssertionResults({
+        assertions: [
+          { assertionId: "CA-1", verdict: "pass", passed: true },
+          { assertionId: "CA-2", passed: true },
+        ],
+      }, assertions);
+
+      expect(results).toMatchObject([
+        { assertionId: "CA-1", verdict: "pass", passed: true },
+        { assertionId: "CA-2", verdict: "pass", passed: true },
+      ]);
+      expect((validatorLoop as any).deriveFeatureValidationStatus({ status: "fail", assertions: results }, false).status).toBe("pass");
+    });
+
+    it("recovers the reported single-assertion pass when the validator did not echo its ID", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(1);
+      const results = (validatorLoop as any).extractAssertionResults({
+        status: "pass",
+        assertions: [{ assertionId: "CA-NOT-ECHOED", verdict: "pass", passed: true, message: "ok" }],
+      }, assertions);
+
+      expect(results).toMatchObject([{
+        assertionId: "CA-1",
+        verdict: "pass",
+        passed: true,
+        message: expect.stringContaining("matched positionally"),
+      }]);
+      expect((validatorLoop as any).deriveFeatureValidationStatus({ status: "fail", assertions: results }, false).status).toBe("pass");
+    });
+
+    it("maps an exact-count zero-ID multi-assertion response positionally", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(2);
+      const results = (validatorLoop as any).extractAssertionResults({
+        assertions: [
+          { assertionId: "unrecognized-first", verdict: "pass", passed: true },
+          { passed: true },
+        ],
+      }, assertions);
+
+      expect(results).toMatchObject([
+        { assertionId: "CA-1", verdict: "pass", passed: true, message: expect.stringContaining("matched positionally") },
+        { assertionId: "CA-2", verdict: "pass", passed: true, message: expect.stringContaining("matched positionally") },
+      ]);
+      expect((validatorLoop as any).deriveFeatureValidationStatus({ status: "fail", assertions: results }, false).status).toBe("pass");
+    });
+
+    it("fails closed for an unrecognized mismatched count or partially recognized IDs", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(2);
+      const wrongCount = (validatorLoop as any).extractAssertionResults({
+        assertions: [{ assertionId: "CA-NOT-ECHOED", passed: true }],
+      }, assertions);
+      const partialMatch = (validatorLoop as any).extractAssertionResults({
+        assertions: [
+          { assertionId: "CA-1", passed: true },
+          { assertionId: "CA-NOT-ECHOED", passed: true },
+        ],
+      }, assertions);
+
+      expect(wrongCount).toMatchObject([
+        { assertionId: "CA-1", passed: false, message: "Validator result IDs did not match any linked assertion ID." },
+        { assertionId: "CA-2", passed: false, message: "Validator result IDs did not match any linked assertion ID." },
+      ]);
+      expect(partialMatch).toMatchObject([
+        { assertionId: "CA-1", passed: true },
+        { assertionId: "CA-2", passed: false, message: "Validator omitted linked assertion result." },
+      ]);
+    });
+
+    it("fails closed when positional fallback receives duplicate unknown or empty IDs", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(2);
+      const duplicateUnknown = (validatorLoop as any).extractAssertionResults({
+        assertions: [
+          { assertionId: "CA-NOT-ECHOED", passed: true },
+          { assertionId: "CA-NOT-ECHOED", passed: true },
+        ],
+      }, assertions);
+      const duplicateEmpty = (validatorLoop as any).extractAssertionResults({
+        assertions: [
+          { assertionId: "", passed: true },
+          { assertionId: "", passed: true },
+        ],
+      }, assertions);
+
+      for (const results of [duplicateUnknown, duplicateEmpty]) {
+        expect(results).toMatchObject([
+          { assertionId: "CA-1", passed: false, message: "Validator result IDs did not match any linked assertion ID." },
+          { assertionId: "CA-2", passed: false, message: "Validator result IDs did not match any linked assertion ID." },
+        ]);
+      }
+    });
+
+    it("preserves duplicate failure, empty/non-array failure, blocked aggregation, and zero assertions", () => {
+      const validatorLoop = createValidatorLoop();
+      const assertions = makeAssertions(1);
+      const duplicate = (validatorLoop as any).extractAssertionResults({
+        assertions: [{ assertionId: "CA-1", passed: true }, { assertionId: "CA-1", passed: true }],
+      }, assertions);
+      const empty = (validatorLoop as any).extractAssertionResults({ assertions: [] }, assertions);
+      const nonArray = (validatorLoop as any).extractAssertionResults({ assertions: "not-an-array" }, assertions);
+      const blocked = (validatorLoop as any).extractAssertionResults({
+        assertions: [{ assertionId: "CA-1", verdict: "blocked", passed: false }],
+      }, assertions);
+      const zeroAssertions = (validatorLoop as any).extractAssertionResults({ assertions: [] }, []);
+
+      expect(duplicate[0]).toMatchObject({ passed: false, message: "Duplicate validator result for linked assertion." });
+      expect(empty[0]).toMatchObject({ passed: false, message: "Validator result IDs did not match any linked assertion ID." });
+      expect(nonArray[0]).toMatchObject({ passed: false, message: "Validator result IDs did not match any linked assertion ID." });
+      expect((validatorLoop as any).deriveFeatureValidationStatus({ status: "fail", assertions: blocked }, false).status).toBe("blocked");
+      expect(zeroAssertions).toEqual([]);
+      expect((validatorLoop as any).deriveFeatureValidationStatus({ status: "pass", assertions: zeroAssertions }, false).status).toBe("fail");
+    });
+  });
+
   // ── parseValidationResult JSON extraction ─────────────────────────────────
 
   describe("parseValidationResult", () => {
-    it("should parse pass result from plain JSON", async () => {
+    const completePassingPayload = JSON.stringify({
+      status: "pass",
+      assertions: [
+        { assertionId: "CA-1", verdict: "pass", passed: true },
+        { assertionId: "CA-2", verdict: "pass", passed: true },
+      ],
+      summary: "All assertions passed",
+    });
+
+    it.each([
+      ["prose braces before a trailing payload", "The inspection called render({ value: 1 }).\n" + completePassingPayload],
+      ["a malformed earlier object before a trailing payload", '{"status": broken}\n' + completePassingPayload],
+      ["an unlabeled fenced payload", "Reasoning follows.\n```\n" + completePassingPayload + "\n```"],
+      ["a trailing comma", completePassingPayload.replace("\n", "").replace("}", ",}")],
+      ["safely truncated closing delimiters", completePassingPayload.slice(0, -1)],
+      ["oversized leading prose while retaining the trailing payload", "x".repeat(256 * 1024) + completePassingPayload],
+      ["more than eight earlier object candidates", Array.from({ length: 12 }, (_, index) => `{"example":${index}}`).join("\n") + "\n" + completePassingPayload],
+    ])("recovers a complete validator payload after %s", async (_name, response) => {
+      const assertions = makeAssertions(2);
+      mockSessionHolder.session.state.messages = [{ role: "assistant", content: response }];
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+
+      await expect((loop as any).parseValidationResult(mockSessionHolder.session, assertions)).resolves.toMatchObject({
+        status: "pass",
+        assertions: [{ assertionId: "CA-1", passed: true }, { assertionId: "CA-2", passed: true }],
+      });
+    });
+
+    it("caps candidate extraction and preserves braces in JSON strings", () => {
+      const candidate = JSON.stringify({ summary: "literal ,} is evidence", status: "pass" });
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+
+      expect((loop as any).extractJsonCandidates("x".repeat(256 * 1024) + candidate)).toEqual([candidate]);
+      expect((loop as any).extractJsonCandidates(Array.from({ length: 12 }, (_, index) => `{"example":${index}}`).join("\n") + candidate)).toHaveLength(8);
+      expect((loop as any).repairJson(candidate)).toBe(candidate);
+    });
+
+    it("keeps recovered payload semantic validation fail-closed", async () => {
+      const assertions = makeAssertions(2);
+      const cases = [
+        { status: "pass", assertions: [{ assertionId: "CA-1", passed: true }, { assertionId: "unknown", passed: true }] },
+        { status: "pass", assertions: [{ assertionId: "CA-1", passed: true }] },
+        { status: "pass", assertions: [{ assertionId: "CA-1", passed: true }, { assertionId: "CA-1", passed: true }] },
+        { status: "unknown", assertions: [{ assertionId: "CA-1", passed: true }, { assertionId: "CA-2", passed: true }] },
+      ];
+
+      for (const candidate of cases) {
+        mockSessionHolder.session.state.messages = [{ role: "assistant", content: `prose {not JSON}\n${JSON.stringify(candidate)}` }];
+        loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+        const result = await (loop as any).parseValidationResult(mockSessionHolder.session, assertions);
+        expect(result.status).not.toBe("pass");
+      }
+
+      mockSessionHolder.session.state.messages = [{ role: "assistant", content: 'prose {not JSON}\n{"status":"pass","summary":"unterminated' }];
+      loop = new MissionExecutionLoop({ taskStore: taskStore as any, missionStore: missionStore as any, rootDir: "/tmp" });
+      await expect((loop as any).parseValidationResult(mockSessionHolder.session, assertions)).resolves.toMatchObject({ status: "error" });
+    });
+
+    it("routes a recovered trailing pass payload through processTaskOutcome", async () => {
       const assertions = makeAssertions(2);
       const response = JSON.stringify({
         status: "pass",
@@ -1608,7 +1861,7 @@ describe("MissionExecutionLoop", () => {
       // Set up mock session with AI response
       mockSessionHolder.session.state.messages = [
         { role: "user", content: "Validate this" },
-        { role: "assistant", content: response },
+        { role: "assistant", content: "The implementation uses render({ value: 1 }).\n" + response },
       ];
 
       const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001" });
@@ -1783,10 +2036,9 @@ describe("MissionExecutionLoop", () => {
       });
     });
 
-    it("should handle malformed JSON gracefully", async () => {
+    it("routes irreparable JSON to a validator error without generated remediation", async () => {
       const assertions = makeAssertions(1);
-      // Malformed JSON with trailing comma
-      const malformedResponse = '{"status":"blocked","assertions":[{"assertionId":"CA-1","passed":false}],"summary":"Blocked","blockedReason":"API down",}';
+      const malformedResponse = '{"status": broken, "assertions": [';
 
       // Set up mock session with malformed JSON
       mockSessionHolder.session.state.messages = [
@@ -1810,12 +2062,11 @@ describe("MissionExecutionLoop", () => {
 
       await loop.processTaskOutcome("FN-001");
 
-      // When JSON is malformed and cannot be repaired, it should result in an error status
-      // The loop should handle the error gracefully
       expect(emitSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/validation:(passed|failed|blocked|error)/),
-        expect.any(Object),
+        "validation:error",
+        expect.objectContaining({ featureId: "F-001" }),
       );
+      expect(missionStore.createGeneratedFixFeature).not.toHaveBeenCalled();
     });
 
     it("should handle AI session returning no messages gracefully", async () => {
@@ -2359,12 +2610,20 @@ describe("MissionExecutionLoop", () => {
         rootDir: "/ambient-root",
         checkoutMaterializer: { materialize, assertSourceClean: vi.fn() },
       });
+      taskStore.getSettings.mockResolvedValue({
+        missionStaleThresholdMs: 600_000,
+        missionMaxTaskRetries: 3,
+        defaultProvider: "memo-provider",
+        defaultModelId: "memo-model",
+      });
       const staleCheck = vi.spyOn(loop as any, "isValidationWorkspaceStale").mockResolvedValue({ workspaceStale: false });
       loop.start();
 
       await loop.processTaskOutcome("FN-001");
 
+      expect(materialize).toHaveBeenCalledOnce();
       expect(materialize).toHaveBeenCalledWith("/ambient-root", "landed-sha");
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001", expect.stringMatching(/^[a-f0-9]{64}$/));
       expect(createResolvedAgentSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/inspection/landed" }));
       expect(staleCheck).toHaveBeenCalledWith("landed-sha", "/inspection/landed");
       expect(dispose).toHaveBeenCalledOnce();
@@ -2395,6 +2654,7 @@ describe("MissionExecutionLoop", () => {
       await loop.processTaskOutcome("FN-001");
 
       expect(createResolvedAgentSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/ambient-root" }));
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion", "FN-001");
       expect(staleCheck).toHaveBeenCalledWith("landed-sha", "/ambient-root");
       expect(inconclusiveHandler).toHaveBeenCalled();
       expect(failHandler).not.toHaveBeenCalled();

@@ -36,28 +36,15 @@ that survives a writer on a different host.
 This file exists so the next person to attempt the unblock reads all three before starting, instead
 of shipping a selection cache and discovering the second read at integration time.
 
-FNXC:WorkflowLifecycleColumns 2026-07-31-23:55 (the emitter route works for `task:moved` and does NOT
-generalise to `task:updated` — measured, before someone does the obvious follow-on):
-#3109 solved this class for `task:moved` by having the EMITTER resolve lanes once and carry them on
-the payload. It is the right fix there and it retired several flags within a day. The obvious next
-step is to do the same for `task:updated`, which is where the remaining sync-listener guards live
-(`scheduler.ts`'s mission-failure and PR-monitoring guards, `triage.ts`'s planning-evacuation guard).
+FNXC:WorkflowLifecycleColumns 2026-08-01-06:11 (FN-8658 supersedes the former non-generalisation):
+The measured cost profile remains: 7 `task:moved` emit sites versus 26 `task:updated` sites across
+ten files, including `audit-ops.ts`'s logEntry fast path. An IR read per update is still a regression.
 
-The cost profile is opposite, and that is why #3109's justification does not transfer. Measured on
-this tree: 7 `task:moved` emit sites versus 26 `task:updated` sites across ten files. #3109 could
-argue the resolution away because a move "is already async and already post-commit, so the resolution
-costs one IR read on a transition that has just done database work". `task:updated` fires on every log
-append, comment, artifact write and steering message — `audit-ops.ts`'s logEntry fast path is one of
-them, and it exists precisely to avoid re-reading the task. An IR read per emit there is a regression
-on the hottest write path in the system.
-
-Partial coverage does not rescue it either, and `triage.ts` is the reason: its evacuation handler
-reacts to ANY `task:updated` carrying a column — it explicitly tolerates partial payloads — so it
-needs lanes on essentially every emit or it keeps its literal fallback anyway.
-
-So the remaining `task:updated` guards are NOT one commit behind #3109. Unblocking them wants either a
-cached lane answer the emitter can attach for free, or the sync reader described above. Recorded so
-the follow-on is a decision rather than a surprise.
+FN-8658 therefore does not resolve on each emit. Paths that already asynchronously resolve the task
+workflow warm a bounded, TTL-limited per-store cache; the central TaskStore emit seam attaches its
+answer when present. The synchronous listener receives `undefined` as unknown and retains its literal
+fallback. This preserves the measurement while avoiding both a hot-path read and PostgreSQL's
+default-only sync resolver.
 */
 
 import { describe, expect, it } from "vitest";
@@ -113,13 +100,13 @@ describe("the sync workflow-IR path is blocked twice, not once", () => {
   });
 
   /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-23:55:
-  The emitter route's cost argument, pinned as a ratio rather than prose. #3109 justified resolving an
-  IR per `task:moved` because a move has just done database work; `task:updated` fires on every log
-  append and comment, so the same change there is a hot-path regression. If these counts ever converge
-  the trade-off changes and the note above should be re-read.
+  FNXC:WorkflowLifecycleColumns 2026-08-01-06:29:
+  The emitter route's cost argument, pinned as a ratio rather than prose. Resolving an IR per
+  `task:updated` is still a hot-path regression because log and comment writes emit it far more often
+  than moves. FN-8658 generalises the event contract through a cache-read central emit seam instead:
+  every emitter gets an answer without an IR read. If these counts ever converge, re-read the trade-off.
   */
-  it("`task:updated` has far more emit sites than `task:moved`, which is why the emitter route does not generalise", () => {
+  it("`task:updated` has far more emit sites than `task:moved`, requiring a cached central emitter seam", () => {
     const countEmits = (event) => {
       const files = new Set();
       let total = 0;

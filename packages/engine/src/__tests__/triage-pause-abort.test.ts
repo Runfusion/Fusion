@@ -183,6 +183,28 @@ describe("TriageProcessor per-task pause aborts", () => {
     processor.stop();
   });
 
+  /*
+  FNXC:WorkflowEvents 2026-08-01-06:29:
+  A renamed execution lane is not an evacuation. The second argument supplies that synchronous
+  distinction; without it, unknown metadata deliberately follows the historic literal fallback.
+  */
+  it("uses payload lanes for renamed planning evacuation and retains the absent-meta fallback", () => {
+    const { store, emit } = createEventedStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+    const retained = { abort: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() };
+    const evacuated = { abort: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() };
+    processor.start();
+    (processor as any).activeSessions.set("FN-RENAMED-WIP", retained);
+    (processor as any).activeSessions.set("FN-UNKNOWN", evacuated);
+
+    emit("task:updated", { id: "FN-RENAMED-WIP", column: "building", status: "planning" }, { lanes: { hold: "drafting", intake: "inbox", wip: "building" } });
+    emit("task:updated", { id: "FN-UNKNOWN", column: "building", status: "planning" });
+
+    expect(retained.dispose).not.toHaveBeenCalled();
+    expect(evacuated.dispose).toHaveBeenCalledOnce();
+    processor.stop();
+  });
+
   it("detaches the task:updated pause listener on stop", () => {
     const { store, emit } = createEventedStore();
     const processor = new TriageProcessor(store, "/tmp/root");

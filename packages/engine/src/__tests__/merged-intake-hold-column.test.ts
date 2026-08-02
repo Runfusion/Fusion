@@ -298,6 +298,14 @@ describe("a column carrying BOTH intake and hold (U11's merged Planning column)"
       await expect(isUnplannedForExecution(gateStore(), card, ir(MERGED))).resolves.toBe(false);
     });
 
+    it("holds a card whose PROMPT is only a DUPLICATE redirect (FN-8704)", async () => {
+      const card = task({ id: "D1", title: "Dup", description: "d", column: MERGED.hold });
+      mkdirSync(join(tasksDir, "D1"), { recursive: true });
+      writeFileSync(join(tasksDir, "D1", "PROMPT.md"), "DUPLICATE: FN-8676\n", "utf-8");
+
+      await expect(isUnplannedForExecution(gateStore(), card, ir(MERGED))).resolves.toBe(true);
+    });
+
     it("does not gate a card already in the wip column", async () => {
       const card = task({ id: "W1", title: "Working", description: "d", column: MERGED.wip });
       seedUnplannedPrompt("W1", "Working", "d");

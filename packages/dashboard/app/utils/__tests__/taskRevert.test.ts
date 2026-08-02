@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
-import { isTaskReverted, findOpenUndoTaskForSource } from "../taskRevert";
+import { isTaskReverted, findOpenUndoTaskForSource, partitionRevertedTasks } from "../taskRevert";
 
 describe("isTaskReverted", () => {
   it.each([
@@ -13,6 +13,20 @@ describe("isTaskReverted", () => {
     [{ revertedAt: "2026-07-16T00:00:00.000Z" }, true],
   ] as const)("returns %s for revertedAt metadata", (sourceMetadata, expected) => {
     expect(isTaskReverted(sourceMetadata as Task["sourceMetadata"] | undefined)).toBe(expected);
+  });
+});
+
+describe("partitionRevertedTasks", () => {
+  const task = (id: string, revertedAt?: unknown): Task => ({
+    id, column: "done", title: id, description: "", createdAt: "", updatedAt: "", dependencies: [], steps: [],
+    sourceMetadata: revertedAt === undefined ? {} : { revertedAt },
+  } as unknown as Task);
+
+  it("keeps invalid markers normal and returns valid markers once", () => {
+    const reverted = task("KB-2", "2026-08-01T00:00:00.000Z");
+    const result = partitionRevertedTasks([task("KB-1", " "), reverted, reverted, task("KB-3", 42)]);
+    expect(result.normal.map(({ id }) => id)).toEqual(["KB-1", "KB-3"]);
+    expect(result.reverted.map(({ id }) => id)).toEqual(["KB-2"]);
   });
 });
 

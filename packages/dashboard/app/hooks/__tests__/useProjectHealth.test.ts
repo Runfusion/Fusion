@@ -145,6 +145,104 @@ describe("useProjectHealth", () => {
     });
   });
 
+  it("publishes each completed batch before a later batch settles", async () => {
+    const firstBatch = Array.from({ length: 5 }, () => deferred<ProjectHealth>());
+    const sixthProject = deferred<ProjectHealth>();
+    mockFetchProjectHealth.mockImplementation((id: string) => {
+      const index = Number(id.slice(1)) - 1;
+      return index < 5 ? firstBatch[index].promise : sixthProject.promise;
+    });
+
+    const { result } = renderUseProjectHealth(["p1", "p2", "p3", "p4", "p5", "p6"]);
+
+    await waitFor(() => {
+      expect(mockFetchProjectHealth).toHaveBeenCalledTimes(5);
+    });
+
+    await act(async () => {
+      firstBatch.forEach((pending, index) => pending.resolve(createHealth(`p${index + 1}`)));
+    });
+
+    await waitFor(() => {
+      expect(result.current.healthMap).toEqual({
+        p1: createHealth("p1"),
+        p2: createHealth("p2"),
+        p3: createHealth("p3"),
+        p4: createHealth("p4"),
+        p5: createHealth("p5"),
+      });
+      expect(result.current.loading).toBe(true);
+      expect(mockFetchProjectHealth).toHaveBeenCalledTimes(6);
+    });
+
+    sixthProject.resolve(createHealth("p6"));
+    await waitFor(() => {
+      expect(result.current.healthMap.p6).toEqual(createHealth("p6"));
+      expect(result.current.loading).toBe(false);
+    });
+  });
+
+  it("deduplicates project IDs before fetching health", async () => {
+    const { result } = renderUseProjectHealth(["p1", "p1", "p2", "p2"]);
+
+    await waitFor(() => {
+      expect(result.current.healthMap).toEqual({
+        p1: createHealth("p1"),
+        p2: createHealth("p2"),
+      });
+    });
+
+    expect(mockFetchProjectHealth.mock.calls.map(([id]) => id)).toEqual(["p1", "p2"]);
+  });
+
+  it("does not publish an older project list after IDs change", async () => {
+    const oldHealth = deferred<ProjectHealth>();
+    const currentHealth = deferred<ProjectHealth>();
+    mockFetchProjectHealth.mockImplementation((id: string) => id === "old" ? oldHealth.promise : currentHealth.promise);
+
+    const { result, rerender } = renderUseProjectHealth(["old"]);
+    await waitFor(() => expect(mockFetchProjectHealth).toHaveBeenCalledWith("old"));
+
+    rerender({ ids: ["current"] });
+    await waitFor(() => expect(mockFetchProjectHealth).toHaveBeenCalledWith("current"));
+
+    currentHealth.resolve(createHealth("current"));
+    await waitFor(() => expect(result.current.healthMap).toEqual({ current: createHealth("current") }));
+
+    oldHealth.resolve(createHealth("old", { activeTaskCount: 99 }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.healthMap).toEqual({ current: createHealth("current") });
+  });
+
+  it("does not let an older manual refresh overwrite newer health", async () => {
+    const olderHealth = deferred<ProjectHealth>();
+    const newerHealth = deferred<ProjectHealth>();
+    mockFetchProjectHealth
+      .mockReturnValueOnce(olderHealth.promise)
+      .mockReturnValueOnce(newerHealth.promise);
+
+    const { result } = renderUseProjectHealth(["p1"]);
+    await waitFor(() => expect(mockFetchProjectHealth).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      void result.current.refresh();
+    });
+    await waitFor(() => expect(mockFetchProjectHealth).toHaveBeenCalledTimes(2));
+
+    newerHealth.resolve(createHealth("p1", { activeTaskCount: 2 }));
+    await waitFor(() => expect(result.current.healthMap.p1?.activeTaskCount).toBe(2));
+
+    olderHealth.resolve(createHealth("p1", { activeTaskCount: 99 }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.healthMap.p1?.activeTaskCount).toBe(2);
+  });
+
   it("refresh aborts in-flight requests when called again", async () => {
     const abortSpy = vi.spyOn(AbortController.prototype, "abort");
     const pending = deferred<ProjectHealth>();

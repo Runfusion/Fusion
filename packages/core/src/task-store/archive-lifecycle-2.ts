@@ -7,28 +7,29 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore, storeLog} from "../store.js";
-import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-stores/async-mission-store-queries.js";
 import { columnsWithFlag, declaresAnyLifecycleTrait } from "../workflows/workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import { toTaskMoveLanes } from "../workflows/workflow-lifecycle-traits.js";
+import {getFeatureByTaskId as getMissionFeatureByTaskId, unlinkFeatureFromTaskId as unlinkMissionFeatureFromTaskId, recordGeneratedFixOperatorStop} from "../async-stores/async-mission-store-queries.js";
 import {TaskHasLineageChildrenError, TaskNotFoundError, TaskSelfDeleteError} from "./errors.js";
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {and, eq} from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import type {Task, Column, ArchivedTaskEntry, GithubIssueAction} from "../types.js";
-import {buildDeleteCallerAuditFields, type TaskDeleteAuditContext} from "../task-delete-attribution.js";
+import type {Task, Column, ArchivedTaskEntry, GithubIssueAction, TaskDeleteClosureContext} from "../types.js";
+import {buildDeleteCallerAuditFields, buildDeleteClosureAuditFields, type TaskDeleteAuditContext} from "../task-delete-attribution.js";
 import {notifyOperatorOfNonOperatorDelete} from "../task-delete-notice.js";
 import "../builtin-traits.js";
 import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
-import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync} from "../task-store/async/async-persistence.js";
+import {softDeleteTaskRowInTransaction, readTaskRow as readTaskRowAsync, readTaskRowInTransaction} from "../task-store/async/async-persistence.js";
+import {appendTaskLifecycleEventInTransaction} from "../task-store/lifecycle-outbox.js";
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, projectPartition, removeLineageReferences} from "../task-store/async/async-lifecycle.js";
+import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async/async-archive-lineage.js";
 import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-stores/async-archive-db.js";
-import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import {disposeArchivedWorkspaceWorktrees, disposeArchivedWorktree, prepareArchivedWorkspaceWorktrees, releasePreparedWorkspaceArchiveDisposal} from "./archive-lifecycle.js";
 
 export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
@@ -107,12 +108,16 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
       archivedAt,
       modelPresetId: task.modelPresetId,
       modelProvider: task.modelProvider,
+      credentialInstanceId: task.credentialInstanceId,
       modelId: task.modelId,
       validatorModelProvider: task.validatorModelProvider,
+      validatorCredentialInstanceId: task.validatorCredentialInstanceId,
       validatorModelId: task.validatorModelId,
       planningModelProvider: task.planningModelProvider,
+      planningCredentialInstanceId: task.planningCredentialInstanceId,
       planningModelId: task.planningModelId,
       mergerModelProvider: task.mergerModelProvider,
+      mergerCredentialInstanceId: task.mergerCredentialInstanceId,
       mergerModelId: task.mergerModelId,
       mergerThinkingLevel: task.mergerThinkingLevel,
       breakIntoSubtasks: task.breakIntoSubtasks,
@@ -133,7 +138,16 @@ export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archi
     };
   }
 
-export async function deleteTaskBackendImpl(store: TaskStore, id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; },): Promise<Task> {
+type DeleteTaskBackendOptions = { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext; };
+type DeleteTaskClaimResult = { task: Task; claimed: boolean };
+
+/*
+FNXC:LifecycleOutbox 2026-08-01-11:12:
+The internal result preserves whether this caller won the conditional first-transition claim.
+`deleteTaskIf` exposes that fact as `deleted`, so a cross-process loser cannot report that it
+performed a deletion merely because its predicate ran against a stale live snapshot.
+*/
+async function deleteTaskBackendWithClaimResultImpl(store: TaskStore, id: string, options?: DeleteTaskBackendOptions): Promise<DeleteTaskClaimResult> {
   /*
   FNXC:TaskDeletion 2026-07-01-00:00:
   Task-bound runtime callers may never soft-delete the task they are executing; this guard is the PostgreSQL-backend mirror of the SQLite-path guard in deleteTaskImpl so direct callers of deleteTaskBackend inherit the same invariant before any mutation or audit.
@@ -153,7 +167,7 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
 
     // Idempotent: already soft-deleted is a no-op.
     if (task.deletedAt) {
-      return task;
+      return { task, claimed: false };
     }
 
     // Lineage-integrity gate (VAL-DATA-010).
@@ -167,9 +181,28 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
 
     const deletedAt = new Date().toISOString();
     const allowResurrection = options?.allowResurrection === true;
+    const projectId = layer.projectId?.trim() || "__legacy_unscoped__";
+    /*
+    FNXC:LifecycleOutbox 2026-08-01-10:33:
+    Test-only barrier: production never assigns this private store property. It makes the
+    cross-process pre-claim TOCTOU deterministic instead of relying on scheduler timing.
+    */
+    await (store as unknown as { __beforeDeleteClaimForTest?: (taskId: string) => void | Promise<void> }).__beforeDeleteClaimForTest?.(id);
 
     // Soft-delete + lineage clear + mission unlink + audit in one transaction (atomicity).
-    await layer.transactionImmediate(async (tx) => {
+    const deletion = await layer.transactionImmediate(async (tx) => {
+      /*
+      FNXC:LifecycleOutbox 2026-08-01-10:33:
+      The pre-transaction deletedAt read is a cross-process TOCTOU window. A conditional
+      claim makes one transition own all side effects; a loser re-reads on this transaction
+      because returning its captured live snapshot would lie about deletedAt.
+      */
+      const claimed = await softDeleteTaskRowInTransaction(tx, id, deletedAt, allowResurrection, projectId, true);
+      if (claimed === false) {
+        const reloaded = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
+        if (!reloaded) throw new TaskNotFoundError(id);
+        return { claimed: false, task: store.rowToTask(store.pgRowToTaskRow(reloaded)) };
+      }
       // Clear lineage references on live children so the parent can be deleted.
       if (lineageChildIds.length > 0) {
         await removeLineageReferences(tx, id, lineageChildIds, deletedAt, layer.projectId);
@@ -194,8 +227,6 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
         await recordGeneratedFixOperatorStop(tx, linkedFeature, "task-delete");
         await unlinkMissionFeatureFromTaskId(tx, linkedFeature.id);
       }
-      // Soft-delete the task row.
-      await softDeleteTaskRowInTransaction(tx, id, deletedAt, allowResurrection, layer.projectId);
       // Record the audit event.
       await store.recordRunAuditEventBackend(tx, {
         domain: "database",
@@ -215,12 +246,52 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: caller class + calling
           // task id; `taskId` reached this function but was never persisted.
           ...buildDeleteCallerAuditFields(options?.auditContext),
+          ...buildDeleteClosureAuditFields(options?.closureContext),
         },
       });
+      /*
+      FNXC:LifecycleOutbox 2026-08-01-10:33:
+      This stays inside transactionImmediate, unlike mailbox delivery: state and durable
+      observation must commit or roll back together, which is the outbox's purpose.
+      */
+      await appendTaskLifecycleEventInTransaction(tx, {
+        projectId,
+        eventType: "task:deleted",
+        taskId: id,
+        occurredAt: deletedAt,
+        payload: {
+          taskId: id,
+          previousColumn: task.column ?? "unknown",
+          previousStatus: task.status ?? null,
+          deletedAt,
+          allowResurrection,
+          githubIssueAction: options?.githubIssueAction ?? null,
+          closureContext: options?.closureContext ?? null,
+          deletedBy: options?.auditContext?.agentId ?? null,
+        },
+      });
+      /*
+      FNXC:LifecycleOutbox 2026-08-01-10:51:
+      This private test seam injects a failure after every durable delete write, proving the
+      outbox, counter, audit, and soft-delete share one transaction. Production construction
+      never assigns it; it exists instead of timing-dependent fault injection.
+      */
+      await (store as unknown as { __afterLifecycleOutboxWriteForTest?: () => void | Promise<void> }).__afterLifecycleOutboxWriteForTest?.();
+      // FNXC:LifecycleOutbox 2026-08-01-10:33: return the persisted transition to both
+      // callers so neither receives the pre-claim live snapshot after a successful delete.
+      const reloaded = await readTaskRowInTransaction(tx, id, { includeDeleted: true }, projectId);
+      if (!reloaded) throw new TaskNotFoundError(id);
+      return { claimed: true, task: store.rowToTask(store.pgRowToTaskRow(reloaded)) };
     });
 
+    if (!deletion.claimed) return deletion;
+
     // Emit lifecycle event (best-effort, outside the transaction).
-    store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
+    store.laneCache.invalidate(task.id);
+    store.emit("task:deleted", task, {
+      githubIssueAction: options?.githubIssueAction ?? "auto",
+      ...(options?.closureContext ? { closureContext: options.closureContext } : {}),
+    });
     /*
     FNXC:TaskDeleteNotice 2026-07-26-16:10:
     Operator mailbox notice for a delete the operator did not perform. Deliberately placed here,
@@ -234,15 +305,19 @@ export async function deleteTaskBackendImpl(store: TaskStore, id: string, option
       { id: task.id, title: task.title, previousColumn: task.column, previousStatus: task.status ?? null },
       options?.auditContext,
     );
-    return task;
+    return deletion;
   }
+
+export async function deleteTaskBackendImpl(store: TaskStore, id: string, options?: DeleteTaskBackendOptions): Promise<Task> {
+  return (await deleteTaskBackendWithClaimResultImpl(store, id, options)).task;
+}
 
 /** PostgreSQL mirror of deleteTaskIfImpl: predicate and deletion share one task lock. */
 export async function deleteTaskIfBackendImpl(
   store: TaskStore,
   id: string,
   predicate: (live: Task) => boolean | Promise<boolean>,
-  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
+  options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext },
 ): Promise<{ task: Task; deleted: boolean }> {
   if (options?.auditContext?.taskId === id) throw new TaskSelfDeleteError(id);
   return store.withTaskLock(id, async () => {
@@ -262,16 +337,14 @@ export async function deleteTaskIfBackendImpl(
       throw new TaskHasLineageChildrenError(id, lineageChildIds);
     }
     if (!await predicate(live)) return { task: live, deleted: false };
-    await deleteTaskBackendImpl(store, id, options);
+    const deletion = await deleteTaskBackendWithClaimResultImpl(store, id, options);
     /*
-    FNXC:TaskDeletion 2026-07-29-18:45:
-    FN-8361 exposes `{ task, deleted }` as the authoritative conditional-delete
-    result. Return the persisted archived row, not deleteTaskBackendImpl's
-    pre-delete audit snapshot, so callers can safely inspect an applied result.
+    FNXC:LifecycleOutbox 2026-08-01-11:12:
+    `deleted` means this caller won the first-transition claim, not merely that the predicate
+    observed a live row. The loser carries the transaction-scoped re-read deleted task while
+    returning false, preventing downstream conditional-delete callers from duplicating work.
     */
-    const deletedRow = await readTaskRowAsync(layer, id, { includeDeleted: true });
-    if (!deletedRow) throw new Error(`Task ${id} disappeared after soft-delete`);
-    return { task: store.rowToTask(store.pgRowToTaskRow(deletedRow)), deleted: true };
+    return { task: deletion.task, deleted: deletion.claimed };
   });
 }
 
@@ -389,10 +462,17 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
     lane-less left that leak reachable through this path even after the listener itself was fixed.
     */
     const movedLanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+    store.laneCache.set(task.id, movedLanes);
     store.emit("task:moved", { task, from: fromColumn, to: "archived" as Column, source: "engine", lanes: movedLanes });
+    store.laneCache.invalidate(task.id);
 
     // Best-effort near-duplicate cleanup.
     await store.clearNearDuplicateReferencesToFailSoft(id, {
+      /*
+      FNXC:TaskStoreArchiveLifecycle 2026-08-01-23:23 DELIBERATE-LITERAL — STATE MARKER:
+      This cleanup follows the physical archive transition after soft deletion. It must identify the
+      durable archive marker rather than a custom workflow archived lane, which may still hold live work.
+      */
       column: "archived",
       reason: "archived",
     });
@@ -571,12 +651,16 @@ export async function restoreFromArchiveImpl(store: TaskStore, entry: import("..
       columnMovedAt: entry.columnMovedAt,
       modelPresetId: entry.modelPresetId,
       modelProvider: entry.modelProvider,
+      credentialInstanceId: entry.credentialInstanceId,
       modelId: entry.modelId,
       validatorModelProvider: entry.validatorModelProvider,
+      validatorCredentialInstanceId: entry.validatorCredentialInstanceId,
       validatorModelId: entry.validatorModelId,
       planningModelProvider: entry.planningModelProvider,
+      planningCredentialInstanceId: entry.planningCredentialInstanceId,
       planningModelId: entry.planningModelId,
       mergerModelProvider: entry.mergerModelProvider,
+      mergerCredentialInstanceId: entry.mergerCredentialInstanceId,
       mergerModelId: entry.mergerModelId,
       mergerThinkingLevel: entry.mergerThinkingLevel,
       breakIntoSubtasks: entry.breakIntoSubtasks,

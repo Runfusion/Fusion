@@ -1,5 +1,19 @@
 # @fusion-plugin-examples/omp-runtime
 
+## 0.1.7-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.7
+- @fusion/plugin-sdk@0.74.0-beta.7
+
+## 0.1.7-beta.6
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.6
+- @fusion/plugin-sdk@0.74.0-beta.6
+
 ## 0.1.7-beta.5
 
 ### Patch Changes

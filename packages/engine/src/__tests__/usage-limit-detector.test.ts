@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { isUsageLimitError, UsageLimitPauser, checkSessionError } from "../errors/usage-limit-detector.js";
+import { CredentialInstanceRotator } from "../credential-instance-rotation.js";
 
 // ── isUsageLimitError classification tests ───────────────────────────
 
@@ -263,6 +264,19 @@ describe("UsageLimitPauser", () => {
 
     await expect(pauser.onProviderAvailable("anthropic")).resolves.toBe(0);
     expect(store.pauseTask).not.toHaveBeenCalled();
+  });
+
+  it("clears the shared credential cooldown before resuming provider parks", async () => {
+    const store = createMockStore();
+    const rotator = new CredentialInstanceRotator({
+      instanceSource: { listInstances: () => [], getDefaultInstance: () => undefined },
+    });
+    const limited = { providerId: "anthropic", instanceId: "backup" };
+    rotator.markLimited(limited);
+    const pauser = new UsageLimitPauser(store, { credentialRotator: rotator });
+
+    await pauser.onProviderAvailable("anthropic");
+    expect(rotator.isCoolingDown(limited)).toBe(false);
   });
 });
 

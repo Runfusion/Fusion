@@ -204,6 +204,18 @@ Track follow-up: **FN-5031** (missing `packages/core/src/__tests__/secrets-env.t
 
 **Plaintext prohibition:** audit payload metadata must never include plaintext, decrypted values, ciphertext, or nonce fields. Use `assertNoSecretPlaintext(...)` as the canonical enforcement helper before emitting secret audit events.
 
+## Provider credential instances (`auth.json`)
+
+Fusion keeps provider credentials in `~/.fusion/agent/auth.json`. A legacy bare key such as `"openrouter"` is the default instance; a named key is `"openrouter[work]"`. Provider and instance ids are non-empty, no-whitespace, no-bracket strings up to 64 characters. Existing bare entries remain readable and are not rewritten merely by reading them.
+
+`__fusionDefaultInstances` is reserved metadata, never a credential. Its per-provider pointer wins only when it names an existing valid credential; resolution otherwise falls back to the bare key, then the lexicographically first named instance, then no instance (`getDefaultInstance` returns `undefined`). The metadata is untrusted: malformed records or stale entries are ignored without a read-time repair. Deleting a pointed-to instance removes that pointer in the same locked write.
+
+Legacy string APIs parse this grammar rather than accepting raw keys. `set("provider", credential)` updates the resolved default, or creates the bare key when none exists; `remove`, `logout`, `removeInstance`, and `modify` are no-ops when no instance exists. `setDefaultInstance` never creates a credential and rejects a missing target. All mutators, including deletes, reject the reserved metadata key. `list()` and `getAll()` remain logical-provider keyed (one resolved credential per provider); use `listInstances()` for individual instances. On-disk records are untrusted and values are type-filtered as credentials, so metadata and malformed values are never returned. External Claude/Codex hydration intentionally consumes bare keys only and ignores named instance keys.
+
+At session creation, an explicitly selected credential instance wins over the provider default only for that provider. A missing named instance falls back to the canonical provider default and is recorded in `session:runtime-resolved`; Fusion never substitutes an arbitrary instance. If there is no default, session resolution fails without exposing credential material. Omitted instance ids retain the legacy default-resolving behavior.
+
+Dashboard auth routes accept an optional instance id; omitted or blank ids retain default-instance behavior. `GET /api/auth/status?provider=<id>&instance=<id>` keeps the full provider envelope but describes the requested instance at that provider entry. A valid missing id is an unauthenticated `200` result, never a fallback to another account. Credential-establishing login and API-key writes may create a supplied id; rename, default, logout, and delete require an existing id. OAuth binds the id and optional opaque label to its server-side flow state, so a callback cannot fall back to the default account. Instance listings expose only ids, labels, auth status, and masked key hints; raw key and token material never leaves storage. `removeInstance` deletes the credential row and its default participation, while credential clear only removes its usable credential state.
+
 ## Operational Notes
 
 - Backups: preserve PostgreSQL project/central schemas and the master-key material/provider source used by the deployment. Retain legacy SQLite backups only as controlled migration/recovery inputs; they are not runtime authority.

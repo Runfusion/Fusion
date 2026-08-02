@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { NotificationProvider, Settings, Task } from "@fusion/core";
+import { WEDGE_RENOTIFY_COOLDOWN_MS, type NotificationProvider, type Settings, type Task } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
 import { describeSelfHealingNoActionWedge, describeTaskWedge } from "../task-wedge-notification.js";
 
@@ -50,7 +50,122 @@ function fixture(workflowIr?: unknown) {
   return { store, service, sendMessageOnce, sendNotification, task, getWedge: () => wedge };
 }
 
+/* Creates a restart-safe claim fake so NotificationService tests exercise delivery policy, not storage implementation. */
+function cooldownFixture({ durable = true }: { durable?: boolean } = {}) {
+  const listeners = new Set<Listener>();
+  let wedge: Task["wedgeNotification"];
+  const stamps = new Map<string, number>();
+  const store = {
+    getSettings: async () => ({ ntfyEnabled: true, ntfyTopic: "test" }) as Settings,
+    on: (event: string, listener: Listener) => { if (event === "task:updated") listeners.add(listener); },
+    off: () => undefined,
+    emit: (task: Task) => listeners.forEach((listener) => listener(task)),
+    ...(durable ? {
+      claimTaskWedgeNotificationEpisode: async (taskId: string, reasonKey: string | null) => {
+        if (reasonKey === null) {
+          if (wedge?.status === "active") wedge = { ...wedge, status: "resolved" };
+          return { claimed: false };
+        }
+        if (wedge?.status === "active" && wedge.reasonKey === reasonKey) return { claimed: false };
+        const now = Date.now();
+        for (const [key, notifiedAt] of stamps) {
+          if (now - notifiedAt >= WEDGE_RENOTIFY_COOLDOWN_MS) stamps.delete(key);
+        }
+        const episodeId = `${taskId}-${reasonKey}-${now}`;
+        wedge = { reasonKey, episodeId, status: "active", transitionedAt: new Date(now).toISOString() };
+        if (stamps.has(reasonKey)) return { claimed: false };
+        stamps.set(reasonKey, now);
+        return { claimed: true, episodeId };
+      },
+    } : {}),
+  };
+  const sendMessageOnce = vi.fn(async (_input: unknown, _key: string) => ({ message: {} as any, inserted: true }));
+  const service = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+  const sendNotification = vi.fn(async () => ({ success: true, providerId: "test" }));
+  service.registerProvider({ getProviderId: () => "test", isEventSupported: () => true, sendNotification });
+  const task = (overrides: Partial<Task> = {}): Task => ({ id: "FN-8691", title: "Blocked task", description: "", column: "in-review", status: "failed", error: "BLOCKED: dependency unavailable", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-08-01T12:00:00.000Z", updatedAt: new Date().toISOString(), ...overrides } as Task);
+  return { store, service, sendMessageOnce, sendNotification, task };
+}
+
+async function flushWedgeHandling() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("task wedge notifications", () => {
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-01-15:35:
+  A BLOCKED task can resolve and re-wedge as scheduler/self-healing touch it. A
+  fresh episode id previously defeated sendMessageOnce; both delivery lanes now
+  notify once per reason cooldown and re-open only after that window expires.
+  */
+  it("suppresses five resolve/re-wedge execution-blocked flaps until the cooldown expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, sendNotification, task } = cooldownFixture();
+    await service.start();
+
+    for (let index = 0; index < 5; index += 1) {
+      store.emit(task({ updatedAt: new Date().toISOString() }));
+      await flushWedgeHandling();
+      store.emit(task({ status: "in-progress", error: undefined, column: "in-progress", updatedAt: new Date().toISOString() }));
+      await flushWedgeHandling();
+    }
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(WEDGE_RENOTIFY_COOLDOWN_MS);
+    store.emit(task({ updatedAt: new Date().toISOString() }));
+    await flushWedgeHandling();
+    expect(sendMessageOnce).toHaveBeenCalledTimes(2);
+    expect(sendNotification).toHaveBeenCalledTimes(2);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("retains X cooldown across Y, preserves distinct gates, and covers self-healing entry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, task } = cooldownFixture();
+    await service.start();
+    const executionBlocked = describeTaskWedge(task())!;
+    const lint = describeTaskWedge(task({ error: "merge verification failed: check:lint" }))!;
+    const changeset = describeTaskWedge(task({ error: "merge verification failed: check:changeset-format" }))!;
+
+    await service.notifyTaskWedge(task(), executionBlocked);
+    await service.notifyTaskWedge(task(), lint);
+    await service.notifyTaskWedge(task(), executionBlocked);
+    await service.notifyTaskWedge(task(), changeset);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(3);
+
+    const noAction = describeSelfHealingNoActionWedge(task({ status: "in-review", error: undefined }), "reconcile-in-review-unmet-dependencies", { taskActive: false });
+    await service.notifyTaskWedge(task({ status: "in-review", error: undefined }), noAction!);
+    store.emit(task({ status: "in-progress", error: undefined, column: "in-progress" }));
+    await flushWedgeHandling();
+    await service.notifyTaskWedge(task({ status: "in-review", error: undefined }), noAction!);
+    expect(sendMessageOnce).toHaveBeenCalledTimes(4);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
+  it("gives the in-memory fallback the same resolve/re-wedge cooldown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
+    const { store, service, sendMessageOnce, sendNotification, task } = cooldownFixture({ durable: false });
+    await service.start();
+    for (let index = 0; index < 5; index += 1) {
+      store.emit(task());
+      await flushWedgeHandling();
+      store.emit(task({ status: "in-progress", error: undefined, column: "in-progress" }));
+      await flushWedgeHandling();
+    }
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    await service.stop();
+    vi.useRealTimers();
+  });
+
   it("sends one actionable push and mailbox message per active terminal episode", async () => {
     const { store, service, sendMessageOnce, sendNotification, task } = fixture();
     await service.start();
@@ -63,6 +178,25 @@ describe("task wedge notifications", () => {
     expect(firstMessage?.content).toContain("Recommended action");
     store.emit(task({ status: "queued", error: undefined, column: "todo", updatedAt: "2026-07-22T12:02:00.000Z" }));
     store.emit(task({ updatedAt: "2026-07-22T12:03:00.000Z" }));
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
+    await service.stop();
+  });
+
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-01-07:44:
+  A recovery and re-wedge can be emitted back-to-back by synchronous task lifecycle writers. The
+  per-task chain must run the recovery's resolve before the second wedge's claim; otherwise the old
+  active episode rejects the claim and drops the second operator alert.
+  */
+  it("serializes back-to-back recovery and re-wedge task updates", async () => {
+    const { store, service, sendMessageOnce, task } = fixture();
+    await service.start();
+
+    store.emit(task());
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+    store.emit(task({ status: "queued", error: undefined, column: "todo", updatedAt: "2026-07-22T12:02:00.000Z" }));
+    store.emit(task({ updatedAt: "2026-07-22T12:03:00.000Z" }));
+
     await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(2));
     await service.stop();
   });

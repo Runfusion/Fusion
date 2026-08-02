@@ -34,58 +34,111 @@ if (targets.length === 0) {
   process.exit(2);
 }
 
+const PR_LIMIT = 300;
+const PR_FILE_PAGE_SIZE = 100;
+const PR_FILE_API_CEILING = 3000;
+
 function gh(args) {
+  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function unknown(message) {
+  console.error(`claim-check: ${message}`);
+  console.error("claim-check: cannot prove a file is unclaimed from incomplete data. Treat as UNKNOWN, not free.");
+  for (const target of targets) console.log(`UNKNOWN    ${target}`);
+  process.exit(2);
+}
+
+function readOpenPullRequests() {
+  let output;
   try {
-    return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  } catch (err) {
-    console.error(`claim-check: gh failed — ${err?.message ?? err}`);
-    console.error("claim-check: cannot prove a file is unclaimed without it. Treat as UNKNOWN, not free.");
-    process.exit(2);
+    output = gh(["pr", "list", "--state", "open", "--limit", String(PR_LIMIT), "--json", "number,title,changedFiles"]);
+  } catch (error) {
+    unknown(`gh failed while listing open PRs — ${error?.message ?? error}`);
+  }
+
+  try {
+    const open = JSON.parse(output);
+    if (!Array.isArray(open)) throw new TypeError("expected an array");
+    if (open.length >= PR_LIMIT) unknown(`${open.length} open PRs hit the --limit ${PR_LIMIT} cap, so the list may be truncated.`);
+    return open;
+  } catch (error) {
+    unknown(`open PR list was malformed — ${error?.message ?? error}`);
   }
 }
 
 /*
-FNXC:FleetClaims 2026-07-31-21:10 (#3175 review — coderabbitai, "detect or eliminate truncation"):
-A SILENT CAP TURNS THIS TOOL INTO THE BUG IT PREVENTS.
-
-`--limit 100` returns at most 100 PRs. Past that, claims live in PRs this never sees and a claimed file
-reports UNCLAIMED — the one answer that must never be wrong here, because a worker acts on it by
-starting work someone else already started. This fleet ran 50+ open PRs at once, so the cap is not
-hypothetical.
-
-Fails closed rather than warning: a warning printed above an `UNCLAIMED` line is read as noise next to
-a verdict. Same reasoning as `gh()` exiting rather than returning empty.
+FNXC:FleetClaims 2026-08-01-16:09:
+GitHub refuses PR diffs over 300 files, but its pull-request-files API exposes a paginated list up to
+its documented 3,000-file ceiling. Reconcile every validated filename record with the authoritative
+`changedFiles` count before using a PR as claim evidence; missing, malformed, failed, mismatched, or
+above-ceiling data stays UNKNOWN. Evaluate every PR before deciding so incomplete data always outranks
+a known claim and workers never treat a partial scan as permission to overlap.
 */
-const PR_LIMIT = 300;
-const open = JSON.parse(gh(["pr", "list", "--state", "open", "--limit", String(PR_LIMIT), "--json", "number,title"]));
-if (open.length >= PR_LIMIT) {
-  console.error(`claim-check: ${open.length} open PRs hit the --limit ${PR_LIMIT} cap, so the list may be truncated.`);
-  console.error("claim-check: cannot prove a file is unclaimed from a partial list. Treat as UNKNOWN, not free.");
-  process.exit(2);
+function filesForPullRequest(pr) {
+  if (!Number.isInteger(pr?.number) || !Number.isInteger(pr?.changedFiles) || pr.changedFiles < 0) {
+    return { complete: false, reason: `PR #${pr?.number ?? "unknown"} has no valid changed-file count` };
+  }
+  if (pr.changedFiles > PR_FILE_API_CEILING) {
+    return { complete: false, reason: `PR #${pr.number} changes ${pr.changedFiles} files, above the ${PR_FILE_API_CEILING}-file API ceiling` };
+  }
+
+  const files = [];
+  const pageCount = Math.ceil(pr.changedFiles / PR_FILE_PAGE_SIZE);
+  for (let page = 1; page <= pageCount; page += 1) {
+    let output;
+    try {
+      output = gh([
+        "api",
+        `repos/{owner}/{repo}/pulls/${pr.number}/files?per_page=${PR_FILE_PAGE_SIZE}&page=${page}`,
+      ]);
+    } catch (error) {
+      return { complete: false, reason: `PR #${pr.number} files API failed on page ${page} — ${error?.message ?? error}` };
+    }
+
+    try {
+      const records = JSON.parse(output);
+      if (!Array.isArray(records) || records.some((record) => typeof record?.filename !== "string" || record.filename.length === 0)) {
+        throw new TypeError("expected an array of filename records");
+      }
+      files.push(...records.map((record) => record.filename));
+    } catch (error) {
+      return { complete: false, reason: `PR #${pr.number} files API returned malformed page ${page} — ${error?.message ?? error}` };
+    }
+  }
+
+  if (files.length !== pr.changedFiles) {
+    return { complete: false, reason: `PR #${pr.number} returned ${files.length} files but reports ${pr.changedFiles}` };
+  }
+  return { complete: true, files };
 }
-const hits = new Map(targets.map((t) => [t, []]));
+
+const open = readOpenPullRequests();
+const hits = new Map(targets.map((target) => [target, []]));
+const incomplete = [];
 
 for (const pr of open) {
-  /*
-  FNXC:FleetClaims 2026-07-31-21:10 (#3175 review — coderabbitai, "unreachable catch"): `gh()` exits on
-  failure, so this try/catch could never fire. Removed rather than made reachable: skipping a PR whose
-  diff failed is exactly how a claim goes unseen, and the fail-closed exit is already the right answer.
-  */
-  const files = gh(["pr", "diff", String(pr.number), "--name-only"]).split("\n").filter(Boolean);
-  for (const t of targets) {
-    if (files.some((f) => f.includes(t))) hits.get(t).push(pr);
+  const result = filesForPullRequest(pr);
+  if (!result.complete) {
+    incomplete.push(result.reason);
+    continue;
+  }
+  for (const target of targets) {
+    if (result.files.some((file) => file.includes(target))) hits.get(target).push(pr);
   }
 }
 
+if (incomplete.length > 0) unknown(incomplete.join("; "));
+
 let claimed = false;
-for (const t of targets) {
-  const prs = hits.get(t);
+for (const target of targets) {
+  const prs = hits.get(target);
   if (prs.length === 0) {
-    console.log(`UNCLAIMED  ${t}`);
+    console.log(`UNCLAIMED  ${target}`);
     continue;
   }
   claimed = true;
-  console.log(`CLAIMED    ${t}`);
+  console.log(`CLAIMED    ${target}`);
   for (const pr of prs) console.log(`             #${pr.number}  ${pr.title}`);
 }
 

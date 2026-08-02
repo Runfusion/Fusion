@@ -75,6 +75,34 @@ describe("heartbeat worktree cwd", () => {
     expect(taskStore.updateTask).toHaveBeenCalledWith("FN-1", { recoveryRetryCount: 1 });
   });
 
+  it("parks typed base-refresh refusals without consuming acquisition retries", async () => {
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-01-16:33:
+    A stale checkout is a deliberate no-session outcome. It must retain the concrete reason for
+    the next heartbeat rather than converting into the unrelated acquisition retry cap.
+    */
+    vi.spyOn(worktreeAcquisition, "acquireTaskWorktree").mockRejectedValueOnce(
+      new worktreeAcquisition.WorktreeBaseRefreshError({
+        kind: "base-reconciliation-required",
+        executionSafe: false,
+        durableBaseSha: "c0",
+        baseSha: "c1",
+      }),
+    );
+    const monitor = new HeartbeatMonitor({ store, taskStore, rootDir: "/repo" });
+
+    await monitor.executeHeartbeat({ agentId: "a1", source: "on_demand" });
+
+    expect(piModule.createFnAgent).not.toHaveBeenCalled();
+    expect(taskStore.updateTask).not.toHaveBeenCalledWith("FN-1", expect.objectContaining({ recoveryRetryCount: expect.anything() }));
+    expect(taskStore.logEntry).toHaveBeenCalledWith(
+      "FN-1",
+      "Worktree base refresh blocked heartbeat execution (base-reconciliation-required)",
+      expect.any(String),
+    );
+    expect(taskStore.moveTask).toHaveBeenCalledWith("FN-1", "todo", { preserveProgress: true });
+  });
+
   // FN-7721 regression: reproduces the reported "worktree-setup loop" symptom
   // (identical `git worktree add -b <branch>` failure repeated indefinitely
   // across heartbeat cycles, ~16.2h in the reported incident) and asserts the

@@ -1676,8 +1676,12 @@ async function readGrokUserSettingsApiKey(): Promise<string | null> {
 }
 
 /*
-FNXC:UsageProviders 2026-07-11-19:45:
-The grok CLI (`grok login`) stores OIDC subscription credentials in `~/.grok/auth.json` as a map keyed by `<issuer>::<client_id>` whose entries carry a Bearer `key`. Its `/usage` command fetches subscription credit usage from `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` (verified live: returns `config.creditUsagePercent`, weekly `currentPeriod`/`billingPeriodEnd`, and per-product `productUsage`). This gives the Usage dropdown a real percent-used weekly window for Grok subscription users, unlike the xAI inference API key which only supports an auth-validity card.
+FNXC:GrokUsage 2026-08-01-11:30:
+FN-8689 recovered no provenance chain from the installed Grok 0.2.118 asset to
+inspectable source, so this legacy billing request must not be described as the
+CLI's verified `/usage` behavior. Keep its credential handling local and emit a
+usage window only when this endpoint itself supplies a finite percentage; absent
+or unclassified fields remain authenticated but unmeterable.
 */
 async function readGrokCliOidcToken(): Promise<string | null> {
   try {
@@ -1731,6 +1735,9 @@ async function fetchGrokCliBillingUsage(
     /*
     FNXC:UsageProviders 2026-07-31-20:31:
     A real account reported zero Grok credit usage while its billing response omitted `creditUsagePercent`, disproving the former omitted-field-to-100% inference. Emit a credits window only for a finite API-supplied percentage; field absence must remain an authenticated but unmeterable state rather than fabricate consumption or infer expired CLI auth.
+
+    FNXC:GrokUsageProvenance 2026-08-01-15:21:
+    FN-8690 could not map the installed Grok CLI asset to readable source, so its compiled strings cannot justify a replacement request or formula. Keep this existing API-supplied percentage gate until provenance and a redacted source-identified capture establish formatter inputs.
     */
     const pctUsed = config.creditUsagePercent;
     if (typeof pctUsed !== "number" || !Number.isFinite(pctUsed)) return { outcome: "no-data" };

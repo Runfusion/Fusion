@@ -1784,6 +1784,9 @@ describe("TaskDetailModal", () => {
         models: availableModels,
         favoriteProviders: [],
         favoriteModels: [],
+        providerInstances: {
+          anthropic: { instances: [{ id: "anthropic-primary", isDefault: true }, { id: "anthropic-secondary", isDefault: false }] },
+        },
       });
 
       const initialTask = makeTask({ id: "FN-001", column: "triage", title: "Model sync test" });
@@ -1791,15 +1794,22 @@ describe("TaskDetailModal", () => {
         ...initialTask,
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
+        credentialInstanceId: null,
+      };
+      const updatedAfterExecutorInstance: Task = {
+        ...updatedAfterExecutor,
+        credentialInstanceId: "anthropic-secondary",
       };
       const updatedAfterValidator: Task = {
-        ...updatedAfterExecutor,
+        ...updatedAfterExecutorInstance,
         validatorModelProvider: "openai",
         validatorModelId: "gpt-4o",
+        validatorCredentialInstanceId: null,
       };
 
       mockUpdateTask
         .mockResolvedValueOnce(updatedAfterExecutor)
+        .mockResolvedValueOnce(updatedAfterExecutorInstance)
         .mockResolvedValueOnce(updatedAfterValidator);
 
       const addToast = vi.fn();
@@ -1842,30 +1852,55 @@ describe("TaskDetailModal", () => {
         expect(mockUpdateTask).toHaveBeenNthCalledWith(
           1,
           "FN-001",
-          expect.objectContaining({
+          {
             modelProvider: "anthropic",
             modelId: "claude-sonnet-4-5",
-          }),
+            credentialInstanceId: null,
+          },
           "project-alpha",
         );
       });
 
-      await user.click(screen.getByLabelText("Reviewer Model"));
-      await user.click(screen.getByText("GPT-4o"));
+      await user.click(screen.getByLabelText("Executor Model"));
+      await user.selectOptions(await screen.findByTestId("custom-model-dropdown-credential-instance"), "anthropic-secondary");
 
       await waitFor(() => {
         expect(mockUpdateTask).toHaveBeenNthCalledWith(
           2,
           "FN-001",
           {
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-4-5",
+            credentialInstanceId: "anthropic-secondary",
+          },
+          "project-alpha",
+        );
+        expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          credentialInstanceId: "anthropic-secondary",
+        }));
+      });
+
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByLabelText("Reviewer Model"));
+      await user.click(screen.getByText("GPT-4o"));
+
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenNthCalledWith(
+          3,
+          "FN-001",
+          {
             validatorModelProvider: "openai",
             validatorModelId: "gpt-4o",
+            validatorCredentialInstanceId: null,
           },
           "project-alpha",
         );
         expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({
           validatorModelProvider: "openai",
           validatorModelId: "gpt-4o",
+          validatorCredentialInstanceId: null,
         }));
         expect(addToast).not.toHaveBeenCalledWith(expect.any(String), "error");
       });
@@ -1892,6 +1927,9 @@ describe("TaskDetailModal", () => {
         ],
         favoriteProviders: [],
         favoriteModels: [],
+        providerInstances: {
+          anthropic: { instances: [{ id: "anthropic-primary", isDefault: true }, { id: "anthropic-secondary", isDefault: false }] },
+        },
       });
       mockUpdateTask.mockRejectedValueOnce(new Error("Task not found"));
 
@@ -1904,6 +1942,7 @@ describe("TaskDetailModal", () => {
             title: "Scoped reviewer failure",
             validatorModelProvider: "anthropic",
             validatorModelId: "claude-haiku-5",
+            validatorCredentialInstanceId: "anthropic-primary",
           })}
           projectId="project-alpha"
           onClose={noop}
@@ -1924,11 +1963,15 @@ describe("TaskDetailModal", () => {
         expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
           validatorModelProvider: "openai",
           validatorModelId: "gpt-4o",
+          validatorCredentialInstanceId: null,
         }, "project-alpha");
         expect(addToast).toHaveBeenCalledTimes(1);
         expect(addToast).toHaveBeenCalledWith("Task not found", "error");
         expect(screen.getByLabelText("Reviewer Model")).toHaveTextContent("Claude Haiku 5");
       });
+
+      await user.click(screen.getByLabelText("Reviewer Model"));
+      expect(await screen.findByTestId("custom-model-dropdown-credential-instance")).toHaveValue("anthropic-primary");
     });
 
     it("renders Save and Cancel in the modal footer, not inside the edit form body", () => {

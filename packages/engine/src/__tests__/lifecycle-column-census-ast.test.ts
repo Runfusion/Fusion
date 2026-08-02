@@ -262,6 +262,26 @@ describe("query-filter category", () => {
     const result = summarize(census(`await store.listTasks({ column: "backlog" });`));
     expect(result.properties.query).toBe(0);
   });
+
+  it("does not mistake a typed missing-task stand-in for a query", () => {
+    const result = summarize(census(`
+      evaluate({ linkedTask: linkedTask ?? { column: "todo" } as Pick<Task, "column"> });
+    `));
+    expect(result.properties.synthetic).toBe(1);
+    expect(result.properties.query).toBe(0);
+  });
+
+  it("does not let a state marker excuse a nearby executable query", () => {
+    const result = summarize(census(`
+      const tombstone = db.update(tasks).set({
+        /* ${DELIBERATE_MARKER} — STATE MARKER */
+        column: "archived",
+      });
+      await store.listTasks({ column: "todo" });
+    `));
+    expect(result.totals.deliberate).toBe(1);
+    expect(result.properties.query).toBe(1);
+  });
 });
 
 /*

@@ -10,6 +10,7 @@ import { routeModel } from "./model-router.js";
 export interface ResolvedModelSelection {
   provider?: string;
   modelId?: string;
+  credentialInstanceId?: string;
 }
 
 export type ModelThinkingPhase = "execution" | "planning" | "validation";
@@ -32,6 +33,7 @@ type ModelPair =
   | {
       provider?: string | null;
       modelId?: string | null;
+      credentialInstanceId?: string | null;
     }
   | undefined;
 
@@ -44,16 +46,31 @@ type TaskModelLike = {
   planningModelId?: string | null;
   mergerModelProvider?: string | null;
   mergerModelId?: string | null;
+  credentialInstanceId?: string | null;
+  validatorCredentialInstanceId?: string | null;
+  planningCredentialInstanceId?: string | null;
+  mergerCredentialInstanceId?: string | null;
 };
 
-function hasCompleteModelPair(pair: ModelPair): pair is { provider: string; modelId: string } {
+function hasCompleteModelPair(pair: ModelPair): pair is { provider: string; modelId: string; credentialInstanceId?: string | null } {
   return Boolean(pair?.provider && pair?.modelId);
 }
 
+/*
+ * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+ * Credential instance selection is persisted but inert in this slice. A winning provider/model
+ * pair carries only its own optional instance id so existing resolution precedence is unchanged.
+ */
 function pickFirstModelPair(...pairs: ModelPair[]): ResolvedModelSelection {
   for (const pair of pairs) {
     if (hasCompleteModelPair(pair)) {
-      return { provider: pair.provider, modelId: pair.modelId };
+      return {
+        provider: pair.provider,
+        modelId: pair.modelId,
+        ...(typeof pair.credentialInstanceId === "string" && pair.credentialInstanceId.length > 0
+          ? { credentialInstanceId: pair.credentialInstanceId }
+          : {}),
+      };
     }
   }
   return {};
@@ -150,10 +167,12 @@ export function resolveProjectDefaultModel(settings?: Partial<Settings>): Resolv
     pickFirstModelPair(
       {
         provider: settings?.defaultProviderOverride,
+        credentialInstanceId: settings?.defaultCredentialInstanceIdOverride,
         modelId: settings?.defaultModelIdOverride,
       },
       {
         provider: settings?.defaultProvider,
+        credentialInstanceId: settings?.defaultCredentialInstanceId,
         modelId: settings?.defaultModelId,
       },
     ),
@@ -166,14 +185,17 @@ export function resolveExecutionSettingsModel(settings?: Partial<Settings>): Res
     pickFirstModelPair(
       {
         provider: settings?.executionProvider,
+        credentialInstanceId: settings?.executionCredentialInstanceId,
         modelId: settings?.executionModelId,
       },
       {
         provider: settings?.executionGlobalProvider,
+        credentialInstanceId: settings?.executionGlobalCredentialInstanceId,
         modelId: settings?.executionGlobalModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "executionProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "executionModelId"),
       },
       resolveProjectDefaultModel(settings),
@@ -187,14 +209,17 @@ export function resolvePlanningSettingsModel(settings?: Partial<Settings>): Reso
     pickFirstModelPair(
       {
         provider: settings?.planningProvider,
+        credentialInstanceId: settings?.planningCredentialInstanceId,
         modelId: settings?.planningModelId,
       },
       {
         provider: settings?.planningGlobalProvider,
+        credentialInstanceId: settings?.planningGlobalCredentialInstanceId,
         modelId: settings?.planningGlobalModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "planningProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "planningModelId"),
       },
       resolveProjectDefaultModel(settings),
@@ -208,14 +233,17 @@ export function resolveValidatorSettingsModel(settings?: Partial<Settings>): Res
     pickFirstModelPair(
       {
         provider: settings?.validatorProvider,
+        credentialInstanceId: settings?.validatorCredentialInstanceId,
         modelId: settings?.validatorModelId,
       },
       {
         provider: settings?.validatorGlobalProvider,
+        credentialInstanceId: settings?.validatorGlobalCredentialInstanceId,
         modelId: settings?.validatorGlobalModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "validatorProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "validatorModelId"),
       },
       resolveProjectDefaultModel(settings),
@@ -229,14 +257,17 @@ export function resolveTitleSummarizerSettingsModel(settings?: Partial<Settings>
     pickFirstModelPair(
       {
         provider: settings?.titleSummarizerProvider,
+        credentialInstanceId: settings?.titleSummarizerCredentialInstanceId,
         modelId: settings?.titleSummarizerModelId,
       },
       {
         provider: settings?.titleSummarizerGlobalProvider,
+        credentialInstanceId: settings?.titleSummarizerGlobalCredentialInstanceId,
         modelId: settings?.titleSummarizerGlobalModelId,
       },
       {
         provider: settings?.planningProvider,
+        credentialInstanceId: settings?.planningCredentialInstanceId,
         modelId: settings?.planningModelId,
       },
       resolveProjectDefaultModel(settings),
@@ -256,18 +287,22 @@ export function resolveImportTranslateSettingsModel(settings?: Partial<Settings>
     pickFirstModelPair(
       {
         provider: settings?.importTranslateProvider,
+        credentialInstanceId: settings?.importTranslateCredentialInstanceId,
         modelId: settings?.importTranslateModelId,
       },
       {
         provider: settings?.importTranslateGlobalProvider,
+        credentialInstanceId: settings?.importTranslateGlobalCredentialInstanceId,
         modelId: settings?.importTranslateGlobalModelId,
       },
       {
         provider: settings?.titleSummarizerProvider,
+        credentialInstanceId: settings?.titleSummarizerCredentialInstanceId,
         modelId: settings?.titleSummarizerModelId,
       },
       {
         provider: settings?.titleSummarizerGlobalProvider,
+        credentialInstanceId: settings?.titleSummarizerGlobalCredentialInstanceId,
         modelId: settings?.titleSummarizerGlobalModelId,
       },
       resolveProjectDefaultModel(settings),
@@ -287,10 +322,12 @@ export function resolveMergerSettingsModel(settings?: Partial<Settings>): Resolv
     pickFirstModelPair(
       {
         provider: settings?.mergerProvider,
+        credentialInstanceId: settings?.mergerCredentialInstanceId,
         modelId: settings?.mergerModelId,
       },
       {
         provider: settings?.mergerGlobalProvider,
+        credentialInstanceId: settings?.mergerGlobalCredentialInstanceId,
         modelId: settings?.mergerGlobalModelId,
       },
       resolveProjectDefaultModel(settings),
@@ -310,10 +347,12 @@ export function resolveMergerFallbackModel(settings?: Partial<Settings>): Resolv
     pickFirstModelPair(
       {
         provider: settings?.mergerFallbackProvider,
+        credentialInstanceId: settings?.mergerFallbackCredentialInstanceId,
         modelId: settings?.mergerFallbackModelId,
       },
       {
         provider: settings?.fallbackProvider,
+        credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
       },
     ),
@@ -331,14 +370,17 @@ export function resolveExecutorFallbackModel(settings?: Partial<Settings>): Reso
     pickFirstModelPair(
       {
         provider: settings?.executionFallbackProvider,
+        credentialInstanceId: settings?.executionFallbackCredentialInstanceId,
         modelId: settings?.executionFallbackModelId,
       },
       {
         provider: settings?.fallbackProvider,
+        credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "executionFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "executionFallbackCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "executionFallbackModelId"),
       },
     ),
@@ -351,14 +393,17 @@ export function resolvePlanningFallbackModel(settings?: Partial<Settings>): Reso
     pickFirstModelPair(
       {
         provider: settings?.planningFallbackProvider,
+        credentialInstanceId: settings?.planningFallbackCredentialInstanceId,
         modelId: settings?.planningFallbackModelId,
       },
       {
         provider: settings?.fallbackProvider,
+        credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "planningFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "planningFallbackCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "planningFallbackModelId"),
       },
     ),
@@ -371,14 +416,17 @@ export function resolveValidatorFallbackModel(settings?: Partial<Settings>): Res
     pickFirstModelPair(
       {
         provider: settings?.validatorFallbackProvider,
+        credentialInstanceId: settings?.validatorFallbackCredentialInstanceId,
         modelId: settings?.validatorFallbackModelId,
       },
       {
         provider: settings?.fallbackProvider,
+        credentialInstanceId: settings?.fallbackCredentialInstanceId,
         modelId: settings?.fallbackModelId,
       },
       {
         provider: resolveSelectedWorkflowModelLane(settings, "validatorFallbackProvider"),
+        credentialInstanceId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackCredentialInstanceId"),
         modelId: resolveSelectedWorkflowModelLane(settings, "validatorFallbackModelId"),
       },
     ),
@@ -394,6 +442,7 @@ export function resolveTaskExecutionModel(
     pickFirstModelPair(
       {
         provider: task.modelProvider,
+        credentialInstanceId: task.credentialInstanceId,
         modelId: task.modelId,
       },
       resolveExecutionSettingsModel(settings),
@@ -410,6 +459,7 @@ export function resolveTaskValidatorModel(
     pickFirstModelPair(
       {
         provider: task.validatorModelProvider,
+        credentialInstanceId: task.validatorCredentialInstanceId,
         modelId: task.validatorModelId,
       },
       resolveValidatorSettingsModel(settings),
@@ -426,6 +476,7 @@ export function resolveTaskPlanningModel(
     pickFirstModelPair(
       {
         provider: task.planningModelProvider,
+        credentialInstanceId: task.planningCredentialInstanceId,
         modelId: task.planningModelId,
       },
       resolvePlanningSettingsModel(settings),
@@ -445,7 +496,7 @@ export function resolveTaskMergerModel(
 ): ResolvedModelSelection {
   return applyTestModeOverrides(
     pickFirstModelPair(
-      { provider: task.mergerModelProvider, modelId: task.mergerModelId },
+      { provider: task.mergerModelProvider, modelId: task.mergerModelId, credentialInstanceId: task.mergerCredentialInstanceId },
       resolveMergerSettingsModel(settings),
     ),
     settings,

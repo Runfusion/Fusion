@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { createContext, memo, useContext, useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
+import { isMobileViewport } from "../hooks/useViewportMode";
 import { linkifyReactChildren } from "../utils/filePathLinkify";
 import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipeline";
 
@@ -30,14 +31,74 @@ const mailboxMarkdownComponents: Components = {
   // Code-block override: fenced ```mermaid renders as a diagram; all other code
   // keeps default rendering. See createMermaidCodeComponent in markdownPipeline.
   code: createMermaidCodeComponent("mailbox-mermaid-diagram"),
-  // Open links in a new tab. Sanitize strips javascript: URLs and event handlers
-  // before this runs, so href is safe.
-  a: ({ children, ...props }) => (
-    <a {...props} target="_blank" rel="noopener noreferrer">
+};
+
+const TASK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
+const MailboxTaskLinkContext = createContext<((taskId: string) => void) | undefined>(undefined);
+
+type MailboxMarkdownAnchorProps = ComponentPropsWithoutRef<"a">;
+
+/**
+ * Returns a task id only for same-origin dashboard deep links with a valid task parameter.
+ *
+ * FNXC:MailboxTaskLinks 2026-08-01-07:20:
+ * Mail task links must open in the existing tab; on non-mobile viewports they open the
+ * task detail modal through the shared onOpenTask handler instead of booting another dashboard tab.
+ */
+export function parseInAppTaskHref(href: string | undefined): string | null {
+  if (!href || typeof window === "undefined") return null;
+
+  try {
+    const url = new URL(href, window.location.origin);
+    const taskId = url.searchParams.get("task");
+    return url.origin === window.location.origin && taskId && TASK_ID_PATTERN.test(taskId)
+      ? taskId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function MailboxMarkdownAnchor({ children, ...props }: MailboxMarkdownAnchorProps) {
+  const onOpenTask = useContext(MailboxTaskLinkContext);
+  const taskId = parseInAppTaskHref(props.href);
+
+  if (!taskId) {
+    /*
+    FNXC:MailboxTaskLinks 2026-08-01-07:34:
+    Only verified same-origin task deep links stay in the dashboard. Markdown sanitization makes all
+    remaining hrefs safe, while external and non-task links retain their established new-tab behavior.
+    */
+    return <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>;
+  }
+
+  if (!onOpenTask) return <a {...props}>{children}</a>;
+
+  return (
+    <a
+      {...props}
+      data-testid="mailbox-task-link"
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+
+        event.preventDefault();
+        /*
+        FNXC:MailboxTaskLinks 2026-08-01-07:20:
+        Mail task links retain their href for copy and modified-click behavior, but ordinary clicks
+        stay in the existing tab. Both viewport paths call the shared handler: desktop opens the task
+        detail modal and mobile opens its existing full-screen task sheet.
+        */
+        if (isMobileViewport()) {
+          onOpenTask(taskId);
+          return;
+        }
+        onOpenTask(taskId);
+      }}
+    >
       {children}
     </a>
-  ),
-};
+  );
+}
 
 const remarkPlugins: PluggableList = [remarkGfm];
 
@@ -48,6 +109,12 @@ interface MailboxMessageContentProps {
   className?: string;
   /** Optional data-testid for test selectors. */
   testId?: string;
+  /**
+   * FNXC:MailboxTaskLinks 2026-08-01-07:34:
+   * The supplied dashboard handler preserves existing-tab task navigation and selects the appropriate
+   * task-detail surface for the current viewport.
+   */
+  onOpenTask?: (taskId: string) => void;
 }
 
 /**
@@ -65,19 +132,26 @@ export const MailboxMessageContent = memo(function MailboxMessageContent({
   content,
   className,
   testId,
+  onOpenTask,
 }: MailboxMessageContentProps) {
+  const markdownComponents = useMemo(
+    () => ({ ...mailboxMarkdownComponents, a: MailboxMarkdownAnchor }),
+    [onOpenTask],
+  );
   const wrapperClass = className
     ? `mailbox-markdown ${className}`
     : "mailbox-markdown";
   return (
-    <div className={wrapperClass} data-testid={testId}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={sharedRehypePlugins}
-        components={mailboxMarkdownComponents}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
+    <MailboxTaskLinkContext.Provider value={onOpenTask}>
+      <div className={wrapperClass} data-testid={testId}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={sharedRehypePlugins}
+          components={markdownComponents}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    </MailboxTaskLinkContext.Provider>
   );
 });

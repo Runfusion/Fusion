@@ -2427,9 +2427,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   );
 
   /*
-  FNXC:TerminalModalControls 2026-07-31-22:19:
-  The tab scroller owns tab presses and horizontal panning; floating-window drags begin only on
-  the reserved grip so a tab interaction cannot leave a captured header drag behind.
+  FNXC:TerminalModalControls 2026-08-01-03:48:
+  The floating terminal must be movable by dragging the empty strip space behind the tabs and
+  anywhere else in the top toolbar, not only the reserved grip (operator request following
+  FN-8633). Only a press that starts inside a real tab surface (`.terminal-tab`, which includes
+  the close and new-tab buttons) stays a tab interaction; empty strip space bubbles to the
+  FloatingWindow `.terminal-header` delegated drag handle. Tab presses keep stopPropagation so
+  they can never leave a captured header drag behind, and an overflowing strip is replaced by
+  the `.terminal-mobile-tabs` dropdown, so no visible strip ever needs horizontal panning.
   */
   const renderTerminalTabStrip = (measuring = false) => (
     <div
@@ -2437,7 +2442,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       className={`terminal-tabs${measuring ? " terminal-tabs--measuring" : ""}`}
       data-testid={measuring ? "terminal-tabs-measuring" : "terminal-tabs"}
       aria-hidden={measuring || undefined}
-      onPointerDown={measuring ? undefined : (event) => event.stopPropagation()}
+      onPointerDown={measuring ? undefined : (event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest(".terminal-tab")) event.stopPropagation();
+      }}
     >
       {tabs.map((tab) => (
         <div

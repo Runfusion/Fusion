@@ -1,4 +1,4 @@
-import { createLogger } from "@fusion/core";
+import { createLogger, DEFAULT_PROVIDER_INSTANCE_ID, isValidProviderInstanceId } from "@fusion/core";
 
 const severityAuditLog = createLogger("dashboard-register-auth-routes");
 import type { Request } from "express";
@@ -117,6 +117,34 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * - If key length <= 8: return 8 bullets (never reveal short keys)
    * - Otherwise: first 3 chars + 5 bullets + last 4 chars
    */
+  /*
+  FNXC:ProviderAuth 2026-08-01-06:11:
+  Instance ids are scoped to a provider. Credential-establishing writes may create a supplied id,
+  but all management mutations require an existing row; labels are optional opaque display text.
+  */
+  function resolveInstanceId(value: unknown): string {
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) return DEFAULT_PROVIDER_INSTANCE_ID;
+    if (!isValidProviderInstanceId(value)) throw badRequest("instance must be a valid provider instance id");
+    return value;
+  }
+
+  // Empty strings are wire-compatible with omission, including for CLI-provider validation.
+  function hasExplicitInstance(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+  }
+
+  function validateLabel(value: unknown, required = false): string | undefined {
+    if (value === undefined || value === null || value === "") {
+      if (required) throw badRequest("label is required");
+      return undefined;
+    }
+    if (typeof value !== "string") throw badRequest("label must be a string");
+    const label = value.trim();
+    if (label.length > 60) throw badRequest("label must be at most 60 characters");
+    if (required && !label) throw badRequest("label is required");
+    return label || undefined;
+  }
+
   function maskApiKey(key: string): string {
     if (key.length <= 8) {
       return "••••••••";
@@ -220,19 +248,25 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   };
 
   type PendingLogin = {
+    provider: string;
     abortController: AbortController;
     inputPromise: Promise<string>;
     resolveInput: (input: string) => void;
     rejectInput: (error: Error) => void;
     inputSubmitted: boolean;
     manualCode?: ManualCodeConfig;
+    instanceId: string;
+    label?: string;
   };
 
-  /**
-   * Track in-progress login flows to prevent concurrent logins for the same provider.
-   * Maps provider ID → pending interactive login state.
-   */
+  /*
+  FNXC:ProviderAuth 2026-08-01-06:25:
+  OAuth is a multi-request flow, so its server-side entry is keyed by provider plus instance.
+  The bound id and opaque label must survive login, manual-code, cancel, and callback handling;
+  an absent or mismatched flow must fail rather than re-targeting the default credential.
+  */
   const loginInProgress = new Map<string, PendingLogin>();
+  const loginKey = (providerId: string, instanceId: string) => `${providerId}::${instanceId}`;
 
   /*
   FNXC:ProviderAuth 2026-07-05-00:00:
@@ -242,7 +276,8 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   const lastLoginError = new Map<string, string>();
 
   const OAUTH_SESSION_TTL_MS = 5 * 60 * 1000;
-  const oauthSessions = new Map<string, { port: number; path: string; originalRedirectUri: string; expiresAt: number }>();
+  type OauthSession = { port: number; path: string; originalRedirectUri: string; expiresAt: number; flowKey: string; provider: string; instanceId: string; timeout: ReturnType<typeof setTimeout> };
+  const oauthSessions = new Map<string, OauthSession>();
 
   function isLocalhostOrigin(origin: string): boolean {
     try {
@@ -259,25 +294,57 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${safeTitle}</title></head><body><h2>${safeTitle}</h2>${safeDetail ? `<p>${safeDetail}</p>` : ""}<p>You can close this tab.</p></body></html>`;
   }
 
-  function cleanupExpiredOauthSessions(): void {
-    const now = Date.now();
+  function deleteOauthSession(state: string): void {
+    const session = oauthSessions.get(state);
+    if (session) clearTimeout(session.timeout);
+    oauthSessions.delete(state);
+  }
+
+  function deleteOauthSessionsForFlow(flowKey: string): void {
     for (const [state, session] of oauthSessions.entries()) {
-      if (session.expiresAt <= now) {
-        oauthSessions.delete(state);
-      }
+      if (session.flowKey === flowKey) deleteOauthSession(state);
     }
   }
 
-  function setOauthSession(state: string, details: { port: number; path: string; originalRedirectUri: string }): void {
+  function cancelOauthFlow(flowKey: string, reason: Error): void {
+    const activeLogin = loginInProgress.get(flowKey);
+    if (!activeLogin) return;
+    loginInProgress.delete(flowKey);
+    deleteOauthSessionsForFlow(flowKey);
+    activeLogin.inputSubmitted = true;
+    activeLogin.rejectInput(reason);
+    activeLogin.abortController.abort();
+  }
+
+  function expireOauthSession(state: string, session: OauthSession): void {
+    deleteOauthSession(state);
+    // A proxy state is the only callback route for this dashboard-origin flow. Once it expires,
+    // terminate its bound login so a later callback cannot persist a cancelled account.
+    cancelOauthFlow(session.flowKey, new Error("OAuth session expired"));
+  }
+
+  function cleanupExpiredOauthSessions(): void {
+    const now = Date.now();
+    for (const [state, session] of oauthSessions.entries()) {
+      if (session.expiresAt <= now) expireOauthSession(state, session);
+    }
+  }
+
+  /*
+  FNXC:ProviderAuth 2026-08-01-07:20:
+  Redirect callbacks carry only OAuth state. Bind that state to the active provider-instance flow
+  and delete it on every terminal path, so a cancelled or forged callback can never resume or
+  overwrite a default credential.
+  */
+  function setOauthSession(state: string, details: { port: number; path: string; originalRedirectUri: string; flowKey: string; provider: string; instanceId: string }): void {
     cleanupExpiredOauthSessions();
-    oauthSessions.set(state, { ...details, expiresAt: Date.now() + OAUTH_SESSION_TTL_MS });
+    const expiresAt = Date.now() + OAUTH_SESSION_TTL_MS;
     const timeout = setTimeout(() => {
       const current = oauthSessions.get(state);
-      if (current && current.expiresAt <= Date.now()) {
-        oauthSessions.delete(state);
-      }
+      if (current?.expiresAt === expiresAt) expireOauthSession(state, current);
     }, OAUTH_SESSION_TTL_MS + 1_000);
     timeout.unref();
+    oauthSessions.set(state, { ...details, expiresAt, timeout });
   }
 
   function rewriteAuthUrl(authUrl: string, origin: string): { url: string; state: string; originalRedirectUri: string; port: number; path: string } {
@@ -569,6 +636,17 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
       const storage = getAuthStorage();
+      /*
+      FNXC:ProviderAuth 2026-08-01-19:10:
+      FN-8713: Express normally supplies `req.query`, but direct route consumers can omit it. Treat an absent query as empty while retaining instance validation; a well-formed dangling instance stays unauthenticated below and must never fall back to the provider default.
+      */
+      const query = req.query ?? {};
+      const requestedProvider = typeof query.provider === "string" ? query.provider : undefined;
+      const rawRequestedInstance = typeof query.instance === "string" ? query.instance : undefined;
+      if (rawRequestedInstance?.trim() && !requestedProvider) throw badRequest("instance requires provider");
+      if (rawRequestedInstance?.trim() && !isValidProviderInstanceId(rawRequestedInstance.trim())) throw badRequest("instance must be a valid provider instance id");
+      if (rawRequestedInstance?.trim() && requestedProvider && syntheticCliProviderIds.has(requestedProvider)) throw badRequest("CLI providers do not support credential instances");
+      const requestedInstance = rawRequestedInstance?.trim() || undefined;
       storage.reload();
       /*
       FNXC:ProviderAuth 2026-07-07-00:00:
@@ -631,7 +709,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           authenticated: hasAuth && !expired && !missingInferenceScope,
           type: "oauth" as const,
           expired: expired || missingInferenceScope,
-          loginInProgress: loginInProgress.has(statusProvider.id),
+          loginInProgress: [...loginInProgress.keys()].some((key) => key.startsWith(`${statusProvider.id}::`)),
           requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
           loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError ?? expiryLoginError,
         };
@@ -809,7 +887,61 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         gitCli = { available: false, installUrl: GIT_INSTALL_URL };
       }
 
-      res.json({ providers, ghCli, gitCli });
+      /*
+      FNXC:ProviderAuth 2026-08-01-06:11:
+      Status remains the full provider envelope: a targeted instance only re-points its named
+      provider. A missing well-formed target is safely unauthenticated, never default fallback.
+      */
+      const instanceProviders = providers.map((provider) => {
+        if (syntheticCliProviderIds.has(provider.id)) return provider;
+        const target = requestedProvider === provider.id ? requestedInstance : undefined;
+        const defaultRef = storage.getDefaultInstance?.(provider.id);
+        const instanceId = target ?? defaultRef?.instanceId ?? DEFAULT_PROVIDER_INSTANCE_ID;
+        const ref = { providerId: provider.id, instanceId };
+        const credential = target ? storage.getInstance?.(ref) : undefined;
+        if (target && !credential && storage.getInstance) {
+          return { ...provider, instanceId, authenticated: false, expired: false, keyHint: undefined, instances: [] };
+        }
+        const refs = storage.listInstances?.(provider.id) ?? [];
+        const targetedCredential = target ? credential : undefined;
+        const targetedKey = targetedCredential?.type === "api_key" && typeof targetedCredential.key === "string"
+          ? targetedCredential.key : undefined;
+        const targetExpired = targetedCredential?.type === "oauth"
+          && (typeof targetedCredential.expires !== "number" || Date.now() >= targetedCredential.expires);
+        return {
+          ...provider,
+          /*
+          FNXC:ProviderAuth 2026-08-01-06:57:
+          A targeted poll is also the UI's per-row flow signal, so it must not report a sibling
+          account's in-flight login as this account's activity.
+          */
+          ...(target ? { loginInProgress: loginInProgress.has(loginKey(provider.id, instanceId)) } : {}),
+          ...(targetedCredential ? {
+            authenticated: targetedCredential.type === "api_key" ? Boolean(targetedKey) : !targetExpired,
+            expired: Boolean(targetExpired),
+            ...(targetedKey ? { keyHint: maskApiKey(targetedKey) } : { keyHint: undefined }),
+          } : {}),
+          instanceId,
+          instances: (target ? refs.filter((item) => item.instanceId === instanceId) : refs)
+            .map((item) => {
+              const instanceCredential = storage.getInstance?.({ providerId: provider.id, instanceId: item.instanceId });
+              const instanceKey = instanceCredential?.type === "api_key" && typeof instanceCredential.key === "string"
+                ? instanceCredential.key : undefined;
+              const expired = instanceCredential?.type === "oauth"
+                && (typeof instanceCredential.expires !== "number" || Date.now() >= instanceCredential.expires);
+              return {
+                instanceId: item.instanceId,
+                ...(typeof instanceCredential?.label === "string" ? { label: instanceCredential.label } : {}),
+                isDefault: item.instanceId === defaultRef?.instanceId,
+                authenticated: instanceCredential?.type === "api_key" ? Boolean(instanceKey) : Boolean(instanceCredential) && !expired,
+                expired: Boolean(expired),
+                ...(instanceCredential?.type ? { type: instanceCredential.type } : {}),
+                ...(instanceKey ? { keyHint: maskApiKey(instanceKey) } : {}),
+              };
+            }),
+        };
+      });
+      res.json({ providers: instanceProviders, ghCli, gitCli });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -1429,18 +1561,23 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/auth/login", async (req, res) => {
     try {
-      const { provider, origin } = req.body;
+      const { provider, origin, instance, label } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
       if (origin !== undefined && typeof origin !== "string") {
         throw badRequest("origin must be a string when provided");
       }
-
+      // Validate before invoking OAuth; storage fallback retains legacy default behavior.
+      const instanceId = resolveInstanceId(instance);
+      const hasNamedInstance = hasExplicitInstance(instance);
+      const instanceLabel = validateLabel(label);
+      if (hasNamedInstance && syntheticCliProviderIds.has(provider)) throw badRequest("CLI providers do not support credential instances");
       const storageProvider = toOauthLoginProviderId(provider);
+      const flowKey = loginKey(provider, instanceId);
 
-      // Prevent concurrent logins for the same provider
-      if (loginInProgress.has(provider)) {
+      // Different accounts may authenticate together; only a duplicate account flow conflicts.
+      if (loginInProgress.has(flowKey)) {
         throw conflict(`Login already in progress for ${provider}`);
       }
 
@@ -1484,14 +1621,17 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         }
       });
       const pendingLogin: PendingLogin = {
+         provider,
          abortController,
          inputPromise,
          resolveInput,
          rejectInput,
          inputSubmitted: false,
          manualCode: getManualCodeConfig(storageProvider, origin),
+         instanceId,
+         label: instanceLabel,
        };
-       loginInProgress.set(provider, pendingLogin);
+       loginInProgress.set(flowKey, pendingLogin);
 
       let autoPromptConsumed = false;
 
@@ -1518,7 +1658,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       let resolvedDeviceCode: DeviceCodeInfo | undefined;
 
       // Start login flow in background — don't await the full login
-      const loginPromise = storage.login(loginProvider, {
+      const loginCallbacks: Parameters<AuthStorageLike["login"]>[1] = {
         onAuth: (info) => {
           if (!resolvedDeviceCode) {
             const parsedUserCode =
@@ -1565,7 +1705,10 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         onProgress: () => {}, // no-op for web UI
         onSelect: async (prompt) => selectOauthOption(storageProvider, prompt),
         signal: abortController.signal,
-      });
+      };
+      const loginPromise = hasNamedInstance && storage.loginInstance
+        ? storage.loginInstance({ providerId: loginProvider, instanceId }, loginCallbacks, instanceLabel)
+        : storage.login(loginProvider, loginCallbacks);
 
       // Race: either we get the auth URL or the login completes/fails first
       const timeout = setTimeout(() => {
@@ -1591,7 +1734,8 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         })
         .finally(() => {
           clearTimeout(timeout);
-          loginInProgress.delete(provider);
+          loginInProgress.delete(flowKey);
+          deleteOauthSessionsForFlow(flowKey);
         });
 
       const authInfo = await authUrlPromise;
@@ -1604,6 +1748,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           port: rewritten.port,
           path: rewritten.path,
           originalRedirectUri: rewritten.originalRedirectUri,
+          flowKey,
+          provider,
+          instanceId,
         });
         responseUrl = rewritten.url;
       }
@@ -1620,7 +1767,11 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
       // Clean up on error
       const provider = req.body?.provider;
-      if (provider) loginInProgress.delete(provider);
+      if (provider) {
+        const flowKey = loginKey(provider, resolveInstanceId(req.body?.instance));
+        loginInProgress.delete(flowKey);
+        deleteOauthSessionsForFlow(flowKey);
+      }
       rethrowAsApiError(err);
     }
   });
@@ -1633,21 +1784,19 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/auth/cancel", (req, res) => {
     try {
-      const { provider } = req.body;
+      const { provider, instance } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
 
-      const activeLogin = loginInProgress.get(provider);
+      const activeLogin = loginInProgress.get(loginKey(provider, resolveInstanceId(instance)));
       if (!activeLogin) {
         res.json({ success: true, cancelled: false });
         return;
       }
 
-      loginInProgress.delete(provider);
-      activeLogin.inputSubmitted = true;
-      activeLogin.rejectInput(new Error("cancelled"));
-      activeLogin.abortController.abort();
+      const activeFlowKey = loginKey(provider, activeLogin.instanceId);
+      cancelOauthFlow(activeFlowKey, new Error("cancelled"));
       res.json({ success: true, cancelled: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -1665,7 +1814,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/auth/manual-code", async (req, res) => {
     try {
-      const { provider, code } = req.body;
+      const { provider, code, instance } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
@@ -1673,11 +1822,17 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest("code is required");
       }
 
-      const activeLogin = loginInProgress.get(provider);
+      const instanceId = resolveInstanceId(instance);
+      const activeLogin = loginInProgress.get(loginKey(provider, instanceId));
+      const providerFlow = [...loginInProgress.values()].find((flow) => flow.provider === provider);
       if (!activeLogin) {
+        if (hasExplicitInstance(instance) && providerFlow && providerFlow.instanceId !== instanceId) {
+          throw badRequest("instance does not match the active login flow");
+        }
         throw conflict(`No login in progress for ${provider}`);
       }
 
+      if (hasExplicitInstance(instance) && instanceId !== activeLogin.instanceId) throw badRequest("instance does not match the active login flow");
       if (activeLogin.inputSubmitted) {
         res.json({ success: true, submitted: false });
         return;
@@ -1703,6 +1858,16 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       const state = typeof req.query.state === "string" ? req.query.state : undefined;
 
       if (error) {
+        if (state) {
+          const failedSession = oauthSessions.get(state);
+          if (failedSession) {
+            deleteOauthSession(state);
+            const failedLogin = loginInProgress.get(failedSession.flowKey);
+            if (failedLogin) {
+              cancelOauthFlow(failedSession.flowKey, new Error("cancelled"));
+            }
+          }
+        }
         return res.status(400).type("text/html").send(simpleErrorHtml("OAuth failed", error));
       }
 
@@ -1712,20 +1877,28 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
       cleanupExpiredOauthSessions();
       const session = oauthSessions.get(state);
-      if (!session || session.expiresAt <= Date.now()) {
-        oauthSessions.delete(state);
+      const activeLogin = session ? loginInProgress.get(session.flowKey) : undefined;
+      if (!session || session.expiresAt <= Date.now() || !activeLogin || activeLogin.provider !== session.provider || activeLogin.instanceId !== session.instanceId) {
+        if (session) deleteOauthSession(state);
         return res.status(400).type("text/html").send(simpleErrorHtml("OAuth session expired or not found"));
       }
 
       const callbackUrl = new URL(`http://localhost:${session.port}${session.path}`);
+      // Consume before proxying so a network error cannot leave a replayable state session.
+      deleteOauthSession(state);
       callbackUrl.searchParams.set("code", code);
       callbackUrl.searchParams.set("state", state);
 
-      const callbackResponse = await fetch(callbackUrl, { method: "GET" });
+      let callbackResponse: Response;
+      try {
+        callbackResponse = await fetch(callbackUrl, { method: "GET" });
+      } catch (error) {
+        // The state was consumed before forwarding; stop its bound flow on transport failure too.
+        cancelOauthFlow(session.flowKey, error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
       const responseBody = await callbackResponse.text();
       const contentType = callbackResponse.headers.get("content-type") ?? "text/html";
-
-      oauthSessions.delete(state);
 
       return res.status(callbackResponse.status).type(contentType).send(responseBody);
     } catch (err: unknown) {
@@ -1744,13 +1917,21 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/auth/logout", async (req, res) => {
     try {
-      const { provider } = req.body;
+      const { provider, instance } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
 
       const storage = getAuthStorage();
-      await storage.logout(toOauthCredentialProviderId(provider));
+      const instanceId = resolveInstanceId(instance);
+      if (hasExplicitInstance(instance) && syntheticCliProviderIds.has(provider)) throw badRequest("CLI providers do not support credential instances");
+      if (hasExplicitInstance(instance) && storage.logoutInstance) {
+        const ref = { providerId: toOauthCredentialProviderId(provider), instanceId };
+        if (!storage.getInstance?.(ref)) throw new ApiError(404, "Credential instance not found");
+        await storage.logoutInstance(ref);
+      } else {
+        await storage.logout(toOauthCredentialProviderId(provider));
+      }
       clearUsageCache();
       res.json({ success: true });
     } catch (err: unknown) {
@@ -1772,7 +1953,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/auth/api-key", async (req, res) => {
     try {
-      const { provider, apiKey } = req.body;
+      const { provider, apiKey, instance, label } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
@@ -1794,7 +1975,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest(`Unknown API key provider: ${provider}`);
       }
 
-      await storage.setApiKey(provider, apiKey.trim());
+      const instanceId = resolveInstanceId(instance);
+      const instanceLabel = validateLabel(label);
+      if (hasExplicitInstance(instance) && storage.setInstanceApiKey) {
+        await storage.setInstanceApiKey({ providerId: provider, instanceId }, apiKey.trim(), instanceLabel);
+      } else {
+        await storage.setApiKey(provider, apiKey.trim());
+      }
 
       let modelsRefreshed: number | undefined;
       let refreshReason: "no-models-from-cli" | "cli-failed" | "disabled-by-settings" | undefined;
@@ -1834,7 +2021,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.delete("/auth/api-key", async (req, res) => {
     try {
-      const { provider } = req.body;
+      const { provider, instance } = req.body;
       if (!provider || typeof provider !== "string") {
         throw badRequest("provider is required");
       }
@@ -1854,7 +2041,14 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest(`Unknown API key provider: ${provider}`);
       }
 
-      await storage.clearApiKey(provider);
+      const instanceId = resolveInstanceId(instance);
+      if (hasExplicitInstance(instance) && storage.clearInstanceApiKey) {
+        const ref = { providerId: provider, instanceId };
+        if (!storage.getInstance?.(ref)) throw new ApiError(404, "Credential instance not found");
+        await storage.clearInstanceApiKey(ref);
+      } else {
+        await storage.clearApiKey(provider);
+      }
       // No model refresh needed on delete: removing the key leaves nothing to sync.
       clearUsageCache();
       res.json({ success: true });
@@ -1864,5 +2058,62 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
       rethrowAsApiError(err);
     }
+  });
+
+  router.get("/auth/providers/:provider/instances", (req, res) => {
+    try {
+      const provider = req.params.provider;
+      const storage = getAuthStorage();
+      const refs = storage.listInstances?.(provider) ?? (storage.hasAuth(provider) || storage.hasApiKey?.(provider)
+        ? [{ providerId: provider, instanceId: DEFAULT_PROVIDER_INSTANCE_ID }]
+        : []);
+      const defaultRef = storage.getDefaultInstance?.(provider);
+      res.json({ instances: refs.map((ref) => {
+        const credential = storage.getInstance?.(ref);
+        const key = credential?.type === "api_key" && typeof credential.key === "string" ? credential.key : undefined;
+        // Instance listings must apply the same fail-safe OAuth expiry semantics as /auth/status.
+        const expired = credential?.type === "oauth" && (typeof credential.expires !== "number" || !Number.isFinite(credential.expires) || Date.now() >= credential.expires);
+        return {
+          instanceId: ref.instanceId,
+          ...(typeof credential?.label === "string" ? { label: credential.label } : {}),
+          isDefault: (defaultRef?.instanceId ?? DEFAULT_PROVIDER_INSTANCE_ID) === ref.instanceId,
+          authenticated: Boolean(credential ?? storage.hasAuth(provider)) && !expired,
+          ...(expired ? { expired: true } : {}),
+          ...(credential?.type ? { type: credential.type } : {}),
+          ...(key ? { keyHint: maskApiKey(key) } : {}),
+        };
+      }) });
+    } catch (err: unknown) { if (err instanceof ApiError) throw err; rethrowAsApiError(err); }
+  });
+
+  router.post("/auth/providers/:provider/instances/:instance/rename", async (req, res) => {
+    try {
+      const ref = { providerId: req.params.provider, instanceId: resolveInstanceId(req.params.instance) };
+      const storage = getAuthStorage();
+      if (!storage.getInstance?.(ref) || !storage.renameInstance) throw new ApiError(404, "Credential instance not found");
+      await storage.renameInstance(ref, validateLabel(req.body?.label, true));
+      res.json({ success: true });
+    } catch (err: unknown) { if (err instanceof ApiError) throw err; rethrowAsApiError(err); }
+  });
+
+  router.post("/auth/providers/:provider/default-instance", async (req, res) => {
+    try {
+      const ref = { providerId: req.params.provider, instanceId: resolveInstanceId(req.body?.instance) };
+      const storage = getAuthStorage();
+      if (!storage.getInstance?.(ref) || !storage.setDefaultInstance) throw new ApiError(404, "Credential instance not found");
+      await storage.setDefaultInstance(ref);
+      res.json({ success: true });
+    } catch (err: unknown) { if (err instanceof ApiError) throw err; rethrowAsApiError(err); }
+  });
+
+  router.delete("/auth/providers/:provider/instances/:instance", async (req, res) => {
+    try {
+      const ref = { providerId: req.params.provider, instanceId: resolveInstanceId(req.params.instance) };
+      const storage = getAuthStorage();
+      if (!storage.getInstance?.(ref) || !storage.removeInstance) throw new ApiError(404, "Credential instance not found");
+      await storage.removeInstance(ref);
+      clearUsageCache();
+      res.json({ success: true });
+    } catch (err: unknown) { if (err instanceof ApiError) throw err; rethrowAsApiError(err); }
   });
 };

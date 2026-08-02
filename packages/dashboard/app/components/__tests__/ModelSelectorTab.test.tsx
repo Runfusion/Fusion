@@ -35,6 +35,10 @@ async function selectDropdownOption(user: ReturnType<typeof userEvent.setup>, la
   await user.click(within(listbox).getByText(option));
 }
 
+/*
+FNXC:TaskDetailModels 2026-08-01-17:12:
+Every direct task-model save owns its lane's provider, model, and credential-instance tuple. An absent or stale instance is deliberately persisted as null so task execution cannot retain a credential override after its model selection changes.
+*/
 describe("ModelSelectorTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -57,6 +61,7 @@ describe("ModelSelectorTab", () => {
       ...task,
       modelProvider: "pi-claude-cli",
       modelId: "claude-sonnet-5",
+      credentialInstanceId: null,
     });
 
     render(
@@ -82,10 +87,12 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenCalledWith("FN-7398", {
         modelProvider: "pi-claude-cli",
         modelId: "claude-sonnet-5",
+        credentialInstanceId: null,
       }, undefined);
       expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({
         modelProvider: "pi-claude-cli",
         modelId: "claude-sonnet-5",
+        credentialInstanceId: null,
       }));
     });
   });
@@ -97,12 +104,16 @@ describe("ModelSelectorTab", () => {
     const task = makeTask({
       modelProvider: "pi-claude-cli",
       modelId: "claude-haiku-5",
+      credentialInstanceId: "executor-stale",
       validatorModelProvider: "pi-claude-cli",
       validatorModelId: "claude-haiku-5",
+      validatorCredentialInstanceId: "reviewer-stale",
       planningModelProvider: "pi-claude-cli",
       planningModelId: "claude-haiku-5",
+      planningCredentialInstanceId: "planning-stale",
       mergerModelProvider: "pi-claude-cli",
       mergerModelId: "claude-haiku-5",
+      mergerCredentialInstanceId: "merger-stale",
       thinkingLevel: "minimal",
     });
 
@@ -119,21 +130,25 @@ describe("ModelSelectorTab", () => {
         ...task,
         modelProvider: "pi-claude-cli",
         modelId: "claude-sonnet-5",
+        credentialInstanceId: null,
       })
       .mockResolvedValueOnce({
         ...task,
         validatorModelProvider: "pi-claude-cli",
         validatorModelId: "claude-sonnet-5",
+        validatorCredentialInstanceId: null,
       })
       .mockResolvedValueOnce({
         ...task,
         planningModelProvider: "pi-claude-cli",
         planningModelId: "claude-sonnet-5",
+        planningCredentialInstanceId: null,
       })
       .mockResolvedValueOnce({
         ...task,
         mergerModelProvider: "pi-claude-cli",
         mergerModelId: "claude-sonnet-5",
+        mergerCredentialInstanceId: null,
       })
       .mockResolvedValueOnce({
         ...task,
@@ -168,6 +183,7 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(1, "FN-7398", {
         modelProvider: "pi-claude-cli",
         modelId: "claude-sonnet-5",
+        credentialInstanceId: null,
       }, "project-alpha");
     });
 
@@ -176,6 +192,7 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(2, "FN-7398", {
         validatorModelProvider: "pi-claude-cli",
         validatorModelId: "claude-sonnet-5",
+        validatorCredentialInstanceId: null,
       }, "project-alpha");
     });
 
@@ -184,6 +201,7 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(3, "FN-7398", {
         planningModelProvider: "pi-claude-cli",
         planningModelId: "claude-sonnet-5",
+        planningCredentialInstanceId: null,
       }, "project-alpha");
     });
 
@@ -192,6 +210,7 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(4, "FN-7398", {
         mergerModelProvider: "pi-claude-cli",
         mergerModelId: "claude-sonnet-5",
+        mergerCredentialInstanceId: null,
       }, "project-alpha");
     });
 
@@ -234,11 +253,13 @@ describe("ModelSelectorTab", () => {
     const task = makeTask({
       modelProvider: "pi-claude-cli",
       modelId: "claude-sonnet-5",
+      credentialInstanceId: "executor-stale",
     });
     mockUpdateTask.mockResolvedValueOnce({
       ...task,
       modelProvider: null,
       modelId: null,
+      credentialInstanceId: null,
     });
 
     render(
@@ -257,6 +278,53 @@ describe("ModelSelectorTab", () => {
       expect(mockUpdateTask).toHaveBeenCalledWith("FN-7398", {
         modelProvider: null,
         modelId: null,
+        credentialInstanceId: null,
+      }, "project-alpha");
+    });
+  });
+
+  it("persists populated instances and clears stale instances with their executor tuple", async () => {
+    const user = userEvent.setup();
+    const task = makeTask({
+      modelProvider: "anthropic",
+      modelId: "claude-haiku-5",
+      credentialInstanceId: "anthropic-primary",
+    });
+    mockFetchModels.mockResolvedValue({
+      models: [
+        { provider: "anthropic", id: "claude-haiku-5", name: "Claude Haiku 5", reasoning: true, contextWindow: 200_000 },
+        { provider: "anthropic", id: "claude-sonnet-5", name: "Claude Sonnet 5", reasoning: true, contextWindow: 1_000_000 },
+      ],
+      favoriteProviders: [],
+      favoriteModels: [],
+      providerInstances: {
+        anthropic: { instances: [{ id: "anthropic-primary", isDefault: true }, { id: "anthropic-secondary", isDefault: false }] },
+      },
+    });
+    mockUpdateTask
+      .mockResolvedValueOnce({ ...task, credentialInstanceId: "anthropic-secondary" })
+      .mockResolvedValueOnce({ ...task, modelId: "claude-sonnet-5", credentialInstanceId: null });
+
+    render(<ModelSelectorTab task={task} addToast={vi.fn()} onTaskUpdated={vi.fn()} projectId="project-alpha" />);
+
+    await waitFor(() => expect(screen.getByLabelText("Executor Model")).toBeInTheDocument());
+    await user.click(screen.getByLabelText("Executor Model"));
+    await user.selectOptions(await screen.findByTestId("custom-model-dropdown-credential-instance"), "anthropic-secondary");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(1, "FN-7398", {
+        modelProvider: "anthropic",
+        modelId: "claude-haiku-5",
+        credentialInstanceId: "anthropic-secondary",
+      }, "project-alpha");
+    });
+
+    await user.keyboard("{Escape}");
+    await selectDropdownOption(user, "Executor Model", "Claude Sonnet 5");
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenNthCalledWith(2, "FN-7398", {
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-5",
+        credentialInstanceId: null,
       }, "project-alpha");
     });
   });

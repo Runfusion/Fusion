@@ -2140,7 +2140,7 @@ The embedded host fills its right-dock container; the inner shell drops overlay-
 FNXC:GitManager 2026-06-22-17:30:
 The embedded Git Manager adapts to its CONTAINER width, not the viewport, so the SAME embedded render works in both the narrow right dock and the wide pop-out (expand) modal:
 - Wide container (expand modal, > 560px): inherits the default desktop layout — vertical section sidebar + content (two-pane, like before). Those default rules live OUTSIDE this container query and are untouched.
-- Narrow container (dock, <= 560px): MIRRORS the phone-width (@media max-width:768px) gm layout exactly. Section tabs become a horizontal strip with ICON + TEXT LABEL per tab (the mobile .gm-nav-item: column, icon over label, comfortable padding), and every section (status grid, create form, branches, stashes, changes/files split, and the REMOTES view) collapses to its mobile single-column form. The remotes view is CSS-only (no JS width gating in GitManagerModal.tsx), so mirroring the @media remotes rules here gives the dock the mobile remotes selector strip + stacked detail.
+- Narrow container (dock, <= 560px): MIRRORS the phone-width (@media max-width:767.98px) gm layout exactly. Section tabs become a horizontal strip with ICON + TEXT LABEL per tab (the mobile .gm-nav-item: column, icon over label, comfortable padding), and every section (status grid, create form, branches, stashes, changes/files split, and the REMOTES view) collapses to its mobile single-column form. The remotes view is CSS-only (no JS width gating in GitManagerModal.tsx), so mirroring the @media remotes rules here gives the dock the mobile remotes selector strip + stacked detail.
 The previous bespoke rules here hid the tab labels (icon-only) and used a cramped strip; the user wants labeled tabs, more spacing, and the mobile remotes layout, so we now mirror the @media gm INTERNAL rules verbatim under the .gm-modal--embedded prefix. Only the viewport-takeover (.modal.gm-modal 100vw/100dvh) rules are NOT mirrored — they are scoped to :not(.gm-modal--embedded) and must never apply to the embedded pane.
 */
 @container gm-embedded (max-width: 560px) {
@@ -4364,7 +4364,7 @@ Worktree commit-history jumps are read-only navigation affordances. Keep the act
 
 /* ── Responsive ── */
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   .gm-changes-split {
     grid-template-columns: 1fr;
   }
@@ -4453,7 +4453,7 @@ Worktree commit-history jumps are read-only navigation affordances. Keep the act
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   /* Full-screen sheet on mobile — drop overlay padding so the modal
      actually fills the viewport instead of being pushed below it.
      FNXC:GitManager 2026-06-22-16:00: scope the viewport-takeover to the
@@ -4547,7 +4547,7 @@ Worktree commit-history jumps are read-only navigation affordances. Keep the act
 
   /*
   FNXC:GitManager 2026-06-22-19:35:
-  Mobile (<=768px) nav strip: ICON-ONLY compact tabs in one horizontally-scrolling row so multiple sections are visible at once. width:auto overrides the base .gm-nav-item width:100% that otherwise made each tab fill the row (one tab, swipe-only). Labels are sr-only (button title is the tooltip).
+  Phone (<768px) nav strip: ICON-ONLY compact tabs in one horizontally-scrolling row so multiple sections are visible at once. width:auto overrides the base .gm-nav-item width:100% that otherwise made each tab fill the row (one tab, swipe-only). Labels are sr-only (button title is the tooltip).
   */
   .gm-nav-item {
     flex: 0 0 auto;
@@ -5063,7 +5063,7 @@ Worktree commit-history jumps are read-only navigation affordances. Keep the act
   color: var(--text);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   /* Git manager: extend the canonical mobile rules above with safe-area and panel scroll behavior only. */
   .gm-content {
     padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));

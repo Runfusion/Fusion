@@ -39,12 +39,22 @@ let pgRow: TaskRowShape | null = null;
 
 vi.mock("../task-store/async-persistence.js", () => ({
   readTaskRow: vi.fn(async () => pgRow),
-  softDeleteTaskRowInTransaction: vi.fn(async () => undefined),
+  readTaskRowInTransaction: vi.fn(async () => pgRow),
+  softDeleteTaskRowInTransaction: vi.fn(async () => true),
 }));
 vi.mock("../task-store/async-lifecycle.js", () => ({
   findLiveLineageChildren: vi.fn(async () => [] as string[]),
   projectPartition: vi.fn(() => undefined),
   removeLineageReferences: vi.fn(async () => undefined),
+}));
+/*
+FNXC:LifecycleOutbox 2026-08-01-11:02:
+This in-memory delete harness has no PostgreSQL transaction executor. Mock the
+transaction-scoped writer at its module boundary so attribution tests retain their
+narrow audit focus while production deletes always use the durable outbox writer.
+*/
+vi.mock("../task-store/lifecycle-outbox.js", () => ({
+  appendTaskLifecycleEventInTransaction: vi.fn(async () => ({ seq: "1", eventId: "test-event" })),
 }));
 vi.mock("../async-mission-store-queries.js", () => ({
   getFeatureByTaskId: vi.fn(async () => null),
@@ -62,6 +72,7 @@ import {
   resolveHttpDeleteCallerKind,
   type TaskDeleteAuditContext,
 } from "../task-delete-attribution.js";
+import type { TaskDeleteClosureContext } from "../types.js";
 import type { Task } from "../types.js";
 
 function createTask(id: string): Task {
@@ -112,6 +123,7 @@ function makeDeleteStore(task: Task) {
       auditEvents.push(event);
     }),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
+    laneCache: { invalidate: vi.fn() },
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
     emit: vi.fn((event: string, ...args: unknown[]) => events.emit(event, ...args)),
     on: events.on.bind(events),
@@ -229,6 +241,36 @@ describe("task:deleted caller attribution", () => {
   Run-audit metadata is ids/counts/outcomes-only. Guard that attribution never smuggles prose or a
   user-agent string in: the two added fields must be a member of the closed union and a task id.
   */
+  it("emits and audits split closure context without changing ordinary deletes", async () => {
+    const task = createTask("FN-SPLIT");
+    const store = makeDeleteStore(task);
+    const closureContext: TaskDeleteClosureContext = {
+      kind: "split-into-subtasks",
+      childTaskIds: ["FN-CHILD-1", "FN-CHILD-2"],
+    };
+    const deleted = vi.fn();
+    store.on("task:deleted", deleted);
+
+    await deleteTaskImpl(store as never, task.id, { closureContext });
+
+    expect(deleted).toHaveBeenCalledWith(task, {
+      githubIssueAction: "auto",
+      closureContext,
+    });
+    expect(store.deletedAuditRow()?.metadata).toMatchObject({
+      closureKind: "split-into-subtasks",
+      closureChildTaskIds: ["FN-CHILD-1", "FN-CHILD-2"],
+    });
+
+    const ordinaryStore = makeDeleteStore(createTask("FN-ORDINARY"));
+    const ordinaryDeleted = vi.fn();
+    ordinaryStore.on("task:deleted", ordinaryDeleted);
+    await deleteTaskImpl(ordinaryStore as never, "FN-ORDINARY");
+    expect(ordinaryDeleted.mock.calls[0]?.[1]).toEqual({ githubIssueAction: "auto" });
+    expect(ordinaryStore.deletedAuditRow()?.metadata).not.toHaveProperty("closureKind");
+    expect(ordinaryStore.deletedAuditRow()?.metadata).not.toHaveProperty("closureChildTaskIds");
+  });
+
   it("records only enum/id attribution values", () => {
     const fields = buildDeleteCallerAuditFields({
       agentId: "pi-extension",

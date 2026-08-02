@@ -19,10 +19,21 @@ type WorkflowModelPair = {
     providerId: string;
     modelId: string;
     thinkingId?: string;
+    credentialInstanceId?: string;
     label: string;
     help: string;
 };
 const DEFAULT_WORKFLOW_ID = "builtin:coding";
+
+/*
+FNXC:SettingsCredentialInstance 2026-08-01-10:19:
+Project lanes that own persisted model overrides must carry their credential instance through the same form state. The empty Default choice deletes only that instance key, preserving provider/model selection while returning resolution to the provider default.
+*/
+const PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS = {
+    default: "defaultCredentialInstanceIdOverride",
+    merger: "mergerCredentialInstanceId",
+    "import-translate": "importTranslateCredentialInstanceId",
+} as const satisfies Partial<Record<string, keyof Settings>>;
 /*
 FNXC:SettingsModels 2026-06-16-19:58:
 Fallback model lanes must be configurable in all Settings surfaces: General uses the global Fallback Model, Workflow Values uses declared workflow settings, and Project Models exposes workflow fallback pairs declared by the active default workflow plus project-scoped title-summarizer fallback keys so saves never PATCH undeclared keys.
@@ -39,6 +50,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "planningProvider",
         modelId: "planningModelId",
         thinkingId: "planningThinkingLevel",
+        credentialInstanceId: "planningCredentialInstanceId",
         label: "Plan/Triage Model",
         help: "Provider and model used when planning or triaging tasks. Leave unset to fall through to the global lane, then the selected workflow.",
     },
@@ -47,6 +59,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "planningFallbackProvider",
         modelId: "planningFallbackModelId",
         thinkingId: "planningFallbackThinkingLevel",
+        credentialInstanceId: "planningFallbackCredentialInstanceId",
         label: "Planning Fallback Model",
         help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
     },
@@ -55,6 +68,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "executionProvider",
         modelId: "executionModelId",
         thinkingId: "executionThinkingLevel",
+        credentialInstanceId: "executionCredentialInstanceId",
         label: "Executor Model",
         help: "Provider and model used while executing workflow steps. Leave unset to fall through to the global lane, then the selected workflow.",
     },
@@ -63,6 +77,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "executionFallbackProvider",
         modelId: "executionFallbackModelId",
         thinkingId: "executionFallbackThinkingLevel",
+        credentialInstanceId: "executionFallbackCredentialInstanceId",
         label: "Executor Fallback Model",
         help: "Fallback provider and model used when the primary Executor model cannot be used.",
     },
@@ -71,6 +86,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "validatorProvider",
         modelId: "validatorModelId",
         thinkingId: "validatorThinkingLevel",
+        credentialInstanceId: "validatorCredentialInstanceId",
         label: "Reviewer Model",
         help: "Provider and model used for workflow review or validation lanes. Leave unset to fall through to the global lane, then the selected workflow.",
     },
@@ -79,6 +95,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         providerId: "validatorFallbackProvider",
         modelId: "validatorFallbackModelId",
         thinkingId: "validatorFallbackThinkingLevel",
+        credentialInstanceId: "validatorFallbackCredentialInstanceId",
         label: "Reviewer Fallback Model",
         help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
     },
@@ -90,7 +107,12 @@ function declaredWorkflowModelPairs(settings?: WorkflowSettingDefinition[]): Wor
         const model = settingsById.get(pair.modelId);
         const thinking = pair.thinkingId ? settingsById.get(pair.thinkingId) : undefined;
         return provider?.type === "string" && model?.type === "string" && (!pair.thinkingId || thinking?.type === "enum" || thinking?.type === "string");
-    });
+    }).map((pair) => ({
+        ...pair,
+        credentialInstanceId: settingsById.get(pair.credentialInstanceId ?? "")?.type === "string"
+            ? pair.credentialInstanceId
+            : undefined,
+    }));
 }
 function modelPairValue(values: Record<string, unknown>, pair: WorkflowModelPair): string {
     const provider = values[pair.providerId];
@@ -224,11 +246,12 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             const next = { ...current };
             delete next[pair.providerId];
             delete next[pair.modelId];
+            if (pair.credentialInstanceId) delete next[pair.credentialInstanceId];
             return next;
         });
         setWorkflowPending((current) => {
             if (!value) {
-                return { ...current, [pair.providerId]: null, [pair.modelId]: null };
+                return { ...current, [pair.providerId]: null, [pair.modelId]: null, ...(pair.credentialInstanceId ? { [pair.credentialInstanceId]: null } : {}) };
             }
             const slashIdx = value.indexOf("/");
             if (slashIdx <= 0)
@@ -237,8 +260,21 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 ...current,
                 [pair.providerId]: value.slice(0, slashIdx),
                 [pair.modelId]: value.slice(slashIdx + 1),
+                // FNXC:ModelDropdown 2026-08-01-10:45: A user-selected provider/model pair must clear its prior credential-instance companion.
+                ...(pair.credentialInstanceId ? { [pair.credentialInstanceId]: null } : {}),
             };
         });
+    }, [onWorkflowLanesChange]);
+    const setWorkflowCredentialInstanceValue = useCallback((pair: WorkflowModelPair, value: string) => {
+        if (!pair.credentialInstanceId) return;
+        onWorkflowLanesChange?.();
+        setWorkflowRejections((current) => {
+            if (!current[pair.credentialInstanceId as string]) return current;
+            const next = { ...current };
+            delete next[pair.credentialInstanceId as string];
+            return next;
+        });
+        setWorkflowPending((current) => ({ ...current, [pair.credentialInstanceId as string]: value || null }));
     }, [onWorkflowLanesChange]);
     const setWorkflowThinkingValue = useCallback((pair: WorkflowModelPair, value: string) => {
         if (!pair.thinkingId)
@@ -256,7 +292,8 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     const resetWorkflowPairValue = useCallback((pair: WorkflowModelPair) => {
         setWorkflowPairValue(pair, "");
         setWorkflowThinkingValue(pair, "");
-    }, [setWorkflowPairValue, setWorkflowThinkingValue]);
+        setWorkflowCredentialInstanceValue(pair, "");
+    }, [setWorkflowCredentialInstanceValue, setWorkflowPairValue, setWorkflowThinkingValue]);
     const saveWorkflowLanes = useCallback(async () => {
         if (!projectId || !workflowDirty)
             return;
@@ -301,6 +338,16 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     // FNXC:GitHubImportTranslate 2026-07-15-09:30: The import-translate lane is project-scoped (like merger/summarization), so its project override must be editable here — otherwise the lane's projectProviderKey/projectModelKey would be unreachable and only the global lane could ever be set.
     // FNXC:SettingsModels 2026-07-15-12:00: Summarization is still project-scoped but is rendered with the AI summarization section below rather than the general Model Lanes list.
     const projectModelLanes = modelLanes.filter((lane) => ["default", "merger", "import-translate"].includes(lane.laneId));
+    const credentialInstanceKeyForLane = (lane: ModelLane): keyof Settings | undefined => PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS[lane.laneId as keyof typeof PROJECT_LANE_CREDENTIAL_INSTANCE_KEYS];
+    const credentialInstanceValueForLane = (lane: ModelLane): string => {
+        const key = credentialInstanceKeyForLane(lane);
+        return key && typeof form[key] === "string" ? form[key] as string : "";
+    };
+    const setCredentialInstanceValueForLane = (lane: ModelLane, instanceId: string) => {
+        const key = credentialInstanceKeyForLane(lane);
+        if (!key) return;
+        setForm((current) => ({ ...current, [key]: instanceId || undefined } as SettingsFormState));
+    };
     const summarizationLane = modelLanes.find((lane) => lane.laneId === "summarization");
     const getProjectLaneLabel = (lane: ModelLane) => {
         if (lane.laneId === "default") {
@@ -343,10 +390,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     const mergerFallbackThinkingValue = typeof form.mergerFallbackThinkingLevel === "string"
         ? form.mergerFallbackThinkingLevel
         : "";
-    const mergerFallbackCustomized = Boolean(mergerFallbackValue || mergerFallbackThinkingValue);
+    const mergerFallbackCustomized = Boolean(mergerFallbackValue || mergerFallbackThinkingValue || form.mergerFallbackCredentialInstanceId);
     const setMergerFallbackValue = (value: string) => {
         if (!value) {
-            setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined } as SettingsFormState));
+            setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined, mergerFallbackCredentialInstanceId: undefined } as SettingsFormState));
             return;
         }
         const slashIdx = value.indexOf("/");
@@ -354,13 +401,15 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             ...f,
             mergerFallbackProvider: value.slice(0, slashIdx),
             mergerFallbackModelId: value.slice(slashIdx + 1),
+            // FNXC:ModelDropdown 2026-08-01-10:45: Explicit model selection clears the prior provider's credential-instance override.
+            mergerFallbackCredentialInstanceId: undefined,
         } as SettingsFormState));
     };
     const setMergerFallbackThinkingValue = (value: string) => {
         setForm((f) => ({ ...f, mergerFallbackThinkingLevel: value || undefined } as SettingsFormState));
     };
     const resetMergerFallbackValue = () => {
-        setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined } as SettingsFormState));
+        setForm((f) => ({ ...f, mergerFallbackProvider: undefined, mergerFallbackModelId: undefined, mergerFallbackThinkingLevel: undefined, mergerFallbackCredentialInstanceId: undefined } as SettingsFormState));
     };
     const renderMergerFallbackLane = () => (
       <div className="form-group" data-testid="project-model-lane-merger-fallback">
@@ -375,7 +424,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </div>
         <div className="settings-model-lane-control-row">
           <div className="settings-model-lane-control-main">
-            <CustomModelDropdown id="mergerFallbackModel" label="Merger Fallback Model" models={availableModels} value={mergerFallbackValue} onChange={setMergerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={mergerFallbackThinkingValue} onThinkingLevelChange={setMergerFallbackThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+            <CustomModelDropdown id="mergerFallbackModel" label="Merger Fallback Model" models={availableModels} value={mergerFallbackValue} onChange={setMergerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={mergerFallbackThinkingValue} onThinkingLevelChange={setMergerFallbackThinkingValue} credentialInstanceId={form.mergerFallbackCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, mergerFallbackCredentialInstanceId: instanceId || undefined } as SettingsFormState))} defaultThinkingLevel={form.defaultThinkingLevel}/>
           </div>
           {mergerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetMergerFallbackValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
@@ -387,10 +436,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     const titleSummarizerFallbackThinkingValue = typeof form.titleSummarizerFallbackThinkingLevel === "string"
         ? form.titleSummarizerFallbackThinkingLevel
         : "";
-    const titleSummarizerFallbackCustomized = Boolean(titleSummarizerFallbackValue || titleSummarizerFallbackThinkingValue);
+    const titleSummarizerFallbackCustomized = Boolean(titleSummarizerFallbackValue || titleSummarizerFallbackThinkingValue || form.titleSummarizerFallbackCredentialInstanceId);
     const setTitleSummarizerFallbackValue = (value: string) => {
         if (!value) {
-            setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined } as SettingsFormState));
+            setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined, titleSummarizerFallbackCredentialInstanceId: undefined } as SettingsFormState));
             return;
         }
         const slashIdx = value.indexOf("/");
@@ -398,13 +447,15 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             ...f,
             titleSummarizerFallbackProvider: value.slice(0, slashIdx),
             titleSummarizerFallbackModelId: value.slice(slashIdx + 1),
+            // FNXC:ModelDropdown 2026-08-01-10:45: A newly chosen fallback model cannot inherit a credential instance from its predecessor.
+            titleSummarizerFallbackCredentialInstanceId: undefined,
         } as SettingsFormState));
     };
     const setTitleSummarizerFallbackThinkingValue = (value: string) => {
         setForm((f) => ({ ...f, titleSummarizerFallbackThinkingLevel: value || undefined } as SettingsFormState));
     };
     const resetTitleSummarizerFallbackValue = () => {
-        setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined } as SettingsFormState));
+        setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined, titleSummarizerFallbackCredentialInstanceId: undefined } as SettingsFormState));
     };
     /*
      * FNXC:SettingsModels 2026-07-15-12:00:
@@ -416,7 +467,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         const status = getLaneStatus(lane);
         const value = getLaneValue(lane);
         const thinkingValue = getLaneThinkingValue(lane);
-        const isOverridden = status === "overridden" || Boolean(thinkingValue);
+        const isOverridden = status === "overridden" || Boolean(thinkingValue) || Boolean(credentialInstanceValueForLane(lane));
         const laneLabel = getProjectLaneLabel(lane);
         return (<div className="form-group" key={lane.laneId}>
         {/*
@@ -435,9 +486,9 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
         </div>
         <div className="settings-model-lane-control-row">
           <div className="settings-model-lane-control-main">
-            <CustomModelDropdown id={`${lane.laneId}Model`} label={laneLabel} models={availableModels} value={value} onChange={(val) => updateLaneValue(lane, val)} placeholder={lane.laneId === "default" ? "Use global default" : "Use global"} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(lane.projectThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
+            <CustomModelDropdown id={`${lane.laneId}Model`} label={laneLabel} models={availableModels} value={value} onChange={(val) => { updateLaneValue(lane, val); setCredentialInstanceValueForLane(lane, ""); }} credentialInstanceId={credentialInstanceValueForLane(lane)} onCredentialInstanceChange={(instanceId) => setCredentialInstanceValueForLane(lane, instanceId)} placeholder={lane.laneId === "default" ? "Use global default" : "Use global"} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(lane.projectThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
           </div>
-          {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+          {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); setCredentialInstanceValueForLane(lane, ""); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
       </div>);
     };
@@ -448,10 +499,10 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
     const chatDefaultThinkingValue = typeof form.chatDefaultThinkingLevel === "string"
         ? form.chatDefaultThinkingLevel
         : "";
-    const chatDefaultCustomized = Boolean(form.chatNewSessionMode || form.chatDefaultKind || form.chatDefaultAgentId || chatDefaultModelValue || chatDefaultThinkingValue);
+    const chatDefaultCustomized = Boolean(form.chatNewSessionMode || form.chatDefaultKind || form.chatDefaultAgentId || chatDefaultModelValue || chatDefaultThinkingValue || form.chatDefaultCredentialInstanceId);
     const setChatDefaultModelValue = (value: string) => {
         if (!value) {
-            setForm((f) => ({ ...f, chatDefaultKind: "model", chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
+            setForm((f) => ({ ...f, chatDefaultKind: "model", chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined, chatDefaultCredentialInstanceId: undefined } as SettingsFormState));
             return;
         }
         const slashIdx = value.indexOf("/");
@@ -463,13 +514,15 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
             chatDefaultAgentId: undefined,
             chatDefaultModelProvider: value.slice(0, slashIdx),
             chatDefaultModelId: value.slice(slashIdx + 1),
+            // FNXC:ModelDropdown 2026-08-01-10:45: A fresh chat model selection must not reuse a previous provider's credential instance.
+            chatDefaultCredentialInstanceId: undefined,
         } as SettingsFormState));
     };
     const setChatDefaultThinkingValue = (value: string) => {
         setForm((f) => ({ ...f, chatDefaultThinkingLevel: value || undefined } as SettingsFormState));
     };
     const resetChatDefaultValue = () => {
-        setForm((f) => ({ ...f, chatNewSessionMode: undefined, chatDefaultKind: undefined, chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState));
+        setForm((f) => ({ ...f, chatNewSessionMode: undefined, chatDefaultKind: undefined, chatDefaultAgentId: undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined, chatDefaultCredentialInstanceId: undefined } as SettingsFormState));
     };
     return (<>
 
@@ -536,7 +589,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           <button type="button" className={`chat-new-dialog-mode-btn${chatDefaultKind === "model" ? " chat-new-dialog-mode-btn--active" : ""}`} onClick={() => setForm((f) => ({ ...f, chatDefaultKind: "model", chatDefaultAgentId: undefined } as SettingsFormState))}>
             {t("settings.projectModels.chatDefaultKindModel", "Model")}
           </button>
-          <button type="button" className={`chat-new-dialog-mode-btn${chatDefaultKind === "agent" ? " chat-new-dialog-mode-btn--active" : ""}`} onClick={() => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState))}>
+          <button type="button" className={`chat-new-dialog-mode-btn${chatDefaultKind === "agent" ? " chat-new-dialog-mode-btn--active" : ""}`} onClick={() => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined, chatDefaultCredentialInstanceId: undefined } as SettingsFormState))}>
             {t("settings.projectModels.chatDefaultKindAgent", "Agent")}
           </button>
         </div>
@@ -553,7 +606,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">
-              <CustomModelDropdown id="chatDefaultModel" label={t("settings.projectModels.chatDefaultModel", "Chat Default Model")} models={availableModels} value={chatDefaultModelValue} onChange={setChatDefaultModelValue} placeholder={t("settings.projectModels.selectChatDefaultModel", "Select a chat default model")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={chatDefaultThinkingValue} onThinkingLevelChange={setChatDefaultThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+              <CustomModelDropdown id="chatDefaultModel" label={t("settings.projectModels.chatDefaultModel", "Chat Default Model")} models={availableModels} value={chatDefaultModelValue} onChange={setChatDefaultModelValue} credentialInstanceId={typeof form.chatDefaultCredentialInstanceId === "string" ? form.chatDefaultCredentialInstanceId : undefined} onCredentialInstanceChange={(instanceId) => setForm((current) => ({ ...current, chatDefaultCredentialInstanceId: instanceId || undefined } as SettingsFormState))} placeholder={t("settings.projectModels.selectChatDefaultModel", "Select a chat default model")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={chatDefaultThinkingValue} onThinkingLevelChange={setChatDefaultThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
             </div>
             {chatDefaultCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.chatDefaultReset", "Reset Chat default")} onClick={resetChatDefaultValue}>{t("settings.projectModels.reset", " Reset ")}</button>)}
           </div>
@@ -564,7 +617,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
           </div>
           <div className="settings-model-lane-control-row">
             <div className="settings-model-lane-control-main">
-              <select id="chatDefaultAgentId" value={form.chatDefaultAgentId ?? ""} disabled={agentsLoading || agents.length === 0} onChange={(event) => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultAgentId: event.target.value || undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined } as SettingsFormState))}>
+              <select id="chatDefaultAgentId" value={form.chatDefaultAgentId ?? ""} disabled={agentsLoading || agents.length === 0} onChange={(event) => setForm((f) => ({ ...f, chatDefaultKind: "agent", chatDefaultAgentId: event.target.value || undefined, chatDefaultModelProvider: undefined, chatDefaultModelId: undefined, chatDefaultThinkingLevel: undefined, chatDefaultCredentialInstanceId: undefined } as SettingsFormState))}>
                 <option value="">{agentsLoading ? t("settings.projectModels.loadingAgents", "Loading agents…") : t("settings.projectModels.selectChatDefaultAgent", "Select a chat default agent")}</option>
                 {agents.map((agent) => (<option key={agent.id} value={agent.id}>{agent.name} ({agent.role})</option>))}
               </select>
@@ -587,6 +640,8 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 const value = modelPairValue(effectiveWorkflowValues, pair);
                 const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
                 const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
+                const rawCredentialInstanceId = pair.credentialInstanceId ? effectiveWorkflowValues[pair.credentialInstanceId] : undefined;
+                const credentialInstanceId = typeof rawCredentialInstanceId === "string" ? rawCredentialInstanceId : "";
                 const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
                     ? workflowPending[pair.providerId] !== null
                     : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
@@ -596,8 +651,13 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                         ? workflowPending[pair.thinkingId] !== null
                         : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
                     : false;
-                const customized = modelCustomized || thinkingCustomized;
-                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined);
+                const credentialInstanceCustomized = pair.credentialInstanceId
+                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.credentialInstanceId)
+                        ? workflowPending[pair.credentialInstanceId] !== null
+                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.credentialInstanceId)))
+                    : false;
+                const customized = modelCustomized || thinkingCustomized || credentialInstanceCustomized;
+                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined) ?? (pair.credentialInstanceId ? workflowRejections[pair.credentialInstanceId]?.message : undefined);
                 return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
                 <div className="settings-model-lane-label-row">
                   <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
@@ -609,7 +669,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                 </div>
                 <div className="settings-model-lane-control-row">
                   <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
+                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={credentialInstanceId} onCredentialInstanceChange={pair.credentialInstanceId ? (instanceId) => setWorkflowCredentialInstanceValue(pair, instanceId) : undefined} showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
                   </div>
                   {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
                 </div>
@@ -687,7 +747,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                   <label htmlFor="preset-executor-model">{t("settings.projectModels.executorModel", "Executor model")}</label>
                   <CustomModelDropdown id="preset-executor-model" label="Preset executor model" models={availableModels} value={presetDraft.executorProvider && presetDraft.executorModelId ? `${presetDraft.executorProvider}/${presetDraft.executorModelId}` : ""} onChange={(val) => {
                     if (!val) {
-                        setPresetDraft((current) => current ? { ...current, executorProvider: undefined, executorModelId: undefined } : current);
+                        setPresetDraft((current) => current ? { ...current, executorProvider: undefined, executorModelId: undefined, executorCredentialInstanceId: undefined } : current);
                         return;
                     }
                     const slashIdx = val.indexOf("/");
@@ -695,14 +755,15 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                         ...current,
                         executorProvider: val.slice(0, slashIdx),
                         executorModelId: val.slice(slashIdx + 1),
+                        executorCredentialInstanceId: undefined,
                     } : current);
-                }} placeholder={t("settings.projectModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable"/>
+                }} placeholder={t("settings.projectModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={presetDraft.executorCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setPresetDraft((current) => current ? { ...current, ...(instanceId ? { executorCredentialInstanceId: instanceId } : { executorCredentialInstanceId: undefined }) } : current)}/>
                 </div>
                 <div className="form-group">
                   <label htmlFor="preset-validator-model">{t("settings.projectModels.reviewerModel", "Reviewer model")}</label>
                   <CustomModelDropdown id="preset-validator-model" label="Preset reviewer model" models={availableModels} value={presetDraft.validatorProvider && presetDraft.validatorModelId ? `${presetDraft.validatorProvider}/${presetDraft.validatorModelId}` : ""} onChange={(val) => {
                     if (!val) {
-                        setPresetDraft((current) => current ? { ...current, validatorProvider: undefined, validatorModelId: undefined } : current);
+                        setPresetDraft((current) => current ? { ...current, validatorProvider: undefined, validatorModelId: undefined, validatorCredentialInstanceId: undefined } : current);
                         return;
                     }
                     const slashIdx = val.indexOf("/");
@@ -710,8 +771,9 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
                         ...current,
                         validatorProvider: val.slice(0, slashIdx),
                         validatorModelId: val.slice(slashIdx + 1),
+                        validatorCredentialInstanceId: undefined,
                     } : current);
-                }} placeholder={t("settings.projectModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable"/>
+                }} placeholder={t("settings.projectModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" credentialInstanceId={presetDraft.validatorCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setPresetDraft((current) => current ? { ...current, ...(instanceId ? { validatorCredentialInstanceId: instanceId } : { validatorCredentialInstanceId: undefined }) } : current)}/>
                 </div>
               </>)}
           </div>
@@ -802,7 +864,7 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
               </div>
               <div className="settings-model-lane-control-row">
                 <div className="settings-model-lane-control-main">
-                  <CustomModelDropdown id="titleSummarizerFallbackModel" label="Title Summarizer Fallback Model" models={availableModels} value={titleSummarizerFallbackValue} onChange={setTitleSummarizerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={titleSummarizerFallbackThinkingValue} onThinkingLevelChange={setTitleSummarizerFallbackThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+                  <CustomModelDropdown id="titleSummarizerFallbackModel" label="Title Summarizer Fallback Model" models={availableModels} value={titleSummarizerFallbackValue} onChange={setTitleSummarizerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={titleSummarizerFallbackThinkingValue} onThinkingLevelChange={setTitleSummarizerFallbackThinkingValue} credentialInstanceId={form.titleSummarizerFallbackCredentialInstanceId} onCredentialInstanceChange={(instanceId) => setForm((f) => ({ ...f, titleSummarizerFallbackCredentialInstanceId: instanceId || undefined } as SettingsFormState))} defaultThinkingLevel={form.defaultThinkingLevel}/>
                 </div>
                 {titleSummarizerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetTitleSummarizerFallbackValue} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
               </div>

@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
 import { isTaskPopupVisibleForView, TASK_DETAIL_FLOATING_GEOMETRY_KEY } from "../App";
 import { FloatingWindow } from "../components/FloatingWindow";
-import type { PoppedOutTaskEntry } from "../hooks/usePoppedOutTasks";
+import { usePoppedOutTasks, type PoppedOutTaskEntry } from "../hooks/usePoppedOutTasks";
 import type { TaskView } from "../hooks/useViewState";
 
 function task(id: string): Task {
@@ -50,6 +51,27 @@ function expectVisibleTaskPopupShell(taskId: string, originTaskView?: TaskView) 
   expect(overlay.className).not.toContain("floating-window-overlay--hidden");
 }
 
+/*
+FNXC:TaskPopupViewGating 2026-08-01-16:04:
+FN-8698 requires Board and List clicks for the same task to address distinct retained popups.
+This interaction harness mirrors App's current-view popup callback so it catches any task-ID-only
+open or refresh regression while exercising the real FloatingWindow hidden/inert contract.
+*/
+function BoardListPopupInteractionHarness({ initialTaskView }: { initialTaskView: "board" | "list" }) {
+  const [taskView, setTaskView] = useState<TaskView>(initialTaskView);
+  const { entries, popOut, close } = usePoppedOutTasks();
+  const sharedTask = task("FN-8698");
+
+  return <>
+    <button onClick={() => setTaskView("board")}>Show Board</button>
+    <button onClick={() => setTaskView("list")}>Show List</button>
+    <button onClick={() => popOut(sharedTask, taskView)}>Open current task</button>
+    <button onClick={() => close(sharedTask.id, "board")}>Close Board task</button>
+    <button onClick={() => close(sharedTask.id, "list")}>Close List task</button>
+    <PopupGateHarness entries={entries} taskView={taskView} taskPopupsBoardListOnly />
+  </>;
+}
+
 const origins: TaskView[] = ["board", "list", "planning", "agents", "command-center", "missions", "documents", "plugin:sample"];
 
 describe("App task popup view gating", () => {
@@ -62,9 +84,48 @@ describe("App task popup view gating", () => {
     expectHiddenTaskPopupShell(entry.task.id, originTaskView);
   });
 
-  it("reproduces the planning-origin symptom and keeps another non-board/list view scoped", () => {
+  it.each([["board", "list"], ["list", "board"]] as const)("opens %s then %s popups independently for the same task and closes each without affecting the other", (firstView, secondView) => {
+    render(<BoardListPopupInteractionHarness initialTaskView={firstView} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open current task" }));
+    expectVisibleTaskPopupShell("FN-8698", firstView);
+
+    fireEvent.click(screen.getByRole("button", { name: secondView === "board" ? "Show Board" : "Show List" }));
+    expectHiddenTaskPopupShell("FN-8698", firstView);
+    fireEvent.click(screen.getByRole("button", { name: "Open current task" }));
+    expectVisibleTaskPopupShell("FN-8698", secondView);
+    expectHiddenTaskPopupShell("FN-8698", firstView);
+
+    // Reopening on the current view refreshes its own instance rather than adding a duplicate.
+    fireEvent.click(screen.getByRole("button", { name: "Open current task" }));
+    expect(screen.getAllByTestId(/floating-window-task-detail-FN-8698-(board|list)$/)).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: secondView === "board" ? "Close Board task" : "Close List task" }));
+    expect(screen.queryByTestId(popupTestId("FN-8698", secondView))).not.toBeInTheDocument();
+    expectHiddenTaskPopupShell("FN-8698", firstView);
+
+    fireEvent.click(screen.getByRole("button", { name: firstView === "board" ? "Show Board" : "Show List" }));
+    expectVisibleTaskPopupShell("FN-8698", firstView);
+    fireEvent.click(screen.getByRole("button", { name: firstView === "board" ? "Close Board task" : "Close List task" }));
+    expect(screen.queryByTestId(popupTestId("FN-8698", firstView))).not.toBeInTheDocument();
+  });
+
+  it("keeps independently addressed Board and List popups visible together when view gating is disabled", () => {
+    render(<PopupGateHarness
+      entries={[
+        { task: task("FN-8698"), originTaskView: "board" },
+        { task: task("FN-8698"), originTaskView: "list" },
+      ]}
+      taskView="planning"
+      taskPopupsBoardListOnly={false}
+    />);
+
+    expectVisibleTaskPopupShell("FN-8698", "board");
+    expectVisibleTaskPopupShell("FN-8698", "list");
+  });
+
+  it("keeps another non-board/list view scoped", () => {
     expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "planning", originTaskView: "planning" })).toBe(true);
-    expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "agents", originTaskView: "agents" })).toBe(true);
     expect(isTaskPopupVisibleForView({ taskPopupsBoardListOnly: true, taskView: "agents", originTaskView: "planning" })).toBe(false);
   });
 

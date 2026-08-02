@@ -293,9 +293,10 @@ vi.mock("../../components/TaskDetailModal", () => ({
       </div>
     </div>
   ),
-  TaskDetailContent: ({ task, onBackToBoard, onOpenDetail }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void }) => (
+  TaskDetailContent: ({ task, onBackToBoard, onOpenDetail, onRequestClose }: { task: { id: string; title?: string }; onBackToBoard?: () => void; onOpenDetail?: (task: { id: string; title?: string }) => void; onRequestClose?: () => void }) => (
     <section data-testid="main-panel-task-detail">
       <button type="button" onClick={onBackToBoard}>Back to board</button>
+      {onRequestClose && <button type="button" aria-label="Close" onClick={onRequestClose}>Close</button>}
       <h2>{task.title ?? task.id}</h2>
       <button type="button" onClick={() => onOpenDetail?.({ id: "FN-6965", title: "Nested task" })}>Open nested task</button>
     </section>
@@ -696,9 +697,117 @@ import { DEFAULT_BOARD_WORKFLOWS } from "./boardWorkflows.test-helpers";
 async function waitForAppShell(): Promise<void> {
   await waitFor(() => {
     expect(fetchSettings).toHaveBeenCalled();
-    expect(screen.getByTitle("Settings")).toBeTruthy();
+    if (mockUseViewportMode() === "mobile") {
+      expect(screen.getByTestId("mobile-view-toggle")).toBeTruthy();
+    } else {
+      expect(screen.getByTitle("Settings")).toBeTruthy();
+    }
   });
 }
+
+describe("FN-8698 retained Board and List task popups", () => {
+  it.each([
+    ["desktop", "board", "list"],
+    ["desktop", "list", "board"],
+    ["mobile", "board", "list"],
+    ["mobile", "list", "board"],
+  ] as const)("opens %s %s then %s independently through real view affordances", async (viewport, firstView, secondView) => {
+    /*
+    FNXC:TaskPopupViewGating 2026-08-01-16:47:
+    FN-8698 requires the real Board and List callback chain to preserve the origin view in both
+    directions at desktop and phone breakpoints. A hook-only harness cannot catch a callback that
+    drops that origin or mobile's separate header navigation path, so this App-level regression
+    clicks each shipped card/row and view-switch affordance and closes each instance independently.
+    */
+    if (viewport === "mobile") mockUseViewportMode.mockReturnValue("mobile");
+    const sharedTask = {
+      id: "FN-8698",
+      title: "Retained popup regression task",
+      description: "Verify Board and List popup identities remain independent.",
+      column: "todo",
+      status: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+    vi.mocked(fetchSettings).mockResolvedValue({
+      ...defaultSettings,
+      openMobileTasksInPopup: true,
+      taskPopupsBoardListOnly: true,
+    });
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [sharedTask],
+      isStale: false,
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      pauseTask: vi.fn(),
+      unpauseTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      resetTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      loadArchivedTasks: vi.fn(),
+      refreshTasks: vi.fn(),
+      ingestCreatedTasks: vi.fn(),
+      lastFetchTimeMs: Date.now(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    const taskSelector = (view: "board" | "list") => view === "board"
+      ? '.card[data-id="FN-8698"]'
+      : viewport === "mobile"
+        ? '.list-card[data-id="FN-8698"]'
+        : '.list-row[data-id="FN-8698"]';
+    const popupFor = (view: "board" | "list") => `floating-window-task-detail-FN-8698-${view}`;
+    const overlayFor = (view: "board" | "list") => `floating-window-overlay-task-detail-FN-8698-${view}`;
+    const showView = async (view: "board" | "list") => {
+      const navigationTestId = viewport === "mobile"
+        ? `mobile-view-toggle-${view}`
+        : `sidebar-nav-${view}`;
+      fireEvent.click(screen.getByTestId(navigationTestId));
+      await waitFor(() => expect(document.querySelector(taskSelector(view))).toBeTruthy());
+    };
+
+    if (firstView !== "board") await showView(firstView);
+    fireEvent.click(document.querySelector(taskSelector(firstView))!);
+    await waitFor(() => expect(screen.getByTestId(popupFor(firstView))).toBeTruthy());
+
+    await showView(secondView);
+    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.click(document.querySelector(taskSelector(secondView))!);
+    await waitFor(() => expect(screen.getByTestId(popupFor(secondView))).toBeTruthy());
+    expect(screen.getByTestId(overlayFor(secondView))).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByTestId(overlayFor(firstView))).toHaveAttribute("aria-hidden", "true");
+
+    if (viewport === "mobile") {
+      fireEvent.click(within(screen.getByTestId(popupFor(secondView))).getByRole("button", { name: "Close" }));
+    } else {
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+    await waitFor(() => expect(screen.queryByTestId(popupFor(secondView))).toBeNull());
+    expect(screen.getByTestId(popupFor(firstView))).toBeTruthy();
+
+    await showView(firstView);
+    await waitFor(() => expect(screen.getByTestId(overlayFor(firstView))).not.toHaveAttribute("aria-hidden"));
+    if (viewport === "mobile") {
+      fireEvent.click(within(screen.getByTestId(popupFor(firstView))).getByRole("button", { name: "Close" }));
+    } else {
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+    await waitFor(() => expect(screen.queryByTestId(popupFor(firstView))).toBeNull());
+  });
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

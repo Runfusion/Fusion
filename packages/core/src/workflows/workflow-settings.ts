@@ -29,6 +29,7 @@
 import type {
   WorkflowSettingDefinition,
 } from "./workflow-ir-types.js";
+import {isValidProviderInstanceId} from "../provider-instance.js";
 
 // ---------------------------------------------------------------------------
 // Typed rejection (TransitionRejection-style: flat, JSON-safe, no class)
@@ -250,6 +251,15 @@ export function validateSettingValuePatch(
           `setting '${key}' is not declared by the named workflow`,
         ),
       );
+      continue;
+    }
+    /*
+     * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+     * Workflow-declared credential companions are persisted but inert in this slice; reject malformed
+     * ids at this write boundary so resolution never needs runtime validation.
+     */
+    if (key.endsWith("CredentialInstanceId") && !isValidProviderInstanceId(value)) {
+      rejections.push(makeWorkflowSettingRejection("type-mismatch", key, `setting '${key}' must be a valid credential instance id`));
       continue;
     }
     const res = validateValue(setting, value);

@@ -451,7 +451,7 @@ Contract assertions (`MissionContractAssertion`) formalize what must be true for
 
 ```typescript
 interface MissionContractAssertion {
-  id: string;              // e.g., "CA-A3B7CD-E9F2"
+  id: string;              // e.g., "CA-MS39KJP3-000A-8ABO" (legacy: "CA-A3B7CD-E9F2")
   milestoneId: string;     // Parent milestone
   sourceFeatureId?: string;// Store-managed feature assertion owner
   scope: "feature" | "milestone";
@@ -492,9 +492,15 @@ interface MilestoneValidationRollup {
 5. `failed` — at least one assertion failed
 6. `blocked` — at least one assertion is blocked
 
+**Current-state reconciliation:** after every successful assertion create, repair, removal, or feature-link change, the PostgreSQL store recomputes this rollup from current assertions, persists the resulting `milestones.validationState` within the same project partition, then emits the validation refresh event. A repaired final failure therefore cannot leave a persisted `failed` badge behind; a remaining failed assertion still wins the current rollup.
+
+**Dashboard refresh freshness:** rollup and validation-telemetry requests share one monotonically increasing generation per milestone. A response writes badge/panel state only when its captured generation is still current, including initial selection, expansion, mutation refreshes, and SSE events. This is request ordering, not validation-state precedence: a newer response is allowed to legitimately transition a milestone back to `failed`.
+
 #### Completion Gate Contract
 
-Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, and each feature validator derives its verdict only from its **linked feature-scoped assertions**. Model summary prose, milestone prose, and behavioral results that are not mapped to a linked behavioral assertion cannot override that verdict.
+Canonical authored feature criteria live on `MissionFeature.acceptanceCriteria`, and each feature validator derives its verdict only from its **linked feature-scoped assertions**. Validator prompts list each authoritative assertion ID in brackets; responses must return exactly one result keyed by each listed ID. To recover older model output safely, only an exact-count response with zero recognized IDs is matched positionally and recorded in diagnostics. Partial matches, duplicate IDs, and count mismatches remain fail-closed. Model summary prose, milestone prose, and behavioral results that are not mapped to a linked behavioral assertion cannot override that verdict.
+
+Validator formatting recovery examines only the final 256 KiB of an assistant response and at most eight string-aware fenced or balanced-object candidates, preferring the final syntactically valid payload. It first parses exactly, then makes one conservative syntax-only repair for trailing commas or missing closing delimiters. Recovery never supplies or changes assertion IDs, verdicts, evidence, summaries, or aggregate outcomes; responses that remain invalid are recorded as validator errors and generate no remediation.
 
 Milestone prose is synchronized to one canonical milestone-scoped assertion with `origin: "derived_milestone_acceptance"`. PostgreSQL restricts uniqueness to that derived origin per project/milestone; authored, imported, and migrated legacy milestone assertions stay independent, are never inferred from title/text, and require no feature links. The rollup evaluates all milestone-scoped assertions after feature coverage and feature assertion passes are ready; unmet parent criteria therefore block milestone completion without failing an already-passing feature. See [Mission Completion Gate Contract](./missions-completion-contract.md).
 
@@ -749,3 +755,9 @@ A completed cited research finding may become a normal Mission Feature. Its feat
 ### Autonomous mission admission
 
 Autonomous no-task heartbeat agents may create or delegate implementation work only with an approved Feature → Slice → Milestone → Mission lineage. Interactive and task-scoped calls remain governed by `task_agent_mutation` policy as described in [Agent task-creation admission](#agent-task-creation-admission). The created task stores that lineage as task metadata; it does not replace the canonical feature `taskId` link except at the documented `defined`-feature first-task bootstrap. Missing or invalid autonomous lineage is rejected before a task is persisted. Roadmap reconciliation marks done tasks done, returns cancelled/requeued tasks to triaged, keeps failed work non-complete, and treats archives as non-promoting no-ops.
+
+## Validator memoization and failure budget (FN-8694)
+
+Automatic feature validation is content-addressed by landed SHA, resolved judge provider/model, and exact built prompts. Admission is atomic per project, feature, and fingerprint: a matching running run is not duplicated; the latest terminal history is selected deterministically; static-only passes are reused; and matching failures permit at most three dispatched runs before the feature is blocked. Behavioral or mixed assertions never reuse a pass, but failures are still budgeted.
+
+Every automatic suppression appends one visible `validation memoized` activity event (`running`, `reuse-pass`, or `budget-exhausted`) with fingerprint and referenced run ID where available. Initial exhaustion additionally appends one `validation-stuck` event; later unchanged sweeps append only their memoized event. No synthetic validator run or verdict is created for reuse or exhaustion. Missing landed SHA, fallback checkout, unknown judge identity, and preparation failures fail open to ordinary validation; `error`/`blocked` outcomes are transient. Manual validation bypasses memoization and the budget. Recovery revisits only a feature bearing FN-8694's budget-block provenance: unchanged inputs remain blocked, while a changed prepared fingerprint can be admitted; unrelated blocked/remediation/operator states stay closed.

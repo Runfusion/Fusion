@@ -479,7 +479,7 @@ The **Token Usage** panel in Agents view is derived from each agent's persisted 
 
 Fusion exposes cache-hit metrics across logs, API, and CLI:
 
-- **Structured logs:** `token-cache-metrics` channel emits per-persist records with `taskId`, `agentId`, `role`, `inputTokens`, `cachedTokens`, `cacheWriteTokens`, and computed `hitRatio`.
+- **Structured logs:** `token-cache-metrics` channel emits per-persist records with `taskId`, `agentId`, `role`, `inputTokens`, `cachedTokens`, `cacheWriteTokens`, and computed `hitRatio`. Emission is `debug`-gated (`FUSION_DEBUG=token-cache-metrics` or `FUSION_DEBUG=1`); it is off in the default TUI log pane.
 - **Agent API:** `GET /api/agents/:id/token-usage` returns `last24h`, `last7d`, and `allTime` window summaries for permanent agents.
 - **CLI rollup:** run `pnpm fn:cache-stats` (or `pnpm fn:cache-stats --json`) for project-wide role totals plus per-permanent-agent cache-hit summaries.
 

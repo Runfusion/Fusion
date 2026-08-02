@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
+import { projectAdmissionCoordinator } from "../concurrency.js";
 
 function withStoreEvents<T extends Record<string, unknown>>(store: T): T & { on: () => void; off: () => void } {
   return {
@@ -89,16 +90,19 @@ describe("refinement routing from triage", () => {
     const specifySpy = vi.spyOn(processor, "specifyTask").mockImplementation(async (task) => {
       const idx = tasks.findIndex((t) => t.id === task.id);
       if (idx >= 0) tasks[idx] = { ...tasks[idx], column: "todo" };
+      // The production planner transfers this bridge when it becomes durable;
+      // this lightweight mock must model that handoff between bounded polls.
+      projectAdmissionCoordinator.releaseReservation(task.id);
     });
 
     (processor as any).running = true;
     /*
-    FNXC:EngineTests 2026-07-23-21:30:
-    FN-8453 (commit eef5eb751) replaced priority-then-refinement triage ordering with the
-    unified oldest-createdAt-first admission coordinator. Refinements no longer jump the
-    same-priority backlog; the no-starvation invariant is now FIFO fairness — the newest
-    refinement behind an 8-task backlog at maxConcurrent=2 must be admitted within
-    ceil(9/2)=5 bounded polls.
+    FNXC:ConcurrencyAdmission 2026-08-01-15:42:
+    FN-8705 keeps FIFO fairness within the planning lane even though cross-lane
+    admission now prioritizes review and execution. Refinements do not jump the
+    planning backlog; the newest refinement behind an 8-task backlog at
+    maxConcurrent=2 must be admitted within ceil(9/2)=5 bounded polls once
+    higher-priority lanes have no accepting candidate.
     */
     for (let i = 0; i < 5; i++) {
       await (processor as any).poll();

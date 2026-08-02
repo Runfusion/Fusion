@@ -4364,8 +4364,15 @@ function InnerEditor({
                         )}
                         onChange={(value) => {
                           const { provider, modelId } = parseModelDropdownValue(value);
-                          updateSelectedData({ config: { modelProvider: provider || undefined, modelId: modelId || undefined } });
+                          updateSelectedData({ config: {
+                            modelProvider: provider || undefined,
+                            modelId: modelId || undefined,
+                            // FNXC:ModelDropdown 2026-08-01-10:45: Explicit node-model changes cannot retain an instance selected for the previous provider.
+                            credentialInstanceId: undefined,
+                          } });
                         }}
+                        credentialInstanceId={String(selectedNode.data.config?.credentialInstanceId ?? "")}
+                        onCredentialInstanceChange={(credentialInstanceId) => updateSelectedData({ config: { credentialInstanceId: credentialInstanceId || undefined } })}
                         /*
                          * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
                          * Prompt model nodes expose the shared inline thinking selector only for the model executor, persisting `config.thinkingLevel` with Default clearing the key.
@@ -5102,9 +5109,13 @@ function InnerEditor({
                             modelProvider: provider || undefined,
                             modelId: modelId || undefined,
                             model: value || undefined,
+                            // FNXC:ModelDropdown 2026-08-01-10:45: Review-node model changes clear the prior credential-instance override.
+                            credentialInstanceId: undefined,
                           },
                         });
                       }}
+                      credentialInstanceId={String(selectedNode.data.config?.credentialInstanceId ?? "")}
+                      onCredentialInstanceChange={(credentialInstanceId) => updateSelectedData({ config: { credentialInstanceId: credentialInstanceId || undefined } })}
                       /*
                        * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
                        * Step-review nodes share the model dropdown thinking selector so review sessions can pin reasoning effort with the same node > task > settings precedence as executor steps.

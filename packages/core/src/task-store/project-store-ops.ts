@@ -45,7 +45,7 @@ import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-
 import {listGoalCitations as listGoalCitationsAsync} from "./async/async-events.js";
 import type {RunAuditEventRow} from "../task-store/row-types.js";
 
-export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer,): Promise<TaskStore> {
+export async function getOrCreateForProjectImpl(store: typeof TaskStore, projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer, consumerId?: string,): Promise<TaskStore> {
     if (!asyncLayer) {
       throw new Error("TaskStore.getOrCreateForProject requires a project-bound PostgreSQL AsyncDataLayer");
     }
@@ -79,7 +79,7 @@ export async function getOrCreateForProjectImpl(store: typeof TaskStore, project
       const store = new TaskStore(
         context.workingDirectory,
         resolvedGlobalSettingsDir,
-        { asyncLayer },
+        { asyncLayer, ...(consumerId ? { consumerId } : {}) },
       );
       await store.init();
       return store;

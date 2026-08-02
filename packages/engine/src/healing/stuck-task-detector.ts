@@ -338,19 +338,30 @@ export class StuckTaskDetector {
           }
           this.exhaustedTasks.delete(canonicalId);
           this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
-          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+          /*
+          FNXC:EngineDiagnostics 2026-08-01-18:11:
+          Track/untrack bookkeeping fires on every session start and flooded the TUI during
+          replan storms. Keep on debug (FUSION_DEBUG=stuck-detector); real stuck detections
+          and terminal-skip/error paths stay on log/warn/error.
+          */
+          stuckLog.debug(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
         })
         .catch((err) => {
           stuckLog.error(`Failed to validate exhausted status for ${canonicalId}; proceeding to track:`, err);
           this.exhaustedTasks.delete(canonicalId);
           this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
-          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+          stuckLog.debug(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
         });
       return;
     }
 
     this.tracked.set(trackingKey, emptyTrackedTask(session, Date.now(), canonicalId));
-    stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+    /*
+    FNXC:EngineDiagnostics 2026-08-01-18:11:
+    Track bookkeeping is steady-state session lifecycle chatter — debug only
+    (FUSION_DEBUG=stuck-detector). Stuck detections remain log/warn/error.
+    */
+    stuckLog.debug(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
   }
 
   /**

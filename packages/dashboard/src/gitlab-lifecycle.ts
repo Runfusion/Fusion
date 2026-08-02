@@ -21,17 +21,34 @@ export async function resolveGitLabClient(store: TaskStore): Promise<{ ok: true;
   return { ok: true, client: new GitLabClient(resolution.auth) };
 }
 
-export function resolveGitLabTarget(task: Pick<Task, "gitlabTracking" | "sourceIssue" | "source">): GitLabLifecycleTarget | null {
+export type ResolveGitLabTargetOptions = {
+  fallbackToSourceOnInvalidTracking?: boolean;
+};
+
+/*
+FNXC:GitLabCloseOnDelete 2026-08-01-10:46:
+Malformed tracking data is inert by default. Only ordinary task deletion opts into source fallback,
+mirroring FN-8673's GitHub early-return fix without causing done-close, comment, tracking-state, or
+split-close consumers to mutate GitLab items they previously left untouched.
+*/
+export function resolveGitLabTarget(
+  task: Pick<Task, "gitlabTracking" | "sourceIssue" | "source">,
+  options: ResolveGitLabTargetOptions = {},
+): GitLabLifecycleTarget | null {
   const item = task.gitlabTracking?.item;
-  if (item) return resolveGitLabTargetFromItem(item);
+  if (item) {
+    const trackingTarget = resolveGitLabTargetFromItem(item);
+    if (trackingTarget) return trackingTarget;
+    if (!options.fallbackToSourceOnInvalidTracking) return null;
+  }
 
   const meta = task.source?.sourceMetadata && typeof task.source.sourceMetadata === "object"
     ? task.source.sourceMetadata as Record<string, unknown>
     : undefined;
-  if (task.sourceIssue?.provider !== "gitlab" || !meta) return null;
-  const kind = meta.resourceType === "merge_request" ? "merge_request" : meta.resourceType === "group_issue" ? "group_issue" : "project_issue";
-  const iid = typeof meta.iid === "number" ? meta.iid : task.sourceIssue.issueNumber;
-  const project = typeof meta.projectId === "number" ? meta.projectId : typeof meta.projectPath === "string" ? meta.projectPath : task.sourceIssue.repository;
+  if (task.sourceIssue?.provider !== "gitlab") return null;
+  const kind = meta?.resourceType === "merge_request" ? "merge_request" : meta?.resourceType === "group_issue" ? "group_issue" : "project_issue";
+  const iid = typeof meta?.iid === "number" ? meta.iid : task.sourceIssue.issueNumber;
+  const project = typeof meta?.projectId === "number" ? meta.projectId : typeof meta?.projectPath === "string" ? meta.projectPath : task.sourceIssue.repository;
   if (!Number.isInteger(iid) || !project) return null;
   return { kind, project, iid, label: formatGitLabTargetLabel(kind, project, iid), url: task.sourceIssue.url };
 }

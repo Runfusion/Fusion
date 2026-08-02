@@ -185,12 +185,13 @@ describe("Column count-flash", () => {
     expect(screen.getByLabelText("1 executing of 4")).toHaveTextContent("1/4");
   });
 
-  it("counts cards with active chrome — a REVISING (needs-replan) todo card and a live code-review gate", () => {
-    // Header must equal the number of visibly active cards (FN-8494 keeps REVISING chrome on
-    // parked replans; a live gate session runs with null status and a pending step lease).
+  it("does NOT count a parked REVISING (needs-replan) todo card — it holds no concurrency slot", () => {
+    // FNXC:BoardColumnCount 2026-08-01-17:53: summing lane headers must never exceed the
+    // engine's live-agent population, so the header counts only the shared Running predicate.
+    // A parked replan glows nothing and counts nothing; a live planning card counts.
     const tasks = [
       { ...makeTask("FN-001"), column: "todo" as ColumnType, status: "needs-replan" as any },
-      { ...makeTask("FN-002"), column: "todo" as ColumnType },
+      { ...makeTask("FN-002"), column: "todo" as ColumnType, status: "planning" as any },
     ];
     render(
       <Column

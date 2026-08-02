@@ -129,6 +129,53 @@ describe("log severity spam contract (source)", () => {
     expect(triage).not.toMatch(/planLog\.log\(`\$\{task\.id\}: using model \$\{modelDesc\}`\)/);
   });
 
+  /*
+  FNXC:EngineDiagnostics 2026-08-01-18:11:
+  Operator TUI review: replan-session setup chatter, track bookkeeping, intentional skill
+  exclusions, zero-recovery no-ops, and metrics JSON must stay off default info/warn.
+  */
+  it("session setup, track bookkeeping, skill exclusion, and zero-recovery stay debug-gated", () => {
+    const session = readSrc("agent-session-helpers.ts");
+    const stuck = readSrc("stuck-task-detector.ts");
+    const triage = readSrc("triage.ts");
+    const resolver = readSrc("skill-resolver.ts");
+    const selfHealing = readSrc("self-healing.ts");
+    const mission = readSrc("mission-execution-loop.ts");
+    const runtime = readSrc("runtimes/in-process-runtime.ts");
+    const tokenUsage = readSrc("session-token-usage.ts");
+    const executor = readSrc("executor.ts");
+
+    expect(session).toMatch(/sessionLog\.debug\(\s*`\[\$\{sessionPurpose\}\] grok-cli fallback/);
+    expect(session).toMatch(/sessionLog\.debug\(\s*`\[\$\{sessionPurpose\}\] Using runtime/);
+    expect(session).not.toMatch(/sessionLog\.log\(\s*`\[\$\{sessionPurpose\}\] grok-cli fallback/);
+    expect(session).not.toMatch(/sessionLog\.log\(\s*`\[\$\{sessionPurpose\}\] Using runtime/);
+
+    expect(stuck).toMatch(/stuckLog\.debug\(`Tracking task \$\{trackingKey\}/);
+    expect(stuck).not.toMatch(/stuckLog\.log\(`Tracking task \$\{trackingKey\}/);
+
+    expect(triage).toMatch(/planLog\.debug\(`\$\{task\.id\}: planning in \$\{leanPlanning/);
+    expect(triage).not.toMatch(/planLog\.log\(`\$\{task\.id\}: planning in \$\{leanPlanning/);
+    expect(triage).toMatch(/if \(code === "ENOENT"\) \{\s*planLog\.debug\(`\$\{taskId\}: failed to read PROMPT\.md/);
+    expect(triage).toMatch(/planLog\.warn\(`\$\{taskId\}: failed to read PROMPT\.md during \$\{context\}/);
+
+    expect(resolver).toMatch(/exists but is disabled by project execution settings/);
+    expect(resolver).toMatch(/type: "info" as ResourceDiagnostic\["type"\],\s*message: `Skill at '\$\{excludedPath\}' exists but is disabled/);
+
+    expect(selfHealing).toMatch(/if \(clearedAgentIds\.size > 0\) \{\s*log\.log\(`Recovered \$\{clearedAgentIds\.size\} drifted/);
+    expect(selfHealing).toMatch(/log\.debug\(`Recovered \$\{clearedAgentIds\.size\} drifted durable agent task link/);
+
+    expect(mission).toMatch(/if \(recoveredCount > 0\) \{\s*loopLog\.log\(`Active mission recovery complete/);
+    expect(mission).toMatch(/loopLog\.debug\(`Active mission recovery complete: recovered \$\{recoveredCount\} features`\)/);
+
+    expect(runtime).toMatch(/runtimeLog\.debug\(`Specifying \$\{t\.id\}\.\.\.`\)/);
+    expect(runtime).not.toMatch(/runtimeLog\.log\(`Specifying \$\{t\.id\}\.\.\.`\)/);
+
+    expect(tokenUsage).toMatch(/cacheMetricsLog\.debug\(JSON\.stringify\(/);
+    expect(tokenUsage).not.toMatch(/cacheMetricsLog\.log\(JSON\.stringify\(/);
+    expect(executor).toMatch(/tokenCacheMetricsLog\.debug\(JSON\.stringify\(/);
+    expect(executor).not.toMatch(/tokenCacheMetricsLog\.log\(JSON\.stringify\(/);
+  });
+
   it("self-healing no-action/skip, worktree-pool probes, and ntfy bookkeeping use debug", () => {
     const sh = readSrc("self-healing.ts");
     const wt = readSrc("worktree-pool.ts");

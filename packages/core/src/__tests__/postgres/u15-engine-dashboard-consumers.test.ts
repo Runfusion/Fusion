@@ -24,7 +24,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { execSync } from "node:child_process";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 import { createConnectionSetFromUrl } from "../../postgres/connection.js";
@@ -144,10 +144,11 @@ async function teardownCtx(ctx: TestCtx | null): Promise<void> {
 async function seedTask(
   ctx: TestCtx,
   id: string,
-  options: { column?: string; deletedAt?: string | null } = {},
+  options: { column?: string; deletedAt?: string | null; projectId?: string } = {},
 ): Promise<void> {
   const now = new Date().toISOString();
   await ctx.adminDb.insert(schema.project.tasks).values({
+    projectId: options.projectId ?? "__legacy_unscoped__",
     id,
     description: `seeded ${id}`,
     column: options.column ?? "todo",
@@ -400,6 +401,32 @@ pgDescribe("U15 engine + dashboard consumers (PostgreSQL)", () => {
       const candidates = await listSoftDeletedColumnDriftCandidates(ctx.layer.db);
       const ids = candidates.map((c) => c.id);
       expect(ids).toEqual(["FN-d1"]);
+    });
+
+    it("scopes drift reconciliation to the data layer project partition", async () => {
+      ctx = await setupCtx();
+      const deletedAt = new Date().toISOString();
+      await seedTask(ctx, "FN-shared", { column: "todo", deletedAt, projectId: "project-a" });
+      await seedTask(ctx, "FN-shared", { column: "in-review", deletedAt, projectId: "project-b" });
+      const projectALayer = { ...ctx.layer, projectId: "project-a" } as AsyncDataLayer;
+
+      const audited: Array<{ id: string; previousColumn: string }> = [];
+      const result = await reconcileSoftDeletedColumnDriftAsync(projectALayer, async (candidate) => {
+        audited.push(candidate);
+      });
+
+      expect(result.reconciled).toBe(1);
+      expect(audited).toEqual([{ id: "FN-shared", previousColumn: "todo" }]);
+      const projectARow = await ctx.adminDb.select().from(schema.project.tasks).where(and(
+        eq(schema.project.tasks.projectId, "project-a"),
+        eq(schema.project.tasks.id, "FN-shared"),
+      ));
+      const projectBRow = await ctx.adminDb.select().from(schema.project.tasks).where(and(
+        eq(schema.project.tasks.projectId, "project-b"),
+        eq(schema.project.tasks.id, "FN-shared"),
+      ));
+      expect(projectARow[0]?.column).toBe("archived");
+      expect(projectBRow[0]?.column).toBe("in-review");
     });
 
     it("returns zero reconciled when no candidates exist", async () => {

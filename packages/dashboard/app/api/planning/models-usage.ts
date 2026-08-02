@@ -14,22 +14,45 @@ export interface ModelInfo {
   name: string;
   reasoning: boolean;
   contextWindow: number;
+  /** Provider-wide public instance metadata, attached by fetchModels for picker consumers. */
+  credentialInstances?: ProviderCredentialInstanceSummary[];
 }
 
 /** Response from the models endpoint */
+/** Public metadata for a configured provider credential; it never contains credential material. */
+export interface ProviderCredentialInstanceSummary {
+  id: string;
+  isDefault: boolean;
+  unavailableModelIds?: string[];
+}
+
 export interface ModelsResponse {
   models: ModelInfo[];
   favoriteProviders: string[];
   favoriteModels: string[];
   defaultProvider?: string;
+  /** Configured credential instances keyed by provider, omitted by older servers. */
+  providerInstances?: Record<string, { instances: ProviderCredentialInstanceSummary[] }>;
   defaultModelId?: string;
   resolvedPlanningProvider?: string;
   resolvedPlanningModelId?: string;
 }
 
 /** Fetch available AI models from the model registry along with favoriteProviders */
-export function fetchModels(): Promise<ModelsResponse> {
-  return api<ModelsResponse>("/models");
+export async function fetchModels(): Promise<ModelsResponse> {
+  const response = await api<ModelsResponse>("/models");
+
+  /*
+  FNXC:ModelDropdown 2026-08-01-09:49:
+  Every existing model picker already receives the catalog returned by this client. Attach public provider-instance summaries to those rows so callers that only retain `models` still receive the optional picker availability without a parallel endpoint or a second dropdown implementation.
+  */
+  return {
+    ...response,
+    models: (response.models ?? []).map((model) => ({
+      ...model,
+      credentialInstances: response.providerInstances?.[model.provider]?.instances,
+    })),
+  };
 }
 
 // --- Usage API ---

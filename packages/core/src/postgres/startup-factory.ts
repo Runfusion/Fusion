@@ -765,6 +765,8 @@ export interface CreateTaskStoreForBackendOptions {
    * constructor (matching `new TaskStore(rootDir)`).
    */
   readonly projectId?: string;
+  /** Explicit durable lifecycle observer identity; absent deliberately disables observation. */
+  readonly consumerId?: string;
   /*
   FNXC:MigrationHoldingPage 2026-07-17-12:20:
   During the one-time SQLite→PostgreSQL auto-migration the caller's HTTP server is
@@ -1259,10 +1261,12 @@ export async function createTaskStoreForBackend(
         undefined,
         options.globalSettingsDir,
         asyncLayer,
+        options.consumerId,
       );
     } else {
       taskStore = new TaskStore(rootDir, options.globalSettingsDir, {
         asyncLayer,
+        ...(options.consumerId ? { consumerId: options.consumerId } : {}),
       });
       await taskStore.init();
     }

@@ -73,6 +73,20 @@ describe("TriageProcessor soft-delete aborts", () => {
     processor.stop();
   });
 
+  it("receives the unchanged TaskStore delete payload when metadata is present", async () => {
+    const { store, emit } = createEventedStore();
+    const processor = new TriageProcessor(store, "/tmp/root");
+    const abort = vi.fn().mockResolvedValue(undefined);
+
+    processor.start();
+    (processor as any).activeSessions.set("FN-TEST-META", { abort, dispose: vi.fn() });
+    emit("task:deleted", { id: "FN-TEST-META", deletedAt: "2026-08-01T09:59:00.000Z" }, { githubIssueAction: "auto" });
+    await Promise.resolve();
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    processor.stop();
+  });
+
   it("is a no-op for unknown soft-deleted ids", () => {
     const { store, emit } = createEventedStore();
     const processor = new TriageProcessor(store, "/tmp/root");

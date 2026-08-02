@@ -722,6 +722,13 @@ export {
 } from "./worktree/worktrunk-failure-handler.js";
 export { isUsageLimitError, UsageLimitPauser } from "./errors/usage-limit-detector.js";
 export { withRateLimitRetry } from "./errors/rate-limit-retry.js";
+export {
+  CredentialInstanceRotator,
+  CREDENTIAL_INSTANCE_COOLDOWN_MS,
+  createRotationPlan,
+  type RotationEvent,
+  type RotationLane,
+} from "./credential-instance-rotation.js";
 export { ResearchOrchestrator, type ResearchOrchestratorOptions, type ResearchOrchestratorStatus, type ResearchOrchestratorStartOptions } from "./research/research-orchestrator.js";
 export {
   ExperimentExecutor,

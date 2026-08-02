@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, useId } from "react"
 import { THINKING_LEVELS } from "@fusion/core";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
-import type { ModelInfo } from "../api";
+import type { ModelInfo, ProviderCredentialInstanceSummary } from "../api";
 import { filterModels } from "../utils/modelFilter";
 import { ProviderIcon } from "./ProviderIcon";
 
@@ -39,10 +39,17 @@ export interface CustomModelDropdownProps {
   defaultThinkingLevel?: string;
   /** Explicitly render the optional inline thinking-level selector even without a change callback. */
   showThinkingLevel?: boolean;
+  /** Optional selected credential instance; empty or absent means provider default. */
+  credentialInstanceId?: string;
+  /** Called when the inline credential-instance selector changes; empty means clear the persisted override. */
+  onCredentialInstanceChange?: (instanceId: string) => void;
+  /** Available credential instances keyed by provider, as advertised by /api/models. */
+  credentialInstances?: Record<string, { instances: ProviderCredentialInstanceSummary[] }>;
 }
 
 interface DropdownPosition {
-  top: number;
+  top: number | null;
+  bottom: number | null;
   left: number;
   width: number;
   maxHeight: number;
@@ -100,6 +107,9 @@ export function CustomModelDropdown({
   onThinkingLevelChange,
   defaultThinkingLevel,
   showThinkingLevel,
+  credentialInstanceId,
+  onCredentialInstanceChange,
+  credentialInstances,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
@@ -112,6 +122,7 @@ export function CustomModelDropdown({
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(loadCollapsedProviders);
   const generatedThinkingId = useId();
+  const generatedInstanceId = useId();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -218,6 +229,38 @@ export function CustomModelDropdown({
     const slashIdx = value.indexOf("/");
     return slashIdx === -1 ? null : value.slice(0, slashIdx);
   }, [hasNoChangeOption, noChangeValue, value]);
+
+  const instanceOptions = useMemo(() => {
+    if (!currentProvider) return [];
+    const seen = new Set<string>();
+    const available = credentialInstances?.[currentProvider]?.instances
+      ?? models.find((model) => model.provider === currentProvider)?.credentialInstances
+      ?? [];
+    const deduplicated = available.filter((instance) => {
+      if (!instance.id || seen.has(instance.id)) return false;
+      seen.add(instance.id);
+      return true;
+    });
+    /*
+    FNXC:ModelDropdown 2026-08-01-09:13:
+    A stale persisted id is retained only after the availability threshold is met. It must not make a single-instance provider sprout this optional control.
+    */
+    if (deduplicated.length >= 2 && credentialInstanceId && !seen.has(credentialInstanceId)) {
+      deduplicated.push({ id: credentialInstanceId, isDefault: false });
+    }
+    return deduplicated;
+  }, [credentialInstanceId, credentialInstances, currentProvider, models]);
+  const shouldShowCredentialInstance = instanceOptions.length >= 2;
+  const normalizedCredentialInstanceId = credentialInstanceId ?? "";
+  const credentialInstanceSelectId = id ? `${id}-credential-instance` : `${generatedInstanceId}-credential-instance`;
+
+  /*
+  FNXC:ModelDropdown 2026-08-01-09:13:
+  Credential-instance selection is visible exactly when a selected provider advertises at least two distinct instances. Rendering nothing otherwise keeps existing and older-server picker menus structurally unchanged; ownership callbacks determine persistence, never visibility.
+
+  FNXC:ModelDropdown 2026-08-01-09:13:
+  A stale selected instance remains an explicit option rather than being cleared during render. Only an operator change may remove a persisted override, preventing unrelated saves from silently changing runtime credentials.
+  */
 
   const specialOptions = useMemo(() => {
     const options: Array<{ type: "default" | "no-change"; value: string; label: string }> = [];
@@ -362,12 +405,22 @@ export function CustomModelDropdown({
       Math.max(triggerLeft, horizontalPadding),
       viewportWidth - horizontalPadding - dropdownWidth,
     ) + offsetLeft;
+    /*
+    FNXC:ModelDropdown 2026-08-01-07:11:
+    The model menu's maxHeight includes a 160px scroll floor, so upward top placement based on that
+    cap separates short model lists from their trigger. Anchor the bottom instead; the visual-viewport
+    offset preserves the existing effective-viewport coordinate conversion for keyboard and zoom cases.
+    */
     const top = openUpward
-      ? Math.max(verticalPadding + offsetTop, triggerTop - maxHeight - gap + offsetTop)
+      ? null
       : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalPadding - maxHeight);
+    const bottom = openUpward
+      ? viewportHeight + offsetTop - rect.top + gap
+      : null;
 
     setDropdownPosition({
       top,
+      bottom,
       left,
       width: dropdownWidth,
       maxHeight,
@@ -593,7 +646,8 @@ export function CustomModelDropdown({
       data-menu-width={menuWidth}
       onKeyDown={handleKeyDown}
       style={{
-        top: `${dropdownPosition.top}px`,
+        top: dropdownPosition.bottom === null ? `${dropdownPosition.top}px` : "auto",
+        bottom: dropdownPosition.bottom === null ? undefined : `${dropdownPosition.bottom}px`,
         left: `${dropdownPosition.left}px`,
         width: `${dropdownPosition.width}px`,
         maxHeight: `${dropdownPosition.maxHeight}px`,
@@ -624,6 +678,28 @@ export function CustomModelDropdown({
       <div className="model-combobox-results-count">
         {t("models.count", { count: filteredModels.length, defaultValue_one: "{{count}} model", defaultValue_other: "{{count}} models" })}
       </div>
+
+      {shouldShowCredentialInstance && (
+        <div className="model-combobox-instance" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <label className="model-combobox-instance-label" htmlFor={credentialInstanceSelectId}>
+            {t("models.labels.credentialInstance", "Credential instance")}
+          </label>
+          <select
+            id={credentialInstanceSelectId}
+            className="thinking-level-select model-combobox-instance-select"
+            data-testid="custom-model-dropdown-credential-instance"
+            value={normalizedCredentialInstanceId}
+            onChange={(e) => onCredentialInstanceChange?.(e.target.value)}
+            disabled={disabled || !onCredentialInstanceChange}
+            aria-label={t("models.labels.credentialInstance", "Credential instance")}
+          >
+            <option value="">{t("models.credentialInstanceDefault", "Default")}</option>
+            {instanceOptions.map((instance) => (
+              <option key={instance.id} value={instance.id}>{instance.id}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {shouldShowThinking && (
         <div className="model-combobox-thinking" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
@@ -820,6 +896,11 @@ export function CustomModelDropdown({
           {shouldShowThinking && (
             <span className={`model-badge ${normalizedThinkingLevel ? "model-badge-custom" : "model-badge-default"} model-combobox-thinking-badge`} data-testid="custom-model-dropdown-thinking-badge">
               {thinkingBadgeLabel}
+            </span>
+          )}
+          {shouldShowCredentialInstance && normalizedCredentialInstanceId && (
+            <span className="model-badge model-badge-custom model-combobox-thinking-badge" data-testid="custom-model-dropdown-credential-instance-badge">
+              {normalizedCredentialInstanceId}
             </span>
           )}
           <span className="model-combobox-trigger-arrow">▼</span>

@@ -334,6 +334,43 @@ describe("AgentLogViewer", () => {
     expect(content.classList.contains("agent-log-tool-detail-content--collapsed")).toBe(true);
   });
 
+  it("keeps identical failed-tool disclosures independent and renders error markup as inert text", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+    const detail = "Error: edit failed\n<script>alert('inert')</script>\n  at edit (tools.ts:12:4)";
+    const entries = [
+      makeEntry({ text: "edit", type: "tool_error", detail, timestamp: "2026-01-01T00:00:00Z" }),
+      makeEntry({ text: "edit", type: "tool_error", detail, timestamp: "2026-01-01T00:00:00Z" }),
+      makeEntry({ text: "edit", type: "tool_error", detail, timestamp: "2026-01-01T00:00:00Z" }),
+    ];
+    const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+
+    const toggles = screen.getAllByTestId("tool-detail-toggle");
+    expect(toggles).toHaveLength(3);
+    expect(toggles[0]).toHaveAccessibleName("Show output (3 lines)");
+    expect(toggles[0]).toBeEnabled();
+    fireEvent.click(toggles[0]);
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
+    expect(toggles[1]).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggles[1]);
+    expect(toggles[1]).toHaveAttribute("aria-expanded", "true");
+    expect(toggles[2]).toHaveAttribute("aria-expanded", "false");
+    const expandedDetails = screen.getAllByTestId("tool-detail-content").filter(
+      (content) => !content.classList.contains("agent-log-tool-detail-content--collapsed"),
+    );
+    expect(expandedDetails).toHaveLength(2);
+    expect(expandedDetails[0]).toHaveTextContent("<script>alert('inert')</script>");
+    expect(expandedDetails[1]).toHaveTextContent("<script>alert('inert')</script>");
+    expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("shows complete long tool output after expanding the output disclosure", () => {
+    const longDetail = `first line\n${"output ".repeat(45)}AGENT_LOG_RESULT_SUFFIX`;
+    render(<AgentLogViewer entries={[makeEntry({ text: "Bash", type: "tool_result", detail: longDetail })]} loading={false} />);
+
+    fireEvent.click(screen.getByTestId("tool-detail-toggle"));
+    expect(screen.getByTestId("tool-detail-content")).toHaveTextContent("AGENT_LOG_RESULT_SUFFIX");
+  });
+
   it("applies the viewer styling via the agent-log-viewer class", () => {
     const entries = [makeEntry()];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);

@@ -575,6 +575,7 @@ export async function moveToDoneImpl(store: TaskStore, task: Task, dir: string):
     lane-less left that leak reachable through this path even after the listener itself was fixed.
     */
     const movedLanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+    store.laneCache.set(task.id, movedLanes);
     store.emit("task:moved", { task, from: fromColumn, to: completeColumn as Column, source: "engine", lanes: movedLanes });
 }
 
@@ -610,10 +611,6 @@ export function stopWatchingImpl(store: TaskStore): void {
     if (store.watcher) {
       store.watcher.close();
       store.watcher = null;
-    }
-    if (store.pollInterval) {
-      clearInterval(store.pollInterval);
-      store.pollInterval = null;
     }
     for (const timer of store.debounceTimers.values()) {
       clearTimeout(timer);

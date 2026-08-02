@@ -52,6 +52,29 @@ export function parseExplicitDuplicateMarker(content: string): ExplicitDuplicate
 }
 
 /*
+FNXC:DuplicateIntake 2026-08-01-19:24:
+A PROMPT.md whose entire body is `DUPLICATE: FN-####` is a triage redirect verdict, not an
+executable plan. FN-8704 was admitted into WIP because filesystem validation only required
+non-empty content; the graph then failed at the `parse` node and parked failed in-progress in a
+loop. Shared predicate so dispatch, hold-release, awaiting-planning badges, and graph-failure
+recovery all reject this shape the same way.
+*/
+/** True when content is solely an explicit triage duplicate redirect (not a real plan body). */
+export function isDuplicateRedirectOnlyPrompt(content: string): boolean {
+  return parseExplicitDuplicateMarker(content) !== null;
+}
+
+/**
+ * Operator-facing reason for rejecting a non-executable PROMPT at dispatch, or null when content
+ * is not a duplicate-only redirect.
+ */
+export function nonExecutableDuplicateRedirectReason(content: string): string | null {
+  const marker = parseExplicitDuplicateMarker(content);
+  if (!marker) return null;
+  return `PROMPT.md is a duplicate redirect marker (DUPLICATE: ${marker.canonicalId}), not an executable plan`;
+}
+
+/*
 FNXC:DuplicateIntake 2026-07-26-10:40:
 Recovery parser for a duplicate verdict the planner announced in its REPLY instead of writing it to
 PROMPT.md. Observed on FN-8600 (2026-07-26): the planner correctly identified the duplicate, said

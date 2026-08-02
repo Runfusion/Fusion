@@ -371,7 +371,8 @@ if (json) {
     const { read = 0, write = 0, other = 0 } = summary.queryRoles;
     console.log(`    of those: ${read} read-shaped (convertible), ${write} writes (do NOT convert), ${other} other`);
   }
-  console.log(`  IR node definitions (not convertible): ${summary.properties.definition}\n`);
+  console.log(`  IR node definitions (not convertible): ${summary.properties.definition}`);
+  console.log(`  Typed synthetic task stand-ins (not queries): ${summary.properties.synthetic ?? 0}\n`);
   console.log("  by column id:");
   for (const [id, count] of Object.entries(summary.byColumnId).sort((a, b) => b[1] - a[1])) {
     console.log(`    ${String(count).padStart(4)}  ${id}`);

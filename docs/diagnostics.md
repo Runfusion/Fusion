@@ -21,7 +21,7 @@ FUSION_DEBUG=1                # everything (also: true, all, *)
 
 The variable is re-read per call, so it can be toggled on a long-lived process without recreating loggers. Debug lines emit under the `info` severity marker and render like any other info line.
 
-Currently debug-gated classes include local/default routing, capacity and re-entrancy skips, poll/sweep no-actions, per-step success/progress, optional integration probes, and successful verification bookkeeping. State-changing recovery and dispatch outcomes remain visible.
+Currently debug-gated classes include local/default routing, capacity and re-entrancy skips, poll/sweep no-actions, per-step success/progress, optional integration probes, successful verification bookkeeping, per-session agent setup (`agent-session` runtime/fallback resolution, planning mode, stuck-detector track bookkeeping), intentional skill-exclusion notices (`[skills] info: … disabled by project execution settings`), expected-missing PROMPT.md seed reads (ENOENT), token-cache metrics JSON, duplicate runtime `Specifying …` echoes, and zero-count recovery summaries. State-changing recovery and dispatch outcomes remain visible.
 
 Dashboard server code uses the core logger only: `import { createLogger } from "@fusion/core";`. Do not import an engine logger, use a relative cross-package logger path, or add a dashboard-local logger implementation.
 

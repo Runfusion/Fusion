@@ -155,10 +155,12 @@ function validateOptionalWorkflowId(workflowId: unknown): string | null | undefi
   throw badRequest("workflowId must be a string or null");
 }
 
+/*
+FNXC:MissionAssertions 2026-08-01-19:44:
+The assertion guard landed on 2026-04-11 for two-segment IDs, but MissionStore.generateId added its idSequence segment on 2026-05-04. Keep this validator aligned with every dash-separated alphanumeric segment emitted by MissionStore while preserving legacy assertion rows.
+*/
 function validateAssertionId(id: string): boolean {
-  // Assertion IDs follow format: CA-{base36timestamp}-{random}
-  // e.g., CA-A3B7CD-E9F2
-  return /^CA-[A-Z0-9]+-[A-Z0-9]+$/i.test(id);
+  return /^CA-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(id);
 }
 
 function validateGoalId(id: string): boolean {

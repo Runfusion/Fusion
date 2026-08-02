@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { TaskStore, AgentLogEntry, AgentRole } from "@fusion/core";
-import { categorizeToolName } from "@fusion/core";
+import { categorizeToolName, redactSecrets } from "@fusion/core";
 import { createLogger } from "../logger.js";
 
 /**
@@ -483,12 +483,19 @@ export class AgentLogger {
     const isToolEntry = type === "tool" || type === "tool_result" || type === "tool_error";
     // FNXC:AgentLogging 2026-07-15-16:00: Failed tool detail is diagnostic signal, unlike verbose arguments/success output, and must survive default-off tool-output persistence for FN-7995 Activity diagnosis.
     const includeDetail = !isToolEntry || type === "tool_error" || this.persistAgentToolOutput;
+    /*
+    FNXC:AgentLogDiagnostics 2026-08-01-17:51:
+    FN-8697 requires useful failed-tool detail to cross the established secret-redaction boundary
+    before an AgentLogger batch reaches JSONL, the API, or the Activity disclosure. Redact at this
+    common entry point so store and callback sinks cannot persist or display credentials.
+    */
+    const persistedDetail = detail !== undefined && includeDetail ? redactSecrets(detail) : undefined;
     const entry: AgentLogEntry = {
       timestamp: new Date().toISOString(),
       taskId: this.taskId,
       text,
       type,
-      ...(detail !== undefined && includeDetail && { detail }),
+      ...(persistedDetail !== undefined && { detail: persistedDetail }),
       ...(this.agent !== undefined && { agent: this.agent }),
       ...(timing?.durationMs !== undefined && { durationMs: timing.durationMs }),
       ...(timing?.timeToFirstTokenMs !== undefined && { timeToFirstTokenMs: timing.timeToFirstTokenMs }),

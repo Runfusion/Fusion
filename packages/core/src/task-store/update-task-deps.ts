@@ -511,12 +511,14 @@ export async function updateTaskDependenciesImpl(store: TaskStore, id: string, m
       column the card is already in is what re-runs reset-on-entry effects downstream.
       */
       if (movedToTriage && respecifyFromColumn !== task.column) {
+        const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+        store.laneCache.set(task.id, lanes);
         store.emit("task:moved", {
           task,
           from: respecifyFromColumn as Column,
           to: task.column as Column,
           source: "engine",
-          lanes: toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined)),
+          lanes,
         });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);

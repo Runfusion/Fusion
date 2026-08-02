@@ -91,6 +91,8 @@ export interface ReviewOptions {
   taskValidatorProvider?: string;
   /** Task-level validator model ID override. When both provider and modelId are set, takes precedence over project/global lanes. */
   taskValidatorModelId?: string;
+  /** Credential instance paired with the task-level validator model selection. */
+  taskValidatorCredentialInstanceId?: string;
   /** Project-level validator model provider override. Takes precedence over global validator lane. */
   projectValidatorProvider?: string;
   /** Project-level validator model ID override. Takes precedence over global validator lane. */
@@ -302,6 +304,8 @@ export async function reviewStep(
     options.taskValidatorProvider,
     options.taskValidatorModelId,
     reviewerModelSettings,
+    undefined,
+    options.taskValidatorCredentialInstanceId,
   );
   const validatorProvider = reviewerModel.provider;
   const validatorModelId = reviewerModel.modelId;
@@ -500,6 +504,9 @@ export async function reviewStep(
       onToolEnd: agentLogger?.onToolEnd,
       defaultProvider: overrides?.forceProvider ?? validatorProvider,
       defaultModelId: overrides?.forceModelId ?? validatorModelId,
+      ...(!overrides?.forceProvider && !overrides?.forceModelId && reviewerModel.credentialInstanceId
+        ? { credentialInstanceId: reviewerModel.credentialInstanceId }
+        : {}),
       fallbackProvider: validatorFallbackProvider,
       fallbackModelId: validatorFallbackModelId,
       fallbackThinkingLevel: options.fallbackThinkingLevel

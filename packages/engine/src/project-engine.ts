@@ -75,7 +75,11 @@ import type { RoutineRunner } from "./scheduling/routine-runner.js";
 import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge, landWorkspaceTask, WorkspacePartialLandError, WorkspaceRepoLandBusyError } from "./merge/merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./merge/group-merge-coordinator.js";
-import { computeTopLevelConcurrencyClaimedFromStore, projectAdmissionCoordinator } from "./concurrency/concurrency.js";
+import {
+  persistedTopLevelAgentTaskIdsFromStore,
+  projectAdmissionCoordinator,
+  resolveActiveTaskCapacityLimit,
+} from "./concurrency/concurrency.js";
 import { canStartNextMergeBody } from "./merge/merge-reclaim-policy.js";
 import {
   registerProjectVerificationLimit,
@@ -453,6 +457,14 @@ export class ProjectEngine {
   // ── Auto-merge state ──
   private mergeQueue: string[] = [];
   private mergeActive = new Set<string>();
+  /** Capacity-deferred ids stay out of the runnable queue until their retry timer fires. */
+  private readonly capacityDeferredMergeTaskIds = new Set<string>();
+  private readonly capacityDeferredMerges = new Map<string, {
+    timer: ReturnType<typeof setTimeout>;
+    resolvers: MergeResolver[];
+    generation: number;
+    manual: boolean;
+  }>();
   /** Merge ids selected by the shared coordinator but not yet handed to rawMerge. */
   private readonly coordinatorAdmittedMergeTaskIds = new Set<string>();
   private unregisterMergeAdmissionProvider?: () => void;
@@ -675,6 +687,7 @@ export class ProjectEngine {
           return [{
             taskId: task.id,
             projectId,
+            lane: "review",
             createdAt: task.createdAt,
             start: async () => {
               // Do not run merge work in the coordinator; hand the exact queued
@@ -801,7 +814,9 @@ export class ProjectEngine {
   window, checking it in addition to `mergeQueue` closes that TOCTOU gap.
   */
   isMergePending(taskId: string): boolean {
-    return this.mergeActive.has(taskId) || this.mergeQueue.includes(taskId);
+    return this.mergeActive.has(taskId)
+      || this.mergeQueue.includes(taskId)
+      || this.capacityDeferredMergeTaskIds.has(taskId);
   }
 
   /**
@@ -1312,6 +1327,14 @@ export class ProjectEngine {
       clearInterval(this.mergeActiveReconcileTimer);
       this.mergeActiveReconcileTimer = null;
     }
+    for (const [taskId, deferred] of this.capacityDeferredMerges) {
+      clearTimeout(deferred.timer);
+      for (const resolver of deferred.resolvers) {
+        resolver.reject(new Error(`Engine shutting down — deferred merge for ${taskId} aborted`));
+      }
+    }
+    this.capacityDeferredMerges.clear();
+    this.capacityDeferredMergeTaskIds.clear();
     this.stopPlannerOverseerPoll();
 
     /*
@@ -2307,6 +2330,15 @@ export class ProjectEngine {
       };
       abort = () => {
         this.removeMergeResolver(taskId, resolver);
+        const deferred = this.capacityDeferredMerges.get(taskId);
+        if (deferred) {
+          deferred.resolvers = deferred.resolvers.filter((candidate) => candidate !== resolver);
+          if (deferred.manual && deferred.resolvers.length === 0 && !this.hasMergeResolvers(taskId)) {
+            clearTimeout(deferred.timer);
+            this.capacityDeferredMerges.delete(taskId);
+            this.capacityDeferredMergeTaskIds.delete(taskId);
+          }
+        }
         if (this.activeMergeTaskId === taskId) {
           this.mergeAbortController?.abort();
           this.mergeAbortController = null;
@@ -2324,7 +2356,7 @@ export class ProjectEngine {
 
       // If this task is already queued or actively merging, wait for the
       // existing merge to finish rather than starting a second one.
-      if (this.mergeActive.has(taskId)) return;
+      if (this.mergeActive.has(taskId) || this.capacityDeferredMergeTaskIds.has(taskId)) return;
 
       if (!this.internalEnqueueMerge(taskId)) {
         this.removeMergeResolver(taskId, resolver);
@@ -2809,6 +2841,7 @@ export class ProjectEngine {
 
   private internalEnqueueMerge(taskId: string): boolean {
     if (this.shuttingDown || !this.started) return false;
+    if (this.capacityDeferredMergeTaskIds.has(taskId)) return false;
     if (this.mergeActive.has(taskId)) {
       // Distinguish "actually being processed" (queued or active) from a
       // leaked entry. Reconcile leaks immediately so recovery paths and fresh
@@ -3874,7 +3907,7 @@ export class ProjectEngine {
           a merge IS an agent, so it still consumes one of the project's slots; it
           just no longer consumes a machine-wide slot too.
 
-          `admitOldest` already takes `semaphore` as optional and enforces
+          `admitNext` already takes `semaphore` as optional and enforces
           `maxConcurrent` independently of it (see its `claimed() + reservations >=
           maxConcurrent` check), so dropping the argument keeps per-project
           admission and oldest-first fairness exactly as they were.
@@ -3888,11 +3921,20 @@ export class ProjectEngine {
               }
             }
             let selected = false;
+            const admissionSettings = await store.getSettings();
+            let mergeClaimSnapshot: Promise<{ count: number; ids: string[] }> | undefined;
+            const getMergeClaimSnapshot = () => mergeClaimSnapshot ??= (async () => {
+              // Full rows preserve pending optional workflow-step leases, which may be the only
+              // live-agent signal for a task while its ordinary status is null.
+              const tasks = await store.listTasks({ slim: false, includeArchived: false });
+              const ids = await persistedTopLevelAgentTaskIdsFromStore(store, tasks);
+              return { count: ids.length, ids };
+            })();
             /*
             FNXC:ConcurrencyAdmission 2026-08-01-01:50 (ROOT CAUSE — triage admission died during every merge):
             This lane previously ran `value = await start()` INSIDE its admission `start()` callback —
             i.e. the ENTIRE merge (git rebase, verification, landing: minutes, or forever when the
-            merge wedges) executed inside `admitOldest`'s single-flight drain. The coordinator is a
+            merge wedges) executed inside `admitNext`'s single-flight drain. The coordinator is a
             project-wide singleton and every caller awaits the previous drain, so triage's poll parked
             at `await existing` for the whole merge window, its `polling` re-entrance guard stayed
             closed, and every 15s tick + task:created wake dropped silently. Observed twice on the
@@ -3901,21 +3943,24 @@ export class ProjectEngine {
             the merge finished. With merge pinned at 1, every merge was a planning outage.
 
             The lane start now only CLAIMS the admission and returns; the merge body runs after
-            `admitOldest` settles, outside the drain. Capacity stays honest: the merge row's own
+            `admitNext` settles, outside the drain. Capacity stays honest: the merge row's own
             merging/landing status is what `claimed()` counts, and at-most-once merging is enforced
             by the merge lease, not by this drain. The transient admit→status-write gap is the same
             one every other lane (triage `void specifyTask`, scheduler `void schedule`) already has.
             */
-            await projectAdmissionCoordinator.admitOldest({
+            await projectAdmissionCoordinator.admitNext({
               projectId: cwd,
-              maxConcurrent: (await store.getSettings()).maxConcurrent ?? 2,
-              claimed: async () => computeTopLevelConcurrencyClaimedFromStore({
-                store,
-                tasks: await store.listTasks({ slim: true, includeArchived: false }),
+              maxConcurrent: resolveActiveTaskCapacityLimit({
+                maxConcurrent: admissionSettings.maxConcurrent ?? 2,
+                maxWorktrees: admissionSettings.maxWorktrees ?? 4,
+                worktreeLimitEnabled: admissionSettings.worktreeLimitEnabled,
               }),
+              claimed: async () => (await getMergeClaimSnapshot()).count,
+              claimedTaskIds: async () => (await getMergeClaimSnapshot()).ids,
               refresh: async () => [{
                 taskId,
                 projectId: cwd,
+                lane: "review",
                 createdAt: mergeCandidate?.createdAt,
                 start: async () => {
                   selected = true;
@@ -3929,6 +3974,36 @@ export class ProjectEngine {
             } finally {
               projectAdmissionCoordinator.releaseReservation(taskId);
             }
+          };
+          const deferMergeForCapacity = (): void => {
+            const retryMs = settings.pollIntervalMs ?? 15_000;
+            const stashedResolvers = this.takeMergeResolvers(taskId);
+            const generation = this.startupGeneration;
+            this.mergeActive.delete(taskId);
+            this.capacityDeferredMergeTaskIds.add(taskId);
+            const timer = setTimeout(() => {
+              const deferred = this.capacityDeferredMerges.get(taskId);
+              if (!deferred || deferred.timer !== timer) return;
+              this.capacityDeferredMerges.delete(taskId);
+              this.capacityDeferredMergeTaskIds.delete(taskId);
+              if (this.shuttingDown || deferred.generation !== this.startupGeneration) {
+                for (const resolver of deferred.resolvers) resolver.reject(new Error("Engine shutting down"));
+                return;
+              }
+              for (const resolver of deferred.resolvers) this.addMergeResolver(taskId, resolver);
+              if (!this.internalEnqueueMerge(taskId)) {
+                for (const resolver of this.takeMergeResolvers(taskId)) {
+                  resolver.reject(new Error(`Deferred merge enqueue rejected for ${taskId}`));
+                }
+              }
+            }, retryMs);
+            timer.unref?.();
+            this.capacityDeferredMerges.set(taskId, {
+              timer,
+              resolvers: stashedResolvers,
+              generation,
+              manual: stashedResolvers.length > 0,
+            });
           };
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge && !routeWorkspaceDirect) {
@@ -3953,10 +4028,11 @@ export class ProjectEngine {
             });
             if (result === undefined) {
               // Another older lane won the shared capacity pass. Re-queue rather
-              // than treating this deferral as a pull-request merge failure.
-              this.mergeActive.delete(taskId);
-              this.internalEnqueueMerge(taskId);
-              continue;
+              // than treating this deferral as a pull-request merge failure. End
+              // this drain: continuing would dequeue the same item immediately
+              // and spin at full speed while capacity remains unavailable.
+              deferMergeForCapacity();
+              break;
             }
             if (result === "merged") {
               runtimeLog.log(`${hasManualResolver ? "Manual" : "Auto"}-merge PR merged: ${taskId}`);
@@ -3998,6 +4074,10 @@ export class ProjectEngine {
             const agentStore = (this.runtime as any).agentStore;
 
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
+            // FNXC:CredentialInstanceRotation 2026-08-01-11:05:
+            // Preserve the runtime-owned rotator identity in downstream option bags;
+            // merger does not opt into rotation, so this is forwarding only.
+            const credentialRotator = (this.runtime as any).credentialRotator;
 
             const rawMerge = async () => {
               const abortSignal = this.claimActiveMerge(taskId);
@@ -4009,6 +4089,7 @@ export class ProjectEngine {
                 manual: hasManualResolver,
                 pool,
                 usageLimitPauser,
+                credentialRotator,
                 agentStore,
                 pluginRunner: this.getPluginRunner(),
                 signal: abortSignal,
@@ -4114,9 +4195,10 @@ export class ProjectEngine {
             if (!result) {
               // An older lane won this admission pass. Keep this merge queued;
               // treating the deferral as a merge failure would consume retries.
-              this.mergeActive.delete(taskId);
-              this.internalEnqueueMerge(taskId);
-              continue;
+              // Exit this drain so the queued item waits for a normal future wake
+              // instead of retrying the same denied admission in a tight loop.
+              deferMergeForCapacity();
+              break;
             }
 
             this.activeMergeSession = null;

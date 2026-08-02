@@ -31,12 +31,22 @@ let lineageChildIds: string[] = [];
 
 vi.mock("../task-store/async-persistence.js", () => ({
   readTaskRow: vi.fn(async () => pgRow),
-  softDeleteTaskRowInTransaction: vi.fn(async () => undefined),
+  readTaskRowInTransaction: vi.fn(async () => pgRow),
+  softDeleteTaskRowInTransaction: vi.fn(async () => true),
 }));
 vi.mock("../task-store/async-lifecycle.js", () => ({
   findLiveLineageChildren: vi.fn(async () => lineageChildIds),
   projectPartition: vi.fn(() => undefined),
   removeLineageReferences: vi.fn(async () => undefined),
+}));
+/*
+FNXC:LifecycleOutbox 2026-08-01-11:02:
+This in-memory delete harness has no PostgreSQL transaction executor. Mock the
+transaction-scoped writer at its module boundary so deletion-gate tests remain
+focused while the real backend always persists the lifecycle event transactionally.
+*/
+vi.mock("../task-store/lifecycle-outbox.js", () => ({
+  appendTaskLifecycleEventInTransaction: vi.fn(async () => ({ seq: "1", eventId: "test-event" })),
 }));
 vi.mock("../async-mission-store-queries.js", () => ({
   getFeatureByTaskId: vi.fn(async () => null),
@@ -45,6 +55,7 @@ vi.mock("../async-mission-store-queries.js", () => ({
 }));
 
 import { deleteTaskImpl } from "../task-store/archive-lifecycle.js";
+import { setupActivityLogListenersImpl } from "../task-store/lifecycle-ops.js";
 import { deleteTaskBackendImpl } from "../task-store/archive-lifecycle-2.js";
 
 function createTask(overrides: Partial<Task> & { id: string }): Task {
@@ -80,6 +91,7 @@ function makeDeleteStore(task: Task, children: string[] = []) {
     backendMode: true,
     isWatching: true,
     taskCache: new Map<string, Task>([[task.id, task]]),
+    laneCache: { invalidate: vi.fn() },
     asyncLayer: {
       db: {},
       projectId: "project-1",
@@ -92,6 +104,7 @@ function makeDeleteStore(task: Task, children: string[] = []) {
       auditEvents.push(event);
     }),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
+    laneCache: { invalidate: vi.fn() },
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
     cleanupBranchForTask: vi.fn(async () => [] as string[]),
     clearNearDuplicateReferencesToFailSoft: vi.fn(async () => undefined),
@@ -109,6 +122,58 @@ function makeDeleteStore(task: Task, children: string[] = []) {
 }
 
 describe("deleteTask gates that survived the PostgreSQL cutover", () => {
+  it("keeps in-process task:deleted emissions and activity rows exact for each delete data state", async () => {
+    const activityRows: Array<{ type: string; taskId?: string }> = [];
+    const deletedEvents: string[] = [];
+    const liveStore = makeDeleteStore(createTask({ id: "FN-LIVE" }));
+    liveStore.activityListenersWired = false;
+    liveStore.recordActivityFromListener = vi.fn((entry: { type: string; taskId?: string }) => activityRows.push(entry));
+    setupActivityLogListenersImpl(liveStore as never);
+    liveStore.on("task:deleted", (task: Task) => deletedEvents.push(task.id));
+
+    await deleteTaskImpl(liveStore as never, "FN-LIVE");
+    expect(deletedEvents).toEqual(["FN-LIVE"]);
+    expect(activityRows.filter((entry) => entry.type === "task:deleted")).toEqual([{ type: "task:deleted", taskId: "FN-LIVE", taskTitle: "FN-LIVE", details: "Task FN-LIVE deleted: FN-LIVE" }]);
+
+    const archivedRows: Array<{ type: string; taskId?: string }> = [];
+    const archivedEvents: string[] = [];
+    const archivedStore = makeDeleteStore(createTask({ id: "FN-ARCHIVED", column: "archived" }));
+    archivedStore.activityListenersWired = false;
+    archivedStore.recordActivityFromListener = vi.fn((entry: { type: string; taskId?: string }) => archivedRows.push(entry));
+    setupActivityLogListenersImpl(archivedStore as never);
+    archivedStore.on("task:deleted", (task: Task) => archivedEvents.push(task.id));
+
+    await deleteTaskImpl(archivedStore as never, "FN-ARCHIVED");
+    expect(archivedEvents).toEqual(["FN-ARCHIVED"]);
+    expect(archivedRows.filter((entry) => entry.type === "task:deleted")).toHaveLength(1);
+
+    const alreadyDeletedRows: Array<{ type: string }> = [];
+    const alreadyDeletedEvents: string[] = [];
+    const alreadyDeletedStore = makeDeleteStore(createTask({ id: "FN-ALREADY-DELETED", deletedAt: "2026-07-15T09:01:00.000Z", column: "archived" }));
+    alreadyDeletedStore.activityListenersWired = false;
+    alreadyDeletedStore.recordActivityFromListener = vi.fn((entry: { type: string }) => alreadyDeletedRows.push(entry));
+    setupActivityLogListenersImpl(alreadyDeletedStore as never);
+    alreadyDeletedStore.on("task:deleted", (task: Task) => alreadyDeletedEvents.push(task.id));
+
+    await deleteTaskImpl(alreadyDeletedStore as never, "FN-ALREADY-DELETED");
+    expect(alreadyDeletedEvents).toEqual([]);
+    expect(alreadyDeletedRows.filter((entry) => entry.type === "task:deleted")).toEqual([]);
+
+    const unknownRows: Array<{ type: string }> = [];
+    const unknownEvents: string[] = [];
+    const unknownStore = makeDeleteStore(createTask({ id: "FN-UNKNOWN-SEED" }));
+    pgRow = null;
+    unknownStore.activityListenersWired = false;
+    unknownStore.recordActivityFromListener = vi.fn((entry: { type: string }) => unknownRows.push(entry));
+    setupActivityLogListenersImpl(unknownStore as never);
+    unknownStore.on("task:deleted", (task: Task) => unknownEvents.push(task.id));
+
+    await expect(deleteTaskImpl(unknownStore as never, "FN-UNKNOWN")).rejects.toMatchObject({ name: "TaskNotFoundError", taskId: "FN-UNKNOWN" });
+    expect(unknownEvents).toEqual([]);
+    expect(unknownRows.filter((entry) => entry.type === "task:deleted")).toEqual([]);
+  });
+
+
   /*
   FNXC:TaskDeletion 2026-07-30-20:15 (PR #2697 review — greptile):
   The module mock is shared across this file and the config clears nothing, so a call-count

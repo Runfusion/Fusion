@@ -1827,7 +1827,14 @@ describe("useChat", () => {
       },
     };
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
-    mockFetchChatSession.mockResolvedValueOnce({ session: generatingSession });
+    /*
+    FNXC:ChatVisibilityResume 2026-08-01-02:35:
+    The visible-edge reconciliation now performs its own authoritative session read after
+    selection. Keep both reads generating: a one-shot mock made the second read fall back to an
+    unrelated idle fixture, which falsely modeled a completed user-visible generation and hid the
+    prior thread this test is meant to protect.
+    */
+    mockFetchChatSession.mockResolvedValue({ session: generatingSession });
     mockFetchChatMessages
       .mockResolvedValueOnce({ messages: [] })
       .mockResolvedValueOnce({ messages: priorThreadNewestFirst });

@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } 
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import type { DbTransaction } from "../../postgres/data-layer.js";
-import type { TaskCreateInput } from "../../types/task-core.js";
+import type { TaskCreateInput } from "../../types/task/task-core.js";
 
 import {
   pgDescribe,
@@ -35,8 +35,9 @@ import {
   listMilestones as listMilestoneRows,
   listMissionEvents,
   listMissions as listMissionRows,
+  updateMilestoneValidationState,
 } from "../../async-stores/async-mission-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../../index.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../postgres/schema/index.js";
 
 const pgTest = pgDescribe;
 
@@ -112,6 +113,13 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(projectA.events.map(({ description }) => description)).toEqual(["Project A event"]);
     expect(projectB.events.map(({ description }) => description)).toEqual(["Project B event"]);
     expect(await listMissionRows(db)).toEqual([]);
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('fusion.project_id', 'project-a', true)`);
+      await updateMilestoneValidationState(tx, "MS-SHARED", "failed");
+    });
+    expect((await readProject("project-a")).milestones[0]?.validationState).toBe("failed");
+    expect((await readProject("project-b")).milestones[0]?.validationState).toBe("not_started");
 
     await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT set_config('fusion.project_id', 'project-a', true)`);
@@ -683,6 +691,59 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     expect(list.find((a) => a.id === created.id)!.assertion).toBe("GET /x returns 200");
   });
 
+  it("reconciles repaired and deleted failed assertions before publishing validation updates", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Current assertion rollup" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const validationEvents: Array<{ state: string; rollup: { state: string } }> = [];
+    m.on("milestone:validation:updated", (payload) => {
+      if (payload.milestoneId === milestone.id) validationEvents.push(payload);
+    });
+    const failed = await m.addContractAssertion(milestone.id, {
+      title: "Repair me", assertion: "works", status: "failed", scope: "milestone",
+    });
+
+    const expectCurrentState = async (state: "ready" | "passed" | "blocked" | "not_started") => {
+      expect((await m.getMilestoneValidationRollup(milestone.id)).state).toBe(state);
+      expect((await m.getMilestone(milestone.id))?.validationState).toBe(state);
+      expect(validationEvents.at(-1)).toMatchObject({ state, rollup: { state } });
+    };
+
+    expect(await m.getMilestoneValidationRollup(milestone.id)).toMatchObject({ state: "failed", failedAssertions: 1 });
+    expect((await m.getMilestone(milestone.id))?.validationState).toBe("failed");
+    await m.updateContractAssertion(failed.id, { status: "pending" });
+    await expectCurrentState("ready");
+    await m.updateContractAssertion(failed.id, { status: "passed" });
+    await expectCurrentState("passed");
+    await m.updateContractAssertion(failed.id, { status: "blocked" });
+    await expectCurrentState("blocked");
+    await m.deleteContractAssertion(failed.id);
+    await expectCurrentState("not_started");
+
+    const remainingFailure = await m.addContractAssertion(milestone.id, {
+      title: "Still failing", assertion: "fails", status: "failed", scope: "milestone",
+    });
+    const repairedFailure = await m.addContractAssertion(milestone.id, {
+      title: "Repairable", assertion: "also fails", status: "failed", scope: "milestone",
+    });
+    await m.updateContractAssertion(repairedFailure.id, { status: "passed" });
+    expect(await m.getMilestoneValidationRollup(milestone.id)).toMatchObject({ state: "failed", failedAssertions: 1 });
+    expect((await m.getMilestone(milestone.id))?.validationState).toBe("failed");
+    await m.deleteContractAssertion(remainingFailure.id);
+
+    const concurrentFirst = await m.addContractAssertion(milestone.id, {
+      title: "Concurrent first", assertion: "first fails", status: "failed", scope: "milestone",
+    });
+    const concurrentSecond = await m.addContractAssertion(milestone.id, {
+      title: "Concurrent second", assertion: "second fails", status: "failed", scope: "milestone",
+    });
+    await Promise.all([
+      m.updateContractAssertion(concurrentFirst.id, { status: "passed" }),
+      m.updateContractAssertion(concurrentSecond.id, { status: "passed" }),
+    ]);
+    await expectCurrentState("passed");
+  });
+
   it("startValidatorRun is returned by getValidatorRunsByFeature", async () => {
     const m = missions();
     const mission = await m.createMission({ title: "Validated" });
@@ -690,8 +751,9 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
     const slice = await m.addSlice(milestone.id, { title: "SL" });
     const feature = await m.addFeature(slice.id, { title: "F" });
 
-    const run = await m.startValidatorRun(feature.id, "manual");
+    const run = await m.startValidatorRun(feature.id, "manual", undefined, "fingerprint-round-trip");
     expect(run.status).toBe("running");
+    expect(run.inputFingerprint).toBe("fingerprint-round-trip");
     expect(run.validatorAttempt).toBe(1);
 
     const runs = await m.getValidatorRunsByFeature(feature.id);
@@ -699,6 +761,43 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
 
     const fetched = await m.getValidatorRun(run.id);
     expect(fetched?.id).toBe(run.id);
+    expect(fetched?.inputFingerprint).toBe("fingerprint-round-trip");
+  });
+
+  it("clears all validation-budget provenance when a changed fingerprint is admitted", async () => {
+    const m = missions();
+    const mission = await m.createMission({ title: "Changed validation input" });
+    const milestone = await m.addMilestone(mission.id, { title: "MS" });
+    const slice = await m.addSlice(milestone.id, { title: "SL" });
+    const feature = await m.addFeature(slice.id, { title: "F" });
+    const exhaustedFingerprint = "a".repeat(64);
+    const changedFingerprint = "b".repeat(64);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const run = await m.startValidatorRun(feature.id, "task_completion", undefined, exhaustedFingerprint);
+      await m.completeValidatorRun(run.id, "failed", "deterministic failure");
+    }
+    await expect(m.admitValidatorRun(feature.id, {
+      inputFingerprint: exhaustedFingerprint,
+      failureBudget: 3,
+      reusePass: true,
+    })).resolves.toMatchObject({ outcome: "budget-exhausted" });
+    expect(await m.getFeature(feature.id)).toMatchObject({
+      loopState: "blocked",
+      validationBudgetFingerprint: exhaustedFingerprint,
+    });
+
+    await expect(m.admitValidatorRun(feature.id, {
+      inputFingerprint: changedFingerprint,
+      failureBudget: 3,
+      reusePass: true,
+    })).resolves.toMatchObject({ outcome: "start", run: { inputFingerprint: changedFingerprint } });
+    expect(await m.getFeature(feature.id)).toMatchObject({
+      loopState: "validating",
+      validationBudgetFingerprint: undefined,
+      validationBudgetRunId: undefined,
+      validationBudgetBlockedAt: undefined,
+    });
   });
 
   it("runs the validator/fix lifecycle and reaps stale runs in PostgreSQL", async () => {

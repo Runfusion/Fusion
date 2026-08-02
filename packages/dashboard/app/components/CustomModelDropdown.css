@@ -137,7 +137,8 @@ The model combobox is portaled outside Agent Settings but remains part of its ru
   border-bottom: var(--btn-border-width) solid var(--border);
 }
 
-.model-combobox-thinking {
+.model-combobox-thinking,
+.model-combobox-instance {
   position: relative;
   display: flex;
   align-items: center;
@@ -148,7 +149,8 @@ The model combobox is portaled outside Agent Settings but remains part of its ru
   border-bottom: var(--btn-border-width) solid var(--border);
 }
 
-.model-combobox-thinking-label {
+.model-combobox-thinking-label,
+.model-combobox-instance-label {
   flex: 1;
   min-width: 0;
   color: var(--text-muted);
@@ -156,7 +158,8 @@ The model combobox is portaled outside Agent Settings but remains part of its ru
   font-weight: 600;
 }
 
-.model-combobox-thinking-select {
+.model-combobox-thinking-select,
+.model-combobox-instance-select {
   flex: 1;
   min-width: 0;
 }
@@ -210,7 +213,8 @@ The Thinking Level <select> renders inside the createPortal dropdown (.model-com
   font-weight: 600;
 }
 
-.model-combobox-thinking::after {
+.model-combobox-thinking::after,
+.model-combobox-instance::after {
   content: "";
   position: absolute;
   right: calc(var(--space-md) + var(--space-sm));

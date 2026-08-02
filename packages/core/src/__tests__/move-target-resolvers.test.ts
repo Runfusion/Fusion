@@ -16,7 +16,7 @@ REVERT CHECK, measured: replacing either body with a bare `return "<legacy id>"`
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import type { WorkflowIrResolverStore } from "../workflow-ir-resolver.js";
-import { resolveReboundTargetForTask, resolveArchiveTargetForTask, resolveWipTargetForTask } from "../workflow-lifecycle-traits.js";
+import { resolveReboundTargetForTask, resolveArchiveTargetForTask, resolveWipTargetForTask } from "../workflows/workflow-lifecycle-traits.js";
 
 function storeWith(ir: WorkflowIr | undefined): WorkflowIrResolverStore {
   return {

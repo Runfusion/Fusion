@@ -16,9 +16,8 @@ import {
 } from "../postgres/schema-applier.js";
 import {mkdir, readdir, readFile, stat} from "node:fs/promises";
 import {join} from "node:path";
-import {existsSync, watch, type Dirent} from "node:fs";
-import type {Task, AgentLogEntry, Column, Settings, GlobalSettings} from "../types.js";
-import {DEFAULT_SETTINGS} from "../types.js";
+import {existsSync, type Dirent} from "node:fs";
+import type {Task, AgentLogEntry, GlobalSettings} from "../types.js";
 import {MOVED_SETTINGS_KEYS, SETTINGS_MIGRATION_VERSION, SETTINGS_MIGRATION_MARKER_KEY} from "../config/moved-settings.js";
 import {stepsToWorkflowIr, stepToFragmentIr, layoutForIr} from "../workflows/workflow-steps-to-ir.js";
 import {getTraitRegistry} from "../workflows/trait-registry.js";
@@ -28,11 +27,8 @@ import {clearTransitionPendingAsync, listTransitionPendingTaskIdsAsync, readTran
 import type {WorkflowSettingDefinition} from "../workflows/workflow-ir-types.js";
 import {validateSettingValuePatch} from "../workflows/workflow-settings.js";
 import "../builtin-traits.js";
-import {Database, SCHEMA_VERSION} from "../db/db.js";
-import {ensureMemoryFileWithBackend} from "../memory/project-memory.js";
 import {appendAgentLogEntriesSync} from "../agents/agent-log-file-store.js";
 import {getErrorMessage} from "../process/error-message.js";
-import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {reconcileTaskIdStateAsync} from "../task-store/async/async-allocator.js";
 import {ACTIVE_TASK_FILTER, insertTaskRowInTransaction, isTaskIdConflictError as isPgTaskIdConflictError, readTaskRow} from "./async/async-persistence.js";
@@ -280,7 +276,6 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
 
     // Task created
     store.on("task:created", (task) => {
-      if (store.suppressActivityLogForPollingEmit) return;
       store.recordActivityFromListener(
         {
           type: "task:created",
@@ -294,7 +289,6 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
 
     // Task moved
     store.on("task:moved", (data) => {
-      if (store.suppressActivityLogForPollingEmit) return;
       if (data.from === data.to) return;
       store.recordActivityFromListener(
         {
@@ -325,7 +319,6 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
 
     // Task updated (check for failures)
     store.on("task:updated", (task) => {
-      if (store.suppressActivityLogForPollingEmit) return;
       if (task.status === "failed") {
         store.recordActivityFromListener(
           {
@@ -369,8 +362,14 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
     });
 
     // Task deleted
-    store.on("task:deleted", (task) => {
-      if (store.suppressActivityLogForPollingEmit) return;
+    store.on("task:deleted", (task, meta) => {
+      /*
+      FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
+      Observed outbox replay is intentionally at-least-once. Activity is writer-owned and
+      accumulating, so observed events must not create a duplicate activity/audit side effect.
+      Cache eviction and bridge fan-out remain safe for duplicate observed notifications.
+      */
+      if (meta?.observed) return;
       store.recordActivityFromListener(
         {
           type: "task:deleted",
@@ -595,167 +594,26 @@ export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ig
   }
 
 export async function watchImpl(store: TaskStore): Promise<void> {
-    if (store.watcher || store.pollInterval) return; // already watching
+    if (store.watcher) return; // already watching
     store.clearStartupSlimListMemo();
 
     /*
-     * FNXC:BackendFlip 2026-06-26-16:00:
-     * In backend mode (PostgreSQL), the entire watch() body below is
-     * SQLite-specific: it reads store.db.getLastModified(), sets up an fs.watch
-     * sentinel + a 1s polling interval whose checkForChanges() cycle queries
-     * store.db.prepare('SELECT ... FROM tasks'), and runs SQLite-only stamp
-     * markers. All of those throw "SQLite Database is not available in backend
-     * mode" because store.db is not constructed when an AsyncDataLayer is
-     * injected.
-     *
-     * The async backend does not rely on this SQLite polling loop for change
-     * detection — runtime mutations go through the async layer and emit their
-     * own events. Populate the in-memory task cache (so the HTTP layer has a
-     * snapshot) via the backend-aware listTasks(), then return without
-     * installing the SQLite watcher/poller. This keeps `fn serve` / boot smoke
-     * booting against embedded PG.
+     * FNXC:TaskDeletedObservation 2026-08-01-09:59:
+     * PostgreSQL has no cross-process `task:deleted` observer today. FN-8683 removed the
+     * unreachable SQLite poller because `store.db` always throws for AsyncDataLayer stores;
+     * cache warming below is the only supported watch behavior. The transactional-outbox design is
+     * documented in docs/solutions/architecture/postgres-cross-process-task-deleted-observation.md.
+     * FN-8684 owns the transactional writer and FN-8685 owns durable consumer delivery; do not
+     * reintroduce a local polling replica as a substitute for their cursor/replay contract.
      */
-        const tasks = await store.listTasks({ slim: true, startupMemo: false });
+    const tasks = await store.listTasks({ slim: true, startupMemo: false });
     store.taskCache.clear();
     for (const task of tasks) {
       store.taskCache.set(task.id, { ...task });
     }
-    return;
+    // Cache must be populated before observed deletes can safely evict local task state.
+    await store.startTaskDeletedOutboxConsumer();
 }
-
-export async function checkForChangesImpl(store: TaskStore): Promise<void> {
-    const startTime = Date.now();
-
-    // Guard against overlapping poll cycles
-    if (store.pollingInProgress) return;
-    store.pollingInProgress = true;
-
-    try {
-      const currentModified = store.db.getLastModified();
-      if (currentModified <= store.lastKnownModified) return;
-      store.lastKnownModified = currentModified;
-
-      // Detect deletions cheaply: compare ID sets without loading full rows.
-      // A row missing from `tasks` can mean two things: the task was actually
-      // deleted, OR it was archived (archiveTask removes it from `tasks` after
-      // copying into `archived_tasks`). Other TaskStore instances polling the
-      // same DB can't tell the difference from this view alone — without the
-      // archive check below they emit spurious task:deleted events for every
-      // archived task, which the activity log records as a deletion.
-      // FN-5105: intentionally include soft-deleted rows here so a deletedAt
-      // transition can be observed and emit task:deleted exactly once.
-      const idRows = store.db.prepare('SELECT id FROM tasks').all() as Array<{ id: string }>;
-      const currentIds = new Set(idRows.map((r) => r.id));
-      const missingIds: string[] = [];
-      for (const id of store.taskCache.keys()) {
-        if (!currentIds.has(id)) missingIds.push(id);
-      }
-      if (missingIds.length > 0) {
-        const archivedSet = store.archiveDb.filterArchived(missingIds);
-        for (const id of missingIds) {
-          const cached = store.taskCache.get(id);
-          if (!cached) continue;
-          store.taskCache.delete(id);
-          store.suppressActivityLogForPollingEmit = true;
-          try {
-            if (archivedSet.has(id)) {
-              // Task moved to archive — emit task:moved (matching what
-              // archiveTask emits in-process) so other subscribers can react.
-              // Skip already-archived cache entries to avoid no-op emits.
-              // Activity-log listeners skip polling emits; the originating
-              // TaskStore instance wrote the row in-process.
-              /*
-              FNXC:WorkflowResolvedColumns 2026-07-31-20:15 (audited — DEAD SYNC PATH, do not convert):
-              Both the guard and the `to: "archived"` it emits are literals, so on a renamed board a
-              polling replica would emit a move to a column the board does not declare. It cannot:
-              `checkForChangesImpl` opens with `store.db.getLastModified()` and `store.db.prepare`,
-              which throw in PostgreSQL backend mode, so this whole polling replica path is legacy
-              SQLite only.
-
-              DELIBERATE-LITERAL — recorded rather than converted, for the same reason as `mission-store.ts` and
-              `project-store-ops.ts`: an unconverted literal in dead code is not debt a fleet pass
-              should spend a signature change on, but it must not read as missed either.
-              */
-              if (cached.column !== "archived") {
-                store.emit("task:moved", { task: cached, from: cached.column, to: "archived" as Column, source: "engine" });
-              }
-            } else {
-              // Polling replicas only mirror the originating delete signal.
-              // Do not record run-audit here; the writer already owns that row.
-              store.emit("task:deleted", cached);
-            }
-          } finally {
-            store.suppressActivityLogForPollingEmit = false;
-          }
-        }
-      }
-
-      // Yield to event loop before the expensive SELECT query
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      // Only load tasks modified since our last known timestamp.
-      // Use lastKnownPollTime (ISO string) to filter — much cheaper than full scan.
-      const selectClause = store.getTaskSelectClause(true);
-      const changedRows = store.lastPollTime
-        ? store.db.prepare(`SELECT ${selectClause} FROM tasks WHERE updatedAt > ? OR columnMovedAt > ?`).all(store.lastPollTime, store.lastPollTime) as unknown as TaskRow[]
-        : store.db.prepare(`SELECT ${selectClause} FROM tasks`).all() as unknown as TaskRow[];
-      store.lastPollTime = new Date().toISOString();
-
-      for (let i = 0; i < changedRows.length; i++) {
-        const row = changedRows[i];
-        const task = store.rowToTask(row);
-        const cached = store.taskCache.get(task.id);
-
-        store.suppressActivityLogForPollingEmit = true;
-        try {
-          if (task.deletedAt) {
-            if (cached) {
-              store.taskCache.delete(task.id);
-              // Polling replicas only re-emit task:deleted for subscribers.
-              // They must not insert duplicate run-audit rows cross-instance.
-              store.emit("task:deleted", cached);
-            }
-            continue;
-          }
-
-          if (!cached) {
-            store.taskCache.set(task.id, { ...task });
-            store.emit("task:created", task);
-          } else if (cached.column !== task.column) {
-            const from = cached.column;
-            store.taskCache.set(task.id, { ...task });
-            store.emit("task:moved", { task, from, to: task.column, source: "engine" });
-          } else {
-            store.taskCache.set(task.id, { ...task });
-            store.emit("task:updated", task);
-          }
-        } finally {
-          store.suppressActivityLogForPollingEmit = false;
-        }
-
-        // Yield every ~50 rows to prevent blocking the event loop during large updates
-        if (i > 0 && i % 50 === 0) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
-      }
-
-      const elapsed = Date.now() - startTime;
-      if (elapsed > 750) {
-        storeLog.warn("checkForChanges took longer than expected", {
-          elapsedMs: elapsed,
-          thresholdMs: 750,
-        });
-      }
-    } catch (err) {
-      storeLog.warn("checkForChanges poll cycle failed", {
-        lastKnownModified: store.lastKnownModified,
-        lastPollTime: store.lastPollTime,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      store.pollingInProgress = false;
-    }
-  }
 
 export async function migrateAgentLogEntriesImpl(store: TaskStore): Promise<void> {
     const migrationKey = "agentLogEntriesToFileMigrationVersion";
@@ -1278,7 +1136,7 @@ export async function migrateLegacyWorkflowStepsImpl(store: TaskStore): Promise<
  */
 export function emitTaskLifecycleEventSafelyImpl(
   store: TaskStore,
-  event: "task:created" | "task:updated",
+  event: "task:created" | "task:updated" | "task:deleted",
   args: Parameters<TaskStore["emitTaskLifecycleEventSafely"]>[1],
 ): boolean {
   const listeners = store.listeners(event) as Array<(...listenerArgs: typeof args) => unknown>;

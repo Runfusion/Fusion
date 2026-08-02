@@ -3341,6 +3341,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         planningModelId,
         nodeId,
         thinkingLevel,
+        credentialInstanceId,
+        validatorCredentialInstanceId,
       } = req.body;
 
       // Validate taskIds
@@ -3360,12 +3362,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const hasPlanningModel = planningModelProvider !== undefined || planningModelId !== undefined;
       const hasNodeId = nodeId !== undefined;
       const hasThinkingLevel = thinkingLevel !== undefined;
-      if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel && !hasNodeId && !hasThinkingLevel) {
+      const hasCredentialInstance = credentialInstanceId !== undefined || validatorCredentialInstanceId !== undefined;
+      if (!hasExecutorModel && !hasValidatorModel && !hasPlanningModel && !hasNodeId && !hasThinkingLevel && !hasCredentialInstance) {
         throw badRequest("At least one model field, thinkingLevel, or nodeId must be provided");
       }
 
       if (nodeId !== undefined && nodeId !== null && typeof nodeId !== "string") {
         throw badRequest("nodeId must be a string, null, or undefined");
+      }
+      if ((credentialInstanceId !== undefined && credentialInstanceId !== null && typeof credentialInstanceId !== "string")
+        || (validatorCredentialInstanceId !== undefined && validatorCredentialInstanceId !== null && typeof validatorCredentialInstanceId !== "string")) {
+        throw badRequest("credential instance IDs must be strings, null, or undefined");
       }
       if (thinkingLevel !== undefined && thinkingLevel !== null && (typeof thinkingLevel !== "string" || !THINKING_LEVELS.includes(thinkingLevel as ThinkingLevel))) {
         throw badRequest(`thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}, null, or undefined`);
@@ -3430,6 +3437,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         planningModelId?: string | null;
         nodeId?: string | null;
         thinkingLevel?: ThinkingLevel | null;
+        credentialInstanceId?: string | null;
+        validatorCredentialInstanceId?: string | null;
       } = {};
       if (validatedExecutor.provider !== undefined) {
         updates.modelProvider = validatedExecutor.provider;
@@ -3459,6 +3468,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (thinkingLevel !== undefined) {
         updates.thinkingLevel = thinkingLevel as ThinkingLevel | null;
       }
+      /*
+      FNXC:TaskBulkModels 2026-08-01-10:34:
+      Bulk model editing must persist explicit credential-instance choices and clear them on Default. Omitting unchanged lanes preserves the no-change sentinel rather than rewriting task overrides.
+      */
+      if (credentialInstanceId !== undefined) updates.credentialInstanceId = credentialInstanceId;
+      if (validatorCredentialInstanceId !== undefined) updates.validatorCredentialInstanceId = validatorCredentialInstanceId;
 
       // Update all tasks in parallel
       const updatePromises = taskIds.map(async (taskId) => {

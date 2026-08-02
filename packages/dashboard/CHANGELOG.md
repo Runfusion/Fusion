@@ -1,5 +1,50 @@
 # @fusion/dashboard
 
+## 0.74.0-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.7
+- @fusion/engine@0.74.0-beta.7
+- @fusion/i18n@0.39.32-beta.7
+- @fusion-plugin-examples/claude-runtime@0.1.7-beta.7
+- @fusion-plugin-examples/cli-printing-press@0.1.49-beta.7
+- @fusion-plugin-examples/compound-engineering@0.1.32-beta.7
+- @fusion-plugin-examples/dependency-graph@0.1.63-beta.7
+- @fusion-plugin-examples/grok-runtime@0.2.10-beta.7
+- @fusion-plugin-examples/omp-runtime@0.1.7-beta.7
+- @fusion-plugin-examples/quality@0.1.7-beta.7
+- @fusion-plugin-examples/roadmap@0.1.51-beta.7
+- @fusion-plugin-examples/cursor-runtime@0.1.51-beta.7
+- @fusion-plugin-examples/droid-runtime@0.1.58-beta.7
+- @fusion-plugin-examples/hermes-runtime@0.2.82-beta.7
+- @fusion-plugin-examples/openclaw-runtime@0.2.82-beta.7
+- @fusion-plugin-examples/paperclip-runtime@0.2.82-beta.7
+
+## 0.74.0-beta.6
+
+### Patch Changes
+
+- 8e50967: summary: GitHub tracking controls now stay expanded while same-task detail updates preserve disabled tracking state.
+  category: fix
+  dev: Reset GitHub tracking disclosure state only when the selected task id changes, and align the renamed-review CLI regression with the classifier's resolved-boolean contract.
+  - @fusion/core@0.74.0-beta.6
+  - @fusion/engine@0.74.0-beta.6
+  - @fusion/i18n@0.39.32-beta.6
+  - @fusion-plugin-examples/claude-runtime@0.1.7-beta.6
+  - @fusion-plugin-examples/cli-printing-press@0.1.49-beta.6
+  - @fusion-plugin-examples/compound-engineering@0.1.32-beta.6
+  - @fusion-plugin-examples/dependency-graph@0.1.63-beta.6
+  - @fusion-plugin-examples/grok-runtime@0.2.10-beta.6
+  - @fusion-plugin-examples/omp-runtime@0.1.7-beta.6
+  - @fusion-plugin-examples/quality@0.1.7-beta.6
+  - @fusion-plugin-examples/roadmap@0.1.51-beta.6
+  - @fusion-plugin-examples/cursor-runtime@0.1.51-beta.6
+  - @fusion-plugin-examples/droid-runtime@0.1.58-beta.6
+  - @fusion-plugin-examples/hermes-runtime@0.2.82-beta.6
+  - @fusion-plugin-examples/openclaw-runtime@0.2.82-beta.6
+  - @fusion-plugin-examples/paperclip-runtime@0.2.82-beta.6
+
 ## 0.74.0-beta.5
 
 ### Patch Changes

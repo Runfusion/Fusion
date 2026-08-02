@@ -1031,6 +1031,7 @@ vi.mock("../errors/context-limit-detector.js", () => ({
 // Mock usage-limit-detector
 vi.mock("../errors/usage-limit-detector.js", () => ({
   checkSessionError: vi.fn(),
+  isUsageLimitError: (message: string) => /usage limit|rate limit|\b429\b/i.test(message),
 }));
 
 // Mock worktree-names
@@ -1086,8 +1087,10 @@ import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { execSync } from "node:child_process";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { createLogger } from "../logger.js";
+import { promptWithAutoRetry, resolveExecutorSessionModel } from "../agent-session-helpers.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
+const mockedResolveExecutorSessionModel = vi.mocked(resolveExecutorSessionModel);
 const mockedExecSync = vi.mocked(execSync);
 const mockedInstallTaskWorktreeIdentityGuard = vi.mocked(installTaskWorktreeIdentityGuard);
 const mockedGenerateWorktreeName = vi.mocked(generateWorktreeName);
@@ -3279,5 +3282,213 @@ describe("StepSessionExecutor executor model lane hierarchy", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-4-5",
     });
+  });
+});
+
+describe("StepSessionExecutor credential-instance retargeting", () => {
+  function makeCredentialExecutor(options: {
+    steps?: number;
+    runStepsInNewSessions?: boolean;
+    credentialInstanceId?: string;
+    maxParallelSteps?: number;
+    resolveCredentialInstanceRetarget?: () => Promise<{ providerId: string; instanceId: string } | undefined>;
+  } = {}) {
+    const stepCount = options.steps ?? 1;
+    return new StepSessionExecutor({
+      taskDetail: makeTaskDetail({
+        prompt: makeStepPrompt("FN-CREDENTIAL", stepCount),
+        steps: Array.from({ length: stepCount }, (_, index) => ({ name: `Step ${index}`, status: "pending" as const })),
+      }),
+      worktreePath: "/project/.worktrees/main",
+      rootDir: "/project",
+      settings: makeSettings({ maxParallelSteps: options.maxParallelSteps ?? 1, runStepsInNewSessions: options.runStepsInNewSessions }),
+      credentialInstanceId: options.credentialInstanceId,
+      resolveCredentialInstanceRetarget: options.resolveCredentialInstanceRetarget,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(promptWithAutoRetry).mockImplementation(async (session: any, prompt: string, options?: unknown) =>
+      session.prompt(prompt, options),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("omits an unset credential instance from legacy session creation", async () => {
+    mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+    const executor = makeCredentialExecutor();
+
+    await executor.executeAll();
+
+    expect(mockedCreateFnAgent.mock.calls[0]?.[0]).not.toHaveProperty("credentialInstanceId");
+  });
+
+  it("forwards the initial instance to each newly-created sequential session", async () => {
+    mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+    const executor = makeCredentialExecutor({ steps: 2, runStepsInNewSessions: true, credentialInstanceId: "account-a" });
+
+    await executor.executeAll();
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(mockedCreateFnAgent.mock.calls.map(([options]) => options.credentialInstanceId)).toEqual(["account-a", "account-a"]);
+    expect(mockedResolveExecutorSessionModel.mock.calls.map((args) => args[4])).toEqual(["account-a", "account-a"]);
+  });
+
+  it("forwards the initial instance to every fresh session in a parallel wave", async () => {
+    mockedCreateFnAgent.mockResolvedValue({ session: makeMockSession() } as any);
+    const executor = makeCredentialExecutor({ steps: 2, maxParallelSteps: 2, credentialInstanceId: "account-a" });
+
+    await executor.executeAll();
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    expect(mockedCreateFnAgent.mock.calls.map(([options]) => options.credentialInstanceId)).toEqual(["account-a", "account-a"]);
+  });
+
+  it("retargets only subsequent fresh sessions and clears back to omitted resolution", async () => {
+    const first = makeMockSession();
+    const second = makeMockSession();
+    const third = makeMockSession();
+    mockedCreateFnAgent
+      .mockResolvedValueOnce({ session: first } as any)
+      .mockResolvedValueOnce({ session: second } as any)
+      .mockResolvedValueOnce({ session: third } as any);
+    const executor = makeCredentialExecutor({ steps: 3, runStepsInNewSessions: true, credentialInstanceId: "account-a" });
+
+    await (executor as any).executeStep(0, "/project/.worktrees/main");
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-b" });
+    await (executor as any).executeStep(1, "/project/.worktrees/main");
+    await executor.retargetCredentialInstance(undefined);
+    await (executor as any).executeStep(2, "/project/.worktrees/main");
+
+    expect(mockedCreateFnAgent.mock.calls.map(([options]) => options.credentialInstanceId)).toEqual([
+      "account-a",
+      "account-b",
+      undefined,
+    ]);
+    expect(mockedCreateFnAgent.mock.calls[2]?.[0]).not.toHaveProperty("credentialInstanceId");
+  });
+
+  it("defers reusable-primary disposal until an active prompt completes, then uses the retargeted instance", async () => {
+    let finishFirstPrompt: (() => void) | undefined;
+    let firstSession: ReturnType<typeof makeMockSession> | undefined;
+    const firstPromptStarted = new Promise<void>((resolve) => {
+      firstSession = {
+        ...makeMockSession(),
+        abortBash: vi.fn(),
+        prompt: vi.fn(() => new Promise<void>((finish) => {
+          finishFirstPrompt = finish;
+          resolve();
+        })),
+      };
+      const second = { ...makeMockSession(), abortBash: vi.fn() };
+      mockedCreateFnAgent
+        .mockResolvedValueOnce({ session: firstSession } as any)
+        .mockResolvedValueOnce({ session: second } as any);
+    });
+    const executor = makeCredentialExecutor({ steps: 2, runStepsInNewSessions: false, credentialInstanceId: "account-a" });
+    const execution = executor.executeAll();
+
+    await firstPromptStarted;
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-b" });
+
+    expect(firstSession?.abortBash).not.toHaveBeenCalled();
+    expect(firstSession?.dispose).not.toHaveBeenCalled();
+    finishFirstPrompt?.();
+
+    await expect(execution).resolves.toEqual([
+      expect.objectContaining({ stepIndex: 0, success: true, retries: 0 }),
+      expect.objectContaining({ stepIndex: 1, success: true, retries: 0 }),
+    ]);
+    expect(firstSession?.dispose).toHaveBeenCalledTimes(1);
+    expect(mockedCreateFnAgent.mock.calls[1]?.[0]).toMatchObject({ credentialInstanceId: "account-b" });
+  });
+
+  it("clears a deferred retarget during cleanup", async () => {
+    let finishPrompt: (() => void) | undefined;
+    const promptStarted = new Promise<void>((resolve) => {
+      const session = {
+        ...makeMockSession(),
+        abortBash: vi.fn(),
+        prompt: vi.fn(() => new Promise<void>((finish) => {
+          finishPrompt = finish;
+          resolve();
+        })),
+      };
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+    });
+    const executor = makeCredentialExecutor({ runStepsInNewSessions: false, credentialInstanceId: "account-a" });
+    const execution = executor.executeAll();
+
+    await promptStarted;
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-b" });
+    await executor.cleanup();
+
+    expect((executor as any).reusablePrimaryRetargetPending).toBe(false);
+    finishPrompt?.();
+    await execution;
+  });
+
+  it("immediately disposes an idle reusable primary session and ignores equivalent or invalid retargets", async () => {
+    const session = { ...makeMockSession(), abortBash: vi.fn() };
+    mockedCreateFnAgent.mockResolvedValue({ session } as any);
+    const executor = makeCredentialExecutor({ runStepsInNewSessions: false, credentialInstanceId: "account-a" });
+
+    await (executor as any).executeStep(0, "/project/.worktrees/main");
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-a" });
+    expect(session.dispose).not.toHaveBeenCalled();
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-b" });
+    expect(session.abortBash).toHaveBeenCalledTimes(1);
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    await expect(executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "bad id" })).resolves.toBeUndefined();
+    expect(getStepSessionLogger().warn).toHaveBeenCalledWith(expect.stringContaining("Ignoring invalid credential instance id"));
+  });
+
+  it("retargets a usage-limit retry through the owning executor's live selection", async () => {
+    const first = {
+      ...makeMockSession(),
+      prompt: vi.fn()
+        .mockRejectedValueOnce(new Error("429 usage limit reached"))
+        .mockResolvedValueOnce(undefined),
+    };
+    const second = makeMockSession();
+    const resolveCredentialInstanceRetarget = vi.fn().mockResolvedValue({ providerId: "anthropic", instanceId: "account-b" });
+    mockedCreateFnAgent
+      .mockResolvedValueOnce({ session: first } as any)
+      .mockResolvedValueOnce({ session: second } as any);
+    const executor = makeCredentialExecutor({ credentialInstanceId: "account-a", resolveCredentialInstanceRetarget });
+
+    const execution = executor.executeAll();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(execution).resolves.toEqual([expect.objectContaining({ success: true, retries: 1 })]);
+    expect(resolveCredentialInstanceRetarget).toHaveBeenCalledTimes(1);
+    expect(mockedCreateFnAgent.mock.calls[1]?.[0]).toMatchObject({ credentialInstanceId: "account-b" });
+  });
+
+  it("applies a manual retarget before a retry without changing retry accounting", async () => {
+    let rejectFirstPrompt: ((error: Error) => void) | undefined;
+    const first = {
+      ...makeMockSession(),
+      prompt: vi.fn(() => new Promise<void>((_resolve, reject) => { rejectFirstPrompt = reject; })),
+    };
+    const second = makeMockSession();
+    mockedCreateFnAgent
+      .mockResolvedValueOnce({ session: first } as any)
+      .mockResolvedValueOnce({ session: second } as any);
+    const executor = makeCredentialExecutor({ credentialInstanceId: "account-a" });
+    const execution = executor.executeAll();
+    await vi.waitFor(() => expect(rejectFirstPrompt).toBeTypeOf("function"));
+
+    await executor.retargetCredentialInstance({ providerId: "anthropic", instanceId: "account-b" });
+    rejectFirstPrompt?.(new Error("retry me"));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(execution).resolves.toEqual([expect.objectContaining({ success: true, retries: 1 })]);
+    expect(mockedCreateFnAgent.mock.calls[1]?.[0]).toMatchObject({ credentialInstanceId: "account-b" });
   });
 });

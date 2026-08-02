@@ -1182,6 +1182,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       onToolEnd: logger.onToolEnd,
       defaultProvider: mergerSessionModel.provider,
       defaultModelId: mergerSessionModel.modelId,
+      ...(mergerSessionModel.credentialInstanceId ? { credentialInstanceId: mergerSessionModel.credentialInstanceId } : {}),
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
       fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
@@ -2449,6 +2450,7 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
+      ...(mergerSessionModel.credentialInstanceId ? { credentialInstanceId: mergerSessionModel.credentialInstanceId } : {}),
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
@@ -2873,6 +2875,7 @@ ${fileList}
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
+      ...(mergerSessionModel.credentialInstanceId ? { credentialInstanceId: mergerSessionModel.credentialInstanceId } : {}),
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
@@ -5925,6 +5928,7 @@ You are assisting with a paused \`git pull --rebase\`.
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
+      ...(mergerSessionModel.credentialInstanceId ? { credentialInstanceId: mergerSessionModel.credentialInstanceId } : {}),
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),
@@ -7095,6 +7099,11 @@ export async function aiMergeTask(
       projectRootDir,
     );
 
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
+    Merge deliberately leaves refreshStaleBase off. The merge lane owns its rebase policy through
+    decideAutoPrerebase/runAutoPrerebase; refreshing here would double-rebase a branch after review.
+    */
     const acquisition = await acquireTaskWorktree({
       task,
       rootDir: projectRootDir,
@@ -10923,6 +10932,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     onToolEnd: agentLogger.onToolEnd,
     defaultProvider: mergerSessionModel.provider,
     defaultModelId: mergerSessionModel.modelId,
+      ...(mergerSessionModel.credentialInstanceId ? { credentialInstanceId: mergerSessionModel.credentialInstanceId } : {}),
     fallbackProvider: mergerFallbackModel.provider,
     fallbackModelId: mergerFallbackModel.modelId,
     fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, mergerTask?.mergerThinkingLevel),

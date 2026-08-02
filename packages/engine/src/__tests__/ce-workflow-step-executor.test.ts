@@ -32,6 +32,7 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { WorktreeBaseRefreshError } from "../worktree-acquisition.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
@@ -39,6 +40,49 @@ import {
   mockedExistsSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
+
+describe("typed worktree base refresh graph refusal", () => {
+  it("does not immediately retry or erase a code-node refresh reason", async () => {
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-01-16:33:
+    The graph must stop before its code handler/session when reuse cannot prove a current,
+    durable-aligned checkout. The refresh outcome remains routable rather than generic exception.
+    */
+    const handler = vi.fn();
+    const prepare = vi.fn().mockRejectedValue(new WorktreeBaseRefreshError({
+      kind: "base-reconciliation-required",
+      executionSafe: false,
+      durableBaseSha: "c0",
+      baseSha: "c1",
+    }));
+    const graph = new WorkflowGraphExecutor({
+      handlers: { code: handler },
+      prepareNodeExecution: prepare,
+      maxRetriesPerNode: 3,
+    });
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "typed-refresh-refusal",
+      columns: [{ id: "in-progress", name: "In Progress", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "execute", kind: "code", column: "in-progress", config: { source: "return {};" } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "execute" },
+        { from: "execute", to: "end", condition: "success" },
+      ],
+    };
+
+    const result = await graph.run({ id: "FN-REFRESH", column: "in-progress", steps: [] } as any, {}, ir);
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
+    expect(result.outcome).toBe("failure");
+    expect(result.context?.["node:execute:value"]).toBe("base-reconciliation-required");
+  });
+});
 
 type CapturedSession = {
   customTools?: Array<{ name?: string }>;
@@ -131,7 +175,7 @@ async function expectCapturedSkillBody(
   distinctiveBody: string,
 ) {
   const { DefaultResourceLoader } = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>("@earendil-works/pi-coding-agent");
-  const { createSkillsOverrideFromSelection, resolveSessionSkills } = await vi.importActual<typeof import("../cli-runtime/skill-resolver.js")>("../cli-runtime/skill-resolver.js");
+  const { createSkillsOverrideFromSelection, resolveSessionSkills } = await vi.importActual<typeof import("../skill-resolver.js")>("../skill-resolver.js");
   const requestedSkillNames = cap.last?.skillSelection?.requestedSkillNames;
   const selection = resolveSessionSkills({ projectRootDir, requestedSkillNames, sessionPurpose: "executor" });
   const loader = new DefaultResourceLoader({

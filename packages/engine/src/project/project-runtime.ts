@@ -91,7 +91,7 @@ export interface ProjectRuntimeEvents {
   /** Emitted when a task is updated */
   "task:updated": [task: Task];
   /** Emitted when a task is deleted */
-  "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
+  "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction; observed?: boolean; outboxEventId?: string }];
   /** Emitted when a cross-node assignment event is observed */
   "task:assigned": [data: { taskId: string; agentId: string; assignedAt: string; source?: string }];
   /** Emitted when an error occurs in the runtime */

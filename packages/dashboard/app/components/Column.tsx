@@ -11,7 +11,6 @@ import { WorktreeGroup } from "./WorktreeGroup";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
-import { isTaskAgentActive } from "../utils/taskActivity";
 import {
   isArchivedColumnRole,
   isCompleteColumnRole,
@@ -20,7 +19,6 @@ import {
   isReviewColumnRole,
   isWipColumnRole,
 } from "../utils/columnRoles";
-import { isTaskStuck } from "../utils/taskStuck";
 import type { ToastType } from "../hooks/useToast";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 import { ChevronDown, ChevronUp, MoreVertical } from "lucide-react";
@@ -365,24 +363,23 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   Column header is executing/total (e.g. 3/4). Executing uses the same Running predicate as the
   footer (unpaused WIP, live planners, active review). Total is the card count in this lane.
 
-  FNXC:BoardColumnCount 2026-07-22-06:10:
-  The header must agree with the cards below it: a Todo card parked in the durable
-  `needs-replan` stage keeps its REVISING badge and activity chrome (FN-8494), so a header
-  that only counts live agents read 0/2 under a glowing card. Union the shared Running
-  predicate with the card's own activity-chrome predicate (isTaskAgentActive, same
-  globalPaused/stuck gates the card applies) so the count equals the number of visibly
-  active cards. Footer Running and admission intentionally keep the live-agent-only truth —
-  a parked replan must not consume top-level concurrency capacity.
+  FNXC:BoardColumnCount 2026-08-01-17:53:
+  Operator requirement: summing the lane headers must never exceed the engine's live-agent
+  population (the concurrency cap's admission truth). The former union with the card
+  activity-chrome predicate (FN-8494 REVISING chrome et al.) let the sum read cap+1 (e.g. 10
+  glowing cards under a 9-slot limit), which operators read as a capacity breach. The union is
+  removed and the chrome predicate itself (isTaskAgentActive) now delegates its positive arm to
+  the same shared Running predicate, so the header still agrees with the glowing cards below it:
+  glow is a strict subset of Running, never a superset.
   */
   const activeTaskCount = useMemo(
     () => tasks.filter((task) =>
-      isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags))
       // FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (PR #2566 review — greptile): these
       // tasks are IN this column, so the column's own flags are their column traits. Without
       // them the header undercounts executing work on a merged planning lane.
-      || isTaskAgentActive(task, { globalPaused, isStuck: isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs, columnFlags), columnFlags }),
+      isRunningAgentTask(enrichRunningAgentTaskShapeFromFlags(task, columnFlags)),
     ).length,
-    [tasks, columnFlags, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs],
+    [tasks, columnFlags],
   );
   /*
   FNXC:BoardColumnWindowing 2026-07-26-11:48:

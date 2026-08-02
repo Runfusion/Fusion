@@ -108,7 +108,8 @@ describe("MCP surface coverage", () => {
     expectResolvedMcpForwarded(
       "src/agent-heartbeat.ts",
       "const heartbeatMcp = await resolveHeartbeatMcpForAgent(taskStore, agentId);",
-      "const { session } = await createResolvedAgentSession({",
+      // FNXC:McpCoverage 2026-08-02-00:15: FN-8654 rebound `session` to a `let` so credential-instance rotation can reassign it; match the destructuring seam without pinning the declaration keyword so the const/let refactor no longer breaks this wiring check.
+      "{ session } = await createResolvedAgentSession({",
       "mcpServers: heartbeatMcp.servers",
     );
   });

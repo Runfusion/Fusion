@@ -18,6 +18,8 @@ import {
   choosePreferredStoredCredential,
   readStoredCredentialsFromAuthFile,
   shouldHydrateStoredCredential,
+  DEFAULT_PROVIDER_INSTANCE_ID,
+  type ProviderInstanceRef,
   type StoredAuthCredential,
 } from "@fusion/core";
 export interface LoginCallbacks {
@@ -42,6 +44,17 @@ export interface DashboardAuthStorage {
   hasApiKey(providerId: string): boolean;
   getApiKey(providerId: string): Promise<string | undefined>;
   get(providerId: string): { type?: string; key?: string } | undefined;
+  /** Optional while read-only and legacy storage adapters are still supported. */
+  listInstances?(providerId: string): ProviderInstanceRef[];
+  getInstance?(ref: ProviderInstanceRef): StoredCredential | undefined;
+  setInstanceApiKey?(ref: ProviderInstanceRef, apiKey: string, label?: string): Promise<void>;
+  clearInstanceApiKey?(ref: ProviderInstanceRef): Promise<void>;
+  loginInstance?(ref: ProviderInstanceRef, callbacks: LoginCallbacks, label?: string): Promise<void>;
+  logoutInstance?(ref: ProviderInstanceRef): Promise<void>;
+  removeInstance?(ref: ProviderInstanceRef): Promise<void>;
+  getDefaultInstance?(providerId: string): ProviderInstanceRef | undefined;
+  setDefaultInstance?(ref: ProviderInstanceRef): Promise<void>;
+  renameInstance?(ref: ProviderInstanceRef, label?: string): Promise<void>;
 }
 
 interface ReadFallbackAuthStorage {
@@ -244,6 +257,82 @@ export function wrapAuthStorageWithApiKeyProviders(
         return credential?.type === "api_key" ? resolveStoredApiKey(credential.key) : undefined;
       }
       return mergedAuthStorage.getApiKey(storageProviderId);
+    },
+    /*
+    FNXC:ProviderAuth 2026-08-01-06:11:
+    Credential-establishing instance writes are the only creation seam: a client-generated id may
+    create or overwrite its credential, while rename/default/logout/remove target existing rows.
+    Labels are opaque display metadata, never keys; first-default selection remains owned by storage.
+    removeInstance deletes the row, unlike clearInstanceApiKey which only clears its credential.
+    */
+    listInstances: (providerId) => mergedAuthStorage.listInstances(toApiKeyStorageProviderId(providerId)),
+    getInstance: (ref) => mergedAuthStorage.getInstance({ ...ref, providerId: toApiKeyStorageProviderId(ref.providerId) }),
+    setInstanceApiKey: async (ref, apiKey, label) => {
+      const providerId = toApiKeyStorageProviderId(ref.providerId);
+      if (providerId === ANTHROPIC_STORAGE_PROVIDER_ID) await migrateStoredAnthropicSubscriptionCredential();
+      await mergedAuthStorage.setInstance({ providerId, instanceId: ref.instanceId }, {
+        type: "api_key", key: apiKey, ...(label ? { label } : {}),
+      });
+    },
+    clearInstanceApiKey: async (ref) => {
+      const providerId = toApiKeyStorageProviderId(ref.providerId);
+      const target = { providerId, instanceId: ref.instanceId };
+      const credential = mergedAuthStorage.getInstance(target);
+      if (!credential) return;
+      // Preserve the instance metadata/default participation; removal is reserved for removeInstance.
+      await mergedAuthStorage.setInstance(target, { ...credential, type: "api_key", key: "" });
+    },
+    loginInstance: async (ref, callbacks, label) => {
+      const providerId = ref.providerId === ANTHROPIC_STORAGE_PROVIDER_ID
+        ? ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
+        : ref.providerId;
+      const target = { providerId, instanceId: ref.instanceId };
+      const previousDefault = mergedAuthStorage.getDefaultInstance(providerId);
+      const previousCredential = previousDefault && mergedAuthStorage.getInstance(previousDefault);
+      /*
+      FNXC:ProviderAuth 2026-08-01-06:48:
+      The runtime OAuth adapter only accepts a bare provider and therefore writes its resolved
+      default slot. Capture and restore that slot around the login before persisting the result to
+      the requested instance, so adding or reauthorizing an account never repoints its credential.
+      */
+      await mergedAuthStorage.login(providerId, callbacks);
+      const credential = mergedAuthStorage.get(providerId);
+      if (!credential) return;
+      await mergedAuthStorage.setInstance(target, { ...credential, ...(label ? { label } : {}) });
+      if (previousDefault && previousCredential && previousDefault.instanceId !== target.instanceId) {
+        await mergedAuthStorage.setInstance(previousDefault, previousCredential);
+      } else if (!previousDefault && target.instanceId !== DEFAULT_PROVIDER_INSTANCE_ID) {
+        /*
+        FNXC:ProviderAuth 2026-08-01-07:20:
+        Bare OAuth adapters materialize their first credential in `default`. When a first login
+        targets another client-generated id, remove that temporary slot and explicitly select the
+        target so no ghost default remains and the requested account becomes the provider default.
+        */
+        await mergedAuthStorage.removeInstance({ providerId, instanceId: DEFAULT_PROVIDER_INSTANCE_ID });
+        await mergedAuthStorage.setDefaultInstance(target);
+      }
+    },
+    logoutInstance: async (ref) => {
+      await mergedAuthStorage.removeInstance({
+        ...ref,
+        providerId: ref.providerId === ANTHROPIC_STORAGE_PROVIDER_ID
+          ? ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID
+          : ref.providerId,
+      });
+    },
+    removeInstance: async (ref) => {
+      await mergedAuthStorage.removeInstance({ ...ref, providerId: toApiKeyStorageProviderId(ref.providerId) });
+    },
+    getDefaultInstance: (providerId) => mergedAuthStorage.getDefaultInstance(toApiKeyStorageProviderId(providerId)),
+    setDefaultInstance: async (ref) => {
+      await mergedAuthStorage.setDefaultInstance({ ...ref, providerId: toApiKeyStorageProviderId(ref.providerId) });
+    },
+    renameInstance: async (ref, label) => {
+      const providerId = toApiKeyStorageProviderId(ref.providerId);
+      const target = { providerId, instanceId: ref.instanceId };
+      const credential = mergedAuthStorage.getInstance(target);
+      if (!credential) throw new Error("Credential instance not found");
+      await mergedAuthStorage.setInstance(target, { ...credential, ...(label ? { label } : {}) });
     },
     get: (providerId) => {
       if (providerId === ANTHROPIC_API_KEY_PROVIDER_ID) {

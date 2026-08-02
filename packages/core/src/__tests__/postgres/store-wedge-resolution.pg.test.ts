@@ -9,6 +9,7 @@
  * A deletion that commits after the compare-and-set but before projection must retain deleted-task semantics instead of returning a stale successful resolution.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { WEDGE_RENOTIFY_COOLDOWN_MS } from "../../types/task/task-core.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,
@@ -26,8 +27,72 @@ pgTest("TaskStore wedge episode resolution (PostgreSQL)", () => {
   beforeAll(h.beforeAll);
   beforeEach(h.beforeEach);
   afterEach(h.afterEach);
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
   afterAll(h.afterAll);
+
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-01-15:35:
+  Cooldown timestamps are keyed by normalized reason rather than the current episode.
+  This covers the reported resolve/re-wedge flap and proves X -> Y -> X retains X's
+  own suppression window while a distinct operator action remains immediately visible.
+  */
+  it("claims wedge notifications once per reason cooldown window", async () => {
+    let now = Date.parse("2026-08-01T12:00:00.000Z");
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const store = h.store();
+    const task = await h.createTestTask();
+
+    const first = await store.claimTaskWedgeNotificationEpisode(task.id, "execution-blocked");
+    expect(first.claimed).toBe(true);
+    await store.resolveTaskWedgeNotificationEpisode(task.id, first.episodeId!);
+
+    const repeated = await store.claimTaskWedgeNotificationEpisode(task.id, "execution-blocked");
+    expect(repeated).toEqual({ claimed: false });
+    const suppressed = await store.getTask(task.id);
+    expect(suppressed.wedgeNotification).toMatchObject({
+      reasonKey: "execution-blocked",
+      status: "active",
+      lastNotifiedAtByReason: { "execution-blocked": "2026-08-01T12:00:00.000Z" },
+    });
+    await store.resolveTaskWedgeNotificationEpisode(task.id, suppressed.wedgeNotification!.episodeId);
+
+    const different = await store.claimTaskWedgeNotificationEpisode(task.id, "merge-blocked:check:lint");
+    expect(different.claimed).toBe(true);
+    await store.resolveTaskWedgeNotificationEpisode(task.id, different.episodeId!);
+    expect(await store.claimTaskWedgeNotificationEpisode(task.id, "execution-blocked")).toEqual({ claimed: false });
+    const secondSuppressed = await store.getTask(task.id);
+    await store.resolveTaskWedgeNotificationEpisode(task.id, secondSuppressed.wedgeNotification!.episodeId);
+
+    now += WEDGE_RENOTIFY_COOLDOWN_MS;
+    const afterCooldown = await store.claimTaskWedgeNotificationEpisode(task.id, "execution-blocked");
+    expect(afterCooldown.claimed).toBe(true);
+
+    const legacy = await h.createTestTask();
+    await store.updateTask(legacy.id, {
+      wedgeNotification: {
+        reasonKey: "legacy",
+        episodeId: "legacy-episode",
+        status: "resolved",
+        transitionedAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    expect((await store.claimTaskWedgeNotificationEpisode(legacy.id, "execution-blocked")).claimed).toBe(true);
+
+    const invalid = await h.createTestTask();
+    await store.updateTask(invalid.id, {
+      wedgeNotification: {
+        reasonKey: "invalid",
+        episodeId: "invalid-episode",
+        status: "resolved",
+        transitionedAt: "2026-08-01T00:00:00.000Z",
+        lastNotifiedAtByReason: { "execution-blocked": "not-a-timestamp" },
+      },
+    });
+    expect((await store.claimTaskWedgeNotificationEpisode(invalid.id, "execution-blocked")).claimed).toBe(true);
+  });
 
   it("resolves the exact active episode", async () => {
     const store = h.store();

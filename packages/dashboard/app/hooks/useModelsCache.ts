@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchModels, type ModelInfo, type ModelsResponse } from "../api";
+import { fetchModels, type ModelInfo, type ModelsResponse, type ProviderCredentialInstanceSummary } from "../api";
 import { clearCache, readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 
 interface ModelsCacheState {
@@ -8,6 +8,7 @@ interface ModelsCacheState {
   favoriteModels: string[];
   defaultProvider: string | null;
   defaultModelId: string | null;
+  providerInstances: Record<string, { instances: ProviderCredentialInstanceSummary[] }>;
 }
 
 export interface UseModelsCacheResult extends ModelsCacheState {
@@ -21,6 +22,7 @@ const EMPTY_MODELS_STATE: ModelsCacheState = {
   favoriteModels: [],
   defaultProvider: null,
   defaultModelId: null,
+  providerInstances: {},
 };
 
 let inflight: Promise<ModelsResponse> | null = null;
@@ -41,6 +43,7 @@ function toModelsCacheState(response: ModelsResponse | null | undefined): Models
     favoriteModels: response.favoriteModels ?? [],
     defaultProvider: response.defaultProvider ?? null,
     defaultModelId: response.defaultModelId ?? null,
+    providerInstances: response.providerInstances ?? {},
   };
 }
 

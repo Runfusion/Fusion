@@ -524,23 +524,6 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
   margin-top: var(--space-xs);
 }
 
-.task-chat-tool-detail-label {
-  color: var(--text-muted);
-  font-size: var(--space-md);
-  font-weight: 600;
-}
-
-.task-chat-tool-detail {
-  box-sizing: border-box;
-  margin: var(--space-xs) 0 0;
-  max-width: 100%;
-  padding: var(--space-xs);
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--space-md);
-}
-
 .task-chat-composer {
   display: flex;
   flex: 0 0 auto;

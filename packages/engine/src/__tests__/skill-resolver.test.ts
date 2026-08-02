@@ -689,7 +689,8 @@ describe("createSkillsOverrideFromSelection", () => {
 
       expect(result.skills).toHaveLength(0);
       expect(result.diagnostics).toHaveLength(1);
-      expect(result.diagnostics[0].type).toBe("warning");
+      // Intentional exclusions are info diagnostics (debug-gated emission), not warn.
+      expect(result.diagnostics[0].type).toBe("info");
       expect(result.diagnostics[0].message).toContain("disabled by project execution settings");
       expect(result.diagnostics.some((diagnostic) => diagnostic.message.includes("not found"))).toBe(false);
     });
@@ -791,7 +792,7 @@ describe("createSkillsOverrideFromSelection", () => {
       expect(lastCall).toContain("missing-skill");
     });
 
-    it("produces warning diagnostic for disabled skills (exists but excluded by patterns)", () => {
+    it("produces info diagnostic for disabled skills (exists but excluded by patterns)", () => {
       // Simulate a skill that exists but was disabled by project exclusion pattern
       const selection: SkillSelectionResult = {
         allowedSkillPaths: new Set<string>(),
@@ -817,15 +818,16 @@ describe("createSkillsOverrideFromSelection", () => {
       // Skill should be filtered out (excluded)
       expect(result.skills).toHaveLength(0);
 
-      // Should produce warning diagnostic for disabled skill (ResourceDiagnostic only supports warning|error|collision)
+      // Intentional exclusions are info (debug-gated emission), not operator warnings
       expect(result.diagnostics).toHaveLength(1);
-      expect(result.diagnostics[0].type).toBe("warning");
+      expect(result.diagnostics[0].type).toBe("info");
       expect(result.diagnostics[0].message).toContain("disabled");
       expect(result.diagnostics[0].message).toContain("disabled-skill");
 
-      // Verify logging
-      expect(mockPiLog.warn).toHaveBeenCalled();
-      const lastCall = mockPiLog.warn.mock.calls[mockPiLog.warn.mock.calls.length - 1][0] as string;
+      // Verify logging routes to debug, not warn
+      expect(mockPiLog.warn).not.toHaveBeenCalled();
+      expect(mockPiLog.debug).toHaveBeenCalled();
+      const lastCall = mockPiLog.debug.mock.calls[mockPiLog.debug.mock.calls.length - 1][0] as string;
       expect(lastCall).toContain("disabled");
     });
 
@@ -1224,7 +1226,7 @@ describe("createSkillsOverrideFromSelection", () => {
 
       expect(result.skills).toEqual([]);
       expect(result.diagnostics).toContainEqual(expect.objectContaining({
-        type: "warning",
+        type: "info",
         message: expect.stringContaining("disabled by project execution settings"),
       }));
     });

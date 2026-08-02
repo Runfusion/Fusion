@@ -11,6 +11,7 @@ import {
 import {
   AgentSemaphore,
   clearPreHeldExecutorSlotsForTests,
+  getPreHeldExecutorSlotsForTests,
   hasPreHeldExecutorSlot,
   projectAdmissionCoordinator,
   registerPreHeldExecutorSlot,
@@ -1570,11 +1571,39 @@ describe("TriageProcessor", () => {
   let store: TaskStore;
   let processor: TriageProcessor;
   const rootDir = "/fake/root";
+  const trackedProcessors: TriageProcessor[] = [];
 
-  beforeEach(() => {
+  const trackProcessor = (instance: TriageProcessor): TriageProcessor => {
+    trackedProcessors.push(instance);
+    return instance;
+  };
+
+  /*
+  FNXC:ConcurrencyAdmission 2026-08-01-06:42:
+  Stubbed specifyTask calls never release the singleton reservation, and
+  unstopped processors retain specify providers. Stop every tracked processor
+  before clearing in finally: clearing first allows stop/timer callbacks to
+  repopulate shared state after the apparent reset.
+  */
+  const resetTriageAdmissionState = async (): Promise<void> => {
+    try {
+      await Promise.allSettled(trackedProcessors.map(async (instance) => instance.stop()));
+    } finally {
+      projectAdmissionCoordinator.clearReservationsForTests();
+      clearPreHeldExecutorSlotsForTests();
+      trackedProcessors.length = 0;
+    }
+  };
+
+  beforeEach(async () => {
+    await resetTriageAdmissionState();
     store = createMockStore();
-    processor = new TriageProcessor(store, rootDir);
+    processor = trackProcessor(new TriageProcessor(store, rootDir));
     mockReviewStep.mockReset();
+  });
+
+  afterEach(async () => {
+    await resetTriageAdmissionState();
   });
 
   it("creates processor with default options", () => {
@@ -1743,6 +1772,43 @@ Planner rewrote mission without the raw request.
     expect(store.on).toHaveBeenCalledWith("settings:updated", expect.any(Function));
   });
 
+  it("clears poll admission state even when a tracked processor stop throws", async () => {
+    const projectId = "/fake/triage-teardown";
+    const task = createTriageTask({ id: "FN-TEARDOWN" });
+    const triageStore = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([task]),
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 10,
+        pollIntervalMs: 10_000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+      }),
+    });
+    const leakingProcessor = trackProcessor(new TriageProcessor(triageStore, projectId, {
+      semaphore: new AgentSemaphore(10),
+    }));
+    vi.spyOn(leakingProcessor, "specifyTask").mockResolvedValue(undefined);
+
+    (leakingProcessor as any).running = true;
+    await (leakingProcessor as any).poll();
+    expect(projectAdmissionCoordinator.inspectProjectStateForTests(projectId).reservedCount).toBe(1);
+    expect(getPreHeldExecutorSlotsForTests()).toContain(task.id);
+
+    vi.spyOn(leakingProcessor, "stop").mockImplementation(() => {
+      throw new Error("stop failed");
+    });
+    await resetTriageAdmissionState();
+
+    expect(projectAdmissionCoordinator.inspectProjectStateForTests(projectId)).toEqual({
+      reservedCount: 0,
+      draining: false,
+      providerIds: [],
+    });
+    expect(projectAdmissionCoordinator.inspectProjectStateForTests(projectId).providerIds)
+      .not.toContain(`specify:${projectId}`);
+    expect(getPreHeldExecutorSlotsForTests()).toEqual([]);
+  });
+
   describe("poll ordering", () => {
     it("dispatches eligible triage tasks by createdAt asc", async () => {
       const tasks: Task[] = [
@@ -1777,7 +1843,7 @@ Planner rewrote mission without the raw request.
           autoMerge: true,
         }),
       });
-      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
       const specifySpy = vi
         .spyOn(triageProcessor, "specifyTask")
         .mockResolvedValue(undefined);
@@ -1814,7 +1880,7 @@ Planner rewrote mission without the raw request.
           autoMerge: true,
         }),
       });
-      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
       const specifySpy = vi
         .spyOn(triageProcessor, "specifyTask")
         .mockResolvedValue(undefined);
@@ -1851,7 +1917,7 @@ Planner rewrote mission without the raw request.
           autoMerge: true,
         }),
       });
-      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
       const specifySpy = vi
         .spyOn(triageProcessor, "specifyTask")
         .mockResolvedValue(undefined);
@@ -1896,7 +1962,7 @@ Planner rewrote mission without the raw request.
         limit: 4,
         snapshot: vi.fn(() => ({ activeCount: 0, waitingCount: 0, availableCount: 4, limit: 4 })),
       };
-      const triageProcessor = new TriageProcessor(triageStore, rootDir, { semaphore: semaphore as any });
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir, { semaphore: semaphore as any }));
       const specifySpy = vi
         .spyOn(triageProcessor, "specifyTask")
         .mockResolvedValue(undefined);
@@ -1933,7 +1999,7 @@ Planner rewrote mission without the raw request.
           autoMerge: true,
         } as Settings),
       });
-      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
       const { promptWithFallback } = await import("../pi.js");
 
       mockCreateFnAgent.mockClear();
@@ -1995,7 +2061,7 @@ Planner rewrote mission without the raw request.
           autoMerge: true,
         }),
       });
-      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
       const specifySpy = vi
         .spyOn(triageProcessor, "specifyTask")
         .mockResolvedValue(undefined);
@@ -4152,6 +4218,10 @@ describe("taskCreate tool model inheritance", () => {
       );
       expect(store.deleteTask).toHaveBeenCalledWith("FN-500", expect.objectContaining({
         removeLineageReferences: true,
+        closureContext: {
+          kind: "split-into-subtasks",
+          childTaskIds: ["FN-501", "FN-502"],
+        },
         auditContext: expect.objectContaining({
           agentId: "triage",
           runId: expect.stringMatching(/^triage-delete-FN-500-/),

@@ -303,7 +303,7 @@ export async function runServe(
    * the TaskStore) as the externalTaskStore for the cwd project's engine so
    * the connection pool is shared — no second embedded PG instance is started.
    */
-  const { createTaskStoreForBackend } = await import("@fusion/core");
+  const { createTaskStoreForBackend, buildConsumerId } = await import("@fusion/core");
   /*
    * FNXC:PostgresFinalCutover 2026-07-14-17:20:
    * Serve must share one successfully booted PostgreSQL layer between CentralCore and the cwd engine. A backend boot error is fatal; constructing a layerless CentralCore would make project discovery appear empty and split control-plane state.
@@ -317,6 +317,13 @@ export async function runServe(
     "backend.factory",
     () => createTaskStoreForBackend({
       rootDir: cwd,
+      /*
+      FNXC:CrossProcessDeleteObservation 2026-08-01-13:03:
+      serve shares this store with the engine, whose runtime starts the durable consumer. Give the
+      shared store the engine identity so its cursor survives restart and cross-process deletes reach
+      runtime observers even though this headless path never calls dashboard watch().
+      */
+      consumerId: buildConsumerId("engine"),
       onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
     }),
     logPhase,

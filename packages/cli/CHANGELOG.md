@@ -1,5 +1,774 @@
 # @runfusion/fusion
 
+## 0.74.0-beta.7
+
+### Minor Changes
+
+- 5f12044: summary: Add support for managing multiple credential accounts per provider.
+  category: feature
+  dev: Adds instance-aware dashboard auth route and client API surfaces.
+- 04c2bb4: summary: Keep the board moving on a second account instead of pausing when a provider hits its limit.
+  category: feature
+  dev: Adds the credential-instance rotator at the in-process runtime with the inventory-size no-op gate and CREDENTIAL_INSTANCE_COOLDOWN_MS.
+- 8a6949d: summary: Honor selected credential instances when starting AI sessions.
+  category: feature
+  dev: Adds AgentRuntimeOptions.resolvedCredentialInstance and credentialInstanceId, optional ResolvedSessionOptions.authStorage, and /api/models providerInstances.
+- 0e8f676: summary: Let operators select configured credential instances from model pickers.
+  category: feature
+  dev: The picker displays a control only for providers with multiple configured instances.
+- 3793b57: summary: Explain GitHub issue closures when triage splits imported work into subtasks.
+  category: feature
+  dev: Adds typed split closure context to delete events and ids-only run-audit metadata.
+- 23c9992: summary: Explain and close GitLab source issues when triage splits imported work.
+  category: feature
+  dev: Adds ordered split-close notes for resolved GitLab project issues.
+- 8c9346e: summary: Add durable transactional task-deletion lifecycle events for PostgreSQL projects.
+  category: feature
+  dev: Registers migration 0040, first-transition claim, and transactional writer seam.
+- 006cc40: summary: Deliver PostgreSQL task deletions to durable cross-process observers.
+  category: feature
+  dev: Adds lifecycle consumer identity, cursor, receipt, lease, dead-letter, and retention storage.
+- 006cc40: summary: Deliver task deletions safely to configured PostgreSQL runtime consumers.
+  category: feature
+  dev: Adds durable per-consumer outbox cursors, receipts, leases, retries, and bounded retention.
+- c978cdb: summary: Close linked GitLab issues when their Fusion task is deleted.
+  category: feature
+  dev: Delete-only malformed tracking fallback preserves inert behavior in other GitLab lifecycle consumers.
+- 39368f4: summary: Bound repeated mission validator runs using content-addressed input memoization.
+  category: feature
+  dev: Stores per-project feature fingerprints and durable validation-budget block provenance.
+- e8ca86d: summary: Prioritize review and execution work before planning when a project slot opens.
+  category: feature
+  dev: Project admission ranks review, execute, then planning; age and task ID break ties within a lane.
+
+### Patch Changes
+
+- 7dbcff1: summary: Board lane counts and card glow now never exceed the actual number of running agents.
+  category: fix
+  dev: `isTaskAgentActive`'s positive arm now delegates to the shared `isRunningAgentTask` predicate and Column headers count only that predicate; the needs-replan REVISING chrome and fresh planner-log glow window are removed (idle replans render "Queued to revise").
+- ebe514c: summary: Notify operators when manual merges wait in renamed workflow review lanes.
+  category: fix
+  dev: Uses emitter-carried task update lanes without making notification listeners asynchronous.
+- 5786c87: summary: Keep Summary token and cost tables scrollable on mobile.
+  category: fix
+  dev: Contains mobile table overflow within the task Summary surface.
+- 4f09758: summary: Let executor steps use a rotated credential account without interrupting active work.
+  category: feature
+  dev: StepSessionExecutor accepts credentialInstanceId and retargetCredentialInstance(ref).
+- ac8ce14: summary: Prevent repeat task-wedge alerts from flooding operator inboxes.
+  category: fix
+  dev: Adds a six-hour durable per-reason cooldown that survives resolve/re-wedge flaps.
+- 1aa1516: summary: Fix mission validators rejecting passing feature assertion results.
+  category: fix
+  dev: Validator prompts now provide assertion IDs and recover exact-count legacy responses safely.
+- 01d6580: summary: Refresh reused execution worktrees against merged dependency changes.
+  category: fix
+  dev: Execution refresh persists the integration baseline while preserving rebased task commits.
+- 529ab26: summary: Fix mission assertion status edits and deletes failing with invalid assertion IDs.
+  category: fix
+  dev: Align dashboard assertion ID validation with MissionStore-generated IDs and surface delete failures.
+- bf173da: summary: Move reverted tasks out of Done and provide Delete or Revise recovery actions.
+  category: fix
+  dev: Reuse the original task description when opening the New Task revision draft.
+- b8f7f9e: summary: Show complete available tool-call details when expanding chats and logs.
+  category: fix
+  dev: Shares tool-call payload formatting across chat, Activity, and Agent Log Viewer.
+- 1e67e87: summary: Fix Git Manager mobile sheets leaving excess space at the right edge.
+  category: fix
+  dev: Resets the resize-handle gutter only below the standalone 768px phone boundary.
+- b8bde05: summary: Show registered projects immediately while dashboard health metrics load.
+  category: fix
+  dev: Project health batches now hydrate cards and aggregate metrics progressively.
+- 3b63351: summary: Recover valid mission validator JSON from ordinary response formatting noise.
+  category: fix
+  dev: Bounds candidate parsing to 256 KiB and eight attempts while preserving fail-closed assertion validation.
+- 7dc6c4b: summary: Keep named Authentication credential actions targeted to the selected account.
+  category: fix
+  dev: Settings omits default-instance arguments and preserves explicit credential instance ids for OAuth and API-key actions.
+- 5d06c92: summary: Keep auth status available when credential-instance query data is absent.
+  category: fix
+  dev: Treats dangling requested instances as unauthenticated without credential fallback.
+- 54c2c1e: summary: Keep milestone validation badges current after assertion repairs or removals.
+  category: fix
+  dev: Reconciles project-scoped PostgreSQL rollups before events and discards stale dashboard refresh responses by milestone generation.
+- 4fb873f: summary: Fix GitHub Import sheet spacing on phones and short viewports.
+  category: fix
+  dev: Clears the standalone FloatingWindow resize gutter only while its sheet contract hides handles.
+- 4c2369e: summary: Open task links from mail in the active dashboard view.
+  category: fix
+  dev: Mail markdown task deep links now use the shared task-detail handler.
+- df56790: summary: Keep upward Quick Add model and priority menus anchored to their trigger.
+  category: fix
+  dev: Portal menus now use bottom anchoring when opening upward.
+- fab2b3a: summary: Keep translated dashboard catalogs aligned with reverted-task resolution actions.
+  category: fix
+  dev: Adds the revertedTasks, revertedResolutionActions, and revise keys to every secondary app catalog so locale parity remains valid after the reverted-task dashboard UI landed.
+- ebe514c: summary: Keep scheduler and planning reactions working on renamed workflow lanes.
+  category: fix
+  dev: TaskStore decorates task:updated with cached resolved lanes; runtime bridges intentionally drop optional metadata.
+
+## 0.74.0-beta.6
+
+### Minor Changes
+
+- 18d654a: summary: Remove the machine-wide concurrency cap — capacity is now two numbers per project.
+  category: breaking
+  dev: Deletes `globalMaxConcurrent` (settings key, CentralCore state API, `PUT /api/global-concurrency`, the Scheduling · Global settings section, and the footer + Command Center global sliders). `GET /api/global-concurrency` survives but returns live telemetry only (`currentlyActive`, `projectsActive`); it no longer reports `globalMaxConcurrent`/`queuedCount`, which came from slot bookkeeping production code never incremented. `acquireGlobalSlot`/`releaseGlobalSlot` had no production callers and are gone. Scheduling · Global and Scheduling · Project merge back into one "Scheduling" section. A stored `globalMaxConcurrent` is ignored; the `central.global_concurrency` table is dropped in a follow-up.
+- 743df98: summary: Add a "Limit concurrent worktrees" toggle — turn it off and Max Concurrent Tasks becomes the only limit.
+  category: feature
+  dev: New project setting `worktreeLimitEnabled` (default true). It is CAPACITY ONLY: tasks still execute in their own git worktree with it off — it decides whether the worktree count is a second limit alongside the agent count. When false, `resolveWorktreeCapacityLimit` returns null and the scheduler builds no worktree gate at all, so `maxWorktrees` is structurally incapable of binding rather than merely generous; `ConcurrencyGateDiagnostic.maxWorktreesGate` is now optional and the queued-reason string omits the worktree line. Absent `worktreeLimitEnabled` reads as true, so existing projects keep their cap. Also deletes `maxTriageConcurrent`, which had zero enforcement reads since FN-8453 removed its pool — the `/config` response no longer includes it.
+- c1c1b96: summary: Chat sessions now expose the full permission-mapped task toolset for gated agents.
+  category: feature
+  dev: createChatFusionToolset binds fn_task_archive/unarchive/delete/retry/pause/unpause/duplicate/merge only when an enforceable actionGateContext is present (wrapToolsWithActionGate is a pass-through without a gate, so ungated registration would bypass task_agent_mutation policy). Adds 10 task-lifecycle tool factories to @fusion/engine agent-tools. fn_task_update/add_dep/promote are intentionally not bound in project-scoped chat (no ambient task id). fn_read_evaluations degrades to ratings-only (no ReflectionStore in chat); fn_reflect_on_performance is omitted (no AgentReflectionService). Regression tests assert the gated surface, the withheld surface without a gate, and absence of ambient-task tools.
+- 0e3d2a2: summary: Stop auto-archiving tasks and auto-filing recovery cards; failures now stay on the task that failed.
+  category: internal
+  dev: Deletes the meta-task auto-archive sweeps (`autoArchiveResolvedMetaTasks`/`autoArchiveStalledMetaTasks` and helpers `classifyMetaTask`/`resolveMetaTargetTaskId`/`computeMetaChainDepth`/`archiveMetaTask`/`evaluateMetaAutoArchiveGuards`) plus settings `metaTaskStallAutoCloseMs` and `metaTaskActiveExecutionGraceMs`; the regex classifier matched ordinary feature work and its positional fallback bound cards to unrelated tasks, so live work could be archived. Also deletes `verification-followup-dedup.ts` (`createAutomatedFollowup`/`decideAutomatedFollowup`), the dead `findActiveRecoveryFollowUp`, and the verification-failure and merge-conflict follow-up call sites — those parents already park `failed` with a descriptive `error` or log an auto-merge-gave-up entry. The autostash-orphan path is preserved as a `logEntry` + `addTaskComment` on the parent carrying sha, stash label, `detectedByTaskId`, and `sourcePhase`, with new run-audit event `task:autostash-orphan-live-detected`. Eval and PR-comment follow-ups are unchanged in behavior with dedup inlined on `suggestionId`/`prNumber`. Run-audit types `task:auto-archived-meta-resolved`, `task:auto-archived-meta-stalled`, `task:auto-archive-meta-resolved-skipped`, `task:auto-archive-meta-stalled-skipped`, `verification:followup-created`, and `verification:followup-deduped` are removed.
+- ba24a53: summary: Make long-running dashboard agent, onboarding, and utility dialogs movable and resizable.
+  category: feature
+  dev: Uses FloatingWindow geometry keys and the modalFloatingWindowContract ratchet.
+- 43160a7: summary: Agent Detail, Import Tasks, and Task Detail move and resize on tablets; geometry resets once.
+  category: feature
+  dev: Replaces size-only modal keys with floating-window identities, preserves Agent Detail mouse-pair dismissal, and retains useModalResizePersist for the Chromium fixture.
+- ba24a53: summary: New Task, right-dock pop-out, and floating terminal windows are moveable and resizable on tablets.
+  category: feature
+  dev: Replaced three bespoke drag/resize implementations with FloatingWindow. Legacy geometry key pairs reset once; Terminal docked mode remains unchanged.
+- 43160a7: summary: Make Create Room movable and resizable with saved window geometry.
+  category: feature
+  dev: Uses the floating-window:create-room geometry key and documents supported modal presentation exceptions.
+- bcaa483: summary: Add the Sage color theme to dashboard theme controls.
+  category: feature
+  dev: Registers the sage id across core, selector, first-paint, token, and swatch registries.
+- 24ef266: summary: Add the Factory Dark dashboard color theme for low-light factory-style operation.
+  category: feature
+  dev: Registers the `factory-dark` id across core, selector, first-paint, token, and swatch registries.
+- 95410b5: summary: Add the Factory Light dashboard color theme.
+  category: feature
+  dev: Adds the `factory-light` id across persisted, selector, and first-paint registries.
+- 182e3fd: summary: Support multiple named credential instances per AI provider.
+  category: feature
+  dev: Adds core provider-instance exports and provider[instance] auth.json storage keys.
+- 7334cff: summary: Persist optional credential-instance selections across Fusion model configuration.
+  category: feature
+  dev: Adds \*CredentialInstanceId settings, presets, task and workflow IR fields, settings-schema registration, and Postgres migration 0039; persisted-but-inert this slice.
+- fd79588: summary: Allow missions to override the project task prefix for triaged task IDs.
+  category: feature
+  dev: Persists an optional mission prefix and threads it through distributed task-ID allocation and commit hooks.
+- 3f33cb0: summary: Pick the workflow for CLI/agent-created and refinement tasks, and title refinements by your own feedback.
+  category: feature
+  dev: Adds project settings `taskCreateWorkflowId` and `refinementTaskWorkflowId` (blank/unset = "Selected workflow"), plus `boardSelectedWorkflowId`, a dashboard-written mirror of the current Board lane so non-browser callers can resolve that option. Resolved by `TaskStore.resolveOriginWorkflowOverrideId(origin)` — pinned setting, then mirrored lane, then `undefined` to inherit the existing project-default path; an unknown or fragment id degrades to inherit. Consumed by `fn task create`, `fn_task_create` (an explicit `workflow_id` argument still wins), and `refineTask`. New route `PUT /api/project/board-selected-workflow`. Separately, `refineTask` now titles the new card with `deriveFallbackTaskTitle(feedback)` instead of `Refinement: <source title>`, and TaskCard renders a `Refines <id>` provenance chip.
+- 99c9f14: summary: Plan Review now runs in the planning lane before a task takes an implementation slot, with a "Plan Review" card badge.
+  category: feature
+  dev: Every coding workflow is plan-in-place — `plan`, `plan-review`, and `plan-replan` sit in `todo`, and the card crosses into `in-progress` once, at `parse`, via the scheduler. This required a graph ENTRY CONTRACT: `resolveColumnResumeNode` makes a run with no durable continuation resume at the card's own column instead of replaying from `start` (a card in `in-progress` resumes at `parse` rather than re-planning and dragging itself backward out of the WIP column). `isUnplannedForExecution`'s pre-release gate now applies only when the plan-review node's column equals the card's column AND the group is enabled for the task. Dashboard: the gate badge drops its planning-lane restriction and reads "Plan Review" instead of "Reviewing"; the status badge no longer duplicates the step name and maps the `planning` status to "Planning". Coding (Ideas)'s private planning-node re-home is deleted — the default graph it clones is already plan-in-place. Scheduler/release fixtures must now model a card whose Plan Review passed. Coding (Ideas) renames its planner column to "Planning" (id `todo` unchanged). Self-healing gains `reconcile-undeclared-task-columns`, which re-homes a row whose column its workflow no longer declares to the workflow's hold/intake column.
+- 3aa942e: summary: Spawned child agents now count against Max Concurrent Tasks instead of a hidden spawn budget.
+  category: breaking
+  dev: Deletes `maxSpawnedAgentsPerParent` (5) and `maxSpawnedAgentsGlobal` (20). `fn_spawn_agent` now gates on the project agent count via `computeTopLevelConcurrencyClaimedFromStore` plus live children. Children were previously counted by neither capacity gate despite each getting its own git worktree, so a fan-out could add up to 20 worktrees while the scheduler believed the project was at its limit. The old per-parent budget also measured cumulative spawns over a task's life rather than concurrent ones, because the per-parent set was cleared only when the parent task ended.
+- 189f237: summary: Approval and permission gates now enforce: self-approval blocked, bash containment, fn serve authenticated by default.
+  category: security
+  dev: "Full approval/permission hardening pass. Decision boundary: the dashboard approvals decision route derives the decider server-side (forged/non-user actors and self-approval 403), same-verdict replay and races 409 via transaction-guarded store updates, pending requests expire after 24h and approved grants after a configurable TTL (FUSION*APPROVAL_GRANT_TTL_MS, default 1h; lazy, no schema change), markCompleted enforces requester ownership. Gates: unclassified tools fail closed to policy-governed command_execution (default `unrestricted` preset behavior unchanged), an unconditional bash containment floor denies daemon-token/credential-store reads and shell calls to the approvals API at every preset, bash approvals bind to the exact command hash, the permanent-agent gate pauses on pending approvals, and agent provisioning approval is live in production (isCallerPrivileged is ceo-only). Extension tools resolve the acting principal via a session identity registry: destructive fn*\* tools are withheld from agent principals and policy-gated otherwise; fn_secret_get approvals now actually redeem (execute-once) under category secrets_access. `fn serve` mints/reuses the daemon token by default (`--no-auth` opts out). Sibling entry points: `fn task move`/glasses gestures hard-cancel via moveSource \"user\", ACP approvals are execute-once, and plugin task stores block destructive methods unless the manifest declares `permissions: { destructiveTaskOps: true }`."
+- d6c917d: summary: Add read-only APIs that enumerate dashboard views and settings sections.
+  category: feature
+  dev: Shared dashboard metadata now drives both the UI and API, with sync tests preventing drift.
+
+### Patch Changes
+
+- e9e63d8: summary: Stop showing the task Actions menu on bare cards in the Planning column.
+  category: fix
+  dev: `shouldShowActionsMenu` opened with `task.column !== "triage"`, which U11 made vacuously true once the `triage` column was deleted — the whole condition short-circuited and the menu rendered on every card, never consulting the disjuncts that enumerate what is actionable on an intake card. Now resolves the intake trait from `currentColumnFlags`, falling back to the legacy id while column metadata is still loading.
+- c143327: summary: Archived-task document rules now work on boards that rename the archived lane.
+  category: fix
+  dev: `upsertTaskDocument` and `publishArchivedTaskDocumentAddition` compared `task.column` against the literal `"archived"`. On a renamed archived lane the first failed to reject (an archived card's documents stayed writable) and the second failed to accept (a legitimate archived-document publication was refused as `parent-not-archived`). Both now take a resolved archived-lane set, supplied by their store-level impls.
+- 41031db: summary: Agents can auto-claim work on boards with renamed columns, and dependencies finished there now count as done.
+  category: fix
+  dev: U7 / R3 — unowned drift-review site. `isRunnableAutoClaimCandidate` carried three lifecycle literals: `column === "todo"` gated candidacy (a renamed workflow's candidate set was permanently empty, silently), and `dependency.column === "done" || "archived"` gated dependency satisfaction (a dependency finished in a renamed complete column was never recognised, blocking the dependent forever). Roles are resolved PER TASK because a dependency may sit on a different workflow from the claimant; both callers are async with store access so they resolve for real. Tasks absent from the resolved map keep the legacy ids, so a partially-resolvable board degrades to today's behavior instead of emptying.
+- e080bca: summary: Show why a task needs approval — the Plan Review replan-cap reason now survives to the board.
+  category: fix
+  dev: `updateTask` never merged `awaitingApprovalReason`, so every writer dropped it and `isReviewBudgetExhaustedApproval` UI was dead. Set persists, null clears, and leaving `awaiting-approval` auto-clears a stale reason.
+- 65f4e85: summary: Blocker fan-out on the board now uses your own column names, so finished cards stop being shown as blockers.
+  category: fix
+  dev: The dashboard `computeBlockerFanoutMap` wrapper forwards per-task `classify`/`escalationClassify`/`reviewColumns` derived from each task's own workflow traits; `Board` builds the index the way `App.tsx` already does for the footer.
+- 5193493: summary: The "Queued to plan" / "Ready" badges now work on boards whose waiting lane is not called Todo.
+  category: fix
+  dev: `GET /api/tasks`'s `awaitingPlanning` enrichment filtered on the literal `todo`. It now resolves the project's `hold` lanes once per board load via `resolveProjectColumnsForRoles` — one `listWorkflowDefinitions()` read, flat in task count, with the per-row PROMPT.md reads still bounded by `AWAITING_PLANNING_ENRICH_LIMIT`.
+- b85a5d4: summary: Compound Engineering Code Review now parks after two unsuccessful remediation attempts instead of retrying forever.
+  category: fix
+  dev: The built-in CE `code-review` optional group now declares `maxRevisions: 2`; custom workflow authors can still choose a different numeric cap or explicit unbounded behavior.
+- 46f3532: summary: Column WIP limits are now actually enforced — a move into a full column is refused instead of silently allowed.
+  category: fix
+  dev: The in-transaction capacity check in `moveTaskInternal` sat inside `if (useWorkflow && …)`, reading `experimentalFeatures.workflowColumns`, which has no production writer — so the block never ran for real projects and `maxConcurrent` was unenforced at the store level. Only the CAPACITY check is un-gated; transition validation keeps its current flag-gated behavior, so the Phase A2 rejection-type/message divergences are untouched. Rejections surface as `capacity-exhausted`, which `hold-release` already reserves slots against and retries next sweep.
+- 7871b28: summary: Fix the column capacity check so a task with no workflow selection is counted against the limit.
+  category: fix
+  dev: `moves.ts` asked `countActiveInCapacitySlotAsync` for pool `"builtin:coding"` while the counter buckets selection-less rows under `DEFAULT_WORKFLOW_POOL_ID`, so the count was always 0 and a finite limit could never bind. Both sides now derive the pool through the shared `resolveCapacityPoolId`. NOTE: no operator-visible change yet — the capacity block is still gated on `experimentalFeatures.workflowColumns`, which nothing in production sets (Phase A3 R2). If that gate is removed, this becomes user-visible and the changeset should be re-categorised.
+- 52d64fa: summary: Graph-native workflows now reconcile completed task steps after review handoff reaches the merge column.
+  category: fix
+  dev: `ensureWorkflowMergeBoundaryTask` evaluates successful node-result proof and projects it onto the legacy checklist before applying its already-at-merge-column no-op. This prevents Compound Engineering tasks from reaching approved review at `0/N`, failing merge with `task has incomplete steps`, and deadlock-pausing.
+- 4ce3ff7: summary: Compound Engineering sync records the lane a completed card actually reached.
+  category: fix
+  dev: `onTaskCompleted` enqueued `toColumn: "done"` while its sibling `onTaskMoved` records the real column, so on a renamed board the sync-queue audit row named a column the board does not have. Now records `task.column`.
+- a54d60e: summary: Node, mesh, and project CLI commands restore registry access without marking the host offline on exit.
+  category: fix
+  dev: Restore the existing layer-less `CentralCore.init()` backend bootstrap that PostgreSQL dual-path cleanup accidentally left unreachable. Generic `close()` only releases resources; daemon, engine-manager, and dashboard shutdown owners retain their explicitly ordered `markLocalNodeOffline()` writes.
+- 6f936f2: summary: Fix the node-override guard not blocking mid-flight changes on boards with a renamed WIP lane.
+  category: fix
+  dev: `fn_task_update` called `validateNodeOverrideChange` without options, so `wipColumns` fell back to the literal `{"in-progress"}` and the running-task check never fired on a renamed board. It now resolves the task's own WIP and COMPLETE lanes via `resolveTaskLifecycleColumns`.
+- be79fe0: summary: Fix PR merges silently never running on boards with a renamed review lane.
+  category: fix
+  dev: `processPullRequestMergeTask` now resolves the task's own merge-orchestration lane via `resolveMergeOrchestrationColumn` and passes it to `getTaskMergeBlocker` as `reviewColumns`, instead of letting the blocker fall back to the literal `in-review` and return "skipped". Affects the `daemon`, `serve` and `dashboard` PR-merge drains. Default and v1-upgraded boards are unchanged.
+- dc36354: summary: Fix CLI commands that stopped working on boards with renamed columns.
+  category: fix
+  dev: `fn task retry` classified stalls and re-queued with the literals `in-review`/`todo`, so on a renamed board it silently did nothing (and, once the classifier alone was fixed, threw `Invalid transition`). Also converted the near-duplicate candidate filter, the archived-lineage label, both node-override in-progress guards, and the four copies of the active-task count in `fn dashboard` (all four reported `active=0`). Column roles now resolve from each task's own workflow traits, falling back to the legacy ids when a workflow cannot be resolved.
+- a57f669: summary: Fix `fn task list` silently omitting cards in renamed or custom workflow columns.
+  category: fix
+  dev: `runTaskList` iterated the legacy six-id `COLUMNS` constant and filtered `t.column === col`, so a card in a workflow-defined column matched no iteration and was never printed. Lanes now come from the tasks themselves via the exported `boardColumnsForDisplay`, and the terminal glyph resolves via `resolveProjectColumnsForRoles(TERMINAL_ROLES)` with the legacy pair as a fail-soft fallback.
+- 86c5a89: summary: Dropping a card with completed steps into a renamed intake lane now asks before resetting progress.
+  category: fix
+  dev: `handleDrop` in Column omitted `columnFlags` from its `useCallback` deps, so the pre-load closure saw the legacy lane ids and skipped the confirmation.
+- faf4245: summary: The duplicate chip now clears once its canonical task lands on a board with renamed lanes.
+  category: fix
+  dev: `resolveNearDuplicateCanonicalInactive` kept the pre-load `getTaskColumnFlags` closure; the callback is hoisted so the dependency can be listed.
+- b85e5f9: summary: GitLab imports and agent delegation now land cards in real board lanes instead of vanishing.
+  category: fix
+  dev: GitLab import passed `column: "triage"`, a column U11 deleted, so imported cards were written into a lane no workflow declares; it now omits `column` and lets `createTask` resolve the workflow's intake lane. `fn_delegate_task` passed the literal `"todo"` and now resolves the created task's own `hold` lane via `resolveTaskLifecycleColumns`, moving the card off intake when the workflow separates the two roles.
+- 920d68e: summary: Fix the dashboard build after task undo classification began using shared column-role helpers.
+  category: fix
+  dev: Export the browser-safe column-roles core leaf and mirror its alias across Vite and Vitest consumers so broad core aliases cannot swallow the subpath.
+- 31e49b6: summary: Task Documents shows the correct status dot for tasks on renamed or custom board columns.
+  category: fix
+  dev: `DocumentsView` takes optional per-task column traits (threaded from App's existing footer map through `MainContent`) and resolves the dot by role; five dashboard `agent === "triage"` role comparisons now use `PLANNER_AGENT_ROLE`.
+- 500f40e: summary: Waiting badges name their wait, and a dependency-free blocked exit replans without a failed badge.
+  category: fix
+  dev: getTaskStatusBadgeLabel gains a context param (idle, overlapBlockedBy) threaded from TaskCard/ListView; fn_task_done(outcome=blocked) with empty blockedBy parks needs-replan in the replan column (run-audit metadata gains parkedAs), dependency-carrying blocks unchanged.
+- 8b039a5: summary: Keep desktop packaging on a packageable Pi 0.82.1 runtime closure.
+  category: fix
+  dev: Advances the matched Pi runtime pin (pi-ai, pi-coding-agent, pi-agent-core, pi-tui) from 0.82.0 to 0.82.1 so electron-builder accepts pi-agent-core's pi-ai@^0.82.1 dependency during the Desktop packaging PR lane.
+- 01a75f9: summary: Desktop builds now typecheck streamed speech-model downloads across differing ReadableStream library definitions.
+  category: fix
+  dev: Casts the fetch response body through unknown before treating it as an async byte iterable, preserving runtime behavior while satisfying the desktop TypeScript library surface.
+- e9b24b6: summary: The duplicate-warning banner in Task Detail now judges the canonical by its own lane, not the legacy ids.
+  category: fix
+  dev: `isNearDuplicateCanonicalInactive` in TaskDetailModal now receives `columnFlagsByTaskId.get(canonical.id)`; the allow-list entry claiming this needed a fetch is removed.
+- c027a72: summary: A working agent no longer loses its task link when the card waits in a renamed planning column.
+  category: fix
+  dev: `recoverDriftedAgentTaskLinks` now passes resolved `parkedColumns` into `evaluateParkedAgentTaskLink`; the sibling sweep already did.
+- 969c2cd: summary: Remove the unused cross-project concurrency table from the central database.
+  category: internal
+  dev: Migration 0037 drops `central.global_concurrency`. Nothing read it after the cap was removed: `global_max_concurrent` held the deleted machine-wide limit, and `currently_active`/`queued_count` were maintained only by `acquireGlobalSlot`/`releaseGlobalSlot`, which had no production caller. `SCHEMA_BASELINE_VERSION` advances to 0037 and the migration is explicitly registered in `schema-applier.ts` (migrations are not auto-discovered). The historical 0000 baseline is left untouched, so a fresh database creates the table and then drops it, converging with upgraded databases. Live cross-project telemetry is unaffected — it comes from `CentralCore.getLiveRunningAgentCounts`.
+- 6fc98fd: summary: Duplicate archiving, CLI merge completion, and stuck-task recovery work on boards with renamed columns.
+  category: fix
+  dev: Also `cli/commands/task-lifecycle`, whose two merge-completion paths passed a hardcoded `"done"`. `duplicate-intake` and `duplicate-guard` passed a hardcoded `"archived"` to `moveTask`. Since the workflow-column rejection went live, a board without that column rejects the move, so the duplicate stays on the board — already stamped `deterministicDuplicateOf`. Both now resolve the `archived`-trait column from the task's workflow, falling back to the legacy id. Four auto-recovery requeues (contamination, foreign-only contamination x2, and the restart path) passed a hardcoded `"todo"` to `moveTask` for the same reason; on a board without that column the move was rejected and the recovery never completed, leaving the task stuck in exactly the state the recovery exists to clear. All four now resolve the rebound target from the task's own workflow.
+- c38d784: summary: Archive and completion transitions now report the board's own lanes to engine listeners.
+  category: fix
+  dev: `archiveTaskBackendImpl` and `moveToDoneImpl` attach `lanes` to their `task:moved` emits, matching `moves.ts`.
+- 31e49b6: summary: Completed work stranded in a renamed planning column is now recovered instead of stuck there.
+  category: fix
+  dev: `recoverCompletedTask` resolves the planner lanes and the promotion target from the task's own workflow (`resolvePlannerLanes`, now shared from `replan-target.ts`), and the planning-evacuation branch of the `task:moved` handler uses the same classification via `isPlannerColumnFor`.
+- dca2049: summary: Engine retries no longer re-queue a task into the column it is already sitting in on renamed boards.
+  category: fix
+  dev: Eight executor rebound guards compared `column !== "todo"` before moving to `resolveReboundColumnFor(...)`; they now resolve once and compare against that value. The FN-1404 `task:move` audit metadata records the resolved column instead of a hardcoded `"todo"`.
+- a8cfce8: summary: Fix stale merge state and a duplicate worktree hand-off on boards with renamed columns.
+  category: fix
+  dev: Two executor guards compared lifecycle column ids literally. `resetMergeStateIfNeeded` clears merge state when a card leaves a lane where a merge could have been recorded (the review and complete roles); on a renamed board neither comparison matched, so a card re-entering execution carried stale `mergeDetails` from its previous pass. The worktree-owner scan asks "who else is actively working here?" — the WIP role — and matched nobody on a renamed board, so the worktree read as unowned and a second task could be handed a checkout already in use. Both now resolve from the task's own workflow.
+- dca2049: summary: A task interrupted by an engine pause now resumes on boards with renamed columns.
+  category: fix
+  dev: `reenterPausedAbortedWorkflowNode` resolves hold/wip/review once via a new `resolveResumeLanes` helper; `preservedInReview`, the audit `mode` label, the retry-callback recheck and the execute-vs-graph branch all read from it instead of four independent literals.
+- c3df0f6: summary: Orphaned tasks are resumed after a restart on boards with renamed columns.
+  category: fix
+  dev: `resumeOrphaned` read the wip lane by role via `listWipLaneTasks()` but its filter still compared `t.column === "in-progress"`, so on a renamed board the read found the orphans and the filter discarded all of them. The filter now tests membership of the resolved wip columns.
+- a8cfce8: summary: Renamed-column boards no longer reuse an in-use checkout or carry stale merge details into a re-run.
+  category: fix
+  dev: `executor.ts` — `findActiveWorktreeOwner`'s durable leg and `resetMergeStateIfNeeded` compared `task.column` against the legacy ids, so on a renamed board the first matched nobody (a live checkout read as unowned after a restart) and the second never fired (a re-entering card kept its previous `mergeDetails`). Both now resolve from the task's own workflow, unioned with the legacy ids.
+- 713e932: summary: Keep resumed planning and review workflows within the configured active worktree limit.
+  category: fix
+  dev: Routes durable workflow continuations through shared project admission without double-counting active task handoffs.
+- 126cee7: summary: Merge-confirmed tasks finalize instead of being parked failed on renamed boards.
+  category: fix
+  dev: `project-engine`'s merge-confirmed finalization passed the card's real column to `getTaskHardMergeBlocker` with no `reviewColumns`, so on a renamed board the identity check returned a blocker and already-landed work was parked `failed`. Both recovery paths now share an exported `REVIEW_ELIGIBLE_SENTINEL_COLUMN` instead of spelling the sentinel independently.
+- 5a19d1d: summary: Count only actively running tasks against worktree capacity.
+  category: fix
+  dev: Retained directories on queued, paused, blocked, or terminal tasks no longer consume scheduler slots.
+- 4f929ac: summary: Terminals, planning sessions, and popped-out task windows no longer reset when switching views or tabs.
+  category: fix
+  dev: Keep-alive layer (KeepAliveView, visibility-based out-of-flow hiding) for Planning Mode, task-detail terminal/planner-chat tabs, and popped-out task FloatingWindows; hidden surfaces suspend SSE/EventSource work via `active` props. Stable keys for streaming chat segments, dock task cards, and MCP server rows. CommandCenter/DevServerView selections persist per project via modalPersistence.
+- 7fd1c7f: summary: Fix worktrees being deleted while a planning agent was still working in them.
+  category: fix
+  dev: `clearPhantomExecutorBinding` computed liveness from four TaskExecutor-owned session maps only, so a triage planning session — owned by TriageProcessor and registered in the module-level `activeSessionRegistry` — was invisible to it. Under plan-in-place a card is specified while it sits in `todo`/`triage`, both reapable by `reapLeakedConcurrencySlots`, and planning routinely outlives its 60s grace; every earlier gate passed, so this method decided alone, returned true, released the slot and then unregistered the planner's own registry paths. It now also refuses when `activeSessionRegistry.pathsForTask(taskId)` is non-empty. Being a chokepoint, this covers all three callers (`reapLeakedConcurrencySlots`, `recoverPausedAbortFailures`, and the `preserveWorktrees` reclaim). The 60s grace is deliberately unchanged — a longer timeout would only make the bug rarer.
+- a3c0501: summary: Allow queued tasks to resume in their retained worktrees when worktree capacity is full.
+  category: fix
+  dev: Retained-worktree transfers bypass only the worktree allocation gate; agent limits still apply.
+- fe7e68b: summary: Wedge notifications can be resolved again on PostgreSQL projects.
+  category: fix
+  dev: jsonb_build_object is variadic "any", so PostgreSQL could not infer the type of the bare `transitionedAt` bind parameter and rejected the resolve-wedge UPDATE at parse time with 42P18. Casting the parameter to ::text fixes it; the failure was total, not data-dependent.
+- 7715a83: summary: Fix asymmetric right padding in Task Detail activity content.
+  category: fix
+  dev: Overlay clearance now applies only to Activity first rows at every breakpoint.
+- d3c1955: summary: Remove the heartbeat enable/disable button from agent org chart nodes.
+  category: fix
+  dev: HeartbeatToggle remains in board view; OrgChartNode no longer receives heartbeat props.
+- f31a716: summary: Prevent false 100% Grok usage when the CLI omits a credit percentage.
+  category: fix
+  dev: Grok billing windows now require a finite API-supplied creditUsagePercent value.
+- f86d758: summary: Keep Task Detail content centered when its body scrolls.
+  category: fix
+  dev: Uses stable both-edge scrollbar gutters with a deterministic inset regression model.
+- 46d5019: summary: Remove excess blank space below task-card progress controls.
+  category: fix
+  dev: The steps toggle now uses its content height instead of a fixed trailing minimum.
+- cde02b4: summary: Align Command Center concurrency controls and remove the unused slider column.
+  category: fix
+  dev: The two per-project capacity tracks now share a baseline when live running counts are shown.
+- 37d891e: summary: Make floating terminal windows reliably draggable on touch tablets.
+  category: fix
+  dev: Adds a reserved tablet-only terminal header drag grip and touch-sized pop-out target.
+- c0ddadd: summary: Balance perceived right-edge padding in Task Detail and Terminal shells.
+  category: fix
+  dev: Moves content padding outside scrollbar-owning surfaces so painted tracks do not read as empty inset.
+- f2f6795: summary: Restore the visible Max worktrees control in Command Center concurrency settings.
+  category: fix
+  dev: Both per-project capacity sliders now share the range layout invariant and explicit loading/error behavior.
+- 5bf9279: summary: Hide unavailable cost badges on board task cards.
+  category: fix
+  dev: Board cards now omit unavailable costs while detail and analytics surfaces retain the guess-free sentinel.
+- 475bb2d: summary: Show Quick Add Start only for workflows with a manual waiting intake lane.
+  category: fix
+  dev: Uses the server-derived manualIntake workflow-column flag instead of hold alone.
+- b9612de: summary: Prevent blank task IDs from enabling Research finding enrichment.
+  category: fix
+  dev: Trims the target task ID before enabling and submitting the enrich action.
+- b65bc0b: summary: Stop reporting a working Grok CLI login as expired auth in the Usage indicator.
+  category: fix
+  dev: Grok billing fetches now preserve auth, no-data, HTTP, and transport outcomes.
+- 897cce9: summary: Fix scheduler not unblocking dependents on boards with renamed hold or terminal columns.
+  category: fix
+  dev: Scheduler now uses async workflow lanes after its synchronous event prologue.
+- ee77a8d: summary: Preserve custom plan sections when Fusion refreshes the original task description.
+  category: fix
+  dev: Uses positional alignment with safe/unsafe partial handling for unmarked descriptions and anchors inserts before the first H2.
+- 031d0f3: summary: Align task-card size badges with adjacent status badge heights.
+  category: fix
+  dev: Size chips now share the task-card header badge geometry at desktop and mobile breakpoints.
+- 3b680cc: summary: Align task-card size badges with neighboring header badges.
+  category: fix
+  dev: Keeps direct size chips in their first header row with token-derived vertical centering.
+- 50ebf3c: summary: `fn project` now counts running agents correctly on renamed workflow boards.
+  category: fix
+  dev: `runningAgentCount` fed raw task rows to `isRunningAgentTaskShape`, so its internal legacy column fallback applied and any board without the literal `in-progress`/`todo` ids reported 0. The command now resolves each task's workflow IR (cached per workflow) via `enrichRunningAgentTaskShape` before counting.
+- 1e50b71: summary: Leaked verification worktrees are now reaped, so planning no longer queues behind exhausted slots.
+  category: fix
+  dev: mission-verification's fn-verify-\* checkouts leaked on process death (dispose is in-process best-effort); the self-healing temp-dir sweep now includes the fn-verify- prefix under tmpdir() with the same age gates and active-session refusal.
+- dd930c8: summary: Create upstream pull requests from task branches pushed to a contributor fork.
+  category: fix
+  dev: Qualifies PR heads with the owner from origin's push URL when it differs from the upstream fetch owner.
+- 21e688e: summary: The glasses board API's `?columns=` filter now works on boards with custom lane names.
+  category: fix
+  dev: `fusion-plugin-even-realities-glasses` validated `?columns=` against a hardcoded six-id allow-list (still naming the deleted `triage`). On a renamed board every requested id was discarded and the parser's "nothing valid" result is indistinguishable from "no filter requested", so the route returned the entire board with a 200. The allow-list is deleted; ids are filtered directly, and an unknown column now yields an empty deck.
+- 92d82b7: summary: Glasses completion notifications now recognise a board whose finished lane is not called Done.
+  category: fix
+  dev: `diffSnapshots` declared a per-task `completeColumnsByTaskId` that no caller ever built, so its completion test fell through to the literal `"done"`. `notifier.ts` now builds it (per task, with a shared IR cache, and only when `alsoNotifyOnDone` is on). The `unwired-lane-parameter` guard now scans `plugins/`, walks inline options-object types, and scopes its "is it wired" search to files that name the declaring symbol — which surfaced 17 further unwired declarations, now recorded as a ratcheted baseline.
+- ed6d544: summary: Glasses plugin review actions now work on boards whose review column is renamed.
+  category: fix
+  dev: `requestReview`/`acceptReview`/`returnToAgent`/`retryTask` gated on literal columns and moved to literal destinations. Their review lane also could not resolve at all, because `resolveLifecycleColumns` keys `review` on `mergeOrchestration` alone; `laneContext` now widens to `mergeBlocker`/`humanReview` when that role is absent.
+- d252c4e: summary: Finished cards no longer crowd live work off the glasses board on a renamed board.
+  category: fix
+  dev: `boardToDeck` filtered active cards on the literals `archived`/`done`. Because the deck is capped at `maxCards`, a renamed complete lane meant every finished card consumed a slot and displaced live work. The route now resolves the project's terminal lanes once per request via `resolveProjectColumnsForRoles` and passes `terminalColumns` down.
+- 89aaf34: summary: Agents no longer appear to be running a parked task on boards with renamed columns.
+  category: fix
+  dev: Both `isParkedTaskColumn` call sites in `agent-heartbeat.ts` omitted the resolved `parkedColumns` argument and took the legacy `todo`/`triage` default, so the stale-link clear never fired on a renamed board. Both now pass the task's resolved `hold`/`intake` lanes.
+- 69bc9fc: summary: GitHub-issue imports are checked for near-duplicates before planning, not after.
+  category: fix
+  dev: Five issues auto-filed for one red-main event each burned a planning session before the post-plan FN-5152 backstop could see siblings (and racing concurrently, none did). Imports carry title+body at create, so specifyTask now runs the same comparator pre-planning for github_import tasks and flags against an older canonical for the operator's duplicate decision, releasing the pre-held slot. Fail-open; non-import creates keep the post-plan-only behavior.
+- 8e5e114: summary: Review stalls are surfaced, and judged consistently, on boards with renamed columns.
+  category: fix
+  dev: The three stall signals disagreed about a row's lane — two took a singular `reviewColumn` (first-per-role) and `getInReviewStallReason` had no seam and used the literal. All three now take a `reviewColumns` membership set, resolved once per row via `resolveReviewColumns`, and `surfaceInReviewStalls` reads the project's review columns instead of the literal `in-review`.
+- 890e1f8: summary: GitHub and GitLab issue panels now count resolved issues on renamed boards.
+  category: fix
+  dev: `aggregateGithubIssueAnalytics` and `aggregateGitlabIssueAnalytics` take an optional lane store and resolve the complete columns via `resolveProjectColumnsForRoles`; their resolved-issue queries previously filtered on the literal `'done'`.
+- ffe9898: summary: Internal gate fix; no user-visible change.
+  category: internal
+  dev: The lane-wiring census now sees lane arguments passed via a ternary or a conditional spread, adds `columnFlagsByTaskId` to its vocabulary, and merges same-named declarations instead of letting the last one clobber the rest.
+- 5897d87: summary: Internal gate fix; no user-visible change.
+  category: internal
+  dev: The lane-wiring census now resolves a call to a same-file declaration before a same-named exported one, removing two false positives in ModelSelectorTab.
+- 3572969: summary: Board lanes and the list view now sort by each column's role, so renamed boards keep their card order.
+  category: fix
+  dev: `Lane` and `ListView` pass the resolved `isArchivedColumn`/`isHoldColumn`/`isCompleteColumn`/`isReviewColumn` traits to `sortTasksForDisplayColumn`, mirroring Board.tsx; previously they used the helper's legacy-id defaults.
+- 48b00ac: summary: A restart during an AI merge no longer auto-pauses the task — reviewing/landing are recognized as live statuses.
+  category: fix
+  dev: The KTD-8 legacy-adoption table preserved merging/-pr/-fix but missed the family's other two live members, so startup adoption parked a mid-landing task paused ("legacy-adoption-unmappable: landing"). Both now preserve; self-healing's stale-merge sweeps remain the recovery owner.
+- 32b6041: summary: Linear imports now land on the board instead of a lane that no longer exists.
+  category: fix
+  dev: `buildLinearTaskCreateInput` passed `column: "triage"`, a column U11 deleted, and an explicit column overrides `createTask`'s own intake resolution — so every imported issue was written into a lane no workflow declares. It now omits `column`. Same defect and same fix as the GitLab importer (#2843); the two tests that pinned `"triage"` now assert the column is absent.
+- 31e49b6: summary: The processing/queued footer counts now share one rule for columns with no trait flags.
+  category: internal
+  dev: `live-agent-count.ts`'s two duplicate no-flags fallbacks collapse into `isLegacyPreImplementationColumn`; deliberately still the legacy pair, with the reason recorded at the helper. `replan-target.ts` comment prose restated by role.
+- b4ed12e: summary: A card in a renamed archived lane is now recognised as archived everywhere, not just on two paths.
+  category: fix
+  dev: `getLiveTaskColumn` manufactures the sentinel `"archived"` that a dozen comparisons across five files trust, and it tested `row.column === "archived"` — so a live row in a renamed archived lane read as live and every downstream gate opened. It now takes a resolved archived-lane set, threaded from the store-level impls; the shared `resolveArchivedLanes` moved to `project-lane-vocabulary.ts` so there is one answer rather than three copies.
+- dca2049: summary: Cards parked in the Coding (Ideas) intake are no longer auto-planned by the engine.
+  category: fix
+  dev: Triage discovery reads the intake trait's `autoTriage: false` from the same IR resolution and skips manual-intake columns; the hold branch is intentionally ungated. The pre-existing guard in `triage.test.ts` could not catch the regression because its mock store cannot resolve a workflow.
+- 7712e0a: summary: Tasks can be merged again on boards whose review column is renamed.
+  category: fix
+  dev: Both merge entry points called `getTaskMergeBlocker` without `reviewColumns`, so its column-identity check used the literal `in-review` and returned a blocker for any renamed review lane — `aiMergeTask` and `runAiMerge` then threw `Cannot merge FN-x: task is in '<lane>', must be in 'in-review'`. Both now resolve the task's own review lanes.
+- 89aaf34: summary: Tasks can be merged and completed on boards whose review column is renamed.
+  category: fix
+  dev: Two `getTaskMergeBlocker` callers omitted the optional resolved `reviewColumns`, so the identity check fell back to the literal `in-review` and refused a card sitting in its own board's review lane — `mergeTaskImpl` threw "Cannot merge …" and the completion move threw "Cannot move … to done". Both now pass `resolveReviewColumns` from the task's workflow, unioned with the legacy id.
+- 00769fa: summary: Planning admission no longer freezes for the duration of every merge.
+  category: fix
+  dev: Root cause of the 5-10 min "Queued to plan" stalls — the merge lane ran the entire merge inside projectAdmissionCoordinator's single-flight drain, so triage's poll parked awaiting it (and its re-entrance guard then dropped every tick silently). The lane start now claims and returns; the merge body runs outside the drain. No automated regression test yet — the drain-blocking shape needs a project-engine harness; the triage poll watchdog (e51ebff381) is the backstop meanwhile.
+- f53c9db: summary: Fix merge re-enqueue failing on boards whose review column is renamed.
+  category: fix
+  dev: `enqueueMergeQueue` (and `store.enqueueMergeQueue`) now resolve the task's own review columns and forward them to `enqueueMergeQueueInTransaction`, which previously fell back to `new Set(["in-review"])` and threw `MergeQueueInvalidColumnError`. The two `moves.ts` handoff callers already supplied them; the merger and self-healing re-enqueue paths did not.
+- f91b8a4: summary: A mission roadmap keeps tracking its tasks on workflows with renamed columns instead of silently freezing.
+  category: fix
+  dev: U7 / R3 — unowned drift site (mission-feature-sync.ts is in no unit's file list). `reconcileMissionFeatureState` read five column literals (done, archived, in-progress, in-review, triage/todo); on a renamed workflow every branch answered "no" and the function collapsed to a permanent noop, so the roadmap froze while the tasks underneath ran to completion. Now resolves complete/archived/wip/review/intake/hold from the task's own workflow. Unresolvable workflow falls back to the legacy ids, NOT to noop — going silent is the failure being fixed. The planner-lane branch also accepts an orphaned legacy `triage`/`todo` id (pre-U11 rows awaiting re-homing), scoped to ids the workflow does not declare so a custom workflow naming its review lane `triage` is not walked backwards.
+- 6235818: summary: Test mode tasks complete again — the mock executor marked the wrong steps since the 0-based step change.
+  category: fix
+  dev: mock-provider.ts sent 1-based step numbers to fn_task_update (0-based since FN-6607), so scripted full-task runs never marked Step 0 and failed with "Step N out of range" at steps#0:step-execute.
+- 8661b73: summary: Cards on boards with two "complete" columns now unblock their dependents correctly.
+  category: fix
+  dev: `TaskMoveLanes` gains an optional `terminal?: readonly string[]` carrying every complete/archived-trait column id; `toTaskMoveLanes` fills it from `columnsWithFlag` rather than the first-match `resolveLifecycleColumns`. The scheduler's `mergeParkedColumns` now unions `base.terminal`, the payload's set, and the single lanes instead of rebuilding from `[complete, archived]`.
+- 3603da7: summary: Duplicate flags now clear when the canonical task finishes on a renamed board.
+  category: fix
+  dev: `clearNearDuplicateReferencesTo` resolves the canonical's own column flags before calling `isNearDuplicateCanonicalInactive`, which otherwise fell back to the legacy `done`/`archived` ids and read a completed canonical as still active, leaving `nearDuplicateOf` markers set forever.
+- 8c79da3: summary: Duplicate-decision cards no longer stay parked forever when the canonical finishes on a renamed board.
+  category: fix
+  dev: The five engine call sites of `isNearDuplicateCanonicalInactive` (self-healing x2, triage x3) now resolve the canonical's own column flags; previously they fell back to the legacy `done`/`archived` ids, so FN-8356's marker cleanup never fired on a custom board.
+- 08a4e41: summary: An idle Revising card now explains it is waiting for a planning slot.
+  category: fix
+  dev: needs-replan is a durable waiting state, not a live session; the TaskCard status badge gains a tooltip when no agent is active, mirroring QUEUED TO PLAN's disambiguation. Label copy (FN-8493 "Revising") unchanged.
+- f8155ca: summary: A running task in a board's second WIP lane can no longer have its node override changed mid-flight.
+  category: fix
+  dev: `fn_task_update` resolved lanes with `resolveTaskLifecycleColumns` (first match per role); switched to the guard's own `resolveNodeOverrideLanes` (`columnsWithFlag`, every match), now re-exported from `@fusion/core`.
+- 7e4e892: summary: One queued badge family — scheduler-queued cards read "Queued", and Queued to plan is the same badge as Planning.
+  category: fix
+  dev: Raw status "queued" no longer renders the lowercase engine token; the standalone queued-to-plan pill is removed and folds into the main status badge span (same classes/tooltip, testid preserved), so a card can never show two queued labels.
+- 10f9df1: summary: Planner oversight now watches tasks on boards with renamed lanes instead of silently watching nothing.
+  category: fix
+  dev: `resolveWatchedStage` keyed on the literal `in-progress`/`in-review`, so on a renamed board it returned null for every card — `observeTask` returned early, no observation was recorded, and `PlannerRecoveryController` had nothing to act on. It now takes the task's resolved `columnFlags`, supplied by `project-engine.ts` at both call sites with a per-poll IR cache.
+- 9094d16: summary: Stop AI Engine now actually stops the workflow graph, and the worktree cap counts planning/review holders.
+  category: fix
+  dev: Two capacity-control regressions. (1) The graph interpreter never re-read settings, so globalPause did not stop node traversal — new Plan Review sessions started under pause; every node entry now polls an isPaused probe and suspends via the durable-continuation mechanism (reason "pause"), and the continuation drain refuses to dispatch while paused. (2) The scheduler's maxWorktrees ledger counted only WIP cards; under plan-in-place, planning/review lanes hold real worktrees, and the deleted global semaphore had been the accidental protection — the ledger now counts every non-terminal task holding a worktree.
+- 9a8fc40: summary: Persist explicit user intent across manual task pauses so startup recovery cannot reclaim paused work.
+  category: fix
+  dev: CLI, dashboard, MCP tool, and mission pause controls now set the durable userPaused latch while automatic holds remain recoverable.
+- 1824c04: summary: Restore an archived card to the lane it was archived from, not to Done.
+  category: fix
+  dev: `preArchiveColumn` was never captured — it has no `project.tasks` column and lives only in the archive snapshot — so `unarchiveTaskImpl` always fell to its `?? "todo"` literal. On a custom workflow `todo` is undeclared, so the destination resolver took its no-usable-history branch and returned the complete lane. Captures the column into the snapshot on archive and reads the snapshot (not the restored row) on unarchive; both halves are required.
+- ec55889: summary: Place plan approval actions alongside the task approval message.
+  category: fix
+  dev: The task-detail approval banner now reuses the footer approval handlers and visibility gate.
+- fbe7eb5: summary: A task awaiting manual plan approval is no longer planned, reviewed, or started before you approve it.
+  category: fix
+  dev: U7 (workflow-owned lifecycle) — `isTaskBlockedOnApproval` is now consulted by the three planning-lane advance surfaces that re-derived their own weaker check from `paused`/`userPaused`: `issueRelease` (plus its in-txn `moveTaskIf` predicate), both plan-review continuation seeders (`seedPreReleasePlanReviewContinuation`, `evaluateStrandedHoldContinuation`), and the drain classifier `resolvePlanningContinuationCandidate` (skip, never orphan). The gap was the status-only hold shape (`status: "awaiting-approval"`, no pause flag) the manual gate writes. Operator force-promote (`allowUnplanned`) still waives it.
+- 5bdb8a1: summary: The planning border and pulsing badge now appear for cards in renamed intake lanes.
+  category: fix
+  dev: `useTasks` gated its planner-activity stamp on the literal `{triage, todo}` pair; it now takes an optional per-task flags resolver supplied by App, with that pair kept as the no-flags fallback.
+- eed8ca5: summary: Fix frozen active-runtime metrics for tasks on boards with a renamed execution column.
+  category: fix
+  dev: `formatTaskPlannerChatMetrics` gained a `wipColumns` option and `chat.ts`'s `fn_task_planner_get_task_metrics` tool resolves it from the task's own workflow via `wipColumnsForTask`. Previously `activeRuntimeMs` added the live tail since `executionStartedAt` only when `task.column === "in-progress"`, so on a renamed board it reported whatever `cumulativeActiveMs` held from the last completed segment. `createTaskPlannerMetricsTool` is exported so the resolver side of the seam is testable.
+- 374956e: summary: Planning admission now respects the worktree cap — no more 8 planners on a 4-worktree board.
+  category: fix
+  dev: Triage admission gated only on the agent count; every planner acquires a real worktree, and the merge-drain freeze (00769fad7c) had been accidentally masking the gap. Admission now budgets min(agent room, worktree room) with the transfer rule (a replan candidate holding its worktree spends no fresh slot); the FN-8600 throttle event names "worktree cap" when it binds. Approximation note: per-candidate budget pairing assumes admitOldest's age order matches the eligible list; small transient skews self-correct on the next 15s poll.
+- 2934ccc: summary: A task whose planning handoff was refused is retried instead of being silently reported as recovered.
+  category: fix
+  dev: U7. `finalizeApprovedTask` now reports a three-state `PlanningHandoffOutcome` (released / parked / withheld) through a mutable report threaded into its ~25 exits; the default is `parked`, so the plumbing is inert except at the two sites explicitly classified as `withheld` (store lacks `moveTaskIf`; the planning-stage guard refuses the release move, FN-8361) and the one that sets `released`. `recoverApprovedTask` returns `outcome !== "withheld"` instead of an unconditional `true`, so `handleStuckAbortRequeue` stops treating a failed handoff as a completed recovery and skipping the stuck-retry budget. `parked` deliberately still returns true — an awaiting-approval park is a successful recovery and must not be overwritten with `needs-replan`.
+- efd8454: summary: Fix the Planning "Add comment to selection" button sitting below the fold in the Planning window.
+  category: fix
+  dev: The modal branch moved inside `FloatingWindow` (2026-07-26) but `PlanningModeModal.css` still sized the sheet as a full-viewport sheet; `min-height: 100dvh` beat `max-height: 100%`, so it overflowed its shorter host body. Scoped override under `.floating-window`.
+- 43463f1: summary: Cards drawn by plugin views and the right dock now use the board's own lane names.
+  category: fix
+  dev: Both `renderTaskCard` producers built a `TaskCard` without `taskColumnFlags` despite having the per-task map in scope.
+- b728857: summary: A GitHub "changes requested" review is no longer dropped on boards with renamed columns.
+  category: fix
+  dev: `PrCommentHandler.handleChangesRequested` gated on `task.column !== "in-review"` and requeued to a hardcoded `"in-progress"`. Both now resolve from the task's workflow — the review lane via the `mergeOrchestration` role, the requeue target via the first `countsTowardWip` column — each falling back to the legacy id.
+- 216632b: summary: Task-duration stats now include finished work on renamed boards.
+  category: fix
+  dev: `aggregateProductivityAnalytics` takes an optional lane store and resolves the complete columns via `resolveProjectColumnsForRoles`; its duration query previously filtered on the literal `'done'`.
+- bcc8bf1: summary: Fix an unregistered built-in workflow id being trusted as a real selection.
+  category: fix
+  dev: `resolveWorkflowIrById` substituted the default coding IR for an id that looks built-in but is not registered, without branding it as a fallback, so `resolveWorkflowIrForTaskWithProvenance` reported `source: "selection"` for it. Brands that substitution, and removes the redundant IR-id cross-check that ran after the marker check — the IR types declare no `id`, and when one is present it is the author's, unrelated to the store-minted `WF-NNN`.
+- 6834ba3: summary: Scheduler, merge queue, and continuation drain recover loudly from a hung pass instead of dying silently.
+  category: fix
+  dev: Same shape as the triage-poll death — a stuck re-entrance guard dropped every later tick without a log. Each pump now records its pass start and force-opens the guard past a duration sized to its legitimate work (schedule 10min, merge drain 30min, continuation drain 5min), logging a WARN with the stuck duration.
+- 2771408: summary: A stuck planner's approved plan is recovered again instead of being discarded and re-planned from scratch.
+  category: fix
+  dev: U11 (#2515) audit. Main now resolves the intake lane for recovery, which fixed merged/renamed workflows and silently broke cards still SITTING in the legacy `triage` column — the migration population U11 re-homing has not reached. `recoverApprovedTask` gated on `task.column !== "triage"`, so after the Planning merge it refused every default-workflow card and the approved spec was discarded — the stale-planning sweeps cleared the status and ordinary discovery re-planned the card, burning a fresh LLM pass on the exact path FN-1312 built to avoid that. Now accepts the task's resolved INTAKE column OR the legacy `triage` id: additive, so cards still awaiting U11 re-homing keep recovering too. Intake-only scope preserved, not widened.
+- a20ddf6: summary: Refined and duplicated tasks land in the workflow's Planning column instead of a deleted legacy column.
+  category: fix
+  dev: task_refine (update-task-deps.ts) and task_duplicate (project-store-ops.ts) hardcoded column "triage"; both now resolve resolveWorkflowIntakeFacts().intake with the literal as last resort. Symptom: amber PLANNING badge (badge color keys off raw column id) on cards in an undeclared column.
+- 60bfebd: summary: The Reliability panel's in-review duration metric now works on a board with renamed lanes.
+  category: fix
+  dev: `getInReviewDurationEvents` had `in-review` and `done` baked into a raw `sql` predicate — invisible to both the lifecycle census and the unwired-lane-parameter guard — so it stayed blind after #2861 fixed the panel's other two inputs. The lanes are now resolved once per call via `resolveProjectColumnsForRoles` and passed in as parameterised equality fragments, defaulting to the legacy ids.
+- 9e1deff: summary: The Reliability health panel no longer reports a perfect review-failure rate on a renamed board.
+  category: fix
+  dev: `/api/health/reliability` counted review entries and bounces with two `getTaskMovedCountsByDay` queries naming `in-review` and `in-progress`. On a renamed board both returned `{}`, so every per-day count was zero and `inReviewFailureRate7d` divided one zero by another and reported healthy. The lanes are now resolved via `resolveProjectColumnsForRoles` and the query is issued per (from, to) pair and summed.
+- 31e49b6: summary: Reopening a card on a renamed board now clears its stale review results, branch and failure state.
+  category: fix
+  dev: `default-workflow-hooks.ts` reopen predicates resolve intake/hold/wip/review/complete by trait from the task's own IR (passed in from `moves.ts` as `DefaultWorkflowMoveContext.lifecycleColumns`) instead of matching the default lineage's column names. `isReopenIntoPlanning` is exported so the store's former "parity mirror" calls it. The flag-OFF inline block in `moves.ts` stays name-based as the parity reference.
+- 8393bba: summary: A rejected plan on a custom workflow goes back to that workflow's own planning column, not one it does not have.
+  category: fix
+  dev: U7 / R7, re-landed on main after the stacked chain was closed. `resolveReplanTargetColumn` returned `triage` by fiat for any workflow declaring neither legacy id (builtin:marketing, every renamed set), moving the card into an undeclared column for `reconcileUndeclaredTaskColumns` to clean up. Legacy ids stay preferred first so both coding built-ins keep their exact target; only a workflow declaring neither reaches the trait fallback, which prefers HOLD over intake (Coding (Ideas)' intake is manual-capture with no AI, so a rejected plan sent there stops being replanned). No declared lane returns undefined and all callers park visibly. Also corrects an inverted U11 note in that function: #2515 keeps `todo` and deletes `triage`, not the reverse.
+- dca2049: summary: Replans on boards without a Triage or Planning column now land in that board's own planning lane.
+  category: fix
+  dev: `resolveReplanTargetColumn` resolves the no-match path from the task's own workflow and returns undefined when it declares no planning lane, instead of returning the literal `"triage"`.
+- 01f081e: summary: Review stalls are surfaced again on boards with renamed columns.
+  category: fix
+  dev: #2951 converted `surfaceInReviewStalls` to read the project's review columns but its conflict resolution dropped the per-card `reviewColumns` argument to `getInReviewStallReason` — and the test proving it — so the sweep resolved lanes and then surfaced nothing. Both restored.
+- 76b513e: summary: Fix user comments not invalidating spec approval on Coding (Ideas) cards.
+  category: fix
+  dev: `addComment`'s re-triage gate listed the legacy `todo`/`triage` column ids, which miss a workflow with a renamed intake column — `builtin:coding-ideas` uses `ideas`. An operator comment on such a card awaiting spec approval invalidated nothing. The gate now resolves the intake/hold roles from the card's own workflow, only for user comments, falling back to the legacy pair when no workflow resolves.
+- f14059e: summary: Fix Retry refusing cards parked mid-planning on five built-in workflows.
+  category: fix
+  dev: The manual retry route decided between specification retry (needs-replan + delete PROMPT.md) and execution retry via `!workflowHasColumn(ir, "triage")`. Measured across all 12 builtins: none plans in `triage`, but seven declare that column, so quick-fix / review-heavy / compound-engineering / design / legacy-coding refused a planning-status card in their own planning column with 400. New `workflowPlansInColumn(ir, column)` asks the graph where planning happens; a card in a pre-WIP column that is not the planning column now takes the non-destructive execution retry rather than losing its spec or its button.
+- 9366bc8: summary: Workflows no longer die at the review handoff on boards with a renamed review lane.
+  category: fix
+  dev: The `review-handoff` seam transitioned to the literal `in-review`; post-U12 `moveTask` rejects a destination the workflow does not declare, so the transition threw `TransitionRejectionError` and killed the walk mid-run. The seam now asks for `columnRole: "review"` and the runtime primitive (which holds the store) resolves it against the task's own selection.
+- 72391c9: summary: Route review-type workflow steps through validator model lanes instead of the execution model.
+  category: fix
+  dev: Review classifiers now select validator primary, fallback, and thinking-level settings while preserving executor runtime semantics and explicit step/task overrides.
+- e9e63d8: summary: Routines and scheduled tasks no longer create work into a column the board does not have.
+  category: fix
+  dev: Create-task steps defaulted their target column to `triage`, which U11 removes from the default workflow. An explicit column bypasses workflow entry-column resolution, so tasks landed in an undeclared column. Now no column is sent by default and each workflow's own intake resolution decides, which is correct for custom boards where `todo` may not exist either. `routine-runner.ts` and `cron-runner.ts` both substituted `"triage"` at execution time and defeated the form-level fix; both now omit it. The `triage` option is removed from the editor and a persisted `triage` is coerced to Automatic on load.
+- 6483f9c: summary: Renamed hold and intake lanes now wake the scheduler and unblock dependents correctly.
+  category: fix
+  dev: The `task:updated`/`task:deleted` handlers resolve lanes asynchronously; the wake set unions legacy ids so it stays a superset.
+- dca2049: summary: The Command Center SDLC funnel now reports stages for boards with renamed or custom columns.
+  category: fix
+  dev: `/command-center/activity` resolves the project's default-workflow columns and passes them as `SdlcFunnelQuery.columns`; unresolvable workflows fall through to the built-in default. `defaultColumns()` now uses `resolveDefaultWorkflowIr()` rather than the legacy monolithic constant.
+- 83294a6: summary: Internal test fix; no user-visible change.
+  category: internal
+  dev: The protobufjs security-floor assertion now reads `pnpm-workspace.yaml`, where #2220 moved pnpm overrides, instead of the empty `package.json` block.
+- 240a6be: summary: Fix a hang when editing dependencies on a task that was blocked by itself.
+  category: fix
+  dev: `updateTaskDependenciesImpl` runs inside `withTaskLock(id)` and read the current blocker via `store.getTask()`, which re-enters the same non-reentrant lock when `blockedBy === id`. Returns the in-lock task copy instead. Second instance of the class fixed in the transition-pending recovery; found by an AST scan for `getTask` nested inside `withTaskLock`.
+- 8b75a42: summary: Branch-misbinding is detected again on boards with renamed columns.
+  category: fix
+  dev: `recoverBranchMisboundInReviewTasks` read the literal `in-review`, so on a renamed board a review card whose branch tip belongs to another task was never detected. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 3c531d9: summary: Three more self-healing repairs use your board's own column names, including one that could disturb a running task.
+  category: fix
+  dev: Converts the worktree-metadata reconcile, orphaned-pending-step-results, and agent-link-drift sweeps in `self-healing.ts` to `resolveProjectColumnsForRoles`.
+- 7784cb1: summary: Merge-evidence repair, already-merged rescue and deadlock recovery run on renamed boards.
+  category: fix
+  dev: `recoverAlreadyMergedReviewTasks` had the same defect on the review lane — a card whose merge succeeded stayed parked with status=failed. `reconcileDoneTaskIntegrity` queried `listTasks({ column: "done" })`, which returns nothing on a renamed board, so the sweep never executed. It now resolves the project's complete lanes via `resolveProjectColumnsForRoles` and queries each, unioned with the legacy id.
+- 8b75a42: summary: Completed tasks get their merge metadata repaired again on renamed boards.
+  category: fix
+  dev: `recoverDoneTaskMergeMetadata` read the literal `done`, so on a renamed board a completed card's merge metadata was never repaired and could keep pointing at a commit that is not the one that landed. Read resolves via `resolveProjectColumnsForRoles(["complete"])` — deliberately not the terminal union — and the per-card check resolves per card.
+- c6767cb: summary: Foreign-only branch contamination is now cleared on boards with renamed columns.
+  category: fix
+  dev: `recoverForeignOnlyContaminatedInReviewTasks` read the literal `in-review`/`in-progress`, so a branch carrying only foreign commits was never classified on a renamed board and the task stayed parked. Reads resolve via `resolveProjectColumnsForRoles`, the two per-card column checks resolve per card, and the concatenated candidate list is deduped.
+- 8b75a42: summary: Ghost review cards are detected again on boards with renamed columns.
+  category: fix
+  dev: `recoverGhostReviewTasks` read the literal `in-review`, so a card parked past the stuck timeout with no merge-lane owner was never found on a renamed board. Read resolves via `resolveProjectColumnsForRoles` and the per-card check resolves per card; the kick-back keeps its literal target because it passes `recoveryRehome: true`.
+- 8b75a42: summary: Dead cards no longer hold a work slot forever on boards with renamed columns.
+  category: fix
+  dev: `recoverInProgressLimbo` read the literal `in-progress`, so a card holding a wip slot with no worktree, no branch and no started step was never reclaimed on a renamed board. The read resolves via `resolveProjectColumnsForRoles` and the per-card column check resolves per card, falling back to the project set when a card's own workflow is unreadable.
+- 16921fc: summary: Stale-dependency cleanup no longer releases a task to edit files another agent still holds, on renamed boards.
+  category: fix
+  dev: The two `shouldHoldActiveFileScopeLease` call sites in self-healing now pass resolved `isWipColumn`/`isReviewColumn` from the wip/review sets those sweeps already resolve, matching the scheduler's own call sites.
+- a453912: summary: Merged-but-unfinished tasks are now finalized on boards with renamed columns.
+  category: fix
+  dev: `recoverMergedReviewTasks` read the literal `in-review`/`todo`, so a card whose merge was confirmed sat unfinished on a renamed board while its commit was already on the base branch. Reads resolve via `resolveProjectColumnsForRoles`, the two per-card column checks resolve per card (falling back to the project sets when a card's own workflow is unreadable), and the candidate list is deduped.
+- 8b75a42: summary: Falsely-failed tasks with all steps done are cleared again on boards with renamed columns.
+  category: fix
+  dev: `recoverMisclassifiedFailures` read the literal `in-review`, so a task parked failed for "without calling fn_task_done" whose steps were all actually done stayed visibly failed on a renamed board. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Review failures from a missing worktree recover on renamed boards, and on boards with two review columns.
+  category: fix
+  dev: `recoverMissingWorktreeReviewFailures` had per-candidate lane wiring but still read the literal `in-review`, so only boards whose review lane kept that name benefited. The read now resolves via `resolveProjectColumnsForRoles`. Its per-candidate set also came from `resolveTaskLifecycleColumns().review` (first column per role) while the classifiers take a membership set; it now unions `columnsWithFlag` across the three review roles.
+- 8b75a42: summary: The zero-commit audit sees quietly-parked review cards again on renamed boards.
+  category: fix
+  dev: `auditNoCommitsExpectedCandidates` read the literal `in-review`, so on a renamed board only the `no_commits` error path fed the audit and a card sitting in a renamed review lane with zero commits and no error was never flagged. Read resolves via `resolveProjectColumnsForRoles`, the lane verdict resolves per card.
+- 8b75a42: summary: Failed tasks that produced nothing release their work slot again on renamed boards.
+  category: fix
+  dev: `recoverNoProgressNoTaskDoneFailures` read the literal `in-progress`, so a wip card failed for "no fn_task_done" with no step progress and no git work was never requeued on a renamed board and kept holding its slot. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Orphan-only scope-violation recovery now runs on boards with renamed columns.
+  category: fix
+  dev: `recoverOrphanOnlyScopeViolations` queried the literal `in-review`, so it never ran on a renamed board and such a task stayed failed. Read now resolves via `resolveProjectColumnsForRoles`; the per-card verdict and its `getTaskHardMergeBlocker` resolve from the task's own workflow.
+- 8b75a42: summary: The orphaned-execution signal is now emitted on boards with renamed columns.
+  category: fix
+  dev: `recoverOrphanedExecutions` read the literal `in-progress`, so on a renamed board it never emitted `task:orphan-detected-no-action` and an operator had no signal that a wip card had no live session. The sweep takes no lifecycle action; this restores visibility only. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Partially-completed work is retried again on boards with renamed columns.
+  category: fix
+  dev: `recoverPartialProgressNoTaskDoneFailures` read the literal `in-review`, so on a renamed board a card failed for "no fn_task_done" that had made real step progress was never retried and its retry budget was never spent. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Post-done wedge recovery now unsticks completed tasks on boards with renamed columns.
+  category: fix
+  dev: `recoverPostDoneNonContinuableWedge` queried the literal `in-review`, so a task that finished every step and was wedged `failed` by a post-done continuation error stayed failed on a renamed board. Read now resolves via `resolveProjectColumnsForRoles`, and its `getTaskHardMergeBlocker` judges each card against its own workflow.
+- 8b75a42: summary: PR-conflict reclaim no longer reads a busy checkout as unowned on renamed boards.
+  category: fix
+  dev: `reclaimPrConflictForTask` built its worktree-owner map from a literal `in-progress` read, so on a renamed board the map was empty and a checkout another task was live in read as unowned. Read resolves via `resolveProjectColumnsForRoles(["countsTowardWip"])`; the map is keyed by worktree path so there is no per-card lane verdict to convert.
+- 8b75a42: summary: Idle assigned agents are reattached to their work on boards with renamed columns.
+  category: fix
+  dev: `reattachOrphanedAssignedExecutions` read the literal `in-progress`, so on a renamed board an agent that stopped executing a task it was still assigned to was never resumed, leaving the card assigned-but-idle. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Self-owned branch conflicts are now reclaimed on boards with renamed columns.
+  category: fix
+  dev: `reclaimSelfOwnedBranchConflicts` read the literal `todo`/`in-progress`/`in-review` and kept three lane guards on column ids, so a task whose own worktree held its own branch stayed wedged on a renamed board. Reads resolve via `resolveProjectColumnsForRoles` and the three guards resolve per card; the `recoveryRehome` re-home keeps its legacy target by design.
+- 8b75a42: summary: Completing a task now releases its dependents on boards with renamed columns.
+  category: fix
+  dev: `reconcileCompletedTask` read the literal `todo`/`in-progress`/`in-review`, so on a renamed board it released nothing and every dependent stayed blocked on finished work. The three reads resolve via `resolveProjectColumnsForRoles`, and dependency satisfaction resolves per dependency (complete/review/archived roles, legacy ids unioned).
+- 8b75a42: summary: Stale dependency blocks now clear on boards with renamed columns.
+  category: fix
+  dev: `clearStaleBlockedBy` read the literal `todo`/`in-progress`/`in-review`, so its already-lane-resolved body never ran on a renamed board and cards stayed blocked behind finished blockers. The three reads now resolve via `resolveProjectColumnsForRoles` and each card is bucketed against its own workflow.
+- 8b75a42: summary: Review cards with unfinished steps are requeued again on boards with renamed columns.
+  category: fix
+  dev: `recoverStaleIncompleteReviewTasks` read the literal `in-review`, so a card that reached review on a graph failure with steps still unfinished was never requeued on a renamed board. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card; the requeue keeps its literal target because it passes `recoveryRehome: true`.
+- 8b75a42: summary: A finished task no longer blocks the merger queue on boards with renamed columns.
+  category: fix
+  dev: `reconcileStaleMergerStatus` read the literal `done`/`archived`, so a terminal card still carrying `merging`/`merging-pr` was never cleared on a renamed board and held the merger queue for every task behind it. One resolved union read over `TERMINAL_ROLES`, deduped.
+- f6e3682: summary: A card stuck mid-merge can be retried again on boards with renamed columns.
+  category: fix
+  dev: `recoverStaleMergingStatus` read the literal `in-review`, so a stale `merging`/`merging-pr` stamp was never cleared on a renamed board. That stamp gates both the merger and the dashboard's manual Retry, so the card could neither progress nor be retried by hand. Read resolves via `resolveProjectColumnsForRoles`, per-card check resolves per card.
+- 8b75a42: summary: Step-complete tasks stranded by a dead session now reach review on boards with renamed columns.
+  category: fix
+  dev: `recoverCompletedTasks` read the literal `in-progress`, so a task whose steps were all done but whose session died before the hand-off to review was never found on a renamed board. The read resolves via `resolveProjectColumnsForRoles` and the per-card column check resolves per card, falling back to the project set when a card's own workflow is unreadable.
+- 8b75a42: summary: Merges that failed on a transient fault recover again on boards with renamed columns.
+  category: fix
+  dev: `recoverTransientMergeFailures` read the literal `in-review` and kept two lane guards on column ids, so a card that burned its retry budget on a network blip or provider fault stayed failed permanently on a renamed board. Read resolves via `resolveProjectColumnsForRoles`; both the slim-snapshot filter and the full-row re-check resolve per card.
+- 8b75a42: summary: Workspace tasks finish their partial lands and release their worktrees on renamed boards.
+  category: fix
+  dev: `reconcileWorkspacePartialLands` and `reconcileOrphanedWorkspaceWorktrees` read the literal `in-review`/`done`, so on a renamed board a workspace task stranded mid-land was never re-enqueued and a finished one never released its per-repo worktrees. Reads resolve via `resolveProjectColumnsForRoles` (review roles, and `complete` only for the cleanup); the partial-land per-card check resolves per card.
+- 6c7467a: summary: Spawned child agents now count against the worktree cap, not only the agent cap.
+  category: fix
+  dev: fn_spawn_agent's own note said a child consumes both dimensions but gated only agents — a fan-out could exceed maxWorktrees to the agent limit. The worktree check runs after the synchronous slot reservation (preserving the anti-TOCTOU ordering, proven by the racing-spawns test) and unwinds it on refusal.
+- 8288e4a: summary: Plan review no longer starts for a task that is still waiting on your approval.
+  category: fix
+  dev: U7. `onSpecifyComplete` now carries the `PlanningHandoffReport` from finalize, and the engine's reaction (`reactToSpecificationComplete`, extracted from the inline `InProcessRuntime` callback so its gating is testable) arms the pre-release plan-review continuation only on `outcome === "released"`. Non-release outcomes log the real outcome instead of asserting `Specified X → todo`, and never reach the store. `recordActivity()` still fires for every outcome so idle detection is unaffected. Complements PR #2491's seeder-side guard, which stays as the defence covering every other caller.
+- 511f5b7: summary: Archived tasks no longer reappear on boards whose archive lane is renamed.
+  category: fix
+  dev: `listTasksModifiedSinceImpl` excluded the literal `archived`; it now excludes the project's resolved archive columns, keeping the literal as the no-resolution fallback.
+- 2fd798c: summary: Review cards no longer all report a false stall on boards with renamed columns.
+  category: fix
+  dev: `getInReviewStallReason` satisfied its own lane check from `context.reviewColumns` but called `getTaskMergeBlocker` without them, so the helper re-checked against the literal `in-review` and returned an identity message for every healthy card — surfaced as a merge-blocker stall, and masking the real reason on genuinely failed ones.
+- 9b82ff2: summary: Keep active task admission within worktree capacity and show queued cards as status badges.
+  category: fix
+  dev: Refreshes full live-task claims at serialized admission and defers capacity-blocked merge retries.
+- 16921fc: summary: Stale-card diagnostics now cover every review and hold column, not just the first of each.
+  category: fix
+  dev: `runSurfacingSweep`'s role gate resolves membership (`resolveReviewColumns` / `columnsWithFlag(ir,"hold")`) instead of `resolveLifecycleColumns()[role]`; signals receive the column SET, and each card's recovery policy is read from its own column. Adds `StalePausedTodoContext.holdColumns`.
+- 71576d9: summary: Fix uneven right padding on tablet task/terminal popups; drag the terminal from anywhere in its toolbar.
+  category: fix
+  dev: Tablet-mode FloatingWindows (`.floating-window--tablet-viewport`) zero the FN-8015 scrollbar gutter; GitHub-import detail compensates locally. Terminal tab-strip empty space now bubbles to the `.terminal-header` drag handle (`touch-action: none` on the tablet floating header supersedes the FN-8633 pan-x contract).
+- f5a776d: summary: Keep fast-mode task-card badges aligned with status badges when space allows.
+  category: fix
+  dev: The task-card meta badge wrapper is layout-transparent so nested chips share the header wrap context.
+- 41cdcc7: summary: Board renames no longer silently disable scheduler auto-claim invalidation and lane guards.
+  category: fix
+  dev: `task:moved` payloads now carry emitter-resolved `lanes` (`TaskMoveLanes`); listeners prefer them over the sync IR resolver, which returns the default workflow under PostgreSQL.
+- 15b21de: summary: Reconcile legacy task checklist and wedge state through the live dashboard backend.
+  category: fix
+  dev: Adds project-scoped task step-update and wedge-resolution API routes.
+- f0875a7: summary: Finished cards on a renamed board now show their completion date.
+  category: fix
+  dev: `lifecycleDates` in TaskCard omitted `isCompleteColumn`/`isArchivedColumn` from its dependency list; both derive from the async `taskColumnFlags` prop.
+- 5ce23b2: summary: Cards in renamed in-progress or review lanes now show their live elapsed-time indicator.
+  category: fix
+  dev: `wantsLiveTimeIndicator`'s dependency list omitted `isWipColumn`/`isReviewColumn`/`taskColumnFlags`, so the memo kept the pre-load answer computed before workflow traits resolved.
+- cf6062c: summary: Finished cards on renamed boards now refresh their diff stats after a merge.
+  category: fix
+  dev: `mergeSignature`'s dependency list omitted `isCompleteColumn`, so the key stayed undefined when column traits arrived after first paint.
+- 3b55e2c: summary: Cards in renamed in-progress, review or completion lanes now show their elapsed-time indicator.
+  category: fix
+  dev: The `TIME_INDICATOR_COLUMNS` legacy id set gated both the indicator memo and the chip layout; it is now a role question with that set kept as the no-flags fallback.
+- 1de0141: summary: Task Detail's "is blocking N todo task(s)" now counts your own lane names instead of reading zero.
+  category: fix
+  dev: `TaskDetailContent` takes an optional `columnFlagsByTaskId`, forwarded from `App` through `AppModals`; the fan-out useMemo passes it to the wrapper. Omitted, behaviour is byte-identical.
+- ea477f3: summary: Command Center team analytics now count completed and in-flight work on renamed boards.
+  category: fix
+  dev: `aggregateTeamAnalytics` takes an optional lane store and resolves complete / wip / human-review columns via `resolveProjectColumnsForRoles`; its SQL previously filtered on the literal `'done'` and `('in-progress','in-review')`, which match nothing on a custom workflow.
+- b4ed12e: summary: Mission delivery repair now accepts a completed card on boards that rename the done lane.
+  category: fix
+  dev: `getTerminalTaskEvidence` tested only `column === "done"`, so a completed card on a renamed board classified as `nonterminal` and `reconcileFeatureDoneWithTerminalTask` threw `TASK_NOT_TERMINAL`. It now takes resolved complete/archived lane sets, supplied by `AsyncMissionStore` from its `taskStore`. The `TerminalTaskEvidence` type's `column` field was widened from the pinned literals to `string`.
+- e5c9ea3: summary: Fix node-override handling on workflows whose terminal node is not named "end".
+  category: fix
+  dev: `updateTask({ nodeId })` passes through `validateNodeOverrideChange` twice. The outer call resolved terminality via `resolveTaskWorkflowIrSync` (the default workflow under PostgreSQL); the inner call passed no options and fell to the literal `nodeId === "end"`. Both now resolve the task's own workflow via the new `isTaskTerminalNodeIdAsync`, and `branch-and-pr-entities.ts` leaves the sync-resolver call-site allow-list.
+- a6af318: summary: Fix a startup hang, and a skipped plugin hook, for tasks interrupted mid column-transition.
+  category: fix
+  dev: `recoverStaleTransitionPendingImpl` ran its per-task body inside `withTaskLock(id)` and then read the task with `store.getTask(id)`, which acquires the same non-reentrant lock. PostgreSQL-only — the SQLite arm already used the lock-free `readTaskFromDb`. Restores a lock-free read (`readTaskRow`) on the backend arm. Reachable only when a stale transition-pending marker names a plugin hook the trait registry still knows. Also switches that recovery's IR read from `resolveTaskWorkflowIrSync` (which returns the default workflow for every task under PostgreSQL, so a custom-workflow task's interrupted hook was silently skipped) to `resolveWorkflowIrForTask`, and drops the now-unused `lifecycle-ops.ts` entry from the sync-resolver call-site allow-list.
+- e51ebff: summary: New tasks no longer sit queued for minutes when a triage poll hangs — a watchdog recovers admission loudly.
+  category: fix
+  dev: One hung poll left this.polling true forever, silently dropping every 15s tick and task:created wake (observed as 5-10 min "Queued to plan" with open capacity, rescued only by unrelated sweeps). Past 120s the guard force-opens with a WARN naming the stuck duration.
+- a271f18: summary: Board, list, task detail, and move menus now render each card's own workflow columns.
+  category: fix
+  dev: U10 of the workflow-owned-lifecycle program (R8). Removes the legacy `COLUMNS` injection from Board's All-workflows lane union (it drew a phantom lane for every legacy column no workflow declared, labelled with the raw id, ordered by the legacy enum rather than the IR); ListView no longer silently drops a row whose stored column its workflow does not declare (display-only re-home to the intake lane, matching Board's existing safety nets); `getWorkflowMoveTargets` offers the workflow's recovery lane instead of an empty move list for a card stranded in an undeclared column; Task Detail's column badge and title/description edit gate resolve from the card's column traits with the legacy id set as fallback; `board-workflows`' built-in lifecycle label map became a fallback rather than an override (it was rendering `builtin:lead-generation`'s "Lead intake" as "Planning"); and the open-PR backward-move guard on `POST /tasks/:id/move` orders columns by the task's workflow instead of `COLUMNS.indexOf`, which returned -1 on any renamed board and disabled the guard entirely.
+- 35b0df1: summary: Tasks created with custom workflow-step toggles now land in their workflow's own intake column.
+  category: fix
+  dev: `resolveDefaultWorkflowIntakeColumn` resolves the intake column side-effect-free (IR + `intake` trait) when a create supplies `enabledWorkflowSteps` without an explicit `workflowId`, so neither `materializeWorkflowSteps` branch runs. Previously `resolvedEntryColumn` stayed undefined and the card fell through to the hard-coded `|| "triage"`.
+- 7003dc9: summary: Board no longer re-renders every column and card when you collapse Archived or change Done sort.
+  category: performance
+  dev: `canDropTask` was allocated as an inline arrow per column per render, defeating `React.memo(Column)` so any Board state change re-rendered all columns and their cards. Bound through a `useMemo` cache keyed by lane+column. The "keeps unaffected columns stable" test is un-skipped and now guards the real workflow board — it previously measured the deleted legacy board.
+- ebc8931: summary: The "Back to" move-menu label now uses your workflow's own review and work column names.
+  category: fix
+  dev: `getTaskMoveTransitions` derived the "Back to In Progress" label from the hardcoded ids `in-review`/`in-progress` plus a hardcoded English string, so a workflow renaming those lanes either lost the label or named a column not on the board. Now keyed on the `mergeBlocker` (current) and `countsTowardWip` (target) traits with the column's own label via a new `taskDetail.move.backTo` key. The labelled set is unchanged for built-in workflows.
+- 642a4fa: summary: Fix board affordances that broke on renamed or merged column lineages.
+  category: fix
+  dev: Column-role helpers move to @fusion/core (column-roles.ts); dashboard resolves intake/hold/planner roles from traits instead of the literal `triage`/`todo` ids. Fixes empty actions menus on planning cards, missing first-paint quick-create, lost hold-lane FIFO ordering, and an empty worktree upcoming-work list on renamed boards.
+- fd6d005: summary: Remove the unreachable legacy board and list rendering path left over from the workflow-columns rollout.
+  category: internal
+  dev: Deletes Board's legacy single-lane `COLUMNS` render, ListView's `LEGACY_LIST_COLUMNS`, the `workflowColumnsEnabled`/`settingsLoaded` prop threading, the `shouldHydrateCache` gate, and TaskDetailModal's `flagEnabled` early return. Core side drops the `workflowColumns` ON→OFF evacuation (`evacuateCustomColumnsToLegacy`) and the uncalled `runWorkflowColumnsIntegrityPass`, superseded by `reconcileUndeclaredTaskColumns`. `flagEnabled` stays on the board-workflows wire as a constant for stale clients.
+- 3ff98aa: summary: Custom board columns can no longer be silently rewritten to Planning by an internal helper.
+  category: internal
+  dev: Deletes `normalizeColumn` from `@fusion/core` (zero callers; the dashboard migrated to the non-lossy `normalizeColumnId` when the data loss was diagnosed) and adds `no-lossy-column-coercion-export.test.ts`, which bans any exported single-argument column helper that maps a valid custom id onto a legacy one — by behaviour, not by name.
+- efbbc45: summary: The Plan action no longer appears on cards that are already executing.
+  category: fix
+  dev: isPreExecutionHoldColumn ORed the legacy `triage` id with the column's traits unconditionally, so a resolved column merely named `triage` was treated as a planning target even when its traits said work was underway. Now flags-first with the id as the documented no-metadata fallback.
+- 6721bdc: summary: The List view now recovers a just-created card's workflow instead of waiting for an unrelated refresh.
+  category: fix
+  dev: Extracts Board's FN-7591 unmapped/suspect-workflow refetch into `useUnmappedWorkflowRefetch` and wires ListView to it. Without it, a task whose `taskWorkflowIds` entry is absent or resolves to a workflow that does not declare its column kept approximated move metadata until some other refresh occurred.
+- da03518: summary: Move menus on custom workflows now offer exactly the moves that workflow allows.
+  category: fix
+  dev: The board-workflows payload gains a per-column `moveTargets` array from `resolveAllowedColumns` — the same resolver `moveTaskInternal` validates against. `getTaskMoveTransitions` reads it instead of approximating targets from neighbouring columns, and the `VALID_TRANSITIONS` default-column-set shortcut is deleted; `builtin-adjacency-matches-legacy-transitions.test.ts` pins the equivalence that made deleting it safe. Optional on the wire, so an older client keeps the neighbour fallback.
+- bc782d8: summary: Task moves now validate against the board's own workflow, so cards cannot land in a column it does not declare.
+  category: fix
+  dev: Deletes the experimentalFeatures.workflowColumns gate on the move path (6 seams) and its inline legacy branch; column side effects run through default-workflow trait hooks unconditionally. Move rejections now report workflow-resolved targets rather than the legacy adjacency table, which no longer advertises the removed `triage` column. The settings key stays schema-tolerated and hidden for upgraded projects.
+- d438cd1: summary: Retry now works for planning cards on boards whose first column isn't named "triage".
+  category: fix
+  dev: register-task-workflow-routes.ts resolves the intake column via columnsWithFlag(ir,"intake") instead of comparing task.column to the literal "triage"; 7 lifecycle-column comparisons in the file drop to 1 (comment text).
+- 89d6d76: summary: Startup recovery no longer moves a card using another workflow's columns when its own cannot be loaded.
+  category: fix
+  dev: `reconcileUndeclaredTaskColumns`'s unresolvable-workflow guard was unreachable — `resolveWorkflowIrById` swallows every failure and returns the default IR, so a card with an unloadable workflow was judged against `builtin:coding` and re-homed to ITS rebound target. The sweep now proves the task's selection resolves to a real definition before moving, checked only for cards already about to move.
+- 3badc24: summary: Workflow edits, deletes, and switches now reconcile the cards sitting in the affected columns.
+  category: fix
+  dev: The three U5 guards (`updateWorkflowDefinition` occupied-column block, `deleteWorkflowDefinition` occupant re-home, `selectTaskWorkflowAndReconcile` switch reconciliation) were gated on the retired raw `experimentalFeatures.workflowColumns` key and had never fired in production. Removing an occupied column now returns a 409 `OccupiedColumnsError` unless `rehomeTo` is supplied; deleting a workflow re-homes its cards immediately rather than at next engine start; switching workflows moves a card whose column the new workflow does not declare and returns a `reconciliation` summary. Also ports the switch path off the synchronous SQLite reader, which throws under PostgreSQL.
+- 063978c: summary: Internal cleanup of retired workflow-columns flag reads; no change to stored workflows or board behavior.
+  category: internal
+  dev: The three v1-IR rollback-compat persist sites (`createWorkflowDefinition`, `updateWorkflowDefinition`, `insertWorkflowDefinitionSync`) branched on the retired raw `experimentalFeatures.workflowColumns` key, which is always false, so the downgrade arm was always taken. The branch and the `flagOn` parameter are removed; `downgradeIrToV1IfPure` is kept as a binary-downgrade affordance and pinned by `workflow-ir-v1-rollback-persistence.test.ts`. `TaskStore.workflowColumnsFlagOn()` is deleted (no callers). `isWorkflowColumnsCompatibilityFlagEnabled` survives; every remaining read is on the move path (U2b).
+- eaea082: summary: Fix execution retry, escalation and loop protection silently doing nothing on renamed-column workflows.
+  category: fix
+  dev: `handleGraphFailure`'s execution-policy ladder (FN-7863/FN-7926 dispatch-loop gate, FN-7996 tool-failure retry, FN-7998 escalation) resolved hold/wip through U1's `resolveTaskLifecycleColumns` instead of the literals `"todo"`/`"in-progress"` at 9 sites. The wip literal made the whole ladder unreachable: a card in a renamed implementation column was classified "already advanced" and its graph failure was swallowed. A workflow that declares no hold/wip column resolves through KTD-10 rebound ordering or fails closed to a visible terminal park — never to an invented column; only an unreadable workflow keeps the legacy literals.
+- 9d3e53d: summary: Surface how an implementation session actually ended, including when the executor moved the card itself.
+  category: internal
+  dev: Adds a closed `ImplementationExit` enum (`engine/executor/implementation-exit.ts`) reported from six completion-adjacent exits in `runImplementation` and announced by the execute seam as `NodeCompleted.exit` on the U3 lifecycle bus. Routing is byte-identical for every exit; nothing branches on an exit id (R5 — reactions only).
+- 131feb2: summary: Report how an implementation session ended on the code path the engine actually runs.
+  category: fix
+  dev: `createDefaultNodeHandlers` prefers `createPrimitivePromptLikeHandler` whenever `deps.primitives` is set, and `executeWorkflowGraph` always sets it — so `createAuthoritativeWorkflowSeams.execute` is unreachable for prompt nodes. The `NodeCompleted.exit` announcement was wired only there and never fired; it now emits from `runCodingSession`. Adds a ratchet asserting the primitives-preferred dispatch rule.
+- 3f763cb: summary: The graph now parks a card in review when a step is blocked on a pending review, instead of the executor doing it.
+  category: internal
+  dev: The live implementation primitive returns `review-pending` and the step handler stops flattening it, so built-in workflows route to their `review-pending-handoff` node. The inline `handoffTaskToReview` in `runImplementation` is gone; user-authored graphs without the edge fall back to a named classifier in `handleGraphFailure`.
+- 5de083e: summary: Declare the pending-review park as a step in the Legacy coding workflow, so it is visible in the editor.
+  category: internal
+  dev: Adds a `review-handoff` seam node (`review-pending-handoff`) plus `execute --outcome:review-pending--> review-pending-handoff --success--> end` to BUILTIN_CODING_WORKFLOW_IR. Inert — no seam returns `review-pending` yet; the behavior move lands separately once the step-session chain can surface the exit.
+- 8578a1d: summary: Add a Park for pending review step to the stepwise coding workflows, visible in the workflow editor.
+  category: internal
+  dev: Threads `ImplementationExit` through `runGraphTaskStep` -> `RunTaskStepResult`/`RunSingleStep` -> `runProjectedGraphTaskStep` -> `stepExecute`, which no longer flattens every ending to `step-done`/`step-failed`; adds the `review-pending-handoff` node plus `steps --outcome:review-pending--> ... --> end` to the stepwise IR (inherited by the final-review and Ideas variants). Inert: no seam returns `review-pending` yet.
+- a68785a: summary: Fix a card parked in a non-existent column after a dependency abort, and restore usage-limit pausing while planning.
+  category: fix
+  dev: P0 audit after the Planning-column merge removed `triage` from the default lineage. `handleDepAbortCleanup` wrote the literal `triage` (undeclared column; only a restart-time reconcile could rescue the card) and now uses `resolveReboundColumnFor`. `UsageLimitPauser.taskUsesProvider` identified the planning lane by `column === "triage"`, which stopped matching for default cards, so the provider fan-out skipped them; it now matches any pre-implementation column.
+- cf7b1a3: summary: Gridlock detection and mission-autopilot retries now work on boards whose columns are renamed.
+  category: fix
+  dev: U7 / R3, R7 — unowned drift-review sites. `gridlock-detector` filtered schedulable cards by `column !== "todo"` AND active cards by `in-progress`/`in-review` literals; on a renamed workflow both sets were empty and each empty set is an early return, so the detector reported "no gridlock" on exactly the boards where every card was stuck. `mission-autopilot`'s retry compared and moved to the literal `todo`, relocating the card into a column the workflow may not declare on every retry; it now resolves the hold role and leaves the card in place when none is declared. Measured on main: `column === / !== "todo" | "triage"` 103 -> 101.
+- da77e61: summary: A provider rate limit now pauses every task actually running on that provider, including on renamed boards.
+  category: fix
+  dev: `taskUsesProvider`'s executor and merger lane checks resolve the workflow's wip/review columns (from the same per-workflow IR cache the planner lane already uses) instead of comparing against `"in-progress"`/`"in-review"`; both fail soft to the legacy literal.
+- defe48d: summary: Per-workflow Command Center metrics now count work on renamed boards.
+  category: fix
+  dev: `aggregateWorkflowAnalytics` takes an optional lane store and resolves complete / wip / human-review columns via `resolveProjectColumnsForRoles`; its SQL previously filtered on the literal `'done'` and `('in-progress','in-review')`.
+- 4158cf1: summary: Internal groundwork for workflow-owned lifecycle; no operator-visible behavior change.
+  category: internal
+  dev: Phase A of the workflow-owned-lifecycle program. U1 adds `resolveLifecycleColumns(ir)` / `resolveTaskLifecycleColumns(store, taskId, cache?)` in `@fusion/core` — the trait-driven seam later phases convert ~207 hardcoded column literals onto. U2 deletes `workflow-columns-settings.ts` (`isWorkflowColumnsEnabled` returned a literal `true`; its six flag-OFF branches were unreachable) and `workflow-parity.ts` with its two dead TaskStore methods (`getWorkflowParitySummary`, `computeWorkflowColumnsGraduationReport`); both files plus seven symbols are added to the `legacy-tombstones` ratchet. The board-workflows response keeps `flagEnabled: true` on the wire for shipped clients. U3 adds the post-commit lifecycle event bus (`getWorkflowEventBus`, `emitWorkflowLifecycleEvent`, ids/outcomes-only payloads enforced at the emit boundary) emitting `TaskTransitioned` from the single post-commit point in `moveTaskInternalImpl` and `NodeEntered`/`RunSuspended` from the graph column boundary, plus `registerWorkflowEventSubscribers` in `@fusion/engine` (empty by design). Durable follow-on work stays in the transactional outbox — a `workflow_work_items` row written inside the transition transaction — with at-least-once delivery proven against real PostgreSQL; subscribers carry only losable reactions.
+- fbe7eb5: summary: A task queued for plan review no longer waits behind other tasks that are parked awaiting your approval.
+  category: fix
+  dev: U7 (PR #2491 review). The planning-continuation drain polls a bounded FIFO batch and a skipped item stayed `runnable` and due, so cards parked on approval re-filled every batch and starved newer plan-review work. Skipped operator-parks now get their `retryAfter` pushed out (`PARKED_CONTINUATION_DEFER_MS`, 60s) instead of a state change, so idleness predicates over `ACTIVE_WORKFLOW_WORK_ITEM_STATES` are unaffected. The write is a compare-and-set via the new `WorkflowWorkItemTransitionPatch.expectedState`, so a claim another node took between the poll and the write is never reset (`running` was not covered by the pre-existing terminal-state check). The drain loop moved to the exported `drainDuePlanningContinuations` so the wiring is testable without constructing a runtime.
+- 3f95c6d: summary: Planned tasks release at full concurrency again — a card's retained planning worktree no longer blocks its own release.
+  category: fix
+  dev: Follow-up to the widened maxWorktrees ledger: a Ready card reuses its planning worktree on release, so its held slot transfers instead of double-counting. Observed live as only 2 of 4 slots releasing after unpause.
+
 ## 0.74.0-beta.5
 
 ### Patch Changes

@@ -26,7 +26,7 @@ import { describe, expect, it } from "vitest";
 import { PLANNER_AGENT_ROLE } from "../types/task-log.js";
 import { resolveAgentPrompt } from "../agent-prompts.js";
 import { resolveDefaultWorkflowIr } from "../builtin-workflows.js";
-import { resolveLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import { resolveLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
 
 describe("the planner ROLE and the deleted intake COLUMN share a name and nothing else", () => {
   it("keeps the planner role named `triage` after U11 removed the column", () => {

@@ -1,5 +1,22 @@
 # @fusion-plugin-examples/reports
 
+## 0.1.51-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.7
+- @fusion/dashboard@0.74.0-beta.7
+- @fusion/plugin-sdk@0.74.0-beta.7
+
+## 0.1.51-beta.6
+
+### Patch Changes
+
+- Updated dependencies [8e50967]
+  - @fusion/dashboard@0.74.0-beta.6
+  - @fusion/core@0.74.0-beta.6
+  - @fusion/plugin-sdk@0.74.0-beta.6
+
 ## 0.1.51-beta.5
 
 ### Patch Changes

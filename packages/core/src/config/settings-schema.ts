@@ -41,21 +41,27 @@ type MovedProjectSettingsKey =
   | "maxReviewerFallbackRetries"
   | "reflectionEnabled"
   | "executionProvider"
+  | "executionCredentialInstanceId"
   | "executionModelId"
   | "executionThinkingLevel"
   | "executionFallbackProvider"
+  | "executionFallbackCredentialInstanceId"
   | "executionFallbackModelId"
   | "executionFallbackThinkingLevel"
   | "planningProvider"
+  | "planningCredentialInstanceId"
   | "planningModelId"
   | "planningThinkingLevel"
   | "planningFallbackProvider"
+  | "planningFallbackCredentialInstanceId"
   | "planningFallbackModelId"
   | "planningFallbackThinkingLevel"
   | "validatorProvider"
+  | "validatorCredentialInstanceId"
   | "validatorModelId"
   | "validatorThinkingLevel"
   | "validatorFallbackProvider"
+  | "validatorFallbackCredentialInstanceId"
   | "validatorFallbackModelId"
   | "validatorFallbackThinkingLevel";
 
@@ -141,6 +147,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   skipConfirmationDialogs: false,
   language: undefined,
   defaultProvider: undefined,
+  defaultCredentialInstanceId: undefined,
   defaultModelId: undefined,
   testMode: undefined,
   voiceInput: undefined,
@@ -152,6 +159,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   modelRouterCheapModelId: undefined,
   mergeRequestContractShadowEnabled: false,
   fallbackProvider: undefined,
+  fallbackCredentialInstanceId: undefined,
   fallbackModelId: undefined,
   /*
   FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
@@ -248,24 +256,30 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   ompCliBinaryPath: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
+  executionGlobalCredentialInstanceId: undefined,
   executionGlobalModelId: undefined,
   planningGlobalProvider: undefined,
+  planningGlobalCredentialInstanceId: undefined,
   planningGlobalModelId: undefined,
   validatorGlobalProvider: undefined,
+  validatorGlobalCredentialInstanceId: undefined,
   validatorGlobalModelId: undefined,
   titleSummarizerGlobalProvider: undefined,
+  titleSummarizerGlobalCredentialInstanceId: undefined,
   titleSummarizerGlobalModelId: undefined,
   /*
   FNXC:Settings-MergerModel 2026-07-13-07:52:
   Global merger baseline lane (provider/model/thinking) is independent of executor/planner/reviewer so operators can pin a merge-capable model under Settings → Global Models without changing other lanes. Undefined falls through to defaultProvider/defaultModelId at resolve time.
   */
   mergerGlobalProvider: undefined,
+  mergerGlobalCredentialInstanceId: undefined,
   mergerGlobalModelId: undefined,
   /*
   FNXC:GitHubImportTranslate 2026-07-15-09:30:
   Global import-translate baseline lane. Undefined falls through to the summarization lane then defaultProvider/defaultModelId at resolve time.
   */
   importTranslateGlobalProvider: undefined,
+  importTranslateGlobalCredentialInstanceId: undefined,
   importTranslateGlobalModelId: undefined,
   importTranslateGlobalThinkingLevel: undefined,
   /*
@@ -536,6 +550,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // (executionGlobalProvider etc.) stay global; project default overrides stay.
   // Project-level default override (NOT moved — stays project-scoped)
   defaultProviderOverride: undefined,
+  defaultCredentialInstanceIdOverride: undefined,
   defaultModelIdOverride: undefined,
   /*
   FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
@@ -716,9 +731,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   useAiMergeCommitSummary: true,
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,
+  titleSummarizerCredentialInstanceId: undefined,
   titleSummarizerModelId: undefined,
   titleSummarizerThinkingLevel: undefined,
   titleSummarizerFallbackProvider: undefined,
+  titleSummarizerFallbackCredentialInstanceId: undefined,
   titleSummarizerFallbackModelId: undefined,
   titleSummarizerFallbackThinkingLevel: undefined,
   /*
@@ -728,6 +745,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   githubImportAutoTranslate: false,
   importTranslateTargetLocale: undefined,
   importTranslateProvider: undefined,
+  importTranslateCredentialInstanceId: undefined,
   importTranslateModelId: undefined,
   importTranslateThinkingLevel: undefined,
   /*
@@ -735,10 +753,12 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Merger model lane stays project-scoped (not workflow-moved) like title summarizer: Settings → Project Models can override the global merger baseline without binding the choice to a workflow graph.
   */
   mergerProvider: undefined,
+  mergerCredentialInstanceId: undefined,
   mergerModelId: undefined,
   mergerThinkingLevel: undefined,
   // FNXC:Settings-MergerModel 2026-07-16-00:00: project merger fallback overrides shared global fallback only when its provider/model pair is complete.
   mergerFallbackProvider: undefined,
+  mergerFallbackCredentialInstanceId: undefined,
   mergerFallbackModelId: undefined,
   mergerFallbackThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
@@ -858,6 +878,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
  * that matches the legacy `DEFAULT_SETTINGS` shape.
  */
 export const DEFAULT_SETTINGS: Settings = {
+  /*
+   * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+   * Optional credential-instance settings share each provider lane's scope and remain inert
+   * until runtime credential selection is introduced by the follow-up slice.
+   */
   ...DEFAULT_GLOBAL_SETTINGS,
   ...DEFAULT_PROJECT_SETTINGS,
 };

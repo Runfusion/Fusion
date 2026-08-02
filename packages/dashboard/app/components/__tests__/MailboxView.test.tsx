@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useEffect, type ReactNode } from "react";
 import { loadAllAppCss } from "../../test/cssFixture";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MailboxView } from "../MailboxView";
 import { NavigationHistoryProvider, useNavigationHistory, type UseNavigationHistoryResult } from "../../hooks/useNavigationHistory";
 import * as apiModule from "../../api";
@@ -831,6 +832,30 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-message-detail")).toBeDefined();
     });
+  });
+
+  it("opens markdown task links from the selected mail detail in the existing desktop tab", async () => {
+    const taskMessage: Message = {
+      ...mockMessage,
+      id: "msg-markdown-task-link",
+      content: "See [FN-1234](/?project=project-1&task=FN-1234) and [external](https://example.com).",
+    };
+    const onOpenTask = vi.fn();
+    const user = userEvent.setup();
+    mockFetchInbox.mockResolvedValue(makeInboxResponse([taskMessage], 1));
+    mockFetchConversation.mockResolvedValue([taskMessage]);
+    mockMarkMessageRead.mockResolvedValue({ ...taskMessage, read: true });
+
+    render(<MailboxView {...defaultProps} onOpenTask={onOpenTask} />);
+    await user.click(await screen.findByTestId("mailbox-item-msg-markdown-task-link"));
+
+    const detail = await screen.findByTestId("mailbox-message-body");
+    const taskLink = within(detail).getByTestId("mailbox-task-link");
+    expect(taskLink).not.toHaveAttribute("target", "_blank");
+    await user.click(taskLink);
+    expect(onOpenTask).toHaveBeenCalledTimes(1);
+    expect(onOpenTask).toHaveBeenCalledWith("FN-1234");
+    expect(within(detail).getByRole("link", { name: "external" })).toHaveAttribute("target", "_blank");
   });
 
   it("opens task-only and planning-clarification related work from mailbox detail", async () => {

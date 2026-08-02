@@ -323,12 +323,16 @@ export function updateTask(
     status?: null;
     modelProvider?: string | null;
     modelId?: string | null;
+    credentialInstanceId?: string | null;
     validatorModelProvider?: string | null;
     validatorModelId?: string | null;
+    validatorCredentialInstanceId?: string | null;
     planningModelProvider?: string | null;
     planningModelId?: string | null;
+    planningCredentialInstanceId?: string | null;
     mergerModelProvider?: string | null;
     mergerModelId?: string | null;
+    mergerCredentialInstanceId?: string | null;
     thinkingLevel?: string | null;
     validatorThinkingLevel?: string | null;
     planningThinkingLevel?: string | null;
@@ -382,6 +386,8 @@ export function batchUpdateTaskModels(
   nodeId?: string | null,
   thinkingLevel?: string | null,
   projectId?: string,
+  credentialInstanceId?: string | null,
+  validatorCredentialInstanceId?: string | null,
 ): Promise<{ updated: Task[]; count: number }> {
   return api<{ updated: Task[]; count: number }>(withProjectId("/tasks/batch-update-models", projectId), {
     method: "POST",
@@ -395,6 +401,8 @@ export function batchUpdateTaskModels(
       planningModelId,
       nodeId,
       ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+      ...(credentialInstanceId !== undefined ? { credentialInstanceId } : {}),
+      ...(validatorCredentialInstanceId !== undefined ? { validatorCredentialInstanceId } : {}),
     }),
   });
 }

@@ -244,6 +244,22 @@ describe("resolve session model parity", () => {
     defaultModelId: "glm-5.1",
   };
 
+  it("carries the winning selection credential instance alongside its provider and model", () => {
+    expect(resolveExecutorSessionModel("task-provider", "task-model", settings, undefined, "personal")).toEqual({
+      provider: "task-provider",
+      modelId: "task-model",
+      credentialInstanceId: "personal",
+    });
+    expect(resolvePlanningSessionModel(undefined, undefined, {
+      ...settings,
+      planningCredentialInstanceId: "work",
+    })).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      credentialInstanceId: "work",
+    });
+  });
+
   it("uses the same fresh settings model for executor and heartbeat when runtimeConfig is absent", () => {
     const executor = resolveExecutorSessionModel(undefined, undefined, settings);
     const heartbeat = resolveHeartbeatSessionModels(settings);

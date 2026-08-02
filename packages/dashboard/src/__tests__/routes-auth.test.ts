@@ -394,6 +394,86 @@ describe("GET /models", () => {
     expect(res.body.models).toEqual([]);
   });
 
+  it("returns instance availability for all configured providers without duplicating catalog models", async () => {
+    const modelRegistry = createMockModelRegistry();
+    const authStorage = createMockAuthStorage({
+      getOAuthProviders: vi.fn().mockReturnValue([{ id: "openai", name: "OpenAI" }]),
+      hasAuth: vi.fn((provider: string) => provider === "openai"),
+      listInstances: vi.fn((provider: string) => provider === "openai"
+        ? [{ providerId: "openai", instanceId: "work" }, { providerId: "openai", instanceId: "personal" }]
+        : []),
+      getDefaultInstance: vi.fn((provider: string) => provider === "openai"
+        ? { providerId: "openai", instanceId: "work" }
+        : undefined),
+      getInstance: vi.fn(() => ({ type: "api_key" })),
+    });
+
+    const res = await GET(buildApp(modelRegistry, authStorage), "/api/models");
+
+    expect(res.body.providerInstances).toEqual({
+      openai: { instances: [{ id: "work", isDefault: true }, { id: "personal", isDefault: false }] },
+    });
+    expect(res.body.models.filter((model: { provider: string }) => model.provider === "openai")).toHaveLength(1);
+  });
+
+  it("derives per-instance unavailable models from the existing credential-kind provider gate", async () => {
+    const modelRegistry = createMockModelRegistry();
+    const authStorage = createMockAuthStorage({
+      getOAuthProviders: vi.fn().mockReturnValue([]),
+      getApiKeyProviders: vi.fn().mockReturnValue([{ id: "openai", name: "OpenAI" }]),
+      hasApiKey: vi.fn((provider: string) => provider === "openai"),
+      listInstances: vi.fn((provider: string) => provider === "openai"
+        ? [{ providerId: "openai", instanceId: "work" }, { providerId: "openai", instanceId: "oauth" }]
+        : []),
+      getDefaultInstance: vi.fn(() => ({ providerId: "openai", instanceId: "work" })),
+      getInstance: vi.fn((ref: { instanceId: string }) => ({ type: ref.instanceId === "work" ? "api_key" : "oauth" })),
+    });
+
+    const res = await GET(buildApp(modelRegistry, authStorage), "/api/models");
+
+    expect(res.body.providerInstances.openai.instances).toEqual([
+      { id: "work", isDefault: true },
+      { id: "oauth", isDefault: false, unavailableModelIds: ["gpt-4o"] },
+    ]);
+  });
+
+  it("omits instance availability when auth storage is unavailable or lacks the optional capability", async () => {
+    const withoutStorage = await GET(buildApp(createMockModelRegistry()), "/api/models");
+    expect(withoutStorage.body).not.toHaveProperty("providerInstances");
+
+    const withoutCapability = await GET(buildApp(createMockModelRegistry(), createMockAuthStorage()), "/api/models");
+    expect(withoutCapability.body).not.toHaveProperty("providerInstances");
+  });
+
+  it("skips a provider whose instance enumeration throws without failing the catalog", async () => {
+    const authStorage = createMockAuthStorage({
+      getOAuthProviders: vi.fn(() => [{ id: "openai", name: "OpenAI" }]),
+      hasAuth: vi.fn(() => true),
+      listInstances: vi.fn(() => { throw new Error("corrupt instance metadata"); }),
+    });
+
+    const res = await GET(buildApp(createMockModelRegistry(), authStorage), "/api/models");
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual(expect.any(Array));
+    expect(res.body).not.toHaveProperty("providerInstances");
+  });
+
+  it("omits unavailable model ids when instance credentials have no existing distinguishable signal", async () => {
+    const modelRegistry = createMockModelRegistry();
+    const authStorage = createMockAuthStorage({
+      listInstances: vi.fn(() => [{ providerId: "custom", instanceId: "one" }]),
+      getDefaultInstance: vi.fn(() => ({ providerId: "custom", instanceId: "one" })),
+      getInstance: vi.fn(() => ({ type: "api_key" })),
+      getOAuthProviders: vi.fn(() => [{ id: "custom", name: "Custom" }]),
+      hasAuth: vi.fn(() => true),
+    });
+
+    const res = await GET(buildApp(modelRegistry, authStorage), "/api/models");
+
+    expect(res.body.providerInstances.custom.instances).toEqual([{ id: "one", isDefault: true }]);
+  });
+
   it("returns empty array when registry has no available models", async () => {
     const modelRegistry = createMockModelRegistry({
       getAvailable: vi.fn().mockReturnValue([]),
@@ -984,14 +1064,14 @@ describe("GET /auth/status", () => {
       "zai",
     ]);
     const githubCopilot = providers.find((p: any) => p.id === "github-copilot");
-    expect(githubCopilot).toEqual({ id: "github-copilot", name: "GitHub Copilot", authenticated: true, type: "oauth", expired: false, loginInProgress: false });
+    expect(githubCopilot).toEqual(expect.objectContaining({ id: "github-copilot", name: "GitHub Copilot", authenticated: true, type: "oauth", expired: false, loginInProgress: false }));
     const openrouter = providers.find((p: any) => p.id === "openrouter");
-    expect(openrouter).toEqual({ id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" });
+    expect(openrouter).toEqual(expect.objectContaining({ id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" }));
     const kimiCoding = providers.find((p: any) => p.id === "kimi-coding");
-    expect(kimiCoding).toEqual({ id: "kimi-coding", name: "Kimi", authenticated: false, type: "api_key" });
+    expect(kimiCoding).toEqual(expect.objectContaining({ id: "kimi-coding", name: "Kimi", authenticated: false, type: "api_key" }));
     // Catalog-only entries (not reported by storage) still surface, present-but-unauthenticated.
     const brave = providers.find((p: any) => p.id === "brave");
-    expect(brave).toEqual({ id: "brave", name: "Brave Search", authenticated: false, type: "api_key" });
+    expect(brave).toEqual(expect.objectContaining({ id: "brave", name: "Brave Search", authenticated: false, type: "api_key" }));
     expect(authStorage.reload).toHaveBeenCalled();
   });
 
@@ -1054,14 +1134,14 @@ describe("GET /auth/status", () => {
 
     expect(res.status).toBe(200);
     const githubCopilot = res.body.providers.find((p: any) => p.id === "github-copilot");
-    expect(githubCopilot).toEqual({
+    expect(githubCopilot).toEqual(expect.objectContaining({
       id: "github-copilot",
       name: "GitHub Copilot",
       authenticated: true,
       type: "oauth",
       expired: false,
       loginInProgress: false,
-    });
+    }));
   });
 
   it("includes oauth and model-registry-derived API key providers in one response", async () => {
@@ -1101,15 +1181,15 @@ describe("GET /auth/status", () => {
       "acme-extension",
     ]);
     const githubCopilot = providers.find((p: any) => p.id === "github-copilot");
-    expect(githubCopilot).toEqual({ id: "github-copilot", name: "GitHub Copilot", authenticated: true, type: "oauth", expired: false, loginInProgress: false });
+    expect(githubCopilot).toEqual(expect.objectContaining({ id: "github-copilot", name: "GitHub Copilot", authenticated: true, type: "oauth", expired: false, loginInProgress: false }));
     const openaiCodex = providers.find((p: any) => p.id === "openai-codex");
-    expect(openaiCodex).toEqual({ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth", expired: false, loginInProgress: false, requiresManualCode: true });
+    expect(openaiCodex).toEqual(expect.objectContaining({ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth", expired: false, loginInProgress: false, requiresManualCode: true }));
     const openrouter = providers.find((p: any) => p.id === "openrouter");
-    expect(openrouter).toEqual({ id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" });
+    expect(openrouter).toEqual(expect.objectContaining({ id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" }));
     const kimiCoding = providers.find((p: any) => p.id === "kimi-coding");
-    expect(kimiCoding).toEqual({ id: "kimi-coding", name: "Kimi", authenticated: false, type: "api_key" });
+    expect(kimiCoding).toEqual(expect.objectContaining({ id: "kimi-coding", name: "Kimi", authenticated: false, type: "api_key" }));
     const acmeExtension = providers.find((p: any) => p.id === "acme-extension");
-    expect(acmeExtension).toEqual({ id: "acme-extension", name: "Acme Extension", authenticated: true, type: "api_key" });
+    expect(acmeExtension).toEqual(expect.objectContaining({ id: "acme-extension", name: "Acme Extension", authenticated: true, type: "api_key" }));
   });
 
   it.each(["https://my-host.example.com", undefined])(
@@ -3311,11 +3391,13 @@ describe("GET /auth/oauth-callback", () => {
       (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
         { id: "google", name: "Google" },
       ]);
+      let finishLogin: (() => void) | undefined;
       (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
         callbacks.onAuth({
           url: `https://accounts.example.com/o/oauth2/v2/auth?state=test-state&redirect_uri=${encodeURIComponent(`http://localhost:${port}/oauth2callback`)}`,
         });
-        return Promise.resolve();
+        // The proxy session is valid only while its bound login remains active.
+        return new Promise<void>((resolve) => { finishLogin = resolve; });
       });
 
       const app = buildApp();
@@ -3331,6 +3413,7 @@ describe("GET /auth/oauth-callback", () => {
       const res = await REQUEST(app, "GET", "/api/auth/oauth-callback?code=test-code&state=test-state");
       expect(res.status).toBe(200);
       expect(String(res.body)).toContain("proxied:test-code:test-state");
+      finishLogin?.();
     } finally {
       await new Promise<void>((resolve, reject) => callbackListener.close((err) => (err ? reject(err) : resolve())));
     }

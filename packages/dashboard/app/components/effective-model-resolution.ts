@@ -83,9 +83,11 @@ export function extractAssignedRuntimeModel(agent: Agent | null | undefined): Mo
 
   const provider = isStringValue(runtimeConfig?.modelProvider) ? runtimeConfig.modelProvider.trim() : "";
   const modelId = isStringValue(runtimeConfig?.modelId) ? runtimeConfig.modelId.trim() : "";
+  const credentialInstanceId = isStringValue(runtimeConfig?.credentialInstanceId) ? runtimeConfig.credentialInstanceId.trim() : "";
   return {
     provider: provider || undefined,
     modelId: modelId || undefined,
+    ...(credentialInstanceId ? { credentialInstanceId } : {}),
   };
 }
 
@@ -191,7 +193,11 @@ export function resolveEffectivePlanning(
   settings?: Settings,
 ): ModelSelection {
   if (task.planningModelProvider && task.planningModelId) {
-    return { provider: task.planningModelProvider, modelId: task.planningModelId };
+    return {
+      provider: task.planningModelProvider,
+      modelId: task.planningModelId,
+      ...(task.planningCredentialInstanceId ? { credentialInstanceId: task.planningCredentialInstanceId } : {}),
+    };
   }
   const fromLog = extractPlanningModelFromLog(logEntries);
   if (fromLog) {

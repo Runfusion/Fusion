@@ -10,7 +10,7 @@ import multer from "multer";
 import { resolve, sep, join, isAbsolute } from "node:path";
 import * as nodeFs from "node:fs";
 
-import type { AnthropicProviderRegistration, TaskStore, ModelPreset, ThinkingLevel } from "@fusion/core";
+import type { AnthropicProviderRegistration, TaskStore, ModelPreset, ThinkingLevel, ProviderInstanceRef } from "@fusion/core";
 import {
   type Task,
   type PiExtensionEntry,
@@ -168,6 +168,16 @@ export interface AuthStorageLike {
   getApiKey?(providerId: string): string | null | undefined | Promise<string | null | undefined>;
   /** Get raw stored credentials for usage providers. */
   get?(providerId: string): { type?: string; key?: string; access?: string; refresh?: string; expires?: number; [key: string]: unknown } | null | undefined;
+  listInstances?(providerId: string): ProviderInstanceRef[];
+  getInstance?(ref: ProviderInstanceRef): { type?: string; key?: string; access?: string; refresh?: string; expires?: number; [key: string]: unknown } | null | undefined;
+  setInstanceApiKey?(ref: ProviderInstanceRef, apiKey: string, label?: string): Promise<void>;
+  loginInstance?(ref: ProviderInstanceRef, callbacks: Parameters<AuthStorageLike["login"]>[1], label?: string): Promise<void>;
+  logoutInstance?(ref: ProviderInstanceRef): Promise<void>;
+  clearInstanceApiKey?(ref: ProviderInstanceRef): Promise<void>;
+  removeInstance?(ref: ProviderInstanceRef): Promise<void>;
+  getDefaultInstance?(providerId: string): ProviderInstanceRef | undefined;
+  setDefaultInstance?(ref: ProviderInstanceRef): Promise<void>;
+  renameInstance?(ref: ProviderInstanceRef, label?: string): Promise<void>;
 }
 
 /*

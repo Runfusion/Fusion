@@ -183,6 +183,9 @@ interface FeatureRow {
   implementationStopReason: string | null;
   implementationStoppedAt: string | null;
   implementationStopOrigin: string | null;
+  validationBudgetFingerprint: string | null;
+  validationBudgetRunId: string | null;
+  validationBudgetBlockedAt: string | null;
   lastValidatorRunId: string | null;
   lastValidatorStatus: string | null;
   generatedFromFeatureId: string | null;
@@ -248,6 +251,7 @@ interface ValidatorRunRow {
   implementationAttempt: number | null;
   validatorAttempt: number | null;
   taskId: string | null;
+  inputFingerprint: string | null;
   summary: string | null;
   blockedReason: string | null;
   startedAt: string;
@@ -344,6 +348,9 @@ const featureColumns = {
   implementationStopReason: schema.project.missionFeatures.implementationStopReason,
   implementationStoppedAt: schema.project.missionFeatures.implementationStoppedAt,
   implementationStopOrigin: schema.project.missionFeatures.implementationStopOrigin,
+  validationBudgetFingerprint: schema.project.missionFeatures.validationBudgetFingerprint,
+  validationBudgetRunId: schema.project.missionFeatures.validationBudgetRunId,
+  validationBudgetBlockedAt: schema.project.missionFeatures.validationBudgetBlockedAt,
   lastValidatorRunId: schema.project.missionFeatures.lastValidatorRunId,
   lastValidatorStatus: schema.project.missionFeatures.lastValidatorStatus,
   generatedFromFeatureId: schema.project.missionFeatures.generatedFromFeatureId,
@@ -394,6 +401,7 @@ const validatorRunColumns = {
   implementationAttempt: schema.project.missionValidatorRuns.implementationAttempt,
   validatorAttempt: schema.project.missionValidatorRuns.validatorAttempt,
   taskId: schema.project.missionValidatorRuns.taskId,
+  inputFingerprint: schema.project.missionValidatorRuns.inputFingerprint,
   summary: schema.project.missionValidatorRuns.summary,
   blockedReason: schema.project.missionValidatorRuns.blockedReason,
   startedAt: schema.project.missionValidatorRuns.startedAt,
@@ -510,6 +518,9 @@ function rowToFeature(row: FeatureRow): MissionFeature {
     implementationStopReason: (row.implementationStopReason ?? undefined) as MissionFeature["implementationStopReason"],
     implementationStoppedAt: row.implementationStoppedAt ?? undefined,
     implementationStopOrigin: row.implementationStopOrigin ?? undefined,
+    validationBudgetFingerprint: row.validationBudgetFingerprint ?? undefined,
+    validationBudgetRunId: row.validationBudgetRunId ?? undefined,
+    validationBudgetBlockedAt: row.validationBudgetBlockedAt ?? undefined,
     lastValidatorRunId: row.lastValidatorRunId ?? undefined,
     lastValidatorStatus: (row.lastValidatorStatus as ValidatorRunStatus) ?? undefined,
     generatedFromFeatureId: row.generatedFromFeatureId ?? undefined,
@@ -569,7 +580,7 @@ function rowToFeatureAssertionLink(row: FeatureAssertionLinkRow): FeatureAsserti
   return { featureId: row.featureId, assertionId: row.assertionId, createdAt: row.createdAt };
 }
 
-function rowToValidatorRun(row: ValidatorRunRow): MissionValidatorRun {
+export function rowToValidatorRun(row: ValidatorRunRow): MissionValidatorRun {
   return {
     id: row.id,
     featureId: row.featureId,
@@ -580,6 +591,7 @@ function rowToValidatorRun(row: ValidatorRunRow): MissionValidatorRun {
     implementationAttempt: row.implementationAttempt ?? 0,
     validatorAttempt: row.validatorAttempt ?? 0,
     taskId: row.taskId ?? undefined,
+    inputFingerprint: row.inputFingerprint ?? undefined,
     summary: row.summary ?? undefined,
     blockedReason: row.blockedReason ?? undefined,
     startedAt: row.startedAt,
@@ -1060,6 +1072,9 @@ export async function updateFeature(handle: QueryHandle, feature: MissionFeature
       implementationStopReason: feature.implementationStopReason ?? null,
       implementationStoppedAt: feature.implementationStoppedAt ?? null,
       implementationStopOrigin: feature.implementationStopOrigin ?? null,
+      validationBudgetFingerprint: feature.validationBudgetFingerprint ?? null,
+      validationBudgetRunId: feature.validationBudgetRunId ?? null,
+      validationBudgetBlockedAt: feature.validationBudgetBlockedAt ?? null,
       lastValidatorRunId: feature.lastValidatorRunId ?? null,
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
@@ -1648,6 +1663,7 @@ export async function createValidatorRun(handle: QueryHandle, run: MissionValida
     implementationAttempt: run.implementationAttempt,
     validatorAttempt: run.validatorAttempt,
     taskId: run.taskId ?? null,
+    inputFingerprint: run.inputFingerprint ?? null,
     summary: run.summary ?? null,
     blockedReason: run.blockedReason ?? null,
     startedAt: run.startedAt,
@@ -2011,6 +2027,9 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
       implementationStopReason: feature.implementationStopReason ?? null,
       implementationStoppedAt: feature.implementationStoppedAt ?? null,
       implementationStopOrigin: feature.implementationStopOrigin ?? null,
+      validationBudgetFingerprint: feature.validationBudgetFingerprint ?? null,
+      validationBudgetRunId: feature.validationBudgetRunId ?? null,
+      validationBudgetBlockedAt: feature.validationBudgetBlockedAt ?? null,
       lastValidatorRunId: feature.lastValidatorRunId ?? null,
       lastValidatorStatus: feature.lastValidatorStatus ?? null,
       generatedFromFeatureId: feature.generatedFromFeatureId ?? null,
@@ -2034,6 +2053,9 @@ export async function upsertFeature(handle: QueryHandle, feature: MissionFeature
         implementationStopReason: sql`excluded.implementation_stop_reason`,
         implementationStoppedAt: sql`excluded.implementation_stopped_at`,
         implementationStopOrigin: sql`excluded.implementation_stop_origin`,
+        validationBudgetFingerprint: sql`excluded.validation_budget_fingerprint`,
+        validationBudgetRunId: sql`excluded.validation_budget_run_id`,
+        validationBudgetBlockedAt: sql`excluded.validation_budget_blocked_at`,
         lastValidatorRunId: sql`excluded.last_validator_run_id`,
         lastValidatorStatus: sql`excluded.last_validator_status`,
         generatedFromFeatureId: sql`excluded.generated_from_feature_id`,

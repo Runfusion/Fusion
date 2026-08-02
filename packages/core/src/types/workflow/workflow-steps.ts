@@ -7,13 +7,22 @@
 
 import type { ThinkingLevel } from "../board/board.js";
 
+/*
+ * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+ * Presets retain optional credential instances beside their model pairs. This data slice does
+ * not consume them at runtime, preserving existing selection behavior.
+ */
 export interface ModelPreset {
   id: string;
   name: string;
   executorProvider?: string;
   executorModelId?: string;
+  /** Optional credential instance for the executor pair; persisted but inert until runtime resolution. */
+  executorCredentialInstanceId?: string;
   validatorProvider?: string;
   validatorModelId?: string;
+  /** Optional credential instance for the validator pair; persisted but inert until runtime resolution. */
+  validatorCredentialInstanceId?: string;
 }
 
 /** A reusable workflow step definition that can run after task implementation. */

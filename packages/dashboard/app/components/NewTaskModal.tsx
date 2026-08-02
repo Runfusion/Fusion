@@ -358,8 +358,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[] | null>(null);
   const [executorModel, setExecutorModel] = useState("");
+  const [credentialInstanceId, setCredentialInstanceId] = useState<string | undefined>(undefined);
   const [validatorModel, setValidatorModel] = useState("");
+  const [validatorCredentialInstanceId, setValidatorCredentialInstanceId] = useState<string | undefined>(undefined);
   const [planningModel, setPlanningModel] = useState("");
+  const [planningCredentialInstanceId, setPlanningCredentialInstanceId] = useState<string | undefined>(undefined);
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
   // FNXC:PlannerOversight 2026-07-04-00:00: Per-task override of the workflow-native plannerOversightLevel setting (FN-7508). "" means inherit from workflow.
   const [plannerOversightLevel, setPlannerOversightLevel] = useState<string>("");
@@ -575,8 +578,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setDescription("");
     setDependencies([]);
     setExecutorModel("");
+    setCredentialInstanceId(undefined);
     setValidatorModel("");
+    setValidatorCredentialInstanceId(undefined);
     setPlanningModel("");
+    setPlanningCredentialInstanceId(undefined);
     setThinkingLevel("");
     setPlannerOversightLevel("");
     setSelectedPresetId("");
@@ -649,10 +655,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
       modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
       modelId: executorModel && executorSlashIdx !== -1 ? executorModel.slice(executorSlashIdx + 1) : undefined,
+      ...(credentialInstanceId ? { credentialInstanceId } : {}),
       validatorModelProvider: validatorModel && validatorSlashIdx !== -1 ? validatorModel.slice(0, validatorSlashIdx) : undefined,
       validatorModelId: validatorModel && validatorSlashIdx !== -1 ? validatorModel.slice(validatorSlashIdx + 1) : undefined,
+      ...(validatorCredentialInstanceId ? { validatorCredentialInstanceId } : {}),
       planningModelProvider: planningModel && planningSlashIdx !== -1 ? planningModel.slice(0, planningSlashIdx) : undefined,
       planningModelId: planningModel && planningSlashIdx !== -1 ? planningModel.slice(planningSlashIdx + 1) : undefined,
+      ...(planningCredentialInstanceId ? { planningCredentialInstanceId } : {}),
       thinkingLevel: thinkingLevel !== "" ? thinkingLevel as "minimal" | "low" | "medium" | "high" | "xhigh" : undefined,
       // FNXC:PlannerOversight 2026-07-04-00:00: omit when "Inherit from workflow" ("") is selected so the task falls back to the workflow's effective plannerOversightLevel.
       ...(plannerOversightLevel !== "" ? { plannerOversightLevel: plannerOversightLevel as "off" | "observe" | "steer" | "autonomous" } : {}),
@@ -700,7 +709,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     resetForm();
     addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     onClose();
-  }, [executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, credentialInstanceId, validatorModel, validatorCredentialInstanceId, planningModel, planningCredentialInstanceId, thinkingLevel, plannerOversightLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedDesc = description.trim();
@@ -1033,9 +1042,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         dependencies={dependencies}
         onDependenciesChange={setDependencies}
         executorModel={executorModel}
-        onExecutorModelChange={handleExecutorModelChange}
+        onExecutorModelChange={(value, meta) => { setCredentialInstanceId(undefined); handleExecutorModelChange(value, meta); }}
+        credentialInstanceId={credentialInstanceId}
+        onCredentialInstanceIdChange={(instanceId) => setCredentialInstanceId(instanceId || undefined)}
         validatorModel={validatorModel}
-        onValidatorModelChange={handleValidatorModelChange}
+        onValidatorModelChange={(value, meta) => { setValidatorCredentialInstanceId(undefined); handleValidatorModelChange(value, meta); }}
+        validatorCredentialInstanceId={validatorCredentialInstanceId}
+        onValidatorCredentialInstanceIdChange={(instanceId) => setValidatorCredentialInstanceId(instanceId || undefined)}
         presetMode={presetMode}
         onPresetModeChange={setPresetMode}
         selectedPresetId={selectedPresetId}
@@ -1055,7 +1068,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         onPlanningMode={onPlanningMode}
         onSubtaskBreakdown={onSubtaskBreakdown}
         planningModel={planningModel}
-        onPlanningModelChange={setPlanningModel}
+        onPlanningModelChange={(value) => { setPlanningCredentialInstanceId(undefined); setPlanningModel(value); }}
+        planningCredentialInstanceId={planningCredentialInstanceId}
+        onPlanningCredentialInstanceIdChange={(instanceId) => setPlanningCredentialInstanceId(instanceId || undefined)}
         thinkingLevel={thinkingLevel}
         plannerOversightLevel={plannerOversightLevel}
         onPlannerOversightLevelChange={setPlannerOversightLevel}

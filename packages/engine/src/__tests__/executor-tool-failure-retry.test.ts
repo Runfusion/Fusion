@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskDetail } from "@fusion/core";
+import { resolveConsecutiveToolFailureRetryBackoffMs, resolveMaxConsecutiveToolFailureRetries, type TaskDetail } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
@@ -103,6 +103,26 @@ describe("executor consecutive tool-failure retry (FN-7996)", () => {
         mode: "same-model",
       },
     }));
+  });
+
+  it("normalizes the configured backoff and waits before retrying", async () => {
+    const { executor, task } = makeHarness({
+      retries: 2.9,
+      entries: [{ type: "tool_error" }, { type: "tool_error" }, { type: "tool_error" }],
+      settings: { executorToolFailureRetryBackoffMs: 2500.9 },
+    });
+    const execute = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    expect(resolveMaxConsecutiveToolFailureRetries({ executorToolFailureRetryCount: 2.9 })).toBe(2);
+    expect(resolveMaxConsecutiveToolFailureRetries({ executorToolFailureRetryCount: -1 })).toBe(2);
+    expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: 2500.9 })).toBe(2500);
+    expect(resolveConsecutiveToolFailureRetryBackoffMs({ executorToolFailureRetryBackoffMs: -1 })).toBe(2000);
+
+    await (executor as any).handleGraphFailure(task, graphFailure());
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(execute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(execute).toHaveBeenCalledWith(task);
   });
 
   it("parks unchanged after a spent retry budget and emits one exhaustion audit", async () => {

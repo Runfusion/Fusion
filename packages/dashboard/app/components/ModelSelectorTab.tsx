@@ -28,6 +28,7 @@ interface ModelSelectorTabProps {
 interface ModelSelection {
   provider?: string;
   modelId?: string;
+  credentialInstanceId?: string;
 }
 
 function normalizeModelField(value: string | null | undefined): string | undefined {
@@ -38,6 +39,7 @@ function getExecutorSelection(task: Task | TaskDetail): ModelSelection {
   return {
     provider: normalizeModelField(task.modelProvider),
     modelId: normalizeModelField(task.modelId),
+    credentialInstanceId: normalizeModelField(task.credentialInstanceId),
   };
 }
 
@@ -45,6 +47,7 @@ function getValidatorSelection(task: Task | TaskDetail): ModelSelection {
   return {
     provider: normalizeModelField(task.validatorModelProvider),
     modelId: normalizeModelField(task.validatorModelId),
+    credentialInstanceId: normalizeModelField(task.validatorCredentialInstanceId),
   };
 }
 
@@ -52,6 +55,7 @@ function getPlanningSelection(task: Task | TaskDetail): ModelSelection {
   return {
     provider: normalizeModelField(task.planningModelProvider),
     modelId: normalizeModelField(task.planningModelId),
+    credentialInstanceId: normalizeModelField(task.planningCredentialInstanceId),
   };
 }
 
@@ -59,6 +63,7 @@ function getMergerSelection(task: Task | TaskDetail): ModelSelection {
   return {
     provider: normalizeModelField(task.mergerModelProvider),
     modelId: normalizeModelField(task.mergerModelId),
+    credentialInstanceId: normalizeModelField(task.mergerCredentialInstanceId),
   };
 }
 
@@ -109,7 +114,7 @@ function getDropdownValue(selection: ModelSelection): string {
 }
 
 function selectionsEqual(a: ModelSelection, b: ModelSelection): boolean {
-  return a.provider === b.provider && a.modelId === b.modelId;
+  return a.provider === b.provider && a.modelId === b.modelId && a.credentialInstanceId === b.credentialInstanceId;
 }
 
 function getSuccessToastMessage(
@@ -141,6 +146,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
   const { t } = useTranslation("app");
   const {
     availableModels,
+    providerInstances,
     favoriteProviders,
     favoriteModels,
     toggleFavoriteProvider,
@@ -213,7 +219,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
     setSelectedMergerThinking(nextMergerThinking);
     setSavedMergerThinking(nextMergerThinking);
     setSavingTarget(null);
-  }, [task.id, task.modelProvider, task.modelId, task.validatorModelProvider, task.validatorModelId, task.planningModelProvider, task.planningModelId, task.mergerModelProvider, task.mergerModelId, task.thinkingLevel, task.validatorThinkingLevel, task.planningThinkingLevel, task.mergerThinkingLevel]);
+  }, [task.id, task.modelProvider, task.modelId, task.credentialInstanceId, task.validatorModelProvider, task.validatorModelId, task.validatorCredentialInstanceId, task.planningModelProvider, task.planningModelId, task.planningCredentialInstanceId, task.mergerModelProvider, task.mergerModelId, task.mergerCredentialInstanceId, task.thinkingLevel, task.validatorThinkingLevel, task.planningThinkingLevel, task.mergerThinkingLevel]);
 
   const executorValue = useMemo(() => getDropdownValue(selectedExecutor), [selectedExecutor]);
   const validatorValue = useMemo(() => getDropdownValue(selectedValidator), [selectedValidator]);
@@ -241,30 +247,38 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
             ? {
                 modelProvider: nextSelection.provider ?? null,
                 modelId: nextSelection.modelId ?? null,
+                credentialInstanceId: nextSelection.credentialInstanceId ?? null,
               }
             : target === "validator"
               ? {
                   validatorModelProvider: nextSelection.provider ?? null,
                   validatorModelId: nextSelection.modelId ?? null,
+                  validatorCredentialInstanceId: nextSelection.credentialInstanceId ?? null,
                 }
               : target === "merger"
                 ? {
                     mergerModelProvider: nextSelection.provider ?? null,
                     mergerModelId: nextSelection.modelId ?? null,
+                    mergerCredentialInstanceId: nextSelection.credentialInstanceId ?? null,
                   }
                 : {
                   planningModelProvider: nextSelection.provider ?? null,
                   planningModelId: nextSelection.modelId ?? null,
+                  planningCredentialInstanceId: nextSelection.credentialInstanceId ?? null,
                 })
           : {
               modelProvider: (target === "executor" ? nextSelection : savedExecutor).provider ?? null,
               modelId: (target === "executor" ? nextSelection : savedExecutor).modelId ?? null,
+              credentialInstanceId: (target === "executor" ? nextSelection : savedExecutor).credentialInstanceId ?? null,
               validatorModelProvider: (target === "validator" ? nextSelection : savedValidator).provider ?? null,
               validatorModelId: (target === "validator" ? nextSelection : savedValidator).modelId ?? null,
+              validatorCredentialInstanceId: (target === "validator" ? nextSelection : savedValidator).credentialInstanceId ?? null,
               planningModelProvider: (target === "planning" ? nextSelection : savedPlanning).provider ?? null,
               planningModelId: (target === "planning" ? nextSelection : savedPlanning).modelId ?? null,
+              planningCredentialInstanceId: (target === "planning" ? nextSelection : savedPlanning).credentialInstanceId ?? null,
               mergerModelProvider: (target === "merger" ? nextSelection : savedMerger).provider ?? null,
               mergerModelId: (target === "merger" ? nextSelection : savedMerger).modelId ?? null,
+              mergerCredentialInstanceId: (target === "merger" ? nextSelection : savedMerger).credentialInstanceId ?? null,
             };
 
         /*
@@ -599,6 +613,9 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               value={executorValue}
               onChange={handleExecutorChange}
               models={availableModels}
+              credentialInstances={providerInstances}
+              credentialInstanceId={selectedExecutor.credentialInstanceId}
+              onCredentialInstanceChange={(credentialInstanceId) => void saveSelection("executor", { ...selectedExecutor, credentialInstanceId: credentialInstanceId || undefined })}
               disabled={isSaving}
               placeholder={t("models.placeholders.selectExecutor", "Select executor model…")}
               favoriteProviders={favoriteProviders}
@@ -632,6 +649,9 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               value={validatorValue}
               onChange={handleValidatorChange}
               models={availableModels}
+              credentialInstances={providerInstances}
+              credentialInstanceId={selectedValidator.credentialInstanceId}
+              onCredentialInstanceChange={(credentialInstanceId) => void saveSelection("validator", { ...selectedValidator, credentialInstanceId: credentialInstanceId || undefined })}
               disabled={isSaving}
               placeholder={t("models.placeholders.selectReviewer", "Select reviewer model…")}
               favoriteProviders={favoriteProviders}
@@ -665,6 +685,9 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               value={planningValue}
               onChange={handlePlanningChange}
               models={availableModels}
+              credentialInstances={providerInstances}
+              credentialInstanceId={selectedPlanning.credentialInstanceId}
+              onCredentialInstanceChange={(credentialInstanceId) => void saveSelection("planning", { ...selectedPlanning, credentialInstanceId: credentialInstanceId || undefined })}
               disabled={isSaving}
               placeholder={t("models.placeholders.selectPlanning", "Select planning model…")}
               favoriteProviders={favoriteProviders}
@@ -684,7 +707,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
             <div className="model-selector-current">
               {mergerUsingDefault ? <span className="model-badge model-badge-default">{t("models.states.usingDefault", "Using default")}{effectiveMerger.provider && effectiveMerger.modelId ? ` (${effectiveMerger.provider}/${effectiveMerger.modelId})` : ""}</span> : <span className="model-badge model-badge-custom">{savedMerger.provider && <ProviderIcon provider={savedMerger.provider} size="sm" />}{savedMerger.provider}/{savedMerger.modelId}</span>}
             </div>
-            <CustomModelDropdown id="mergerModel" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={handleMergerChange} models={availableModels} disabled={isSaving} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={handleToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={handleToggleModelFavorite} thinkingLevel={selectedMergerThinking ?? ""} onThinkingLevelChange={handleMergerThinkingChange} defaultThinkingLevel={settings?.mergerThinkingLevel ?? "off"} />
+            <CustomModelDropdown id="mergerModel" label={t("tasks.mergerModel", "Merger Model")} value={mergerValue} onChange={handleMergerChange} models={availableModels} credentialInstances={providerInstances} credentialInstanceId={selectedMerger.credentialInstanceId} onCredentialInstanceChange={(credentialInstanceId) => void saveSelection("merger", { ...selectedMerger, credentialInstanceId: credentialInstanceId || undefined })} disabled={isSaving} placeholder={t("tasks.usingDefault", "Using default")} favoriteProviders={favoriteProviders} onToggleFavorite={handleToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={handleToggleModelFavorite} thinkingLevel={selectedMergerThinking ?? ""} onThinkingLevelChange={handleMergerThinkingChange} defaultThinkingLevel={settings?.mergerThinkingLevel ?? "off"} />
             <small>{t("models.descriptions.merger", "The AI model used to merge this task.")}</small>
           </div>
 

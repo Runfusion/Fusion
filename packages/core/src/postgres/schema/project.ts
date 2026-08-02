@@ -92,12 +92,16 @@ export const tasks = projectSchema.table("tasks", {
   baseCommitSha: text("base_commit_sha"),
   modelPresetId: text("model_preset_id"),
   modelProvider: text("model_provider"),
+  credentialInstanceId: text("credential_instance_id"),
   modelId: text("model_id"),
   validatorModelProvider: text("validator_model_provider"),
+  validatorCredentialInstanceId: text("validator_credential_instance_id"),
   validatorModelId: text("validator_model_id"),
   planningModelProvider: text("planning_model_provider"),
+  planningCredentialInstanceId: text("planning_credential_instance_id"),
   planningModelId: text("planning_model_id"),
   mergerModelProvider: text("merger_model_provider"),
+  mergerCredentialInstanceId: text("merger_credential_instance_id"),
   mergerModelId: text("merger_model_id"),
   mergerThinkingLevel: text("merger_thinking_level"),
   mergeRetries: integer("merge_retries"),
@@ -559,6 +563,78 @@ export const symbolLocks = projectSchema.table("symbol_locks", {
   index("idxSymbolLocksOwner").on(t.projectId, t.ownerTaskId),
   index("idxSymbolLocksExpiry").on(t.status, t.expiresAt),
 ]);
+
+/*
+FNXC:LifecycleOutbox 2026-08-01-10:33:
+These project-scoped rows make task:deleted observable across PostgreSQL processes after
+FN-8683 removed unreachable SQLite polling. The writer inserts them with the soft-delete;
+the counter row serializes allocation without MAX(seq)+1 races and rolls back on failure.
+*/
+export const taskLifecycleEvents = projectSchema.table("task_lifecycle_events", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  seq: bigint("seq", { mode: "bigint" }).notNull(),
+  eventId: text("event_id").notNull(),
+  eventType: text("event_type").notNull(),
+  taskId: text("task_id").notNull(),
+  occurredAt: text("occurred_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  payload: jsonb("payload").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.seq] }),
+  unique("task_lifecycle_events_project_event_unique").on(t.projectId, t.eventId),
+  check("task_lifecycle_events_type_check", sql`${t.eventType} IN ('task:deleted')`),
+  index("idxTaskLifecycleEventsTask").on(t.projectId, t.taskId),
+]);
+
+export const taskLifecycleEventSeq = projectSchema.table("task_lifecycle_event_seq", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  lastSeq: bigint("last_seq", { mode: "bigint" }).notNull().default(sql`0`),
+}, (t) => [primaryKey({ columns: [t.projectId] })]);
+
+/*
+FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
+The transactional delete outbox needs durable state per independently observing identity.
+Registration, cursor/lease, receipt, and dead-letter rows stay project-scoped so one
+runtime's acknowledgement never suppresses another runtime's at-least-once delivery.
+*/
+export const taskLifecycleConsumerRegistrations = projectSchema.table("task_lifecycle_consumer_registrations", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  consumerId: text("consumer_id").notNull(),
+  registeredAt: text("registered_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  active: integer("active").notNull().default(1),
+}, (t) => [primaryKey({ columns: [t.projectId, t.consumerId] })]);
+
+export const taskLifecycleConsumerCursors = projectSchema.table("task_lifecycle_consumer_cursors", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  consumerId: text("consumer_id").notNull(),
+  lastAckedSeq: bigint("last_acked_seq", { mode: "bigint" }).notNull().default(sql`0`),
+  retryAttempts: integer("retry_attempts").notNull().default(0),
+  retryBackoffUntil: text("retry_backoff_until"),
+  leaseToken: text("lease_token"),
+  fencingToken: bigint("fencing_token", { mode: "bigint" }).notNull().default(sql`0`),
+  leaseExpiresAt: text("lease_expires_at"),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.consumerId] })]);
+
+export const taskLifecycleConsumerReceipts = projectSchema.table("task_lifecycle_consumer_receipts", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  consumerId: text("consumer_id").notNull(),
+  eventId: text("event_id").notNull(),
+  seq: bigint("seq", { mode: "bigint" }).notNull(),
+  processedAt: text("processed_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.consumerId, t.eventId] })]);
+
+export const taskLifecycleConsumerDeadLetters = projectSchema.table("task_lifecycle_consumer_dead_letters", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  consumerId: text("consumer_id").notNull(),
+  eventId: text("event_id").notNull(),
+  seq: bigint("seq", { mode: "bigint" }).notNull(),
+  attempts: integer("attempts").notNull(),
+  failureClass: text("failure_class").notNull(),
+  parkedAt: text("parked_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [primaryKey({ columns: [t.projectId, t.consumerId, t.eventId] })]);
 
 // ── Workflow step definitions ────────────────────────────────────────
 export const workflowSteps = projectSchema.table("workflow_steps", {
@@ -1476,6 +1552,9 @@ export const missionFeatures = projectSchema.table("mission_features", {
   implementationStopReason: text("implementation_stop_reason"),
   implementationStoppedAt: text("implementation_stopped_at"),
   implementationStopOrigin: text("implementation_stop_origin"),
+  validationBudgetFingerprint: text("validation_budget_fingerprint"),
+  validationBudgetRunId: text("validation_budget_run_id"),
+  validationBudgetBlockedAt: text("validation_budget_blocked_at"),
   lastValidatorRunId: text("last_validator_run_id"),
   lastValidatorStatus: text("last_validator_status"),
   generatedFromFeatureId: text("generated_from_feature_id"),
@@ -2063,12 +2142,14 @@ export const missionValidatorRuns = projectSchema.table("mission_validator_runs"
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   taskId: text("task_id"),
+  inputFingerprint: text("input_fingerprint"),
 }, (t) => [
   primaryKey({ columns: [t.projectId, t.id] }),
   index("idxValidatorRunsFeatureId").on(t.featureId),
   index("idxValidatorRunsMilestoneId").on(t.milestoneId),
   index("idxValidatorRunsSliceId").on(t.sliceId),
   index("idxValidatorRunsStatus").on(t.status),
+  index("idxValidatorRunsFeatureFingerprint").on(t.projectId, t.featureId, t.inputFingerprint),
 ]);
 
 export const missionValidatorFailures = projectSchema.table("mission_validator_failures", {

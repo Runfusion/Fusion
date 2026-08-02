@@ -8,6 +8,8 @@ const HEAP_MB = 6144;
 const DEFAULT_CONCURRENCY = 2;
 const MAX_CONCURRENCY = 2;
 const VITEST_WRAPPER = "scripts/run-vitest-with-heap.mjs";
+const TEST_RUNNER_ENV = "FUSION_DASHBOARD_QUALITY_RUNNER";
+const TEST_MODE_ENV = "FUSION_DASHBOARD_QUALITY_TEST_MODE";
 const EXCLUDE_BUILD_OUTPUT = ["--exclude", "**/build-output.test.ts"];
 
 export const qualityLanes = [
@@ -79,15 +81,23 @@ export function resolveConcurrency(env = process.env) {
   return Math.min(requested, MAX_CONCURRENCY);
 }
 
-function parseArgs(argv) {
+/*
+FNXC:DashboardQualityLanes 2026-08-01-17:15:
+FN-8714 follows FN-8699/#2784: pnpm forwards package-script arguments as a leading standalone
+`--`, so remove only that boundary marker before validating the runner's own options. Remaining
+arguments still fail closed; aggregate mode must not turn unknown options or failed lanes into a
+false passing quality report.
+*/
+export function parseArgs(argv) {
+  const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv;
   let group = "all";
   let list = false;
   let allLanes = false;
 
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
+  for (let index = 0; index < normalizedArgv.length; index += 1) {
+    const arg = normalizedArgv[index];
     if (arg === "--group") {
-      group = argv[index + 1] ?? "";
+      group = normalizedArgv[index + 1] ?? "";
       index += 1;
       continue;
     }
@@ -124,9 +134,12 @@ function formatLaneCommand(lane) {
 function runLane(lane) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
+    // FNXC:DashboardQualityLanes 2026-08-01-17:15: The child-process regression runs the exact pnpm
+    // command with a deterministic lane fixture; production always retains the heap wrapper.
+    const runnerPath = process.env[TEST_MODE_ENV] === "1" ? process.env[TEST_RUNNER_ENV] || VITEST_WRAPPER : VITEST_WRAPPER;
     console.log(`[dashboard-quality] start ${lane.name}: ${formatLaneCommand(lane)}`);
     // process-supervisor-allowlist: foreground test orchestrator runs bounded child processes and waits for each to finish
-    const child = spawn(process.execPath, [VITEST_WRAPPER, ...lane.args], {
+    const child = spawn(process.execPath, [runnerPath, ...lane.args], {
       cwd: new URL("..", import.meta.url),
       stdio: "inherit",
       env: process.env,

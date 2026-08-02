@@ -39,7 +39,7 @@ import {
   type DefaultWorkflowMoveContext,
 } from "../default-workflow-hooks.js";
 import { getTotalAgentActiveMs } from "../task-timing.js";
-import { resolveLifecycleColumns } from "../workflow-lifecycle-traits.js";
+import { resolveLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
 import type { WorkflowIr } from "../workflow-ir-types.js";
 import type { Task } from "../types.js";
 

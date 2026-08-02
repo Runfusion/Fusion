@@ -133,6 +133,14 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
     };
   }, [open, mode, projectId, isArchivedColumn]);
 
+  /*
+  FNXC:ResearchEnrich 2026-08-01-02:35:
+  Enriching requires a real task identifier. Whitespace made the action appear available and sent
+  a non-actionable identifier downstream, so validate the normalized value and submit that same
+  value rather than preserving an input-only representation.
+  */
+  const normalizedTaskId = taskId.trim();
+
   if (!open) return null;
 
   return (
@@ -195,11 +203,11 @@ export function ResearchTaskActionModal({ open, mode, run, finding, projectId, o
           <button
             className="btn btn-primary"
             type="button"
-            disabled={saving || (mode === "enrich" && !taskId)}
+            disabled={saving || (mode === "enrich" && !normalizedTaskId)}
             onClick={() => {
               setSaving(true);
               void onConfirm({
-                taskId: mode === "enrich" ? taskId : undefined,
+                taskId: mode === "enrich" ? normalizedTaskId : undefined,
                 title: mode === "create" ? title.trim() : undefined,
                 description: mode === "create" ? description.trim() : undefined,
                 priority: mode === "create" ? priority : undefined,

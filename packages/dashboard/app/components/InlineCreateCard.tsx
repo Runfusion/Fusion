@@ -118,12 +118,16 @@ export function InlineCreateCard({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
+  const [credentialInstanceId, setCredentialInstanceId] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
+  const [validatorCredentialInstanceId, setValidatorCredentialInstanceId] = useState<string | undefined>(undefined);
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
+  const [planningCredentialInstanceId, setPlanningCredentialInstanceId] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
   const [mergerProvider, setMergerProvider] = useState<string | undefined>(undefined);
+  const [mergerCredentialInstanceId, setMergerCredentialInstanceId] = useState<string | undefined>(undefined);
   const [mergerModelId, setMergerModelId] = useState<string | undefined>(undefined);
   /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: quick-create board card carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
@@ -500,12 +504,16 @@ export function InlineCreateCard({
       ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
       modelPresetId: selectedPresetId,
       modelProvider: hasExecutorOverride ? executorProvider : undefined,
+      credentialInstanceId: hasExecutorOverride ? credentialInstanceId : undefined,
       modelId: hasExecutorOverride ? executorModelId : undefined,
       validatorModelProvider: hasValidatorOverride ? validatorProvider : undefined,
+      validatorCredentialInstanceId: hasValidatorOverride ? validatorCredentialInstanceId : undefined,
       validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
       planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
+      planningCredentialInstanceId: hasPlanningOverride ? planningCredentialInstanceId : undefined,
       planningModelId: hasPlanningOverride ? planningModelId : undefined,
       mergerModelProvider: hasMergerOverride ? mergerProvider : undefined,
+      mergerCredentialInstanceId: hasMergerOverride ? mergerCredentialInstanceId : undefined,
       mergerModelId: hasMergerOverride ? mergerModelId : undefined,
       validatorThinkingLevel: validatorThinkingLevel !== "" ? validatorThinkingLevel as ThinkingLevel : undefined,
       planningThinkingLevel: planningThinkingLevel !== "" ? planningThinkingLevel as ThinkingLevel : undefined,
@@ -532,7 +540,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, hasMergerOverride, mergerProvider, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, credentialInstanceId, executorModelId, hasValidatorOverride, validatorProvider, validatorCredentialInstanceId, validatorModelId, hasPlanningOverride, planningProvider, planningCredentialInstanceId, planningModelId, hasMergerOverride, mergerProvider, mergerCredentialInstanceId, mergerModelId, thinkingLevel, validatorThinkingLevel, planningThinkingLevel, mergerThinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;
@@ -667,18 +675,21 @@ export function InlineCreateCard({
     const next = parseModelSelection(value);
     setExecutorProvider(next.provider);
     setExecutorModelId(next.modelId);
+    setCredentialInstanceId(undefined);
   }, []);
 
   const handleValidatorChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
     setValidatorProvider(next.provider);
     setValidatorModelId(next.modelId);
+    setValidatorCredentialInstanceId(undefined);
   }, []);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
     setPlanningProvider(next.provider);
     setPlanningModelId(next.modelId);
+    setPlanningCredentialInstanceId(undefined);
   }, []);
 
   const handleThinkingLevelChange = useCallback((value: string) => {
@@ -1239,7 +1250,15 @@ export function InlineCreateCard({
               onExecutorChange={handleExecutorChange}
               onValidatorChange={handleValidatorChange}
               onPlanningChange={handlePlanningModelChange}
-              onMergerChange={(value) => { const next = parseModelSelection(value); setMergerProvider(next.provider); setMergerModelId(next.modelId); }}
+              onMergerChange={(value) => { const next = parseModelSelection(value); setMergerProvider(next.provider); setMergerModelId(next.modelId); setMergerCredentialInstanceId(undefined); }}
+              credentialInstanceId={credentialInstanceId}
+              onCredentialInstanceChange={(value) => setCredentialInstanceId(value || undefined)}
+              validatorCredentialInstanceId={validatorCredentialInstanceId}
+              onValidatorCredentialInstanceChange={(value) => setValidatorCredentialInstanceId(value || undefined)}
+              planningCredentialInstanceId={planningCredentialInstanceId}
+              onPlanningCredentialInstanceChange={(value) => setPlanningCredentialInstanceId(value || undefined)}
+              mergerCredentialInstanceId={mergerCredentialInstanceId}
+              onMergerCredentialInstanceChange={(value) => setMergerCredentialInstanceId(value || undefined)}
               mergerThinkingLevel={mergerThinkingLevel}
               onMergerThinkingLevelChange={setMergerThinkingLevel}
               validatorThinkingLevel={validatorThinkingLevel}

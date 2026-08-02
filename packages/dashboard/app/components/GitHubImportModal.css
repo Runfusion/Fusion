@@ -328,6 +328,16 @@ Padding lives on the panel rather than the pane content so header, toast, and sc
 }
 
 /*
+FNXC:GitHubImport 2026-08-01-03:48:
+Tablet windows zero the shared FN-8015 body gutter (`.floating-window--tablet-viewport .floating-window__body`
+in FloatingWindow.css) because it rendered as an uneven right border on tablet. This panel's right
+inset was supplied by that gutter, so restore it locally to keep the panel's insets symmetric.
+*/
+.floating-window--tablet-viewport .github-import-detail-panel {
+  padding-inline-end: var(--space-lg);
+}
+
+/*
 FNXC:GitHubImport 2026-07-15-23:25:
 Bottom action bar for the detail preview. Import/Close issue moved here from the pane header —
 commit actions belong below the content they act on and within thumb reach on a phone, and this

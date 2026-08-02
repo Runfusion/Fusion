@@ -7,9 +7,9 @@ Portaled `position: fixed` menus (Quick Add Deps and sibling pickers) must stay 
 (same failure class as the TaskDetail Activity menu fix).
 
 FNXC:QuickAddDepsMenu 2026-07-25-12:00:
-Anchor-first: place the menu immediately below (or above) the trigger, then shrink `maxHeight` to the
-real free space. Never clamp `top` away from the trigger to preserve a preferred/min height floor —
-that produced the Deps menu floating too high and unattached when space was tight.
+Anchor-first: place the menu immediately below the trigger or anchor its bottom immediately above it,
+then shrink `maxHeight` to the real free space. Computing upward `top` from a preferred/clamped
+height detached short menus; never clamp placement to preserve a preferred/min height floor.
 */
 
 export interface FixedMenuTriggerRect {
@@ -33,7 +33,8 @@ export interface FixedMenuPositionInput {
 }
 
 export interface FixedMenuPosition {
-  top: number;
+  top: number | null;
+  bottom: number | null;
   left: number;
   width: number;
   maxHeight: number;
@@ -88,13 +89,18 @@ export function computeFixedMenuPosition(input: FixedMenuPositionInput): FixedMe
 
   if (openUpward) {
     const maxHeight = Math.max(0, Math.min(input.preferredHeight, spaceAbove));
-    // Bottom edge of the menu sits `gap` above the trigger top — always attached.
-    const top = input.triggerRect.top - gap - maxHeight;
-    return { top, left, width, maxHeight, openUpward: true };
+    /*
+    FNXC:QuickAddMenuAnchor 2026-08-01-07:11:
+    Upward Quick Add menus must anchor their bottom edge to the trigger because maxHeight is only a
+    scroll cap. Positioning from a preferred/clamped height detaches short option lists; bottom
+    anchoring keeps every rendered height exactly `gap` above the trigger.
+    */
+    const bottom = input.viewportHeight - input.triggerRect.top + gap;
+    return { top: null, bottom, left, width, maxHeight, openUpward: true };
   }
 
   const maxHeight = Math.max(0, Math.min(input.preferredHeight, spaceBelow));
   // Top edge sits `gap` below the trigger bottom — always attached.
   const top = input.triggerRect.bottom + gap;
-  return { top, left, width, maxHeight, openUpward: false };
+  return { top, bottom: null, left, width, maxHeight, openUpward: false };
 }

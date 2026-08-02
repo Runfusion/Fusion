@@ -13,6 +13,7 @@ import { Maximize2, Minimize2, Loader2, ChevronDown, ChevronRight } from "lucide
 import "./AgentLogViewer.css";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { ToolCallDetails } from "./ToolCallDetails";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -173,7 +174,7 @@ interface CollapsibleToolDetailProps {
   type?: "tool" | "tool_result" | "tool_error";
 }
 
-function CollapsibleToolDetail({ detail }: CollapsibleToolDetailProps): ReactElement {
+function CollapsibleToolDetail({ detail, type = "tool_result" }: CollapsibleToolDetailProps): ReactElement {
   const { t } = useTranslation("app");
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
@@ -200,7 +201,14 @@ function CollapsibleToolDetail({ detail }: CollapsibleToolDetailProps): ReactEle
         className={expanded ? "agent-log-tool-detail-content" : "agent-log-tool-detail-content agent-log-tool-detail-content--collapsed"}
         data-testid="tool-detail-content"
       >
-        <pre className="agent-log-tool-detail">{linkifyFilePaths(detail)}</pre>
+        <ToolCallDetails
+          className="agent-log-tool-detail"
+          resultValue={detail}
+          argumentsLabel={t("agentLog.arguments", "Arguments")}
+          resultLabel={type === "tool_error" ? t("agentLog.error", "Error") : type === "tool" ? t("agentLog.arguments", "Arguments") : t("agentLog.output", "Output")}
+          resultIsError={type === "tool_error"}
+          renderValue={linkifyFilePaths}
+        />
       </div>
     </div>
   );

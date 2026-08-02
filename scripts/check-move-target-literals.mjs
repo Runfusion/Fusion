@@ -89,6 +89,36 @@ function hasDeliberateMarker(node, source) {
 }
 
 /*
+FNXC:MoveTargetRatchet 2026-08-01-04:24:
+FN-8657 verified the production population at zero, but a zero-only test cannot prove the ratchet still
+sees the throw-causing regression. Keep the AST walk callable with an in-memory fixture so tests prove a
+literal destination is counted and that only a leading DELIBERATE-LITERAL can exempt it.
+
+The audit found moveTaskInternal confined to moves.ts, its private enforcement point. We still scan it as
+stronger-than-required defense-in-depth and pin that behavior here; external callers would not be invisible.
+*/
+export function countLegacyMoveTargetLiterals(source, file = "fixture.ts") {
+  if (!source.includes("moveTask")) return 0;
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  let count = 0;
+  const walk = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : ts.isIdentifier(node.expression) ? node.expression.text : "";
+      if (MOVE_FNS.has(callee)) {
+        const destination = node.arguments[1];
+        const hit = destination && destinationLiterals(destination).find((text) => LEGACY_COLUMN_IDS.has(text));
+        if (hit && !hasDeliberateMarker(node, source)) count += 1;
+      }
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(sf);
+  return count;
+}
+
+/*
 FNXC:MoveTargetRatchet 2026-07-31-19:05 (u12 — the scan ran on IMPORT, so the shape list could not be tested):
 Everything below executed at module load and ended in `process.exit`, so importing this file to unit-test
 `destinationLiterals` would have run the whole scan and killed the test process. That list has missed FOUR
@@ -128,28 +158,6 @@ if (isEntryPoint) {
     process.exit(1);
   }
 
-  /** True when the statement enclosing `node` carries a DELIBERATE-LITERAL in its LEADING comments. */
-  /*
-  FNXC:MoveTargetRatchet 2026-07-31-21:55 (probe of this gate's own claim):
-  TERNARY DESTINATIONS. The gate prints "POPULATION EMPTY ... keep it empty", and a staged probe showed
-  that claim held for two spellings and not a third: `moveTask(id, ok ? "done" : "in-review")` was
-  invisible, because the check required arguments[1] to BE a literal. A ternary over two lanes is a
-  natural way to write exactly the destination this gate exists to prevent.
-
-  ONE hit per call site, not per branch — a two-branch ternary is one move, and counting both would
-  inflate a population the ratchet holds at zero.
-
-  DELIBERATELY NOT DESCENDING into `??` or `||`. `moveTask(id, lanes.complete ?? "done")` is the
-  documented degraded arm this program writes on purpose — a resolved value with a legacy fallback,
-  which the lifecycle census classifies as `traitFallback` rather than backlog. Counting those would
-  report correct code as debt. Probed and left alone rather than assumed: both forms measure 0.
-
-  STILL NOT DETECTED, stated so nobody assumes coverage: a destination bound to a local first
-  (`const t = "archived"; moveTask(id, t)`). Resolving that needs symbol/dataflow analysis rather than a
-  shape test, which is a different tool than this file is.
-  */
-
-
   const byFile = {};
   for (const file of files) {
     let source;
@@ -162,30 +170,7 @@ if (isEntryPoint) {
       console.error("check-move-target-literals: refusing to report a count that may be short.");
       process.exit(2);
     }
-    if (!source.includes("moveTask")) continue;
-    const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-    let count = 0;
-    const walk = (node) => {
-      if (ts.isCallExpression(node)) {
-        const callee = ts.isPropertyAccessExpression(node.expression)
-          ? node.expression.name.text
-          : ts.isIdentifier(node.expression) ? node.expression.text : "";
-        if (MOVE_FNS.has(callee)) {
-          /* FNXC:MoveTargetRatchet 2026-07-31-23:55 (#3246 review): DESTINATION ARGUMENT ONLY.
-             moveTask(id, toColumn, options?) and moveTaskInternal(id, toColumn, options, internal,
-             currentTask?) both put the destination at index 1. Scanning every argument counted
-             `{ reason: "done" }` in an options bag as a move target — work that does not exist and
-             that no real fix could clear. Backtick form included. */
-          const destination = node.arguments[1];
-          const hit = destination && destinationLiterals(destination).find((text) => LEGACY_COLUMN_IDS.has(text));
-          if (hit && !hasDeliberateMarker(node, source)) {
-            count += 1;
-          }
-        }
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(sf);
+    const count = countLegacyMoveTargetLiterals(source, file);
     if (count > 0) byFile[file] = count;
   }
 

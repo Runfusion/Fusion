@@ -58,6 +58,8 @@ function storeFor(task: Task, settings: Partial<Settings> = {}) {
       return { seeded: true, workItemId: item.id };
     }),
     getTasksDir: vi.fn(() => ""),
+    // FNXC:StrandedHoldContinuation 2026-08-02-00:15: 713e9320b0 routed continuation dispatch through createPlanningContinuationDispatcher, whose capacity gate reads projectId from store.getRootDir(); the mock must expose it so drainWorkflowContinuations does not throw.
+    getRootDir: vi.fn(() => "fn8592-project"),
     _items: items,
   } as unknown as TaskStore & { _items: WorkflowWorkItem[] };
 }

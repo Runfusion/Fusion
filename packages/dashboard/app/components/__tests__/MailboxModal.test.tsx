@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MailboxModal } from "../MailboxModal";
 import * as apiModule from "../../api";
 import * as mobileKeyboardModule from "../../hooks/useMobileKeyboard";
@@ -138,6 +139,7 @@ const defaultProps = {
 describe("MailboxModal", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   beforeEach(() => {
@@ -434,6 +436,31 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-message-detail")).toBeDefined();
     });
+  });
+
+  it("opens markdown task links from the selected mobile mail detail in the existing tab", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockImplementation(() => ({ matches: true })));
+    const taskMessage: Message = {
+      ...mockMessage,
+      id: "msg-modal-markdown-task-link",
+      content: "See [FN-1234](/?task=FN-1234) and [external](https://example.com).",
+    };
+    const onOpenTask = vi.fn();
+    const user = userEvent.setup();
+    mockFetchInbox.mockResolvedValue({ messages: [taskMessage], total: 1, unreadCount: 1 });
+    mockFetchConversation.mockResolvedValue([taskMessage]);
+    mockMarkMessageRead.mockResolvedValue({ ...taskMessage, read: true });
+
+    render(<MailboxModal {...defaultProps} onOpenTask={onOpenTask} />);
+    await user.click(await screen.findByTestId("mailbox-item-msg-modal-markdown-task-link"));
+
+    const detail = await screen.findByTestId("mailbox-message-body");
+    const taskLink = within(detail).getByTestId("mailbox-task-link");
+    expect(taskLink).not.toHaveAttribute("target", "_blank");
+    await user.click(taskLink);
+    expect(onOpenTask).toHaveBeenCalledTimes(1);
+    expect(onOpenTask).toHaveBeenCalledWith("FN-1234");
+    expect(within(detail).getByRole("link", { name: "external" })).toHaveAttribute("target", "_blank");
   });
 
   it("opens task-only and planning-clarification related work from modal detail", async () => {

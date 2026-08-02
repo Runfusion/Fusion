@@ -81,6 +81,8 @@ export interface OverflowViewRenderProps {
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
   onOpenTaskInDock?: (task: Task | TaskDetail) => void;
+  /** Opens New Task with a reverted source task's original description. */
+  onReviseTask?: (task: Task | TaskDetail) => void;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onOpenDetail?: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onSendSelectionToTask?: (description: string) => void;
@@ -161,6 +163,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
         columnFlagsByTaskId={props.columnFlagsByTaskId}
         projectId={props.projectId}
         onOpenTask={props.onOpenTaskInDock}
+        onReviseTask={props.onReviseTask}
         onDeleteTask={props.onDeleteTask}
         addToast={props.addToast}
         prAuthAvailable={false}

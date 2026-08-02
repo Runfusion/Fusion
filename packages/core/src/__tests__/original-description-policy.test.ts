@@ -8,6 +8,7 @@ Also covers embedded-H2 operator text so description updates cannot duplicate or
 corrupt PROMPT.md when the raw request contains lines like `## Required behavior`.
 */
 import { describe, expect, it } from "vitest";
+import { computePlanApprovalFingerprint } from "../plan-approval.js";
 import {
   ORIGINAL_DESCRIPTION_END_MARKER,
   ORIGINAL_DESCRIPTION_HEADING,
@@ -177,10 +178,117 @@ describe("original description policy", () => {
     expect(twice.split("## Extra section from operator").length - 1).toBe(1);
   });
 
-  it("treats unmarked planner sections ending at structural headings only", () => {
+  it("uses the first H2 for an unmarked section when operator text is unavailable", () => {
     const bodyWithUnknownH2 = "Intro\n\n## Required behavior\n\n- do the thing";
     const unmarked = sampleSpec({ withOriginal: true, originalBody: bodyWithUnknownH2, marked: false });
-    // Extract must include ## Required behavior (not a structural heading).
-    expect(extractOriginalDescriptionBody(unmarked)).toBe(bodyWithUnknownH2);
+    expect(extractOriginalDescriptionBody(unmarked)).toBe("Intro");
+  });
+
+  it("preserves a custom section after an unmarked non-empty description", () => {
+    const prompt = `# Task: FN-8659\n\n## Original Description\n\n${SAMPLE_DESC}\n\n## Product Overview\n\nCustom planner context.\n\n## Before → After Transformation\n\n- before\n`;
+    const once = applyOriginalDescription(prompt, SAMPLE_DESC);
+
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, SAMPLE_DESC)).toBe(once);
+  });
+
+  it("preserves a custom section after an unmarked empty description", () => {
+    const prompt = "# Task: FN-8659\n\n## Original Description\n\n\n## Product Overview\n\nCustom planner context.\n\n## Mission\n\nShip it.\n";
+    const once = applyOriginalDescription(prompt, "   ");
+
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, "   ")).toBe(once);
+  });
+
+  it("preserves a custom section whose title collides with operator prose", () => {
+    const description = "Operator context:\n## Product Overview\nKeep this as prose.";
+    const prompt = `# Task: FN-8659\n\n## Original Description\n\n${description}\n\n## Product Overview\n\nCustom planner context.\n\n## Mission\n\nShip it.\n`;
+    const once = applyOriginalDescription(prompt, description);
+
+    expect(once).toContain(`${ORIGINAL_DESCRIPTION_START_MARKER}\n${description}\n${ORIGINAL_DESCRIPTION_END_MARKER}`);
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("inserts Original Description above a leading custom section", () => {
+    const prompt = "# Task: FN-8659\n\n## Product Overview\n\nCustom planner context.\n\n## Mission\n\nShip it.\n";
+    const once = applyOriginalDescription(prompt, SAMPLE_DESC);
+
+    expect(once.indexOf(ORIGINAL_DESCRIPTION_HEADING)).toBeLessThan(once.indexOf("## Product Overview"));
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, SAMPLE_DESC)).toBe(once);
+  });
+
+  it("keeps marker-bounded sections unchanged", () => {
+    const marked = sampleSpec({ withOriginal: true, originalBody: SAMPLE_DESC, marked: true });
+    expect(applyOriginalDescription(marked, SAMPLE_DESC)).toBe(marked);
+  });
+
+  it("uses the allowlist-priority tiebreak after alignment failure", () => {
+    const prompt = "# Task: FN-8659\n\n## Original Description\n\nPlanner rewrite has no matching opening line.\n\n## Mission\n\nEarlier lower-priority heading.\n\n## Before → After Transformation\n\nChosen by allowlist priority.\n";
+    const once = applyOriginalDescription(prompt, "Operator opening line.");
+
+    // FNXC:OriginalDescriptionInPrompt 2026-08-01-05:18: Historical priority selects the later
+    // Before heading, so the earlier Mission remains in the unmarked body being replaced.
+    expect(once).not.toContain("Earlier lower-priority heading.");
+    expect(once).toContain("## Before → After Transformation\n\nChosen by allowlist priority.");
+    expect(once.indexOf(ORIGINAL_DESCRIPTION_END_MARKER)).toBeLessThan(
+      once.indexOf("## Before → After Transformation"),
+    );
+    expect(applyOriginalDescription(once, "Operator opening line.")).toBe(once);
+  });
+
+  it("does not trust unsafe partial alignment before an embedded operator H2", () => {
+    const description = "Opening line.\n\n## Mission\n\nThis is operator prose.";
+    const prompt = "# Task: FN-8659\n\n## Original Description\n\nOpening line.\n\nPlanner changed this line.\n\n## Mission\n\nThis is operator prose.\n\n## Product Overview\n\nCustom planner context.\n\n## Before → After Transformation\n\nStructural boundary.\n";
+    const once = applyOriginalDescription(prompt, description);
+
+    // The unmatched description still has an H2, so the legacy tiebreak—not Mission—sets the bound.
+    expect(once.indexOf(ORIGINAL_DESCRIPTION_END_MARKER)).toBeLessThan(
+      once.indexOf("## Before → After Transformation"),
+    );
+    expect(once).not.toContain("Planner changed this line.");
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("uses safe partial alignment after every embedded operator H2 was consumed", () => {
+    const description = "Opening line.\n\n## Mission\n\nOperator prose after the H2.";
+    const prompt = "# Task: FN-8659\n\n## Original Description\n\nOpening line.\n\n## Mission\n\nPlanner divergence after the embedded H2.\n\n## Product Overview\n\nCustom planner context.\n\n## Before → After Transformation\n\nStructural boundary.\n";
+    const once = applyOriginalDescription(prompt, description);
+
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(once.indexOf(ORIGINAL_DESCRIPTION_END_MARKER)).toBeLessThan(
+      once.indexOf("## Product Overview"),
+    );
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("keeps an embedded operator H2 inside the aligned body before a custom section", () => {
+    const description = "Opening line.\n\n## Mission\n\nThis is operator prose.";
+    const prompt = `# Task: FN-8659\n\n## Original Description\n\n${description}\n\n## Product Overview\n\nCustom planner context.\n\n## Before → After Transformation\n\nStructural boundary.\n`;
+    const once = applyOriginalDescription(prompt, description);
+
+    expect(extractOriginalDescriptionBody(once, description)).toBe(description);
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("anchors insertion above a colliding leading custom heading", () => {
+    const description = "Operator context:\n## Product Overview\nKeep this as prose.";
+    const prompt = "# Task: FN-8659\n\n## Product Overview\n\nCustom planner context.\n\n## Mission\n\nShip it.\n";
+    const once = applyOriginalDescription(prompt, description);
+
+    expect(once.indexOf(ORIGINAL_DESCRIPTION_HEADING)).toBeLessThan(once.indexOf("## Product Overview"));
+    expect(once).toContain("## Product Overview\n\nCustom planner context.");
+    expect(applyOriginalDescription(once, description)).toBe(once);
+  });
+
+  it("keeps hygiene-before-fingerprint stable across a second pass", () => {
+    const planner = `# Task: FN-8659\n\n## Original Description\n\n${SAMPLE_DESC}\n\n## Product Overview\n\nCustom planner context.\n\n## Mission\n\nShip it.\n`;
+    const once = applyOriginalDescription(planner, SAMPLE_DESC);
+    const twice = applyOriginalDescription(once, SAMPLE_DESC);
+
+    expect(computePlanApprovalFingerprint(twice)).toBe(computePlanApprovalFingerprint(once));
+    expect(twice).toBe(once);
   });
 });

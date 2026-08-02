@@ -104,11 +104,14 @@ export interface ArchivedTaskEntry {
   deletedAt?: string;
   /** Timestamp when the task was archived to the log */
   archivedAt: string;
+  /** FNXC:CredentialInstanceSelection 2026-08-01-05:43: archive entries preserve persisted-but-inert credential-instance companions for every task model pair. */
   /** Optional: model preset and override fields for executor and validator */
   modelPresetId?: string;
   modelProvider?: string;
+  credentialInstanceId?: string;
   modelId?: string;
   validatorModelProvider?: string;
+  validatorCredentialInstanceId?: string;
   validatorModelId?: string;
   /**
    * Optional provider/model override for the planning session — the same provider/model pair
@@ -121,8 +124,10 @@ export interface ArchivedTaskEntry {
    * codebase — this field has never had anything to do with a column.
    */
   planningModelProvider?: string;
+  planningCredentialInstanceId?: string;
   planningModelId?: string;
   mergerModelProvider?: string;
+  mergerCredentialInstanceId?: string;
   mergerModelId?: string;
   mergerThinkingLevel?: ThinkingLevel;
   /** Per-task token/cost accounting (input/output/cache) preserved across archival. */

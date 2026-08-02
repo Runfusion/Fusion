@@ -46,6 +46,7 @@ import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
 import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
 import { workflowNodeRequiresWorktree } from "./workflow-node-execution-needs.js";
 import type { WorkflowColumnBoundary } from "./workflow-column-boundary.js";
+import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
 
@@ -1596,6 +1597,27 @@ export class WorkflowGraphExecutor {
         return projected;
       } catch (error) {
         if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
+        /*
+        FNXC:WorktreeBaseRefresh 2026-08-01-16:33:
+        A code-node refresh refusal is a pre-session, typed non-execution result, not a handler
+        exception. Do not spend immediate node retries or erase its actionable reason: returning
+        the refresh kind lets the graph route/park it while preserving the checkout for a later,
+        independently verified acquisition.
+        */
+        if (error instanceof WorktreeBaseRefreshError) {
+          const failureResult: WorkflowNodeResult = {
+            outcome: "failure",
+            value: error.refresh.kind,
+            contextPatch: {
+              [`node:${node.id}:error`]: error.message,
+              [`node:${node.id}:baseRefresh`]: error.refresh.kind,
+            },
+          };
+          if (recordProgress && this.shouldRecordNodeProgress(node)) {
+            await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+          }
+          return failureResult;
+        }
         lastError = error;
         /*
         FNXC:SessionContention 2026-07-25-21:30:
@@ -1742,13 +1764,19 @@ export class WorkflowGraphExecutor {
      * disables inline fixes, preserving the default-enabled review worktree contract
      * that prevents issue #2075's pre-review no-worktree failure.
      */
+    /*
+    FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
+    A graph `code` node is the implementation boundary even when its sandbox runner does not
+    otherwise advertise a worktree need. Force preparation so an existing planning checkout is
+    refreshed before code executes; review and planning retain their normal classifier behavior.
+    */
     const requiresWorktree = workflowNodeRequiresWorktree(node, {
       optionalGroupId,
       reviewerInlineFixes: settings?.reviewerInlineFixes,
-    });
+    }) || node.kind === "code";
     return {
       requiresWorktree,
-      reason: requiresWorktree ? "write-capable-node" : undefined,
+      reason: node.kind === "code" ? "implementation-code-node" : requiresWorktree ? "write-capable-node" : undefined,
     };
   }
 

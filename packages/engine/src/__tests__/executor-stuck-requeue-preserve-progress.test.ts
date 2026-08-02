@@ -74,10 +74,25 @@ function installGitResult(kind: "uncommitted-only" | "committed") {
   });
 }
 
+/*
+FNXC:StuckRequeue 2026-08-02-00:20:
+The branch-durability PROOF in resetStepsIfWorkLost runs `git merge-base "<task-branch>" HEAD`; only
+THAT proof must fail for this scenario. Setup's contamination/diff base uses `git merge-base HEAD main`
+(and origin/main), which must still resolve — otherwise execution short-circuits before the agent
+session ever starts and the stuck-requeue cleanup under test is never reached (the test then hangs on
+startedPromise). Scope the failure to the task-branch merge-base and leave the main-base lookups intact.
+*/
 function installGitProofFailure() {
   mockedExecSync.mockImplementation((cmd: string) => {
     if (cmd.includes("git rev-parse --is-inside-work-tree")) return "true\n";
-    if (cmd.includes("git merge-base")) throw new Error("fatal: not a valid object name fusion/fn-7174");
+    // Branch-durability PROOF (resetStepsIfWorkLost): `git merge-base "<task-branch>" HEAD`.
+    // Only this proof fails; every setup lookup mirrors the uncommitted-only fixture so execution
+    // still reaches the running session before the stuck kill.
+    if (cmd.includes("git merge-base") && cmd.includes("fusion/missing-fn-7174")) {
+      throw new Error("fatal: not a valid object name fusion/missing-fn-7174");
+    }
+    if (cmd.includes("git merge-base")) return "base-sha\n";
+    if (cmd.includes("git rev-parse")) return "base-sha\n";
     return "";
   });
 }

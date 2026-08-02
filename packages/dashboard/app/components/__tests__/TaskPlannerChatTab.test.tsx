@@ -1148,6 +1148,25 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.queryByTestId("task-planner-chat-empty")).not.toBeInTheDocument();
   });
 
+  it("keeps complete persisted planner tool payloads available after expansion", async () => {
+    const longCommand = "pnpm --filter @fusion/dashboard exec vitest run planner --PLANNER_COMMAND_SUFFIX";
+    const longResult = `planner output\n${"line ".repeat(45)}PLANNER_RESULT_SUFFIX`;
+    mockFetchChatMessages.mockResolvedValue({
+      messages: [{
+        id: "assistant-long-tool", sessionId: "chat-planner", role: "assistant", content: "Planner ran bash", thinkingOutput: null,
+        metadata: { toolCalls: [{ toolName: "bash", args: { command: longCommand }, result: longResult, isError: false, status: "completed" }] },
+        createdAt: "2026-06-30T00:02:00.000Z",
+      }],
+    });
+    renderPlannerChat();
+
+    const details = await screen.findByText("bash").then((node) => node.closest("details.chat-tool-call") as HTMLDetailsElement);
+    expect(details.open).toBe(false);
+    await userEvent.click(details.querySelector("summary") as HTMLElement);
+    expect(details).toHaveTextContent(longCommand);
+    expect(details).toHaveTextContent("PLANNER_RESULT_SUFFIX");
+  });
+
   it("renders mixed persisted planner question tool calls with the shared answer UI outside collapsed details", async () => {
     const user = userEvent.setup();
     mockFetchChatMessages.mockResolvedValue({

@@ -232,6 +232,20 @@ export function FloatingWindow({
   mouse geometry; a known touch tablet at 768px is the one surface that receives enlarged targets.
   */
   const hasTabletTouchGeometry = isTabletTouchViewport(viewportMode);
+  /*
+  FNXC:ModalTouchGeometry 2026-08-01-04:23:
+  NAMING CONTRACT — FloatingWindow has two distinct tablet markers; do not conflate them:
+  - `floating-window--tablet-viewport`: the viewport MODE classifies as tablet (769-1024px
+    width OR a known 768px touch tablet), touch or not. Pure styling surface — currently the
+    FN-8015 gutter zeroing lives here.
+  - `floating-window--touch-geometry`: tablet AND touch-capable (`isTabletTouchViewport`) —
+    enlarged 44px drag/resize targets only.
+  A 900px non-touch window is `--tablet-viewport` but NOT `--touch-geometry`, and operators
+  still see the FN-8015 scrollbar gutter as an uneven right inset there (third recurrence of
+  the Task Detail right-padding bug — FN-8630/FN-8634 fixed only the `.modal-overlay` shells,
+  while every tablet task popup and floating terminal renders through THIS host).
+  */
+  const isTabletViewportMode = viewportMode === "tablet";
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
   /*
   FNXC:ModalGeometryPersistence 2026-07-16-00:40:
@@ -638,7 +652,7 @@ export function FloatingWindow({
     >
       <div
         ref={panelRef}
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${className ? ` ${className}` : ""}`}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${hasTabletTouchGeometry ? " floating-window--touch-geometry" : ""}${isTabletViewportMode ? " floating-window--tablet-viewport" : ""}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={bringToFront}

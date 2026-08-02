@@ -6,10 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
-import {TaskStore, storeLog, isWorkflowColumnsCompatibilityFlagEnabled} from "../store.js";
-import {rm} from "node:fs/promises";
-import {join} from "node:path";
-import {detectWorkspaceRepos, saveWorkspaceConfig, loadWorkspaceConfig} from "../git/git-repository.js";
+import {TaskStore, storeLog} from "../store.js";
 import type {BoardConfig, Settings, GlobalSettings, ConfigChangedBy} from "../types.js";
 import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {MOVED_SETTINGS_KEYS, stripMovedSettingsKeys, patchContainsMovedKey} from "../config/moved-settings.js";
@@ -21,6 +18,34 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {isPlainObject, deepMergeWithNullDelete} from "../task-store/settings-helpers.js";
 import {readProjectConfig as readProjectConfigAsync, writeProjectConfig as writeProjectConfigAsync} from "../task-store/async/async-settings.js";
 import {appendConfigurationRevision, createConfigurationRevision} from "../async-stores/async-configuration-revision-store.js";
+import {isValidProviderInstanceId} from "../provider-instance.js";
+
+/*
+ * FNXC:CredentialInstanceSelection 2026-08-01-05:38:
+ * Settings authoring validates persisted-but-inert credential instance ids before either project
+ * or global persistence. Nested presets are atomic: one malformed element rejects the whole write.
+ */
+function assertValidCredentialInstanceSettingsPatch(patch: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (key.endsWith("CredentialInstanceId") || key === "defaultCredentialInstanceIdOverride") {
+      if (value !== null && value !== undefined && !isValidProviderInstanceId(value)) {
+        throw new Error(`invalid credential instance id for settings key '${key}'`);
+      }
+    }
+  }
+  if (patch.modelPresets !== null && patch.modelPresets !== undefined) {
+    if (!Array.isArray(patch.modelPresets)) throw new Error("modelPresets must be an array");
+    for (const [index, preset] of patch.modelPresets.entries()) {
+      if (typeof preset !== "object" || preset === null) throw new Error(`modelPresets[${index}] must be an object`);
+      for (const key of ["executorCredentialInstanceId", "validatorCredentialInstanceId"] as const) {
+        const value = (preset as Record<string, unknown>)[key];
+        if (value !== undefined && !isValidProviderInstanceId(value)) {
+          throw new Error(`invalid credential instance id for modelPresets[${index}].${key}`);
+        }
+      }
+    }
+  }
+}
 
 /** Publish committed setting snapshots and run the normal post-commit effects. */
 export async function publishSettingsUpdated(store: TaskStore, previous: Settings, settings: Settings): Promise<void> {
@@ -33,6 +58,7 @@ export async function publishSettingsUpdated(store: TaskStore, previous: Setting
 }
 
 export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+    assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     /*
     FNXC:ConfigVersioning 2026-07-18-12:15:
     Keep the compatibility SQLite settings path writable while projects migrate
@@ -168,6 +194,7 @@ export async function updateSettingsImpl(store: TaskStore, patch: Partial<Settin
   }
 
 export async function updateGlobalSettingsImpl(store: TaskStore, patch: Partial<GlobalSettings>, changedBy: ConfigChangedBy = { kind: "human", id: "local-user" }): Promise<Settings> {
+    assertValidCredentialInstanceSettingsPatch(patch as Record<string, unknown>);
     // Read previous state BEFORE writing so the diff is correct
     const previousGlobal = await store.globalSettingsStore.getSettings();
     /*

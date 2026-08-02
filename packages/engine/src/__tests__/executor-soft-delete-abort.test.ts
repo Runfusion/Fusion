@@ -124,6 +124,21 @@ describe("TaskExecutor soft-delete aborts", () => {
     expect((executor as any).activeSubagentSessions.has("FN-TEST-4")).toBe(false);
   });
 
+  it("receives the unchanged TaskStore delete payload when metadata is present", async () => {
+    const { store, emit } = createEventedStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const abort = vi.fn().mockResolvedValue(undefined);
+
+    (executor as any).activeSessions.set("FN-TEST-META", {
+      session: { abort, dispose: vi.fn() },
+      seenSteeringIds: new Set<string>(),
+    });
+    emit("task:deleted", { ...makeTask("FN-TEST-META"), deletedAt: "2026-08-01T09:59:00.000Z" }, { githubIssueAction: "auto" });
+    await (executor as any).pendingTaskDisposals.get("FN-TEST-META");
+
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
   it("is a silent no-op when the deleted task has no active surfaces", () => {
     const { store, emit } = createEventedStore();
     const executor = new TaskExecutor(store, "/tmp/test");

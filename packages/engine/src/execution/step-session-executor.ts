@@ -18,8 +18,8 @@ const execAsync = promisify(exec);
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
-import { resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
+import type { AgentHeartbeatRun, AgentStore, MessageStore, PermanentAgentGatingContext, ProviderInstanceRef, ResolvedMcpServerDefinition, TaskDetail, Settings, SteeringComment, TaskStore } from "@fusion/core";
+import { isValidProviderInstanceId, resolvePersistAgentThinkingLog, resolveExecutorFallbackModel } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -41,7 +41,7 @@ import { createLogger } from "../logger.js";
 import { createFallbackModelObserver } from "../auth/fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 import { isContextLimitError } from "../errors/context-limit-detector.js";
-import { checkSessionError } from "../errors/usage-limit-detector.js";
+import { checkSessionError, isUsageLimitError } from "../errors/usage-limit-detector.js";
 import {
   createDelegateTaskTool,
   createTaskAssignTool,
@@ -124,6 +124,20 @@ export interface StepSessionExecutorOptions {
   runtimeHint?: string;
   /** Optional assigned-agent runtime config for model override precedence. */
   assignedAgentRuntimeConfig?: Record<string, unknown>;
+  /*
+   * FNXC:CredentialInstanceRotation 2026-08-01-09:58:
+   * FN-8654 rotates executor-step work after a usage-limit error. This optional
+   * initial target lets every new session use that selected credential instance;
+   * when absent, session creation omits the key to preserve legacy resolution.
+   */
+  credentialInstanceId?: string;
+  /*
+   * FNXC:CredentialInstanceRotation 2026-08-01-10:41:
+   * A usage-limit retry must re-read the task's selected account through the
+   * owning executor, which alone has the live task and effective agent identity.
+   * Returning undefined deliberately restores provider-default resolution.
+   */
+  resolveCredentialInstanceRetarget?: () => Promise<ProviderInstanceRef | undefined>;
   /**
    * FNXC:StepLifecycle 2026-07-22-09:53: This awaitable pre-start contract lets the
    * authoritative lifecycle projection reject execution before session allocation;
@@ -741,6 +755,15 @@ export class StepSessionExecutor {
   private reusablePrimaryHandle: SessionHandle | null = null;
   private reusableStepTelemetry: { agentLogger: AgentLogger; trackingKey: string } | null = null;
   private reusablePrimaryLastTokenUsage: StepResult["tokenUsage"] | undefined;
+  /*
+   * FNXC:CredentialInstanceRotation 2026-08-01-09:58:
+   * Credential rotation is mutable run state, never an options mutation. Only
+   * the reusable primary session can outlive an attempt; fresh and parallel
+   * sessions naturally read this target when they are created.
+   */
+  private credentialInstanceId: string | undefined;
+  private reusablePrimaryRetargetPending = false;
+  private reusablePrimaryAttemptActive = false;
 
   private registerActiveStepSession(stepIndex: number, handle: SessionHandle, worktreePath: string): void {
     this.activeSessions.set(stepIndex, handle);
@@ -777,8 +800,15 @@ export class StepSessionExecutor {
    * FNXC:WorkflowStepSessions 2026-06-29-22:58:
    * Coding (per-step review) still needs the StepSessionExecutor boundary so the graph can run `step-review` between steps, but the operator's "Each step in a new session" switch must control session freshness. Reuse only the primary sequential worktree when `runStepsInNewSessions` is false; parallel/isolated worktrees always need their own sessions because their cwd differs and they may run concurrently.
    */
-  private shouldReusePrimarySession(worktreePath: string): boolean {
+  private async shouldReusePrimarySession(worktreePath: string): Promise<boolean> {
+    await this.drainReusablePrimaryRetarget();
     return this.options.settings.runStepsInNewSessions === false && worktreePath === this.options.worktreePath;
+  }
+
+  private async drainReusablePrimaryRetarget(): Promise<void> {
+    if (!this.reusablePrimaryRetargetPending || this.reusablePrimaryAttemptActive) return;
+    this.reusablePrimaryRetargetPending = false;
+    await this.disposeReusablePrimarySession();
   }
 
   private selectReusableTelemetry(fallback: { agentLogger: AgentLogger; trackingKey: string }): { agentLogger: AgentLogger; trackingKey: string } {
@@ -807,8 +837,32 @@ export class StepSessionExecutor {
   constructor(options: StepSessionExecutorOptions) {
     this.options = options;
     this.store = options.store ?? (NOOP_TASK_STORE as TaskStore);
+    this.credentialInstanceId = options.credentialInstanceId;
     // Clamp maxParallelSteps to 1–4 range
     this.maxParallel = Math.max(1, Math.min(4, options.settings.maxParallelSteps ?? 2));
+  }
+
+  /*
+   * FNXC:CredentialInstanceRotation 2026-08-01-09:58:
+   * FN-8654 may retarget future executor-step sessions after a usage-limit error.
+   * disposeReusablePrimarySession aborts bash and disposes its session, so an
+   * active primary attempt must drain normally before disposal; eager disposal
+   * would change its result and retry lifecycle. Parallel sessions are untouched.
+   */
+  async retargetCredentialInstance(ref: ProviderInstanceRef | undefined): Promise<void> {
+    if (ref && !isValidProviderInstanceId(ref.instanceId)) {
+      stepExecLog.warn(`Ignoring invalid credential instance id for task ${this.options.taskDetail.id}`);
+      return;
+    }
+    const nextCredentialInstanceId = ref?.instanceId;
+    if (nextCredentialInstanceId === this.credentialInstanceId) return;
+
+    this.credentialInstanceId = nextCredentialInstanceId;
+    if (this.reusablePrimaryAttemptActive) {
+      this.reusablePrimaryRetargetPending = true;
+      return;
+    }
+    await this.disposeReusablePrimarySession();
   }
 
   /**
@@ -998,6 +1052,8 @@ export class StepSessionExecutor {
       activeSessionRegistry.unregisterPath(worktreePath);
     }
     this.activeSessions.clear();
+    this.reusablePrimaryRetargetPending = false;
+    this.reusablePrimaryAttemptActive = false;
     await this.disposeReusablePrimarySession();
   }
 
@@ -1012,6 +1068,8 @@ export class StepSessionExecutor {
     if (this.activeSessions.size > 0) {
       await this.terminateAllSessions();
     }
+    this.reusablePrimaryRetargetPending = false;
+    this.reusablePrimaryAttemptActive = false;
     await this.disposeReusablePrimarySession();
 
     // Remove parallel worktrees
@@ -1257,7 +1315,7 @@ export class StepSessionExecutor {
 
     // Build reduced step prompt for context-limit recovery (simpler, shorter)
     const reducedStepPrompt = buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
-    const reusePrimarySession = this.shouldReusePrimarySession(worktreePath);
+    const reusePrimarySession = await this.shouldReusePrimarySession(worktreePath);
 
     // Acquire semaphore if provided
     if (semaphore) {
@@ -1379,6 +1437,7 @@ export class StepSessionExecutor {
             taskDetail.modelId,
             settings,
             this.options.assignedAgentRuntimeConfig,
+            this.credentialInstanceId,
           );
 
           if (reusePrimarySession && this.reusablePrimarySession) {
@@ -1456,6 +1515,13 @@ Follow instructions precisely and avoid unrelated changes.`,
                 telemetry.agentLogger.onToolEnd(name, isError, result);
                 stuckTaskDetector?.recordActivity(telemetry.trackingKey);
               },
+              /*
+               * FNXC:CredentialInstanceRotation 2026-08-01-09:58:
+               * The explicit executor target wins over any model-derived instance
+               * because FN-8654 deliberately retargeted after a usage-limit error.
+               * Omit the key entirely when unset to preserve legacy resolution.
+               */
+              ...(this.credentialInstanceId ? { credentialInstanceId: this.credentialInstanceId } : {}),
               // FNXC:PluginSkills 2026-07-12-00:00: Step-session createFnAgent must receive plugin skill body dirs from TaskExecutor; names alone do not make plugin-package SKILL.md files discoverable.
               ...(this.options.skillSelection ? { skillSelection: this.options.skillSelection } : {}),
               ...(this.options.additionalSkillPaths && this.options.additionalSkillPaths.length > 0 ? { additionalSkillPaths: this.options.additionalSkillPaths } : {}),
@@ -1499,6 +1565,10 @@ Follow instructions precisely and avoid unrelated changes.`,
             this.reusableStepTelemetry = localTelemetry;
           }
           this.registerActiveStepSession(stepIndex, handle, worktreePath);
+          // FNXC:CredentialInstanceRotation 2026-08-01-09:58: This marker covers
+          // the whole registered reused-primary attempt so retargeting cannot call
+          // destructive disposal between registration and prompt completion.
+          if (reusePrimarySession) this.reusablePrimaryAttemptActive = true;
           stuckTaskDetector?.trackTask(trackingKey, { dispose: () => session?.dispose() }, taskDetail.id);
 
           const sessionModel = await describeAgentModel(session);
@@ -1581,6 +1651,18 @@ Follow instructions precisely and avoid unrelated changes.`,
             }
           }
 
+          /*
+           * FNXC:CredentialInstanceRotation 2026-08-01-10:41:
+           * A limited account may be replaced while this workflow is running.
+           * Ask TaskExecutor for the live, runtime-config-aware target before
+           * retrying, so the next session does not recreate the limited account.
+           */
+          if (isUsageLimitError(errorMessage) && this.options.resolveCredentialInstanceRetarget) {
+            await this.retargetCredentialInstance(
+              await this.options.resolveCredentialInstanceRetarget(),
+            );
+          }
+
           // If this was the last attempt, return failure
           if (attempt === MAX_STEP_RETRIES) {
             const result: StepResult = {
@@ -1609,6 +1691,8 @@ Follow instructions precisely and avoid unrelated changes.`,
           this.unregisterActiveStepSession(stepIndex, worktreePath);
           stuckTaskDetector?.untrackTask(trackingKey);
           if (reusePrimarySession) {
+            this.reusablePrimaryAttemptActive = false;
+            await this.drainReusablePrimaryRetarget();
             this.reusableStepTelemetry = null;
           } else {
             try {

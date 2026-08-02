@@ -329,6 +329,8 @@ export function AppModals({
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}
             onMoveTask={taskOperations.moveTask}
+            /* FNXC:TaskRevert 2026-08-01-20:27: Modal detail must offer the same revision draft recovery as every reverted-task host. */
+            onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
             onDeleteTask={taskOperations.deleteTask}
             onMergeTask={taskOperations.mergeTask}
             onArchiveTask={taskOperations.archiveTask}

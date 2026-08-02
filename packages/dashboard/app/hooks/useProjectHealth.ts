@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { ProjectHealth } from "../api";
 import { fetchProjectHealth } from "../api";
 import { isVisibilityResumeError, useTabVisibilitySuspension, useVisibilityAwarePoll } from "./visibilitySuspension";
@@ -32,13 +32,16 @@ const BATCH_SIZE = 5; // Number of concurrent health fetches
  * skeleton flicker and scroll position resets during periodic updates.
  */
 export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthResult {
+  // The caller can provide duplicate IDs from overlapping node sources; fetch and publish each logical project once.
+  const projectIdsKey = projectIds.join("\u0000");
+  const uniqueProjectIds = useMemo(() => [...new Set(projectIds)], [projectIdsKey]);
   const [healthMap, setHealthMap] = useState<Record<string, ProjectHealth | null>>({});
-  const [loading, setLoading] = useState(true); // Start true for initial load
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const requestVersionRef = useRef(0);
   const healthMapRef = useRef(healthMap);
   const visibilitySuspension = useTabVisibilitySuspension();
-  // Track if we've completed the initial load
   const initialLoadCompleteRef = useRef(false);
 
   useEffect(() => {
@@ -49,44 +52,31 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
     return Object.keys(healthMapRef.current).length > 0 && isVisibilityResumeError(errorMessage, visibilitySuspension.wasRecentlyHidden());
   }, [visibilitySuspension]);
 
-  /**
-   * Refresh health data for all projects.
-   * This is called both for initial load and for background polling.
-   * Background polling does NOT set loading=true to avoid UI flicker.
-   */
   const refresh = useCallback(async () => {
-    // Handle empty projectIds - clear health state and complete initial load
-    if (projectIds.length === 0) {
+    if (uniqueProjectIds.length === 0) {
+      abortRef.current?.abort();
+      requestVersionRef.current += 1;
       setHealthMap({});
-      // Mark initial load complete (there's nothing to fetch)
-      if (!initialLoadCompleteRef.current) {
-        initialLoadCompleteRef.current = true;
-      }
+      initialLoadCompleteRef.current = true;
       setLoading(false);
+      setError(null);
       return;
     }
 
-    // Cancel any in-flight requests
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
-    abortRef.current = new AbortController();
-
-    // Determine if this is the initial load
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestVersion = ++requestVersionRef.current;
     const isInitial = !initialLoadCompleteRef.current;
+
     if (isInitial) {
       setLoading(true);
     }
     setError(null);
 
     try {
-      // Fetch health in batches
-      const newHealthMap: Record<string, ProjectHealth | null> = {};
-
-      for (let i = 0; i < projectIds.length; i += BATCH_SIZE) {
-        const batch = projectIds.slice(i, i + BATCH_SIZE);
-
-        // Fetch this batch concurrently
+      for (let index = 0; index < uniqueProjectIds.length; index += BATCH_SIZE) {
+        const batch = uniqueProjectIds.slice(index, index + BATCH_SIZE);
         const batchResults = await Promise.allSettled(
           batch.map(async (id) => {
             try {
@@ -94,43 +84,55 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
             } catch {
               return null;
             }
-          })
+          }),
         );
 
-        batch.forEach((id, index) => {
-          const result = batchResults[index];
-          newHealthMap[id] = result.status === "fulfilled" ? result.value : null;
-        });
-
-        // Check for cancellation between batches
-        if (abortRef.current?.signal.aborted) {
+        if (controller.signal.aborted || requestVersion !== requestVersionRef.current) {
           return;
         }
+
+        const completedBatch = Object.fromEntries(batch.map((id, batchIndex) => {
+          const result = batchResults[batchIndex];
+          return [id, result.status === "fulfilled" ? result.value : null];
+        }));
+
+        /*
+        FNXC:ProjectHealthProgress 2026-08-01-15:40:
+        Health metrics are independent, optional telemetry. Publish each completed bounded batch immediately
+        so ProjectOverview hydrates visible cards and aggregate values progressively; a slower later batch must
+        not hold completed project data behind the initial-load gate.
+        */
+        setHealthMap((previous) => ({ ...previous, ...completedBatch }));
       }
 
-      setHealthMap(newHealthMap);
-      initialLoadCompleteRef.current = true;
+      if (requestVersion === requestVersionRef.current && !controller.signal.aborted) {
+        initialLoadCompleteRef.current = true;
+      }
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        // Ignore abort errors
+      if (controller.signal.aborted || requestVersion !== requestVersionRef.current || (err instanceof Error && err.name === "AbortError")) {
         return;
       }
+
       const errorMessage = err instanceof Error ? err.message : "Failed to fetch health data";
       if (!shouldSuppressVisibilityResumeError(errorMessage)) {
         setError(errorMessage);
       }
-      // Mark initial load complete even on error so we don't stay in loading state
       initialLoadCompleteRef.current = true;
     } finally {
-      setLoading(false);
+      if (requestVersion === requestVersionRef.current && !controller.signal.aborted) {
+        setLoading(false);
+      }
     }
-  }, [projectIds, shouldSuppressVisibilityResumeError]);
+  }, [shouldSuppressVisibilityResumeError, uniqueProjectIds]);
 
   const refreshProject = useCallback(async (projectId: string) => {
+    const requestVersion = requestVersionRef.current;
     try {
       const health = await fetchProjectHealth(projectId);
-      setHealthMap((prev) => ({
-        ...prev,
+      if (requestVersion !== requestVersionRef.current) return;
+
+      setHealthMap((previous) => ({
+        ...previous,
         [projectId]: health,
       }));
     } catch (err) {
@@ -138,17 +140,13 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
     }
   }, []);
 
-  // Initial fetch and when project IDs change
   useEffect(() => {
-    // Reset initial load state when projectIds changes
     initialLoadCompleteRef.current = false;
-
+    setHealthMap({});
     void refresh();
 
     return () => {
-      if (abortRef.current) {
-        abortRef.current.abort();
-      }
+      abortRef.current?.abort();
     };
   }, [refresh]);
 
@@ -158,7 +156,7 @@ export function useProjectHealth(projectIds: string[]): UseMultiProjectHealthRes
   page from ever going idle, which is what makes mobile browsers reclaim the tab and force a cold reload on
   return; one refresh fires on the hidden -> visible edge so health badges are not stale when seen.
   */
-  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: projectIds.length > 0 });
+  useVisibilityAwarePoll(refresh, POLL_INTERVAL_MS, { enabled: uniqueProjectIds.length > 0 });
 
   return {
     healthMap,

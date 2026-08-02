@@ -448,6 +448,10 @@ export interface MissionFeature {
   /** Timestamp and authority that recorded the terminal stop. */
   implementationStoppedAt?: string;
   implementationStopOrigin?: string;
+  /** FN-8694 provenance for a content-addressed validation failure budget block. */
+  validationBudgetFingerprint?: string;
+  validationBudgetRunId?: string;
+  validationBudgetBlockedAt?: string;
   /** ID of the last validator run for this feature */
   lastValidatorRunId?: string;
   /** Status of the last validator run (passed, failed, blocked, error) */
@@ -459,6 +463,19 @@ export interface MissionFeature {
 }
 
 // ── Validator Run & Loop Types ──────────────────────────────────────
+
+/** Atomic admission result for an automatic content-addressed validator dispatch. */
+export type ValidatorRunAdmissionOutcome = "start" | "running" | "reuse-pass" | "budget-exhausted";
+export interface ValidatorRunAdmission {
+  outcome: ValidatorRunAdmissionOutcome;
+  run?: MissionValidatorRun;
+}
+export interface ValidatorRunAdmissionInput {
+  inputFingerprint: string;
+  taskId?: string;
+  reusePass: boolean;
+  failureBudget: number;
+}
 
 /**
  * A validator run represents a single execution of the validation phase
@@ -477,6 +494,8 @@ export interface MissionValidatorRun {
   status: ValidatorRunStatus;
   /** What triggered this run (e.g., "task_completion", "manual", "scheduled") */
   triggerType?: string;
+  /** SHA-256 fingerprint of the canonical validator input, when eligible. */
+  inputFingerprint?: string;
   /** Which implementation attempt this run corresponds to */
   implementationAttempt: number;
   /** Which validation attempt this run corresponds to */

@@ -1458,6 +1458,22 @@ describe("TerminalModal", () => {
       fireEvent.click(screen.getAllByRole("tab")[1]);
       expect(setActiveTab).toHaveBeenCalledWith("tab-2");
       expect(panel.setPointerCapture).toHaveBeenCalledTimes(1);
+
+      /*
+      FNXC:TerminalModalControls 2026-08-01-03:48:
+      Empty strip space behind the tabs is a drag surface: a press that starts on the
+      `.terminal-tabs` container itself (not inside a `.terminal-tab`) must bubble to the
+      FloatingWindow `.terminal-header` delegated drag handle and move the window.
+      */
+      const tabStrip = screen.getByTestId("terminal-tabs");
+      const preDragLeft = panel.style.left;
+      fireEvent.pointerDown(tabStrip, { pointerId: 65, pointerType: "touch", clientX: 300, clientY: 40 });
+      fireEvent.pointerMove(panel, { pointerId: 65, pointerType: "touch", clientX: 380, clientY: 90 });
+      fireEvent.pointerUp(panel, { pointerId: 65, pointerType: "touch", clientX: 380, clientY: 90 });
+      await waitFor(() => {
+        expect(panel.setPointerCapture).toHaveBeenCalledTimes(2);
+        expect(panel.style.left).not.toBe(preDragLeft);
+      });
       unmount();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
@@ -1467,24 +1483,31 @@ describe("TerminalModal", () => {
     }
   });
 
-  it("keeps the tablet drag grip isolated from the horizontally pannable tab strip", () => {
+  /*
+  FNXC:TerminalModalControls 2026-08-01-03:48:
+  Supersedes the FN-8633 grip-isolation contract: the operator wants the floating terminal
+  draggable from the empty strip space behind the tabs and anywhere in the top toolbar. The
+  tablet floating header AND tab strip hand the whole touch gesture to FloatingWindow's pointer
+  drag (`touch-action: none`); native strip panning is moot because an overflowing strip is
+  replaced by the mobile-tabs dropdown. The grip remains as the visible movability affordance.
+  */
+  it("makes the whole tablet floating header a touch drag surface while keeping the grip affordance", () => {
     const gripSelector = ".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip";
-    const tabsSelector = ".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-tabs";
     const gripSelectorIndex = terminalModalCss.indexOf(gripSelector);
     const gripRuleEnd = terminalModalCss.indexOf("}", gripSelectorIndex);
     const gripRule = terminalModalCss.slice(gripSelectorIndex, gripRuleEnd);
-    const tabsSelectorIndex = terminalModalCss.indexOf(tabsSelector);
-    const tabsRuleEnd = terminalModalCss.indexOf("}", tabsSelectorIndex);
-    const tabsRule = terminalModalCss.slice(tabsSelectorIndex, tabsRuleEnd);
+    const headerTouchSelector = ".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header,\n.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-tabs";
+    const headerTouchIndex = terminalModalCss.indexOf(headerTouchSelector);
+    const headerTouchRule = terminalModalCss.slice(headerTouchIndex, terminalModalCss.indexOf("}", headerTouchIndex));
 
     expect(gripSelectorIndex).toBeGreaterThan(-1);
     expect(gripRule).toContain("min-block-size: var(--modal-resize-touch-target);");
     expect(gripRule).toContain("min-inline-size: var(--modal-resize-touch-target);");
     expect(gripRule).toContain("touch-action: none;");
-    expect(tabsSelectorIndex).toBeGreaterThan(-1);
-    expect(tabsRule).toContain("touch-action: pan-x;");
-    expect(terminalModalCss).not.toContain(".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating {\n  touch-action: none;");
-    expect(terminalModalCss).not.toContain(".modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header {\n  touch-action: none;");
+    expect(headerTouchIndex).toBeGreaterThan(-1);
+    expect(headerTouchRule).toContain("touch-action: none;");
+    // Grab affordance on the floating header/strip; real tabs keep the base pointer cursor.
+    expect(terminalModalCss).toContain(".modal.terminal-modal.terminal-modal--floating .terminal-header,\n.modal.terminal-modal.terminal-modal--floating .terminal-tabs {\n  cursor: grab;");
     expect(terminalModalCss.slice(0, gripSelectorIndex)).not.toContain("@media (min-width: 769px)");
     expect(loadAllAppCss()).toContain(gripSelector);
   });

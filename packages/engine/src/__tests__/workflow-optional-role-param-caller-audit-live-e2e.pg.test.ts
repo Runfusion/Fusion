@@ -153,16 +153,14 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
         self-healing.ts:13184     await resolveProjectColumnsForRoles  (:13170)     async-resolved
         self-healing.ts:13294     await resolveProjectColumnsForRoles  (:13293)     async-resolved
         task-agent-sync.ts:243    await resolveLinkSyncColumnRoles     (:225)       async-resolved
-        scheduler.ts:1798         resolveTaskParkedColumnsSync         (:1797)      SYNC — INERT
+        scheduler.ts:1761         await resolveTaskParkedColumns       (:1760)      async-resolved
 
-    Three of the four resolve through an awaited resolver that reads the task's real selection. One
-    does not. `scheduler.ts:1798` resolves through
-    `resolveTaskParkedColumnsSync`, which reaches `getTaskWorkflowSelectionImpl` — `undefined` for
-    every task under PostgreSQL — so the resolver takes its `!workflowId` branch and returns the
-    DEFAULT builtin IR. It does not get `undefined` and fall through to a legacy arm; it gets a REAL
-    IR resolving REAL traits, the default board's, with full confidence. That site answers
-    `hold`/`intake` as `todo`/`triage` on every board, exactly as the literal did. Driven proof:
-    `workflow-scheduler-sync-role-conversion-inert-live-e2e.pg.test.ts`.
+    All four now resolve through an awaited resolver that reads the task's real selection. FN-8656
+    ("resolve scheduler lanes for renamed holds") repointed the last site, `scheduler.ts`'s
+    `rollbackParked`, from the inert `resolveTaskParkedColumnsSync` (which reached
+    `getTaskWorkflowSelectionImpl` — `undefined` under PostgreSQL — and returned the DEFAULT builtin
+    IR, answering `hold`/`intake` as `todo`/`triage` on every board exactly as the literal did) at the
+    awaited `resolveTaskParkedColumns`. The seam is closed at 4-of-4 async, 0 sync.
 
     A SECOND kind of inertness sits at `self-healing.ts:13184` and is deliberately NOT asserted below:
     that sweep's gate is `hasFreshRun || hasActiveExecution`, which never reads
@@ -176,10 +174,8 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     conversion class — and it would have been recorded by the very audit written to catch it, which is
     why the split below asserts the RESOLUTION PATH and not just the presence of the key.
 
-    The sync-resolved site is asserted BY NAME. It is a real defect, not a deferral, but converting
-    `scheduler.ts` is not this file's job and guessing at a fix in a file another worker owns would be
-    worse than naming it. If someone repoints it at the async resolver this case fails, and the fix is
-    to move that entry from the inert list to the live one.
+    The scheduler site is asserted BY NAME below so it cannot quietly regress to a sync resolution.
+    FN-8656 converted it, so its entry moved from the inert list to the live one.
     */
     const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
 
@@ -222,24 +218,28 @@ pgDescribe("optional-role-parameter conversions, measured on a live store", () =
     const asyncResolved = parkedConverted.filter((s) => provenanceOf(sourceFor(s), s).includes("await"));
     const syncResolved = parkedConverted.filter((s) => !provenanceOf(sourceFor(s), s).includes("await"));
 
-    /* 3 resolve through an AWAITED resolver that reads the task's real selection
-       (self-healing.ts:13170 and :13293 via `resolveProjectColumnsForRoles`, task-agent-sync.ts:225
-       via `resolveLinkSyncColumnRoles`). 1 does not: scheduler.ts:1797. */
-    expect(asyncResolved.length).toBe(3);
-    expect(syncResolved.length).toBe(1);
+    /*
+    FNXC:InertSyncLaneConversions 2026-08-02-00:35:
+    FN-8656 ("resolve scheduler lanes for renamed holds") repointed the last sync-resolved site
+    (scheduler.ts's `rollbackParked`) from `resolveTaskParkedColumnsSync` at the awaited
+    `resolveTaskParkedColumns`, closing the seam. All 4 converted parked sites now resolve through an
+    AWAITED resolver that reads the task's real selection (self-healing.ts x2 via
+    `resolveProjectColumnsForRoles`, task-agent-sync.ts via `resolveLinkSyncColumnRoles`, scheduler.ts
+    via `resolveTaskParkedColumns`). Per this file's own contract the site moved from the inert list to
+    the live one: async=4, sync=0. `resolveTaskParkedColumnsSync` is no longer referenced in source.
+    */
+    expect(asyncResolved.length).toBe(4);
+    expect(syncResolved.length).toBe(0);
 
-    /* Named, so the sync-resolved site cannot quietly become "just one of the four". This is the
-       assertion that fails if someone converts it properly — at which point move it to the live list
-       above rather than deleting this. */
+    /* Named, so the scheduler site cannot quietly regress back to a sync resolution. It is asserted on
+       the PROVENANCE, not the call window — the resolver name is in the assignment
+       (`const rollbackParked = await resolveTaskParkedColumns(...)`), while the call itself only
+       mentions `rollbackParked`. If someone repoints it back at a sync helper this case fails loudly. */
     const schedulerSource = read("scheduler.ts");
     const schedulerParked = schedulerSource.split("evaluateParkedAgentTaskLink(").slice(1)
       .filter((s) => s.trimStart().startsWith("{"));
     expect(schedulerParked.length).toBe(1);
-    /* Asserted on the PROVENANCE, not the call window — the resolver name is in the assignment
-       (`const rollbackParked = resolveTaskParkedColumnsSync(...)`, scheduler.ts:1797), while the call
-       itself only mentions `rollbackParked`. Matching the window here is the same mistake the
-       resolution-path check above documents, and it fails loudly rather than silently passing. */
-    expect(provenanceOf(schedulerSource, schedulerParked[0]!)).toMatch(/resolveTaskParkedColumnsSync/);
+    expect(provenanceOf(schedulerSource, schedulerParked[0]!)).toMatch(/await\s+resolveTaskParkedColumns\b/);
 
     /* The lease seam's two SELF-HEALING sites. Its other two are in `scheduler.ts` and were converted
        from the start, so 2 converted here is the seam at 4-of-4.

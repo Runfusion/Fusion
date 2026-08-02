@@ -330,7 +330,22 @@ function classifyColumnProperty(node) {
       && ts.isIdentifier(property.name)
       && (property.name.text === "id" || property.name.text === "kind"),
   );
-  return hasDefinitionSibling ? "definition" : "query";
+  if (hasDefinitionSibling) return "definition";
+  /*
+  FNXC:LifecycleColumnCensus 2026-08-01-23:23:
+  A typed `{ column: "todo" } as Pick<Task, "column">` is a synthetic in-memory stand-in for a
+  missing task, not a query or mutation. Counting it as a query hid the distinction between an
+  executable workflow-lane filter and a legacy-seeded fallback with no workflow to resolve.
+
+  Keep this structural and narrow: an untyped object or a real task-create input remains a query so a
+  nearby assertion cannot launder executable lane debt.
+  */
+  const assertedType = ts.isAsExpression(object.parent) || ts.isTypeAssertionExpression(object.parent)
+    ? object.parent.type.getText()
+    : "";
+  return /\bPick\s*<\s*Task\s*,\s*["']column["']\s*>/.test(assertedType)
+    ? "synthetic"
+    : "query";
 }
 
 /** True for a `column: "<legacy id>"` property assignment. */
@@ -687,14 +702,14 @@ export function summarize(findings) {
   */
   const deliberateByFile = new Map();
 
-  const properties = { query: 0, definition: 0 };
+  const properties = { query: 0, definition: 0, synthetic: 0 };
   const queryByFile = new Map();
   const queryByColumnId = {};
   /* Read / write / other split of the query class — reported, never ratcheted. */
   const queryRoles = { read: 0, write: 0, other: 0 };
 
   for (const finding of findings) {
-    if (finding.kind === "query" || finding.kind === "definition") {
+    if (finding.kind === "query" || finding.kind === "definition" || finding.kind === "synthetic") {
       properties[finding.kind] += 1;
       if (finding.kind === "query") {
         queryByColumnId[finding.columnId] = (queryByColumnId[finding.columnId] ?? 0) + 1;

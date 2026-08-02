@@ -125,13 +125,12 @@ The size chip is a direct header child immediately after the task id, before thi
   min-height: var(--card-chip-height);
 }
 
+/*
+FNXC:TaskCardLayout 2026-08-01-05:38:
+The fast-mode badge must share the header line with status, priority, and oversight badges whenever space remains. Keep this nested semantic wrapper layout-transparent so its meta badges join `.card-header-badges` directly instead of wrapping as one atomic group.
+*/
 .card-meta-badges {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  row-gap: var(--space-xs);
-  min-width: 0;
+  display: contents;
 }
 
 /*
@@ -258,6 +257,17 @@ Lock the id to the same chip-height row as .card-header-actions so the task id, 
 
 .card-status-badge {
   letter-spacing: 0.5px;
+}
+
+.card-queued-reason-icon {
+  flex: 0 0 auto;
+  margin-inline-start: var(--space-xs);
+  margin-inline-end: calc(var(--space-xs) / -2);
+  transform: translateY(calc(var(--space-xs) / -8));
+}
+
+.card-status-badge--queued-with-reason {
+  padding-inline-end: var(--space-xs);
 }
 
 /*
@@ -547,16 +557,17 @@ FN-6774 removes the saturated stuck-task edge stripe from board cards. Keep the 
 }
 
 /*
-FNXC:TaskCardLayout 2026-07-26-08:29 (FN-8599):
-As a direct header child after .card-id, the size chip must stay in the first chip-height row. Whole-header centering misaligned it when the middle badge group wrapped, so lock its tokenized height and anchor it at the header start while the shared badge rule centers its text.
+FNXC:TaskCardLayout 2026-08-01-04:48 (FN-8665):
+The size chip must derive its box from the shared header-chip padding, line-height, and border so it renders at the same height as status and metadata chips. As a direct child after .card-id, keep it anchored to the header's first row when the middle badge group wraps.
+
+FNXC:TaskCardLayout 2026-08-01-06:46 (FN-8675):
+Every task-card header badge must share the first-row vertical centerline. The direct size chip keeps FN-8665's intrinsic badge geometry, so offset it downward by the token-derived space that centers status and metadata chips inside `.card-header-badges` rather than giving it a divergent fixed row height.
 */
 .card-size-badge {
   align-self: flex-start;
   flex-shrink: 0;
   box-sizing: border-box;
-  height: var(--card-chip-height);
-  min-height: var(--card-chip-height);
-  max-height: var(--card-chip-height);
+  transform: translateY(calc((var(--space-xs) * 3) / 4));
   letter-spacing: 0.5px;
 }
 
@@ -580,6 +591,7 @@ As a direct header child after .card-id, the size chip must stay in the first ch
 
 .card-priority-badge {
   /* FNXC:PriorityIconOnlyBadge 2026-07-12-00:00: FN-7867 removes visible priority text from board cards, so these shared spacing declarations no longer add card text width; keep them to preserve the Task Detail priority chip/select geometry that reuses the same badge class. */
+  flex-shrink: 0;
   gap: var(--space-xs);
   letter-spacing: 0.4px;
 }
@@ -607,6 +619,7 @@ Zap at the badge text size so it remains centered without making the header row 
 .card-execution-mode-badge {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   justify-content: center;
   box-sizing: border-box;
   font-size: 0.625rem;
@@ -1689,15 +1702,16 @@ The mobile/short-landscape 28px ⋯ touch target must not expand .card-header-ac
 */
 @media (max-width: 768px), (max-height: 480px) {
   /*
-  FNXC:TaskCardLayout 2026-07-26-08:29 (FN-8599):
-  Narrow and short-landscape cards use the mobile chip rhythm. Keep the size chip first-row anchored instead of centering it over wrapped header badges.
+  FNXC:TaskCardLayout 2026-08-01-04:48 (FN-8665):
+  Narrow and short-landscape cards keep the size chip first-row anchored while its shared mobile text-chip rule supplies the same intrinsic height as neighboring badges.
+
+  FNXC:TaskCardLayout 2026-08-01-06:46 (FN-8675):
+  Mobile and short-landscape header badges require the same centered first-row alignment as desktop. Preserve the direct size chip's compact intrinsic geometry and apply the token-derived row-center offset instead of changing its height.
   */
   .card-size-badge {
     align-self: flex-start;
     box-sizing: border-box;
-    height: var(--card-chip-height-mobile);
-    min-height: var(--card-chip-height-mobile);
-    max-height: var(--card-chip-height-mobile);
+    transform: translateY(calc((var(--space-xs) * 3) / 4));
   }
 
   .card-menu-btn {
@@ -2032,8 +2046,7 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
   }
 
 
-  .card-header-badges,
-  .card-meta-badges {
+  .card-header-badges {
     gap: calc(var(--space-xs) / 2);
     row-gap: var(--space-xs);
   }
@@ -2150,3 +2163,7 @@ The three-dot menu is the sole card move/action entry point. Keep this shared bu
 .card-field-badge--overflow {
   font-weight: 600;
 }
+
+/* FNXC:TaskRevert 2026-08-01-19:51: Reverted tasks require visible resolution controls, not hover-only menu actions. */
+.card-reverted-actions { display: inline-flex; gap: var(--space-1); }
+.reverted-tasks-section { display: grid; gap: var(--space-2); padding: var(--space-3); }

@@ -505,6 +505,7 @@ export interface WorkflowModelLanePair {
   providerId: string;
   modelId: string;
   thinkingId?: string;
+  credentialInstanceId?: string;
   label: string;
   help: string;
 }
@@ -525,6 +526,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "planningProvider",
     modelId: "planningModelId",
     thinkingId: "planningThinkingLevel",
+    credentialInstanceId: "planningCredentialInstanceId",
     label: "Plan/Triage Model",
     help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the default lane.",
   },
@@ -533,6 +535,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "planningFallbackProvider",
     modelId: "planningFallbackModelId",
     thinkingId: "planningFallbackThinkingLevel",
+    credentialInstanceId: "planningFallbackCredentialInstanceId",
     label: "Planning Fallback Model",
     help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
   },
@@ -541,6 +544,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "executionProvider",
     modelId: "executionModelId",
     thinkingId: "executionThinkingLevel",
+    credentialInstanceId: "executionCredentialInstanceId",
     label: "Executor Model",
     help: "Provider and model used by task implementation agents. Leave unset to inherit from the default lane.",
   },
@@ -549,6 +553,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "executionFallbackProvider",
     modelId: "executionFallbackModelId",
     thinkingId: "executionFallbackThinkingLevel",
+    credentialInstanceId: "executionFallbackCredentialInstanceId",
     label: "Executor Fallback Model",
     help: "Fallback provider and model used when the primary Executor model cannot be used.",
   },
@@ -557,6 +562,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "validatorProvider",
     modelId: "validatorModelId",
     thinkingId: "validatorThinkingLevel",
+    credentialInstanceId: "validatorCredentialInstanceId",
     label: "Reviewer Model",
     help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
   },
@@ -565,6 +571,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     providerId: "validatorFallbackProvider",
     modelId: "validatorFallbackModelId",
     thinkingId: "validatorFallbackThinkingLevel",
+    credentialInstanceId: "validatorFallbackCredentialInstanceId",
     label: "Reviewer Fallback Model",
     help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
   },
@@ -619,7 +626,12 @@ function ValuesTab({
     [settingsById],
   );
   const modelPairSettingIds = useMemo(
-    () => new Set(modelLanePairs.flatMap((pair) => [pair.providerId, pair.modelId, ...(pair.thinkingId ? [pair.thinkingId] : [])])),
+    () => new Set(modelLanePairs.flatMap((pair) => [
+      pair.providerId,
+      pair.modelId,
+      ...(pair.thinkingId ? [pair.thinkingId] : []),
+      ...(pair.credentialInstanceId ? [pair.credentialInstanceId] : []),
+    ])),
     [modelLanePairs],
   );
 
@@ -727,6 +739,8 @@ function ValuesTab({
       ...prev,
       [pair.providerId]: split?.provider ?? null,
       [pair.modelId]: split?.modelId ?? null,
+      // FNXC:ModelDropdown 2026-08-01-10:45: Persisted workflow lane selections clear any instance from the prior provider/model pair.
+      ...(pair.credentialInstanceId ? { [pair.credentialInstanceId]: null } : {}),
     }));
     setRejections((prev) => {
       if (!prev[pair.providerId] && !prev[pair.modelId]) return prev;
@@ -737,6 +751,12 @@ function ValuesTab({
     });
   };
 
+  const setModelPairCredentialInstanceValue = (pair: WorkflowModelLanePair, value: string) => {
+    if (!pair.credentialInstanceId) return;
+    // Default clears the stored override; workflow setting writes use null-as-delete.
+    setValue(pair.credentialInstanceId, value || null);
+  };
+
   const setModelPairThinkingValue = (pair: WorkflowModelLanePair, value: string) => {
     if (!pair.thinkingId) return;
     setValue(pair.thinkingId, value || null);
@@ -745,6 +765,7 @@ function ValuesTab({
   const clearModelPairValue = (pair: WorkflowModelLanePair) => {
     setModelPairValue(pair, "");
     setModelPairThinkingValue(pair, "");
+    setModelPairCredentialInstanceValue(pair, "");
   };
 
   const dirty = Object.keys(pending).length > 0;
@@ -807,8 +828,17 @@ function ValuesTab({
     const thinkingValue = pair.thinkingId && typeof valueOfSettingId(pair.thinkingId) === "string"
       ? (valueOfSettingId(pair.thinkingId) as string)
       : "";
-    const error = rejections[pair.providerId]?.message ?? rejections[pair.modelId]?.message ?? (pair.thinkingId ? rejections[pair.thinkingId]?.message : undefined);
-    const customized = isCustomizedId(pair.providerId) || isCustomizedId(pair.modelId) || Boolean(pair.thinkingId && isCustomizedId(pair.thinkingId));
+    const credentialInstanceId = pair.credentialInstanceId && typeof valueOfSettingId(pair.credentialInstanceId) === "string"
+      ? (valueOfSettingId(pair.credentialInstanceId) as string)
+      : "";
+    const error = rejections[pair.providerId]?.message
+      ?? rejections[pair.modelId]?.message
+      ?? (pair.thinkingId ? rejections[pair.thinkingId]?.message : undefined)
+      ?? (pair.credentialInstanceId ? rejections[pair.credentialInstanceId]?.message : undefined);
+    const customized = isCustomizedId(pair.providerId)
+      || isCustomizedId(pair.modelId)
+      || Boolean(pair.thinkingId && isCustomizedId(pair.thinkingId))
+      || Boolean(pair.credentialInstanceId && isCustomizedId(pair.credentialInstanceId));
     const dropdownDisabled = modelsLoading || availableModels.length === 0;
     const emptyHelp =
       !modelsLoading && availableModels.length === 0
@@ -833,6 +863,8 @@ function ValuesTab({
             models={availableModels}
             value={value}
             onChange={(next) => setModelPairValue(pair, next)}
+            credentialInstanceId={credentialInstanceId}
+            onCredentialInstanceChange={(value) => setModelPairCredentialInstanceValue(pair, value)}
             placeholder={t("workflowSettings.selectModel", "Select a model…")}
             defaultOptionLabel={t("workflowSettings.useInheritedModel", "Use inherited/default model")}
             disabled={dropdownDisabled}

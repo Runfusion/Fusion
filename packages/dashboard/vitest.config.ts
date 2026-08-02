@@ -345,13 +345,13 @@ required responsive acceptance lane, so the test must not remain excluded from d
 */
 const quarantinedDashboardTests: string[] = [
   /*
-  FNXC:DashboardTestQuarantine 2026-07-30-12:30:
-  Wall-clock off-by-one-millisecond: the freshness clock case asserts exact epoch equality against a
-  value derived from a second real-clock read. 1 failure in 3 identical runs, with the change under
-  test (PR #2731) living in a different hook and provably unrelated — stashing it did not stop the
-  variance. Quarantined on sight rather than appeased; the fix is fake timers, not a tolerance.
+  FNXC:DashboardTestQuarantine 2026-08-01-05:17:
+  FN-8647 observed the real Pi ModelRuntime Kimi K3 catalog test timing out in 2/6
+  loaded CI samples. Quarantine it with the ledger row rather than widen its 15s
+  budget; the reusable beforeAll seam is landed, while FN-8669 owns the budget
+  decision and CI re-measurement before the deletion deadline.
   */
-  "app/hooks/__tests__/useTasks-hydration-freshness.test.ts",
+  "src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
   /*
   FNXC:DashboardTestQuarantine 2026-07-17-16:50:
   FN-8245 re-admits all three UI files with their ledger rows removed in lockstep.

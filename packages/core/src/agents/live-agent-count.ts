@@ -171,6 +171,8 @@ function terminalKind(task: RunningAgentTaskShape): ColumnTerminalKind {
  * Active review/merge statuses count only in review/merge columns.
  * A live `pending` workflow-step lease (e.g. an in-flight Code Review gate)
  * counts in any non-terminal column, since gate sessions run with null status.
+ * A parked `failed` row never counts, even in WIP — failed WIP is operator-
+ * visible debris, not a live agent (must not consume maxWorktrees/maxConcurrent).
  */
 /*
 FNXC:ConcurrencyIndicators 2026-07-30-03:40 DELIBERATE-LITERAL: the no-enrichment fallback only.
@@ -180,6 +182,15 @@ guess, and a wrong guess under-reports the queued total. Fix at the CALLER by pa
 */
 export function isRunningAgentTask(task: RunningAgentTaskShape): boolean {
   if (task.paused || task.userPaused || terminalKind(task) !== "none") return false;
+  /*
+  FNXC:ConcurrencyIndicators 2026-08-01-19:22:
+  Failed WIP parks (honest-blocked, graph parse failure, exhausted recovery) remain in the
+  WIP column until an operator or rebound moves them, but they are not live agents. Counting
+  them filled maxWorktrees/maxConcurrent and blocked ready work (e.g. FN-8704 sitting
+  in-progress/failed while todos waited on capacity). Match review-lane semantics, which
+  already exclude status:"failed" from active merge holders.
+  */
+  if (task.status === "failed") return false;
   if (task.status === "planning") return true;
   // Review statuses are not globally live: a stale status in intake/WIP must not consume capacity.
   if (ACTIVE_IN_REVIEW_AGENT_STATUSES.has(String(task.status ?? ""))) {

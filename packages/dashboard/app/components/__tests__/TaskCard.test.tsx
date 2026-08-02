@@ -26,12 +26,12 @@ import { getPriorityColorVar, getPriorityLabel } from "../../utils/priorityIndic
 
 // Mock lucide-react to avoid SVG rendering issues in test env
 vi.mock("lucide-react", () => ({
-  Link: () => null,
+  Link: (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />,
   GitBranch: () => null,
   Gitlab: () => null,
   Clock: () => null,
   Pencil: () => null,
-  Layers: () => null,
+  Layers: (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />,
   ChevronDown: () => null,
   Folder: () => null,
   GitPullRequest: () => null,
@@ -1095,6 +1095,69 @@ describe("TaskCard", () => {
       expect(onUnpauseTask).toHaveBeenCalledWith("FN-001");
       expect(onUnpauseTask).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  it("isolates mobile menu actions from card detail while intentional card taps still open it", async () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onOpenDetail = vi.fn();
+    const onUnpauseTask = vi.fn(async () => makeTask());
+    const onPauseTask = vi.fn(async () => makeTask({ paused: true }));
+    try {
+      const { rerender } = render(
+        <TaskCard
+          task={makeTask({ paused: true, userPaused: true })}
+          onOpenDetail={onOpenDetail}
+          addToast={noop}
+          onUnpauseTask={onUnpauseTask}
+          onPauseTask={onPauseTask}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      const unpause = screen.getByRole("menuitem", { name: "Unpause" });
+      fireEvent.pointerDown(unpause, { pointerType: "touch", pointerId: 1 });
+      fireEvent.touchStart(unpause, { touches: [{ clientX: 20, clientY: 20 }] });
+      fireEvent.pointerUp(unpause, { pointerType: "touch", pointerId: 1 });
+      await waitFor(() => expect(onUnpauseTask).toHaveBeenCalledWith("FN-001"));
+      expect(onUnpauseTask).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(onOpenDetail).not.toHaveBeenCalled();
+
+      rerender(
+        <TaskCard
+          task={makeTask({ paused: false, userPaused: false })}
+          onOpenDetail={onOpenDetail}
+          addToast={noop}
+          onUnpauseTask={onUnpauseTask}
+          onPauseTask={onPauseTask}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("card-menu-btn-FN-001"));
+      await waitFor(() => expectBoardContextMenuPortaled());
+      const pause = screen.getByRole("menuitem", { name: "Pause" });
+      fireEvent.pointerDown(pause, { pointerType: "touch", pointerId: 2 });
+      fireEvent.touchStart(pause, { touches: [{ clientX: 20, clientY: 20 }] });
+      fireEvent.pointerUp(pause, { pointerType: "touch", pointerId: 2 });
+      await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-001"));
+      expect(onPauseTask).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(onOpenDetail).not.toHaveBeenCalled();
+
+      const card = document.querySelector(".card") as HTMLElement;
+      fireEvent.touchStart(card, {
+        touches: [{ clientX: 20, clientY: 20 }],
+        changedTouches: [{ clientX: 20, clientY: 20 }],
+      });
+      fireEvent.touchEnd(card, {
+        touches: [],
+        changedTouches: [{ clientX: 20, clientY: 20 }],
+      });
+      expect(onOpenDetail).toHaveBeenCalledTimes(1);
     } finally {
       cleanupGeometry();
     }
@@ -2409,7 +2472,9 @@ describe("TaskCard", () => {
     expect(screen.getByText("executing")).toBeDefined();
   });
 
-  it("FN-8493 renders Revising, not Replan, for a bare needs-replan Board card", () => {
+  it("FN-8493 renders the idle Queued to revise label, not Replan, for a bare needs-replan Board card", () => {
+    // FNXC:TaskActivity 2026-08-01-17:53: needs-replan holds no concurrency slot, so the card is
+    // idle — it renders the descriptive waiting label instead of the live "Revising" copy.
     render(
       <TaskCard
         task={makeTask({ column: "triage", status: "needs-replan" })}
@@ -2418,7 +2483,7 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("Revising")).toHaveClass("card-status-badge");
+    expect(screen.getByText("Queued to revise")).toHaveClass("card-status-badge");
     expect(screen.queryByText("Replan")).not.toBeInTheDocument();
   });
 
@@ -2909,7 +2974,9 @@ describe("TaskCard", () => {
     expect(headerBadges.contains(badge)).toBe(true);
   });
 
-  it("renders an active Planning badge when a status-null triage card has fresh planner activity", () => {
+  it("does not glow a status-null triage card on fresh planner logs alone", () => {
+    // FNXC:TaskActivity 2026-08-01-17:53: a log line is not a concurrency slot; the pulsing
+    // Planning badge requires the authoritative planning status the engine counts.
     const recentAgentActivityAt = new Date().toISOString();
     const { container } = render(
       <TaskCard
@@ -2919,8 +2986,8 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(container.querySelector(".card")).toHaveClass("agent-active");
-    expect(screen.getByLabelText("Planning")).toHaveClass("card-status-badge", "pulsing");
+    expect(container.querySelector(".card")).not.toHaveClass("agent-active");
+    expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
   it("does not render a status badge when a status-null triage card has no fresh planner activity", () => {
@@ -2931,7 +2998,9 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
-  it("keeps board replan cards glowing and their status badge pulsing", () => {
+  it("does not glow board replan cards — a parked replan holds no concurrency slot", () => {
+    // FNXC:TaskActivity 2026-08-01-17:53: FN-8494's replan chrome is removed so lane counts
+    // and glow can never exceed the live-agent population; the badge stays, statically.
     const { container } = render(
       <TaskCard
         task={makeTask({ id: "FN-8494-board", column: "triage", status: "needs-replan" })}
@@ -2940,8 +3009,9 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(container.querySelector(".card")).toHaveClass("agent-active");
-    expect(screen.getByText("Revising")).toHaveClass("card-status-badge", "pulsing");
+    expect(container.querySelector(".card")).not.toHaveClass("agent-active");
+    expect(screen.getByText("Queued to revise")).toHaveClass("card-status-badge");
+    expect(screen.getByText("Queued to revise")).not.toHaveClass("pulsing");
   });
 
   it.each([
@@ -3873,11 +3943,11 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-footer-row-right")).toBeNull();
   });
 
-  it("defines responsive flex-wrap styling for grouped card meta badges", () => {
+  it("keeps grouped card meta badges layout-transparent in the shared header wrap context", () => {
     const fullCss = loadAllAppCss();
 
-    expect(fullCss).toMatch(/\.card-meta-badges\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*gap:\s*var\(--space-xs\);[^}]*\}/);
-    expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-meta-badges\s*\{[^}]*gap:\s*calc\(var\(--space-xs\) \/ 2\);[^}]*\}/);
+    expect(fullCss).toMatch(/\.card-meta-badges\s*\{[^}]*display:\s*contents;[^}]*\}/);
+    expect(fullCss).toMatch(/@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.card-header-badges\s*\{[^}]*gap:\s*calc\(var\(--space-xs\) \/ 2\);[^}]*\}/);
   });
 
   describe("retry button on failed tasks", () => {
@@ -4847,12 +4917,12 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("provider-icon-github")).toBeDefined();
   });
 
-  it("renders the GitHub tracking link inline with queued metadata when the footer has no leading content", () => {
+  it("renders queued as a header status badge and leaves no clock tag at the bottom", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
           column: "todo",
-          status: "queued",
+          status: null,
           sourceType: "dashboard_ui",
           githubTracking: {
             issue: {
@@ -4864,20 +4934,42 @@ describe("TaskCard", () => {
             },
           },
         })}
+        queued
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
 
     const link = screen.getByRole("link", { name: "Linked GitHub issue #42" });
-    const metaRow = container.querySelector(".card-meta");
-    const queuedBadge = container.querySelector(".queued-badge");
-    expect(container.querySelector(".card-footer-row")).toBeNull();
-    expect(link.closest(".card-meta")).toBe(metaRow);
-    expect(link.closest(".card-footer-row-right")?.closest(".card-meta")).toBe(metaRow);
-    expect(container.querySelector(".card-bottom-right-row")).toBeNull();
-    expect(queuedBadge).not.toBeNull();
-    expect(queuedBadge?.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const queuedBadge = screen.getByText("Queued");
+    expect(link.closest(".card-footer-row")).not.toBeNull();
+    expect(queuedBadge).toHaveClass("card-status-badge", "card-status-badge--todo");
+    expect(queuedBadge.closest(".card-header-badges")).not.toBeNull();
+    expect(container.querySelector(".queued-badge")).toBeNull();
+    expect(queuedBadge.querySelector("svg")).toBeNull();
+    expect(link.closest(".card-meta")).toBeNull();
+  });
+
+  it.each([
+    ["file overlap", { overlapBlockedBy: "FN-OVERLAP" }, "card-queued-overlap-icon", "card-queued-dependency-icon", "Queued due to file overlap with FN-OVERLAP"],
+    ["dependency", { blockedBy: "FN-DEPENDENCY" }, "card-queued-dependency-icon", "card-queued-overlap-icon", "Queued on dependency FN-DEPENDENCY"],
+    ["file overlap when both blockers are present", { overlapBlockedBy: "FN-OVERLAP", blockedBy: "FN-DEPENDENCY" }, "card-queued-overlap-icon", "card-queued-dependency-icon", "Queued due to file overlap with FN-OVERLAP"],
+  ] as const)("shows the %s icon after Queued without putting the blocker id in the badge", (_case, blocker, expectedIcon, absentIcon, title) => {
+    const queuedTask = makeTask({ column: "todo", status: "queued", ...blocker });
+    const { container } = render(
+      <TaskCard task={queuedTask} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    const badge = screen.getByText("Queued").closest(".card-status-badge") as HTMLElement;
+    expect(badge).toHaveTextContent(/^Queued$/);
+    expect(badge).toHaveClass("card-status-badge--queued-with-reason");
+    const icon = badge.querySelector(`[data-testid="${expectedIcon}-${queuedTask.id}"]`);
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveClass("card-queued-reason-icon");
+    expect(icon).toHaveAttribute("size", "7");
+    expect(badge.querySelector(`[data-testid="${absentIcon}-${queuedTask.id}"]`)).toBeNull();
+    expect(badge).toHaveAttribute("title", title);
+    expect(container.querySelector(".queued-badge")).toBeNull();
   });
 
 

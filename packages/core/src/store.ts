@@ -1,11 +1,13 @@
 import { EventEmitter } from "node:events";
 import type { TaskMoveLanes } from "./workflows/workflow-lifecycle-traits.js";
+import { TaskLaneCache } from "./task-lane-cache.js";
 import { randomUUID } from "node:crypto";
+import { WEDGE_RENOTIFY_COOLDOWN_MS } from "./types/task/task-core.js";
 import { join } from "node:path";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import * as schema from "./postgres/schema/index.js";
 import { type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResult, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, CommitAssociationDiffBackfillReport, GithubIssueAction, TaskDeleteClosureContext, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrThreadState, PrThreadOutcome, PluginActivation, PluginActivationInput } from "./types.js";
 
 export type OverlapBlockerRepairReason =
   | "task-not-found"
@@ -36,13 +38,6 @@ export interface RepairOverlapBlockerResult {
 }
 
 /** @internal Extracted modules use this compatibility flag */
-export function isWorkflowColumnsCompatibilityFlagEnabled(settings: Pick<Settings, "experimentalFeatures"> | undefined): boolean {
-  /*
-  FNXC:WorkflowColumns 2026-06-22-00:00:
-  TaskStore still needs the raw compatibility flag for legacy movement characterization, v1 workflow-IR rollback persistence, and ON→OFF custom-column evacuation tests. This is narrower than the public runtime helper, which treats stale false values as enabled after workflow-column cutover.
-  */
-  return settings?.experimentalFeatures?.workflowColumns === true;
-}
 import { type PluginGateVerdict } from "./plugins/plugin-gate-verdict.js";
 import type { PluginOnSchemaInit, PluginPostgresSchemaDefinition } from "./plugins/plugin-types.js";
 import { assertLoadedPluginSchemaInitHooksSupported, type LoadedPluginSchemaContract } from "./postgres/plugin-schema-hook.js";
@@ -124,7 +119,8 @@ import { clearWorkflowRunBranchesImpl, projectMergeRequestToWorkflowWorkItemImpl
 import { flushAgentLogBufferImpl, appendAgentLogBatchImpl } from "./task-store/agent-logs.js";
 import { refineTaskImpl, updateTaskDependenciesImpl } from "./task-store/update-task-deps.js";
 import { createWorkflowStepImpl, updateWorkflowStepImpl, updateWorkflowDefinitionImpl, deleteWorkflowDefinitionImpl, setDefaultWorkflowIdImpl, selectTaskWorkflowImpl } from "./task-store/workflow-ops.js";
-import { initImpl, setupActivityLogListenersImpl, reconcileOrphanedTaskDirsImpl, watchImpl, checkForChangesImpl, migrateAgentLogEntriesImpl, migrateMovedSettingsImpl, recoverStaleTransitionPendingImpl, migrateLegacyWorkflowStepsImpl, emitTaskLifecycleEventSafelyImpl } from "./task-store/lifecycle-ops.js";
+import { initImpl, setupActivityLogListenersImpl, reconcileOrphanedTaskDirsImpl, watchImpl, migrateAgentLogEntriesImpl, migrateMovedSettingsImpl, recoverStaleTransitionPendingImpl, migrateLegacyWorkflowStepsImpl, emitTaskLifecycleEventSafelyImpl } from "./task-store/lifecycle-ops.js";
+import { TaskDeletedOutboxConsumer } from "./task-store/task-deleted-outbox-consumer.js";
 import { updateStepImpl, startStepImpl, acquireMergeQueueLeaseImpl, mergeTaskImpl } from "./task-store/merge-queue-ops.js";
 import { addCommentImpl, publishArchivedTaskDocumentAdditionImpl, upsertTaskDocumentImpl } from "./task-store/comments-ops.js";
 import { deleteTaskImpl, archiveTaskImpl, type DeleteTaskIfResult } from "./task-store/archive-lifecycle.js";
@@ -168,8 +164,20 @@ export interface TaskStoreEvents {
   never "legacy".
   */
   "task:moved": [data: { task: Task; from: ColumnId; to: ColumnId; source: "user" | "engine" | "scheduler"; lanes?: TaskMoveLanes }];
-  "task:updated": [task: Task];
-  "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
+  /*
+  FNXC:WorkflowEvents 2026-08-01-06:11:
+  `task:updated` listeners are synchronous and may receive cache-warmed resolved lanes as an optional
+  second argument. The first argument remains the Task so existing one-argument subscribers are
+  unchanged; absent metadata is unknown, never a legacy-lane claim.
+  */
+  "task:updated": [task: Task, meta?: { lanes?: TaskMoveLanes }];
+  /*
+  FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
+  Observed outbox delivery is at-least-once, including a crash-window duplicate. The explicit
+  marker lets listener paths suppress writer-owned accumulating effects while bridge/cache work
+  remains idempotent; event identity makes duplicate provenance inspectable without payload prose.
+  */
+  "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; observed?: boolean; outboxEventId?: string }];
   "task:merged": [result: MergeResult];
   "settings:updated": [data: { settings: Settings; previous: Settings }];
   "workflow:setting-values-updated": [data: {
@@ -373,8 +381,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public static readonly DEFAULT_WORKFLOW_POOL_ID = DEFAULT_WORKFLOW_POOL_ID;
 
   /** FNXC:RuntimeBackendInjection 2026-06-24-14:20: Backend-mode factory. */
-  static async getOrCreateForProject( projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer, ): Promise<TaskStore> {
-    return getOrCreateForProjectImpl(this, projectId, centralCore, globalSettingsDir, asyncLayer);
+  static async getOrCreateForProject( projectId?: string, centralCore?: CentralCore, globalSettingsDir?: string, asyncLayer?: AsyncDataLayer, consumerId?: string, ): Promise<TaskStore> {
+    return getOrCreateForProjectImpl(this, projectId, centralCore, globalSettingsDir, asyncLayer, consumerId);
   }
 
   /** FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Task metadata is authoritative in PostgreSQL; task document/blob files remain on disk. */
@@ -383,14 +391,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public configPath: string;
   public _db: Database | null = null;
   public activityListenersWired = false;
-  /** When true, activity-log listeners skip recording (set by checkForChanges polling so re-emitted events don't double-log). In-process emit path remains sole source of truth. */
-  public suppressActivityLogForPollingEmit = false;
   public _archiveDb: ArchiveDatabase | null = null;
 
   /**
    * FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Production TaskStores receive an AsyncDataLayer and delegate all persistence to PostgreSQL. A missing layer is a construction error; retained sync members exist only until compatibility tests and types are removed.
    */
   public readonly asyncLayer: AsyncDataLayer | null = null;
+  /** Explicitly absent means cross-process lifecycle observation is disabled. */
+  public readonly consumerId: string | null;
+  private taskDeletedOutboxConsumer: TaskDeletedOutboxConsumer | null = null;
   private pluginPostgresSchemaExecutor: ((contracts: readonly LoadedPluginSchemaContract[]) => Promise<void>) | null = null;
 
   /*
@@ -411,6 +420,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   public watcher: FSWatcher | null = null;
   public taskCache: Map<string, Task> = new Map();
+  /** Per-store, bounded answer cache used only to decorate synchronous task:updated events. */
+  public readonly laneCache = new TaskLaneCache();
   /*
   FNXC:IncompletePgPorts 2026-07-26-20:35:
   Sync getDatabaseHealth/healthCheck cannot await PostgreSQL. Cache the last
@@ -456,16 +467,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public workflowDefinitionsCache: WorkflowDefinition[] | null = null;
   public _pluginWorkflowStepTemplates: Array<{ pluginId: string; template: WorkflowStepTemplate }> = [];
   public globalSettingsStore: GlobalSettingsStore;
-  public pollInterval: ReturnType<typeof setInterval> | null = null;
-  public pollingInProgress = false;
-  public lastKnownModified: number = 0;
-  public lastPollTime: string | null = null;
   public donePauseBackfillDone = false;
   public startupSlimListMemo = new Map<string, { expiresAt: number; promise: Promise<Task[]> }>();
   public static readonly STARTUP_SLIM_LIST_MEMO_TTL_MS = 2_500;
 
   public get isWatching(): boolean {
-    return this.watcher !== null || this.pollInterval !== null;
+    return this.watcher !== null;
   }
   public missionStore: MissionStore | AsyncMissionStore | null = null;
   public ideationStore: AsyncIdeationStore | null = null;
@@ -521,7 +528,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /** FNXC:RuntimeBackendInjection 2026-06-24-14:05: asyncLayer → backend mode (PostgreSQL, no SQLite); absent → legacy SQLite. */
-  constructor( public rootDir: string, globalSettingsDir?: string, options?: { asyncLayer?: AsyncDataLayer }, ) {
+  constructor( public rootDir: string, globalSettingsDir?: string, options?: { asyncLayer?: AsyncDataLayer; consumerId?: string }, ) {
     super();
     this.setMaxListeners(100);
     assertProjectRootDir(rootDir, "TaskStore");
@@ -530,13 +537,57 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     this.tasksDir = join(this.fusionDir, "tasks");
     this.configPath = join(this.fusionDir, "config.json");
     this.asyncLayer = options?.asyncLayer ?? null;
+    this.consumerId = options?.consumerId ?? null;
     const resolvedGlobalSettingsDir = globalSettingsDir
       ?? (process.env.VITEST === "true" ? join(rootDir, ".fusion-global-settings") : undefined);
     this.globalSettingsDir = resolvedGlobalSettingsDir;
     this.globalSettingsStore = new GlobalSettingsStore(resolvedGlobalSettingsDir, this.asyncLayer ?? undefined);
   }
-  public emitTaskLifecycleEventSafely( event: "task:created" | "task:updated", args: TaskStoreEvents["task:created"] | TaskStoreEvents["task:updated"], ): boolean {
+  /*
+  FNXC:WorkflowEvents 2026-08-01-06:28:
+  Safe lifecycle emission invokes listeners directly to isolate listener failures, so it bypasses
+  EventEmitter.emit. Decorate this path too; otherwise the hot update surfaces silently miss lanes.
+  */
+  public emitTaskLifecycleEventSafely( event: "task:created" | "task:updated" | "task:deleted", args: TaskStoreEvents["task:created"] | TaskStoreEvents["task:updated"] | TaskStoreEvents["task:deleted"], ): boolean {
+    if (event === "task:updated" && args.length === 1) {
+      const task = args[0] as Task;
+      const lanes = this.laneCache.get(task.id);
+      if (lanes !== undefined) return emitTaskLifecycleEventSafelyImpl(this, event, [task, { lanes }]);
+    }
     return emitTaskLifecycleEventSafelyImpl(this, event, args);
+  }
+
+  /** Dispatch a committed outbox row without replaying delete-writer side effects. */
+  public emitObservedTaskDeleted(
+    task: Task,
+    outboxEventId: string,
+    metadata: Pick<NonNullable<TaskStoreEvents["task:deleted"][1]>, "githubIssueAction" | "closureContext"> = {},
+  ): boolean {
+    /*
+    FNXC:CrossProcessDeleteObservation 2026-08-01-13:03:
+    Observed delivery must retain the delete's integration intent while marking it replay-safe.
+    Bridges can report the original split handoff/action, but listener-owned GitHub/GitLab mutation
+    paths must not repeat a committed writer's effects during at-least-once crash-window delivery.
+    */
+    this.taskCache.delete(task.id);
+    return emitTaskLifecycleEventSafelyImpl(this, "task:deleted", [task, {
+      ...metadata,
+      observed: true,
+      outboxEventId,
+    }]);
+  }
+
+  /** Start durable task:deleted observation only for explicitly named backend consumers. */
+  async startTaskDeletedOutboxConsumer(): Promise<void> {
+    if (!this.asyncLayer || !this.consumerId || this.taskDeletedOutboxConsumer) return;
+    this.taskDeletedOutboxConsumer = new TaskDeletedOutboxConsumer(this);
+    await this.taskDeletedOutboxConsumer.start();
+  }
+
+  async stopTaskDeletedOutboxConsumer(): Promise<void> {
+    const consumer = this.taskDeletedOutboxConsumer;
+    this.taskDeletedOutboxConsumer = null;
+    await consumer?.stop();
   }
 
   /**
@@ -1326,7 +1377,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; wedgeNotification?: import("./types.js").TaskWedgeNotificationState | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; executeRequeueLoopCount?: number | null; graphResumeRetryCount?: number | null; consecutiveToolFailureRetryCount?: number | null; executorEscalationAttempted?: boolean | null; toolFailureDetectorLogCursor?: number | null; toolFailureRetryExhaustedAuditEmitted?: boolean | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; executeRequeueLoopSignature?: string | null; postReviewFixCount?: number | null; planReviewReplanCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; bulkCompletionRefusalAt?: string | null; workflowIrPin?: string | null; workflowIrPinNodeId?: string | null; workflowIrPinColumnId?: string | null; legacyAdoptedAt?: string | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; credentialInstanceId?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorCredentialInstanceId?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningCredentialInstanceId?: string | null; planningModelId?: string | null; mergerModelProvider?: string | null; mergerCredentialInstanceId?: string | null; mergerModelId?: string | null; thinkingLevel?: string | null; validatorThinkingLevel?: string | null; planningThinkingLevel?: string | null; mergerThinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; cumulativePlanningMs?: number | null; planningStartedAt?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; declaredSymbols?: string[] | null | undefined; missionId?: string | null; sliceId?: string | null; workflowTransitionNotification?: import("./types.js").WorkflowTransitionNotificationMarker | undefined; plannerOversightLevel?: string | null; sessionAdvisorEnabled?: boolean | null; approvedPlanFingerprint?: string | null },    runContext?: RunMutationContext,
   ): Promise<Task> {
     return updateTaskImpl(this, id, updates, runContext);
   }
@@ -1344,9 +1395,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         return { wedgeNotification: { ...prior, status: "resolved", transitionedAt: new Date().toISOString() } };
       }
       if (prior?.status === "active" && prior.reasonKey === reasonKey) return null;
+
+      const now = Date.now();
+      const lastNotifiedAtByReason = Object.fromEntries(Object.entries(prior?.lastNotifiedAtByReason ?? {}).filter(([, timestamp]) => {
+        const notifiedAt = Date.parse(timestamp);
+        return Number.isFinite(notifiedAt) && notifiedAt <= now && now - notifiedAt < WEDGE_RENOTIFY_COOLDOWN_MS;
+      }));
       const episodeId = randomUUID();
-      result = { episodeId, claimed: true };
-      return { wedgeNotification: { reasonKey, episodeId, status: "active", transitionedAt: new Date().toISOString() } };
+      const suppressed = reasonKey in lastNotifiedAtByReason;
+      if (!suppressed) lastNotifiedAtByReason[reasonKey] = new Date(now).toISOString();
+      result = suppressed ? { claimed: false } : { episodeId, claimed: true };
+      return {
+        wedgeNotification: {
+          reasonKey,
+          episodeId,
+          status: "active",
+          transitionedAt: new Date(now).toISOString(),
+          ...(Object.keys(lastNotifiedAtByReason).length > 0 ? { lastNotifiedAtByReason } : {}),
+        },
+      };
     });
     return result;
   }
@@ -1571,6 +1638,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return task;
     });
   }
+  /*
+  FNXC:WorkflowEvents 2026-08-01-06:11:
+  One seam decorates every TaskStore `task:updated` emission, including hot synchronous paths, with a
+  cached answer only. Explicit metadata wins; runtime and process bridge EventEmitters do not call this
+  method and deliberately DROP lanes because absent metadata safely preserves their listener fallback.
+  */
+  override emit<E extends string | symbol>(event: E, ...args: any[]): boolean {
+    if (event === "task:updated" && args.length === 1) {
+      const task = args[0] as Task;
+      const lanes = this.laneCache.get(task.id);
+      if (lanes !== undefined) return EventEmitter.prototype.emit.call(this, event, task, { lanes });
+    }
+    return EventEmitter.prototype.emit.call(this, event, ...args);
+  }
+
   async updateStep( id: string, stepIndex: number, status: import("./types.js").StepStatus, options?: { source?: "graph" }, ): Promise<Task> {
     return updateStepImpl(this, id, stepIndex, status, options);
   }
@@ -2179,7 +2261,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /**
    * FNXC:RuntimeLifecycleAsync 2026-06-24-12:05:
    */
-  public async deleteTaskBackend( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
+  public async deleteTaskBackend( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
     return deleteTaskBackendImpl(this, id, options);
   }
 
@@ -2190,13 +2272,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    */
   public async recordRunAuditEventBackend( tx: DbTransaction, event: { domain: string; mutationType: string; target: string; taskId: string; agentId: string; runId: string; metadata: Record<string, unknown>; }, ): Promise<void> {    return recordRunAuditEventBackendImpl(this, tx, event);
   }
-  async deleteTask( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
+  async deleteTask( id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext; }, ): Promise<Task> {
     return deleteTaskImpl(this, id, options);
   }
   async deleteTaskIf(
     id: string,
     predicate: (live: Task) => boolean | Promise<boolean>,
-    options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; auditContext?: TaskDeleteAuditContext },
+    options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; allowResurrection?: boolean; githubIssueAction?: GithubIssueAction; closureContext?: TaskDeleteClosureContext; auditContext?: TaskDeleteAuditContext },
   ): Promise<DeleteTaskIfResult> {
     /*
     FNXC:SqliteDualPathCleanup 2026-07-26-14:05:
@@ -2278,9 +2360,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async watch(): Promise<void> {
     return watchImpl(this);
-  }
-  public async checkForChanges(): Promise<void> {
-    return checkForChangesImpl(this);
   }
   stopWatching(): void {
     return stopWatchingImpl(this);

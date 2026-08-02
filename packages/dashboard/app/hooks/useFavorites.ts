@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { updateGlobalSettings, type ModelInfo } from "../api";
+import { updateGlobalSettings, type ModelInfo, type ProviderCredentialInstanceSummary } from "../api";
 import { useModelsCache } from "./useModelsCache";
 
 /**
@@ -9,6 +9,7 @@ export interface UseFavoritesResult {
   availableModels: ModelInfo[];
   favoriteProviders: string[];
   favoriteModels: string[];
+  providerInstances: Record<string, { instances: ProviderCredentialInstanceSummary[] }>;
   toggleFavoriteProvider: (provider: string) => Promise<void>;
   toggleFavoriteModel: (modelId: string) => Promise<void>;
 }
@@ -17,7 +18,7 @@ export interface UseFavoritesResult {
  * Loads model catalog + favorites and exposes optimistic favorite toggles.
  */
 export function useFavorites(): UseFavoritesResult {
-  const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, refresh } = useModelsCache();
+  const { models, favoriteProviders: cachedFavoriteProviders, favoriteModels: cachedFavoriteModels, providerInstances, refresh } = useModelsCache();
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>(models);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>(cachedFavoriteProviders);
   const [favoriteModels, setFavoriteModels] = useState<string[]>(cachedFavoriteModels);
@@ -96,6 +97,7 @@ export function useFavorites(): UseFavoritesResult {
     availableModels,
     favoriteProviders,
     favoriteModels,
+    providerInstances,
     toggleFavoriteProvider,
     toggleFavoriteModel,
   };

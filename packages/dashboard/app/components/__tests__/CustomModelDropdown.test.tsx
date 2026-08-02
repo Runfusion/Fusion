@@ -572,8 +572,39 @@ describe("CustomModelDropdown", () => {
     const portal = await screen.findByTestId("model-combobox-portal");
     expect(portal.style.left).toBe("239px");
     expect(portal.style.width).toBe("120px");
-    expect(portal.style.top).toBe("196px");
+    expect(portal.style.top).toBe("auto");
+    expect(portal.style.bottom).toBe("111px");
     expect(portal.style.maxHeight).toBe("360px");
+  });
+
+  it.each([
+    { name: "desktop", width: 1024, height: 760 },
+    { name: "mobile", width: 375, height: 760 },
+  ])("bottom-anchors an empty model list upward on $name", async ({ width, height }) => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(height);
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: width <= 768 && query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as MediaQueryList));
+
+    render(<CustomModelDropdown label="Empty Model" value="" onChange={vi.fn()} models={[]} />);
+    const trigger = screen.getByRole("button", { name: "Empty Model" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      top: 700, bottom: 728, left: 24, width: 120, right: 144, height: 28, x: 24, y: 700, toJSON: () => ({}),
+    });
+
+    await user.click(trigger);
+    const portal = await screen.findByTestId("model-combobox-portal");
+    expect(portal.style.top).toBe("auto");
+    expect(portal.style.bottom).toBe(`${height - 700 + 4}px`);
   });
 
   describe("Readable menu sizing", () => {
@@ -1070,10 +1101,9 @@ describe("CustomModelDropdown", () => {
         await user.click(screen.getByRole("button", { name: "Executor Model" }));
 
         const portal = await screen.findByTestId("model-combobox-portal");
-        const top = parseFloat(portal.style.top);
-
-        // Should position upward: rect.top - estimatedHeight - 4 = 710 - 320 - 4 = 386
-        expect(top).toBe(386);
+        // Upward placement must be independent of the max-height scroll cap.
+        expect(portal.style.top).toBe("auto");
+        expect(portal.style.bottom).toBe("94px");
       } finally {
         restore();
         Object.defineProperty(window, "innerHeight", {

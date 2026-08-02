@@ -1,19 +1,14 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { customProviderRegistryKey, type CustomProvider } from "@fusion/core";
 import { readCustomProviders } from "../auth/custom-providers.js";
+import { createInMemoryModelRegistry, warmSharedModelRuntime } from "./_model-runtime-fixture.js";
 
-async function createInMemoryModelRegistry(): Promise<ModelRegistry> {
-  const runtime = await ModelRuntime.create({
-    credentials: { read: async () => undefined, list: async () => [], modify: async (_id, fn) => fn(undefined), delete: async () => undefined },
-    modelsPath: null,
-    allowModelNetwork: false,
-  });
-  return new ModelRegistry(runtime);
-}
+beforeAll(async () => {
+  await warmSharedModelRuntime();
+});
 
 describe("custom providers openai-responses regression", () => {
   let homeDir: string;

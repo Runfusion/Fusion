@@ -15,6 +15,7 @@ import { openNativeStructure } from "./nativeStructureNavigation";
 import { nativeStructureChatRefMatcher, parseNativeStructureChatRef, splitNativeStructureChatRefMatch } from "./nativeStructureChatRef";
 import { MicButton } from "./MicButton";
 import { useComposerDictation } from "../hooks/useComposerDictation";
+import { ToolCallDetails, formatToolArgsPreview, formatToolPreview, hasToolCallDetails } from "./ToolCallDetails";
 
 export interface StandardRoomContext {
   roomName: string;
@@ -149,26 +150,8 @@ export function formatModelTag(provider?: string | null, modelId?: string | null
   return formatted.length > 30 ? `${formatted.slice(0, 30)}…` : formatted;
 }
 
-function truncateToolValue(value: string, maxLength: number): string {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength)}…`;
-}
-
-function formatToolArgsSummary(args?: Record<string, unknown>): string | null {
-  if (!args) return null;
-  const entries = Object.entries(args);
-  if (entries.length === 0) return null;
-  return entries.map(([key, value]) => {
-    const stringValue = typeof value === "string" ? value : (() => {
-      try { return JSON.stringify(value); } catch { return String(value); }
-    })();
-    return `${key}=${truncateToolValue(stringValue, 50)}`;
-  }).join(", ");
-}
-
 function formatToolResultSummary(result: unknown): string | null {
-  if (result === undefined) return null;
-  if (typeof result === "string") return truncateToolValue(result, 200);
-  try { return truncateToolValue(JSON.stringify(result), 200); } catch { return truncateToolValue(String(result), 200); }
+  return formatToolPreview(result, 200);
 }
 
 function buildFailureReferenceHref(reference: FailureInfo["reference"]): string | null {
@@ -242,22 +225,33 @@ export function renderStandardToolCalls(
     }
     const isRunning = toolCall.status === "running";
     const isError = toolCall.status === "completed" && toolCall.isError;
-    const argsSummary = formatToolArgsSummary(toolCall.args);
+    const argsSummary = formatToolArgsPreview(toolCall.args);
     const resultSummary = formatToolResultSummary(toolCall.result);
     const summaryPreview = isRunning ? argsSummary : resultSummary ? `${t("chat.toolCallResultPrefix", "result")}: ${resultSummary}` : argsSummary ? `${t("chat.toolCallArgsPrefix", "args")}: ${argsSummary}` : null;
     const statusLabel = isRunning ? t("chat.toolCallStatusRunning", "running") : isError ? t("chat.toolCallStatusError", "error") : t("chat.toolCallStatusCompleted", "completed");
+    const className = `chat-tool-call${isRunning ? " chat-tool-call--running" : ""}${isError ? " chat-tool-call--error" : ""}`;
+    const summary = (
+      <>
+        <span className="chat-tool-call-status-dot" aria-hidden="true" />
+        <span className="chat-tool-call-name" title={toolCall.toolName}>{toolCall.toolName}</span>
+        {summaryPreview && <span className="chat-tool-call-preview" title={summaryPreview}>{summaryPreview}</span>}
+        <span className="chat-tool-call-status-text">{statusLabel}</span>
+      </>
+    );
+    if (!hasToolCallDetails(toolCall.args, toolCall.result)) {
+      return <div key={`${toolCall.toolName}-${index}`} className={className}><div className="chat-tool-call-summary">{summary}</div></div>;
+    }
     return (
-      <details key={`${toolCall.toolName}-${index}`} className={`chat-tool-call${isRunning ? " chat-tool-call--running" : ""}${isError ? " chat-tool-call--error" : ""}`} open={isRunning}>
-        <summary>
-          <span className="chat-tool-call-status-dot" aria-hidden="true" />
-          <span className="chat-tool-call-name" title={toolCall.toolName}>{toolCall.toolName}</span>
-          {summaryPreview && <span className="chat-tool-call-preview" title={summaryPreview}>{summaryPreview}</span>}
-          <span className="chat-tool-call-status-text">{statusLabel}</span>
-        </summary>
-        <div className="chat-tool-call-content">
-          {argsSummary && <div className="chat-tool-call-row"><span className="chat-tool-call-label">{t("chat.toolCallArgsPrefix", "args")}</span><span className="chat-tool-call-value">{argsSummary}</span></div>}
-          {resultSummary && <div className={`chat-tool-call-row${isError ? " chat-tool-call-row--error" : ""}`}><span className="chat-tool-call-label">{t("chat.toolCallResultPrefix", "result")}</span><span className="chat-tool-call-value">{resultSummary}</span></div>}
-        </div>
+      <details key={`${toolCall.toolName}-${index}`} className={className} open={isRunning}>
+        <summary>{summary}</summary>
+        <ToolCallDetails
+          className="chat-tool-call-content"
+          argumentsValue={toolCall.args}
+          resultValue={toolCall.result}
+          argumentsLabel={t("chat.toolCallArgsPrefix", "args")}
+          resultLabel={t("chat.toolCallResultPrefix", "result")}
+          resultIsError={isError}
+        />
       </details>
     );
   };

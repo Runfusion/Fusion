@@ -705,7 +705,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledTimes(1));
     expect(mockUpdateValues).toHaveBeenCalledWith(
       "wf-1",
-      { planningProvider: "anthropic", planningModelId: "claude-sonnet" },
+      { planningProvider: "anthropic", planningModelId: "claude-sonnet", planningCredentialInstanceId: null },
       "proj-1",
     );
   });
@@ -759,6 +759,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
       validatorFallbackProvider: null,
       validatorFallbackModelId: null,
       validatorFallbackThinkingLevel: null,
+      validatorFallbackCredentialInstanceId: null,
     }, "proj-1");
   });
 
@@ -788,7 +789,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledTimes(1));
     expect(mockUpdateValues).toHaveBeenCalledWith(
       "wf-1",
-      { planningProvider: null, planningModelId: null },
+      { planningProvider: null, planningModelId: null, planningCredentialInstanceId: null },
       "proj-1",
     );
   });
@@ -830,7 +831,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(mockUpdateValues).toHaveBeenNthCalledWith(
       2,
       "wf-1",
-      { planningProvider: "anthropic", planningModelId: "claude-sonnet" },
+      { planningProvider: "anthropic", planningModelId: "claude-sonnet", planningCredentialInstanceId: null },
       "proj-1",
     );
   });
@@ -871,7 +872,7 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(within(row).getByLabelText("Plan/Triage Model")).toHaveTextContent("Claude Sonnet");
     expect(mockUpdateValues).toHaveBeenCalledWith(
       "wf-1",
-      { planningProvider: "anthropic", planningModelId: "claude-sonnet" },
+      { planningProvider: "anthropic", planningModelId: "claude-sonnet", planningCredentialInstanceId: null },
       "proj-1",
     );
   });

@@ -7,6 +7,14 @@ FN-6603 found that unicode-range scoping is not enough when the symbols face is 
 
 FNXC:Terminal 2026-06-20-18:04:
 FN-6811 recurrence #6 tightened ownership of this scoped symbols face: every terminal surface that exposes the DOM glyph fallback must define the same ASCII-excluding @font-face in its own CSS chunk, and tests must check each CSS owner independently rather than relying on combined app CSS.
+
+FNXC:TerminalLayout 2026-08-01-04:23:
+SHELL NAMING MAP — the terminal renders through FIVE shells and only some live in this file:
+docked/below panels and the mobile sheet are plain `.modal`/host elements styled here, but the
+FLOATING pop-out wraps `terminalContent` in FloatingWindow (FloatingWindow.css), whose shared
+body element owns the FN-8015 inline-end gutter and the tablet-viewport zeroing. An
+inset/padding bug reported "on the terminal
+modal" in tablet view is almost certainly the FloatingWindow shell, not a rule in this file.
 */
 @font-face {
   font-family: "Fusion Terminal Nerd Font Symbols";
@@ -244,9 +252,12 @@ FN-7897: reserve space for the fixed ExecutorStatusBar footer when it is rendere
 /*
 FNXC:TerminalModalControls 2026-07-31-22:41:
 The tablet classifier, rather than the legacy 769px media query, owns this grip so a known
-768px touch tablet remains a floating window instead of receiving phone-sheet chrome. Only the
-reserved grip disables browser gesture handling: applying `touch-action: none` to the panel or
-header prevents native horizontal panning in the descendant overflowing tab strip.
+768px touch tablet remains a floating window instead of receiving phone-sheet chrome.
+
+FNXC:TerminalModalControls 2026-08-01-03:48:
+The grip is no longer the sole drag surface — the whole tablet floating header (including empty
+tab-strip space) is `touch-action: none` and draggable below — but it stays as the always-visible
+affordance that signals the window is movable.
 */
 .modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header__drag-grip {
   position: relative;
@@ -274,12 +285,19 @@ header prevents native horizontal panning in the descendant overflowing tab stri
 }
 
 /*
-FNXC:TerminalModalControls 2026-07-31-22:41:
-The tab strip must retain native horizontal touch panning while the sibling grip owns window
-movement. This explicit contract prevents future tablet drag rules from suppressing tab scrolling.
+FNXC:TerminalModalControls 2026-08-01-03:48:
+Supersedes the 2026-07-31 pan-x contract: the operator wants the floating terminal draggable
+from the empty strip space behind the tabs and anywhere in the top toolbar, not only the grip.
+`touch-action: none` on the tablet floating header (and its strip) hands the whole touch gesture
+to FloatingWindow's pointer drag; without it the browser claims horizontal movement as a native
+pan and pointercancels the drag mid-gesture. Native strip panning is not lost: an overflowing
+strip is replaced by the `.terminal-mobile-tabs` dropdown (ResizeObserver in TerminalModal.tsx),
+so a visible strip never scrolls horizontally. Tab presses stay tab presses via the scoped
+stopPropagation in renderTerminalTabStrip.
 */
+.modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-header,
 .modal.terminal-modal.terminal-modal--tablet.terminal-modal--floating .terminal-tabs {
-  touch-action: pan-x;
+  touch-action: none;
 }
 
 /*
@@ -335,6 +353,17 @@ hit area; it is not a second terminal control.
 
 .terminal-tab--active:hover {
   border-bottom-color: var(--in-progress);
+}
+
+/*
+FNXC:TerminalModalControls 2026-08-01-03:48:
+The floating header (including empty tab-strip space) is a window drag surface at every pointer
+type; show the grab affordance there while real tab surfaces keep the base `.terminal-tab`
+pointer cursor above.
+*/
+.modal.terminal-modal.terminal-modal--floating .terminal-header,
+.modal.terminal-modal.terminal-modal--floating .terminal-tabs {
+  cursor: grab;
 }
 
 .terminal-tab-indicator {

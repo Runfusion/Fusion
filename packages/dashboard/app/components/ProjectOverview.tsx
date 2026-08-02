@@ -230,12 +230,13 @@ export function ProjectOverview({
     onSelectProject(project);
   }, [onSelectProject, recentProjectIds]);
 
-  // Determine if we need to show skeleton
-  // Show skeleton for initial load if:
-  // 1. Projects list is still loading, OR
-  // 2. Projects exist but we haven't fetched health data yet (healthLoading with no data)
-  // Don't show skeleton during background health polling when health data already exists
-  const needsInitialSkeleton = loading || (healthLoading && projects.length > 0 && Object.keys(healthMap).length === 0);
+  /*
+  FNXC:ProjectOverviewHealthHydration 2026-08-01-15:40:
+  Registered project metadata and controls are the navigation-critical surface, while health is optional,
+  potentially slow per-project telemetry. Keep the grid visible as soon as the list resolves; cards mark only
+  their own pending health rather than replacing the whole overview until every batch has completed.
+  */
+  const needsInitialSkeleton = loading;
   /*
   FNXC:DashboardHeader 2026-06-22-16:42:
   The Project Dashboard overview (projects, stats, filters, and charts/overview content) owns the shared top header. The Board view must stay headerless because its columns already consume the full board surface.
@@ -439,6 +440,7 @@ export function ProjectOverview({
       {/* Project grid */}
       <div className="project-grid">
         {sortedProjects.map(({ project, health }) => {
+          const healthPending = healthLoading && !Object.hasOwn(healthMap, project.id);
           const availabilityMappings: DisplayMapping[] = getNodeMappingsForProject(project)
             .filter((mapping) => mapping.available)
             .map((mapping) => ({
@@ -451,6 +453,7 @@ export function ProjectOverview({
               key={project.id}
               project={project}
               health={health}
+              healthLoading={healthPending}
               availabilityMappings={availabilityMappings}
               onSelect={handleSelectProject}
               onPause={onPauseProject}

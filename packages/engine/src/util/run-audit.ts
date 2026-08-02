@@ -97,6 +97,17 @@ export type GitMutationType =
   | "worktree:remove-leaked-registered-worktree"
   | "worktree:reuse"
   /*
+   * FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
+   * Execution-only reused-worktree refresh records outcome-only audit events so operators can
+   * distinguish a mechanical C1 advance, a typed block/conflict, compensated persistence failure,
+   * and stateless C0-to-C1 reconciliation without recording command output or branch prose.
+   */
+  | "worktree:base-refreshed"
+  | "worktree:base-refresh-blocked"
+  | "worktree:base-refresh-conflict"
+  | "worktree:base-refresh-persistence-failed-compensated"
+  | "worktree:base-refresh-reconciled"
+  /*
    * FNXC:TaskPinnedWorktrees 2026-07-16-00:00:
    * Emitted when task-pinned acquisition (`worktreeNaming: "task-id"`) corrects a `task.worktree` cache that
    * disagrees with the derived `<worktreesDir>/<task-id>` path (the FN-7996 stale/foreign-pointer shape).

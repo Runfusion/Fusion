@@ -7,6 +7,8 @@ survives because task creation, comments, and title/description sync use it
 to write the human-visible PROMPT.md stub.
 */
 
+import { isDuplicateRedirectOnlyPrompt } from "../duplicates/explicit-duplicate-marker.js";
+
 export function buildBootstrapPrompt(taskId: string, title: string | undefined, description: string): string {
   const heading = title ? `${taskId}: ${title}` : taskId;
   return `# ${heading}\n\n${description}\n`;
@@ -102,5 +104,11 @@ export function isTaskAwaitingPlanning(
 ): boolean {
   if (task.status != null && AWAITING_PLANNING_STATUSES.has(task.status)) return true;
   if (promptContent === null) return true;
+  /*
+  FNXC:DuplicateIntake 2026-08-01-19:24:
+  A duplicate-only PROMPT is unplanned for execution — badge and triage must agree with
+  scheduler filesystem validation so the card shows "Queued to plan", not Ready.
+  */
+  if (isDuplicateRedirectOnlyPrompt(promptContent)) return true;
   return isUnplannedSeedPrompt(promptContent, task.id, task.title, task.description);
 }

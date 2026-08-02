@@ -6,7 +6,7 @@ forever, because `TaskMoveLanes` carried one id per role and the scheduler rebui
 */
 import { describe, expect, it } from "vitest";
 
-import { toTaskMoveLanes } from "../workflow-lifecycle-traits.js";
+import { toTaskMoveLanes } from "../workflows/workflow-lifecycle-traits.js";
 import type { WorkflowIr } from "../workflow-ir.js";
 
 const twoCompleteBoard = {

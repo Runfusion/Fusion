@@ -30,6 +30,7 @@ import {
   type WorkflowIrColumn,
   type TraitFlags,
   createTaskStoreForBackend,
+  buildConsumerId,
   FUSION_RESTART_EXIT_CODE,
   FUSION_NON_RETRYABLE_EXIT_CODE,
   isPostgresUniqueError,
@@ -951,6 +952,8 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       "backend.factory",
       () => createTaskStoreForBackend({
         rootDir: cwd,
+        /* FNXC:CrossProcessDeleteObservation 2026-08-01-12:14: The dashboard store subscribes SSE, so it owns the restart-stable dashboard lifecycle consumer stream. */
+        consumerId: buildConsumerId("dashboard"),
         onMigrationProgress: (event) => migrationHoldingServer?.setMigrationProgress(event),
       }),
       logPhase,
@@ -1065,7 +1068,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       if (!store) throw new Error("cwd TaskStore not yet initialized");
       projectStore = store;
     } else {
-      const boot = await createTaskStoreForBackend({ rootDir: projectPath });
+      const boot = await createTaskStoreForBackend({
+        rootDir: projectPath,
+        /* FNXC:CrossProcessDeleteObservation 2026-08-01-12:14: Each dashboard project store uses the dashboard role, isolated by project id in durable consumer state. */
+        consumerId: buildConsumerId("dashboard"),
+      });
       projectStore = boot.taskStore;
       projectStoreShutdowns.set(projectPath, boot.shutdown);
       setHostTaskStore(projectPath, projectStore);

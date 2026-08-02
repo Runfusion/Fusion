@@ -897,19 +897,18 @@ describe("the ratchet follows the count down", () => {
     return file;
   };
 
-  it("TIGHTENS on a drop and exits 0, so somebody else's merge cannot redden the gate", async () => {
+  it("reports an untouched drop without writing a baseline it did not author", async () => {
     const run1 = await run(inflate, ["--strict"]);
 
     expect(run1.code).toBe(0);
-    expect(run1.out).toContain("TIGHTENED");
+    expect(run1.out).toContain("CAN BE TIGHTENED");
     /*
-    The WRITE is the point, so assert it directly against the inflated value rather than against itself — my
-    first version compared `allowedAfter` to `4 + allowedAfter`, which is true for every number and proved
-    nothing. Recording that here because it is the same vacuous-assertion trap this file keeps documenting,
-    and I walked into it while writing the case that guards against it.
+    FNXC:LifecycleColumnCensus 2026-08-01-23:23:
+    Plain strict verification is read-only. An untouched drop remains green but must leave its
+    inflated fixture allowance intact; only explicit `--update-baseline` owns the resulting diff.
     */
-    expect(run1.allowedAfter).toBe(run1.inflatedFrom - 3);
-    expect(run1.out).toContain("COMMIT IT");
+    expect(run1.allowedAfter).toBe(run1.inflatedFrom);
+    expect(run1.out).toContain("Not written. Record it deliberately");
   }, 30_000);
 
   it("FAILS when the change TOUCHES the file that dropped, so the allowance cannot stay open", async () => {
@@ -1144,6 +1143,20 @@ describe("the census scans the files it claims to scan", () => {
     expect(code).toBe(1);
     expect(out).toContain("pkg/src/a.ts");
     expect(out).not.toContain("ENOENT");
+  });
+
+  it("fails --strict for each unmarked query role", async () => {
+    const roles = {
+      read: `await store.listTasks({ column: "todo" });`,
+      write: `db.update(tasks).set({ column: "archived" });`,
+      other: `const created = { column: "todo" };`,
+    };
+    for (const [role, source] of Object.entries(roles)) {
+      const { code, out } = await runOnFixture({ "pkg/src/query.ts": source }, ["--strict"]);
+      expect(code, role).toBe(1);
+      expect(out).toContain("pkg/src/query.ts");
+      expect(out).not.toContain("ENOENT");
+    }
   });
 
   it("counts every listed file, not just the first", async () => {

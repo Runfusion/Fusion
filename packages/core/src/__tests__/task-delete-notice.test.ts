@@ -35,7 +35,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../task-store/async-persistence.js", () => ({
   readTaskRow: vi.fn(async () => pgRow),
-  softDeleteTaskRowInTransaction: vi.fn(async () => undefined),
+  readTaskRowInTransaction: vi.fn(async () => pgRow),
+  softDeleteTaskRowInTransaction: vi.fn(async () => true),
+}));
+vi.mock("../task-store/lifecycle-outbox.js", () => ({
+  appendTaskLifecycleEventInTransaction: vi.fn(async () => undefined),
 }));
 vi.mock("../task-store/async-lifecycle.js", () => ({
   findLiveLineageChildren: vi.fn(async () => [] as string[]),
@@ -120,6 +124,7 @@ function makePgStore(task: Task) {
     recordRunAuditEventBackend: vi.fn(async () => undefined),
     makeSyntheticDeleteRunId: vi.fn((id: string) => `synthetic-delete-${id}`),
     emit: vi.fn(),
+    laneCache: { invalidate: vi.fn() },
     /* `deleteTaskIf` wraps the conditional delete in the per-task lock; the fake runs
        the body inline so the predicate/short-circuit paths are exercised for real. */
     withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),

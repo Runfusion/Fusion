@@ -3020,16 +3020,6 @@ Toast text must contrast its status background across every dashboard theme and 
   cursor: default;
 }
 
-.queued-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  color: var(--todo);
-}
-
-
-
 /* === Dependency Dropdown (shared: InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm) === */
 .dep-trigger-wrap {
   position: relative;

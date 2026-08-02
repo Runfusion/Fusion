@@ -3126,13 +3126,11 @@ describe("QuickEntryBox", () => {
         expect(dropdown.classList.contains("dep-dropdown--portal")).toBe(true);
         expect(dropdown.style.position).toBe("fixed");
 
-        const top = parseFloat(dropdown.style.top);
         const maxHeight = parseFloat(dropdown.style.maxHeight);
         const gap = 4;
-        // Menu bottom edge must sit `gap` above the trigger top (open upward, attached).
-        expect(top + maxHeight).toBeCloseTo(150 - gap, 5);
-        // Must not float at the old detached clamp (top ≈ 16 with maxHeight 200 leaving a large gap).
-        expect(top + maxHeight + gap).toBeCloseTo(150, 5);
+        // Bottom anchoring stays attached even when the menu's natural list is shorter than maxHeight.
+        expect(dropdown.style.top).toBe("auto");
+        expect(dropdown.style.bottom).toBe(`${viewportHeight - 150 + gap}px`);
         expect(maxHeight).toBeLessThanOrEqual(150 - 16 - gap);
       });
 
@@ -4464,6 +4462,44 @@ describe("QuickEntryBox", () => {
       expect(menu.style.top).toBeTruthy();
       expect(menu.style.left).toBeTruthy();
       expect(menu.style.width).toBeTruthy();
+    });
+
+    it.each([
+      { name: "desktop", width: 1280, height: 760 },
+      { name: "mobile", width: 375, height: 760 },
+    ])("bottom-anchors short priority and populated model menus upward on $name", ({ width, height }) => {
+      const widthDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientWidth");
+      const heightDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, "clientHeight");
+      Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: width });
+      Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: height });
+
+      try {
+        renderQuickEntryBox({});
+        expandQuickEntry();
+
+        const priorityTrigger = screen.getByTestId("quick-entry-priority-button");
+        vi.spyOn(priorityTrigger, "getBoundingClientRect").mockReturnValue({
+          top: 700, bottom: 728, left: 24, width: 80, right: 104, height: 28, x: 24, y: 700, toJSON: () => ({}),
+        });
+        openPriorityMenu();
+        const priorityMenu = screen.getByTestId("quick-entry-priority-option-normal").closest(".priority-picker-dropdown--portal") as HTMLElement;
+        expect(priorityMenu.style.top).toBe("auto");
+        expect(priorityMenu.style.bottom).toBe(`${height - 700 + 4}px`);
+
+        const modelTrigger = screen.getByTestId("quick-entry-models");
+        vi.spyOn(modelTrigger, "getBoundingClientRect").mockReturnValue({
+          top: 700, bottom: 728, left: 24, width: 80, right: 104, height: 28, x: 24, y: 700, toJSON: () => ({}),
+        });
+        openModelMenu();
+        const modelMenu = screen.getByTestId("model-nested-menu");
+        expect(modelMenu.style.top).toBe("auto");
+        expect(modelMenu.style.bottom).toBe(`${height - 700 + 4}px`);
+      } finally {
+        if (widthDescriptor) Object.defineProperty(document.documentElement, "clientWidth", widthDescriptor);
+        else delete (document.documentElement as { clientWidth?: number }).clientWidth;
+        if (heightDescriptor) Object.defineProperty(document.documentElement, "clientHeight", heightDescriptor);
+        else delete (document.documentElement as { clientHeight?: number }).clientHeight;
+      }
     });
 
     it("does not close model menu when clicking inside CustomModelDropdown portal", () => {

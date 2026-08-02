@@ -37,6 +37,7 @@ import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction,
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../task-store/async/async-audit.js";
 import type {DbTransaction} from "../postgres/data-layer.js";
 import { resolveTaskPrefix } from "./task-prefix.js";
+import {assertValidProviderInstanceId} from "../provider-instance.js";
 
 type CreateTaskWithAfterInsert = TaskCreateInput & {
   /** Internal transaction hook; never persisted in task source metadata. */
@@ -148,7 +149,14 @@ async function resolveDefaultWorkflowIntakeColumn(store: TaskStore): Promise<str
   }
 }
 
-export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
+export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: {
+ onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
+  /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
+  for (const key of ["credentialInstanceId", "validatorCredentialInstanceId", "planningCredentialInstanceId", "mergerCredentialInstanceId"] as const) {
+    const value = (input as unknown as Record<string, unknown>)[key];
+    if (value !== undefined && value !== null) assertValidProviderInstanceId(value);
+  }
+
     // U8/R6: apply the reviewLevel creation-time preset (maps level -> enabledWorkflowSteps; explicit wins).
     input = applyReviewLevelPreset(input);
     if (!input.description?.trim()) {
@@ -471,12 +479,16 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       scopeOverrideReason: input.scopeOverrideReason,
       nodeId: input.nodeId,
       modelProvider: input.modelProvider,
+      credentialInstanceId: input.credentialInstanceId,
       modelId: input.modelId,
       validatorModelProvider: input.validatorModelProvider,
+      validatorCredentialInstanceId: input.validatorCredentialInstanceId,
       validatorModelId: input.validatorModelId,
       planningModelProvider: input.planningModelProvider,
+      planningCredentialInstanceId: input.planningCredentialInstanceId,
       planningModelId: input.planningModelId,
       mergerModelProvider: input.mergerModelProvider,
+      mergerCredentialInstanceId: input.mergerCredentialInstanceId,
       mergerModelId: input.mergerModelId,
       thinkingLevel: input.thinkingLevel,
       validatorThinkingLevel: input.validatorThinkingLevel,
@@ -941,12 +953,16 @@ export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreat
       scopeOverrideReason: input.scopeOverrideReason,
       nodeId: input.nodeId,
       modelProvider: input.modelProvider,
+      credentialInstanceId: input.credentialInstanceId,
       modelId: input.modelId,
       validatorModelProvider: input.validatorModelProvider,
+      validatorCredentialInstanceId: input.validatorCredentialInstanceId,
       validatorModelId: input.validatorModelId,
       planningModelProvider: input.planningModelProvider,
+      planningCredentialInstanceId: input.planningCredentialInstanceId,
       planningModelId: input.planningModelId,
       mergerModelProvider: input.mergerModelProvider,
+      mergerCredentialInstanceId: input.mergerCredentialInstanceId,
       mergerModelId: input.mergerModelId,
       thinkingLevel: input.thinkingLevel,
       validatorThinkingLevel: input.validatorThinkingLevel,

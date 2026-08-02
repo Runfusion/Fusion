@@ -143,6 +143,22 @@ describe("oauth credential interop", () => {
     ]);
   });
 
+  it("keeps only bare provider credentials from Fusion multi-instance auth files", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "fusion-oauth-interop-"));
+    try {
+      const authPath = join(tempDir, "auth.json");
+      writeFileSync(authPath, JSON.stringify({
+        provider: { type: "api_key", key: "bare" },
+        "provider[work]": { type: "api_key", key: "named" },
+        "provider[": { type: "api_key", key: "malformed" },
+        __fusionDefaultInstances: { provider: "work" },
+      }));
+      expect(readStoredCredentialsFromAuthFile(authPath)).toEqual({ provider: { type: "api_key", key: "bare" } });
+      writeFileSync(authPath, JSON.stringify({ "provider[work]": { type: "api_key", key: "named" } }));
+      expect(readStoredCredentialsFromAuthFile(authPath)).toEqual({});
+    } finally { rmSync(tempDir, { recursive: true, force: true }); }
+  });
+
   it("gracefully ignores malformed auth files", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "fusion-oauth-interop-"));
 

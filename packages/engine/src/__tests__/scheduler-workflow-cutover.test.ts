@@ -398,7 +398,7 @@ describe("Scheduler workflow cutover", () => {
 
   it("does not clear status or release work when maxConcurrent is full", async () => {
     const active = task({ id: "FN-001", column: "in-progress" });
-    const ready = task({ id: "FN-002", status: "queued" });
+    const ready = task({ id: "FN-002", status: "queued", worktree: "/tmp/project/.worktrees/fn-002" });
     const store = storeWith([active, ready], { maxConcurrent: 1, maxWorktrees: 4 });
     const onSchedule = vi.fn();
     const scheduler = new Scheduler(store, { onSchedule });
@@ -458,6 +458,62 @@ describe("Scheduler workflow cutover", () => {
     );
     expect(onSchedule).not.toHaveBeenCalled();
     expect(ready.column).toBe("todo");
+  });
+
+  it("does not let a retained directory bypass a full active-task worktree cap", async () => {
+    const active = task({ id: "FN-101", column: "in-progress", worktree: "/tmp/project/.worktrees/fn-101" });
+    const ready = task({ id: "FN-200", status: "queued", worktree: "/tmp/project/.worktrees/fn-200" });
+    const store = storeWith([active, ready], { maxConcurrent: 4, maxWorktrees: 1 });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-200", "in-progress", expect.anything(), expect.anything());
+    expect(onSchedule).not.toHaveBeenCalled();
+  });
+
+  it("counts only active tasks when retained queued worktrees would strand execution slots", async () => {
+    /*
+    FNXC:WorktreeCapacity 2026-08-01-04:38:
+    Live regression: seven active tasks plus two dependency-blocked queued cards with retained
+    worktrees filled a nine-slot ledger. The inactive holders then blocked both dependency-free
+    roots from starting. Slots represent live task execution, not directories retained on disk.
+    */
+    const planners = Array.from({ length: 6 }, (_, index) => task({
+      id: `FN-PLAN-${index}`,
+      status: "planning",
+      worktree: `/tmp/project/.worktrees/plan-${index}`,
+    }));
+    const executing = task({
+      id: "FN-EXECUTING",
+      column: "in-progress",
+      worktree: "/tmp/project/.worktrees/executing",
+    });
+    const parkedDependents = [
+      task({ id: "FN-PARKED-1", status: "queued", worktree: "/tmp/project/.worktrees/parked-1", dependencies: ["FN-ROOT-1"] }),
+      task({ id: "FN-PARKED-2", status: "queued", worktree: "/tmp/project/.worktrees/parked-2", dependencies: ["FN-ROOT-1"] }),
+    ];
+    const roots = [
+      task({ id: "FN-ROOT-1", status: "queued" }),
+      task({ id: "FN-ROOT-2", status: "queued" }),
+      task({ id: "FN-ROOT-3", status: "queued" }),
+    ];
+    const store = storeWith([...planners, executing, ...parkedDependents, ...roots], {
+      maxConcurrent: 12,
+      maxWorktrees: 9,
+    });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ROOT-1", column: "in-progress" }));
+    expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ROOT-2", column: "in-progress" }));
+    expect(onSchedule).not.toHaveBeenCalledWith(expect.objectContaining({ id: "FN-ROOT-3" }));
+    expect(roots[2]?.column).toBe("todo");
   });
 
   /*
@@ -569,6 +625,88 @@ describe("Scheduler workflow cutover", () => {
     expect(second.status).toBe("queued");
   });
 
+  it("rechecks canonical live tasks inside final admission after the sweep snapshot goes stale", async () => {
+    const active = Array.from({ length: 8 }, (_, index) =>
+      task({ id: `FN-ACTIVE-${index}`, column: "in-progress" }),
+    );
+    const ready = task({ id: "FN-READY", status: "queued" });
+    const latePlanner = task({ id: "FN-LATE-PLANNER", status: "planning" });
+    const store = storeWith([...active, ready], { maxConcurrent: 12, maxWorktrees: 9 });
+    vi.mocked(store.listTasks)
+      .mockResolvedValueOnce([...active, ready])
+      .mockResolvedValue([...active, latePlanner, ready]);
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(store.moveTaskIf).not.toHaveBeenCalledWith(
+      ready.id,
+      "in-progress",
+      expect.any(Function),
+      expect.anything(),
+    );
+    expect(onSchedule).not.toHaveBeenCalled();
+    expect(ready.column).toBe("todo");
+    expect(ready.status).toBe("queued");
+  });
+
+  it("counts a pending optional workflow-step lease in final scheduler admission", async () => {
+    const active = Array.from({ length: 8 }, (_, index) =>
+      task({ id: `FN-LEASE-ACTIVE-${index}`, column: "in-progress" }),
+    );
+    const liveLease = task({
+      id: "FN-LIVE-LEASE",
+      status: null,
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        source: "optional-group",
+        status: "pending",
+        startedAt: "2026-08-01T00:00:00.000Z",
+      }],
+    });
+    const ready = task({ id: "FN-READY", status: "queued" });
+    const store = storeWith([...active, liveLease, ready], { maxConcurrent: 12, maxWorktrees: 9 });
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(onSchedule).not.toHaveBeenCalled();
+    expect(ready.column).toBe("todo");
+  });
+
+  it("does not let a stale full sweep hide capacity that freed before final admission", async () => {
+    const initiallyActive = Array.from({ length: 9 }, (_, index) =>
+      task({ id: `FN-STALE-ACTIVE-${index}`, column: "in-progress" }),
+    );
+    const ready = task({ id: "FN-READY", status: "queued" });
+    const store = storeWith([...initiallyActive, ready], { maxConcurrent: 12, maxWorktrees: 9 });
+    vi.mocked(store.listTasks)
+      .mockResolvedValueOnce([...initiallyActive, ready])
+      .mockResolvedValue(initiallyActive.slice(0, 8).concat(ready));
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    expect(store.moveTaskIf).toHaveBeenCalledWith(
+      ready.id,
+      "in-progress",
+      expect.any(Function),
+      expect.anything(),
+    );
+    expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: ready.id }));
+  });
+
   it("leaves a task queued when the authoritative release move rejects after reservation", async () => {
     const ready = task({ id: "FN-002", status: "queued" });
     const store = storeWith([ready], { maxConcurrent: 4, maxWorktrees: 4 });
@@ -600,8 +738,36 @@ describe("Scheduler workflow cutover", () => {
     expect(ready.status).toBe("queued");
   });
 
+  it("returns a rejected active-task reservation so the next candidate can start", async () => {
+    const retained = task({ id: "FN-001", status: "queued", worktree: "/tmp/project/.worktrees/fn-001" });
+    const fresh = task({ id: "FN-002", status: "queued" });
+    const store = storeWith([retained, fresh], { maxConcurrent: 4, maxWorktrees: 1 });
+    vi.mocked(store.moveTaskIf).mockRejectedValueOnce(
+      new TransitionRejectionError(
+        makeTransitionRejection(
+          "capacity-exhausted",
+          "transition.rejected.capacityExhausted",
+          true,
+          "Column is at capacity",
+        ),
+        "Column is at capacity",
+      ),
+    );
+    const onSchedule = vi.fn();
+    const scheduler = new Scheduler(store, { onSchedule });
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.moveTaskIf).toHaveBeenCalledTimes(2);
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-001", "in-progress", expect.any(Function), expect.anything());
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-002", "in-progress", expect.any(Function), expect.anything());
+    expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002", column: "in-progress" }));
+    expect(fresh.column).toBe("in-progress");
+  });
+
   it("does not release work when the shared semaphore is saturated", async () => {
-    const ready = task({ id: "FN-002", status: "queued" });
+    const ready = task({ id: "FN-002", status: "queued", worktree: "/tmp/project/.worktrees/fn-002" });
     const store = storeWith([ready], { maxConcurrent: 4, maxWorktrees: 4 });
     const semaphore = new AgentSemaphore(1);
     await semaphore.acquire();

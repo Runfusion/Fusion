@@ -58,6 +58,7 @@ import type {
   AgentPermissionPolicyActionCategory,
   PermanentAgentActionCategory,
   PermanentAgentGatingContext,
+  ProviderInstanceRef,
   ResolvedMcpServerDefinition,
 } from "@fusion/core";
 import {
@@ -1064,6 +1065,10 @@ export interface AgentOptions {
   defaultProvider?: string;
   /** Default model ID within the provider (e.g. "claude-sonnet-4-5"). Used with `defaultProvider`. */
   defaultModelId?: string;
+  /** Concrete session-scoped credential instance, resolved by agent-session-helpers. */
+  resolvedCredentialInstance?: ProviderInstanceRef;
+  /** Informational requested credential instance id. */
+  credentialInstanceId?: string;
   /** Optional fallback model provider used when the primary selected model hits
    *  a retryable provider-side failure such as rate limiting or overload. */
   fallbackProvider?: string;
@@ -2299,7 +2304,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     logMcpForwardingSkipped({ runtimeId: "pi", provider: options.defaultProvider, skippedCount: requestedMcpServers.length, lane: "createFnAgent" });
   }
   const authStorage = createFusionAuthStorage();
-  const modelRegistry = await createFusionModelRegistry(authStorage);
+  const modelRegistry = await createFusionModelRegistry(authStorage, undefined, options.resolvedCredentialInstance);
   const modelRuntime = modelRegistry.modelRuntime;
 
   // Resolve the project root early so extension providers, skill discovery,

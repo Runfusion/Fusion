@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isDefaultProviderInstance, parseProviderInstanceKey } from "../provider-instance.js";
 
 export type StoredAuthCredential = {
   type?: string;
@@ -82,7 +83,7 @@ function getLastRefreshFallbackExpiryMs(lastRefresh: unknown): number | undefine
   return parsed + CODEX_REFRESH_FALLBACK_WINDOW_MS;
 }
 
-function isStoredAuthCredential(value: unknown): value is StoredAuthCredential {
+export function isStoredAuthCredential(value: unknown): value is StoredAuthCredential {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -275,11 +276,17 @@ export function readStoredCredentialsFromAuthFile(authPath: string): Record<stri
     }
 
     const credentials: Record<string, StoredAuthCredential> = {};
-    for (const [providerId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!isStoredAuthCredential(value)) {
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const ref = parseProviderInstanceKey(key);
+      if (!ref || !isDefaultProviderInstance(ref.instanceId) || !isStoredAuthCredential(value)) {
         continue;
       }
-      credentials[providerId] = value;
+      /*
+      FNXC:ProviderAuth 2026-08-01-04:36:
+      External Claude/Codex hydration accepts only bare provider keys. A named instance is
+      Fusion-internal selection state and must not masquerade as a provider id downstream.
+      */
+      credentials[ref.providerId] = value;
     }
     return credentials;
   } catch {

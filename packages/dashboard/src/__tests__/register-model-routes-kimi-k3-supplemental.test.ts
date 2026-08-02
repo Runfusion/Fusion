@@ -1,5 +1,5 @@
 import type { Router } from "express";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { registerModelRoutes } from "../routes/register-model-routes.js";
 
@@ -9,9 +9,20 @@ FN-8564 requires Kimi K3 to reach both model-catalog consumers. This route-level
 coverage uses Pi 0.82.0's actual built-in ModelRuntime catalog after refresh, so an
 SDK catalog regression cannot leave the Dashboard dropdown missing K3 while the engine
 registry test remains green.
+
+FNXC:ModelCatalog 2026-08-01-05:17:
+FN-8647 preserves the real SDK catalog while hoisting its construction to one reusable
+per-file beforeAll seam, keeping future cases O(1) constructions per file. With one
+case today this does not change wall-clock time or remove the >15s risk: beforeAll
+inherits the same 15s hook budget. The test is quarantined while an owner decides that
+budget; no timeout was widened.
 */
 
+let nativeKimiRegistry: ModelRegistry;
+let nativeKimiRegistryConstructionCount = 0;
+
 async function createNativeKimiRegistry(): Promise<ModelRegistry> {
+  nativeKimiRegistryConstructionCount += 1;
   const runtime = await ModelRuntime.create({
     credentials: {
       read: async (providerId) => providerId === "kimi-coding"
@@ -57,8 +68,16 @@ function createModelsHandler(modelRegistry: ModelRegistry) {
 }
 
 describe("FN-8180: Kimi K3 /api/models catalog", () => {
+  beforeAll(async () => {
+    nativeKimiRegistry = await createNativeKimiRegistry();
+  });
+
+  afterAll(() => {
+    expect(nativeKimiRegistryConstructionCount).toBe(1);
+  });
+
   it("surfaces the native K3 model once for a configured Kimi provider", async () => {
-    const handler = createModelsHandler(await createNativeKimiRegistry());
+    const handler = createModelsHandler(nativeKimiRegistry);
     const json = vi.fn();
 
     await handler({}, { json });

@@ -41,6 +41,11 @@ re-recording, because from inside this check a fall caused by denser encoding is
 from a fall caused by a gate being deleted — and only the second is a defect. That check is the
 standing obligation attached to every `--update-baseline`.
 
+FNXC:LifecycleColumnCensus 2026-08-01-05:01:
+FN-8656 re-records the scheduler drop because it removes the inert sync-lane source entirely, not
+because it deletes this guard. The synchronous prologue now uses emitter lanes and every await-safe
+arm resolves asynchronously, so there are no sync-derived scheduler guards left to census.
+
 WHY A RISE AND NOT ZERO. Existing sync-resolved guards are real, deliberate, and documented — the
 scheduler's listeners genuinely cannot await today, and their authors said so. Demanding zero would
 force either a revert or an exemption marker on day one. What must not happen is MORE literals

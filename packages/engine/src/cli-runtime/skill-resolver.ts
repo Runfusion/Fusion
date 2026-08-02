@@ -519,8 +519,14 @@ export function createSkillsOverrideFromSelection(
 
     for (const excludedPath of excludedSkillPaths) {
       if (hasDiscoveredMatch(excludedPath)) {
+        /*
+        FNXC:EngineDiagnostics 2026-08-01-18:11:
+        Intentional project skill exclusions are expected config, not operator degradation.
+        Use type=info so emission paths route to piLog.debug (FUSION_DEBUG=pi) instead of
+        warn-flooding the TUI on every session that rediscovers the same disabled skill.
+        */
         newDiagnostics.push({
-          type: "warning",
+          type: "info" as ResourceDiagnostic["type"],
           message: `Skill at '${excludedPath}' exists but is disabled by project execution settings${purpose}`,
           path: excludedPath,
         });

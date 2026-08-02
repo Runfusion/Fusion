@@ -18,7 +18,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import ts from "typescript";
 
-import { destinationLiterals } from "../check-move-target-literals.mjs";
+import { countLegacyMoveTargetLiterals, destinationLiterals } from "../check-move-target-literals.mjs";
 
 /** Parse `expr` as the second argument of a moveTask call and return the literals the gate sees. */
 function literalsOf(expr) {
@@ -85,6 +85,34 @@ test("does NOT report a `||` fallback", () => {
 
 test("does NOT report a template with substitution", () => {
   assert.deepEqual(literalsOf("`${prefix}-done`"), []);
+});
+
+/*
+FNXC:MoveTargetRatchet 2026-08-01-04:24:
+FN-8657's measured product population is zero, so these in-memory fixtures make the zero ratchet
+non-vacuous: a renamed-board-breaking literal must remain observable without adding unsafe product code.
+The audit found moveTaskInternal private to moves.ts; its positive case stays pinned because the scanner
+intentionally provides stronger defense-in-depth than the public moveTask-only contract requires.
+*/
+test("counts legacy-literal move destinations in scanner fixtures", () => {
+  const fixture = `
+    store.moveTask(id, "done");
+    store.moveTask(id, ok ? "todo" : "in-review");
+    store.moveTask(id, ("archived"));
+    store.moveTask(id, "triage" as ColumnId);
+    store.moveTask(id, resolved?.complete ?? "done");
+    store.moveTask(id, resolved || "todo");
+  `;
+  assert.equal(countLegacyMoveTargetLiterals(fixture), 4);
+});
+
+test("counts moveTaskInternal destinations as defense-in-depth", () => {
+  assert.equal(countLegacyMoveTargetLiterals('store.moveTaskInternal(id, "done", {}, {});'), 1);
+});
+
+test("only a leading DELIBERATE-LITERAL comment exempts a destination", () => {
+  assert.equal(countLegacyMoveTargetLiterals('/* DELIBERATE-LITERAL */\nstore.moveTask(id, "todo");'), 0);
+  assert.equal(countLegacyMoveTargetLiterals('store.moveTask(id, "todo"); /* DELIBERATE-LITERAL */'), 1);
 });
 
 test("extracts a renamed lane too — legacy filtering is the CALLER's job, not this function's", () => {

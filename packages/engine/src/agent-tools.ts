@@ -1277,6 +1277,27 @@ async function findDefinedFeatureBootstrapDuplicate(
   return matches[0] ? byId.get(matches[0].id) : undefined;
 }
 
+async function resolveDelegationReadyColumn(
+  store: TaskStore,
+  workflowId?: string,
+): Promise<string> {
+  /*
+  FNXC:AgentDelegation 2026-08-01-23:36:
+  Delegation promises immediate heartbeat eligibility, so it targets the workflow's hold/ready lane,
+  not a manual intake lane. Resolve the selected workflow's trait-defined hold column first, then its
+  entry column; the legacy `todo` fallback preserves delegation when workflow resolution is degraded.
+  */
+  try {
+    const selectedWorkflowId = workflowId ?? (await store.getDefaultWorkflowId()) ?? fusionCore.DEFAULT_WORKFLOW_ID;
+    const ir = await fusionCore.resolveWorkflowIrById(store, selectedWorkflowId);
+    return fusionCore.columnsWithFlag(ir, "hold")[0]
+      ?? fusionCore.resolveEntryColumnId(ir)
+      ?? "todo";
+  } catch {
+    return "todo";
+  }
+}
+
 async function carryCanonicalTaskRouting(
   store: TaskStore,
   canonical: Task,
@@ -5383,8 +5404,8 @@ export function createDelegateTaskTool(
     name: "fn_delegate_task",
     label: "Delegate Task",
     description:
-      "Create a new task and assign it to a specific agent for execution. The task goes to " +
-      "'todo' and will be picked up by the target agent on their next heartbeat cycle. " +
+      "Create a new task and assign it to a specific agent for execution. The task goes to the " +
+      "selected workflow's ready lane and will be picked up by the target agent on their next heartbeat cycle. " +
       "Use fn_list_agents first to find available agents and their capabilities. " +
       "Optionally pass workflow_id to select a workflow at creation time; use " +
       "fn_workflow_list to discover valid IDs.",
@@ -5465,11 +5486,11 @@ export function createDelegateTaskTool(
         if (lineage && "error" in lineage) {
           return { content: [{ type: "text" as const, text: `ERROR: ${lineage.error}` }], details: { rule: "mission-lineage-required" }, isError: true };
         }
-        // Create task assigned to the target agent
+        const readyColumn = await resolveDelegationReadyColumn(taskStore, workflowId);
         const { task, wasDuplicate } = await createAgentTask(taskStore, {
           description: params.description,
           dependencies: params.dependencies,
-          column: "todo",
+          column: readyColumn,
           assignedAgentId: params.agent_id,
           ...(workflowId ? { workflowId } : {}),
           ...(lineage ? { missionId: lineage.missionId, sliceId: lineage.sliceId } : {}),

@@ -167,7 +167,12 @@ export async function accumulateSessionTokenUsage(
       }, model, now),
     };
 
-    cacheMetricsLog.log(JSON.stringify({
+    /*
+    FNXC:EngineDiagnostics 2026-08-01-18:11:
+    Per-persist token cache metrics are structured telemetry, not operator state changes.
+    Gate on FUSION_DEBUG=token-cache-metrics so the TUI is not filled with JSON every session end.
+    */
+    cacheMetricsLog.debug(JSON.stringify({
       taskId,
       agentId: options?.agentId,
       role,

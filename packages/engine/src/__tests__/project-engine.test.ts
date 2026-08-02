@@ -2494,6 +2494,74 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
+  it("does not admit a merge over a pending optional workflow-step lease", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true, maxConcurrent: 1, maxWorktrees: 1 });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-MERGE-WAITING",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-merge-waiting",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    mockStore.store.listTasks.mockImplementation(async (options?: { slim?: boolean }) => options?.slim === false
+      ? [{
+          id: "FN-LIVE-REVIEW",
+          column: "todo",
+          paused: false,
+          status: null,
+          workflowStepResults: [{
+            workflowStepId: "code-review",
+            workflowStepName: "Code Review",
+            phase: "pre-merge",
+            source: "optional-group",
+            status: "pending",
+            startedAt: "2026-08-01T00:00:00.000Z",
+          }],
+        }]
+      : []);
+
+    engine.enqueueMerge("FN-MERGE-WAITING");
+
+    await vi.waitFor(() => {
+      expect(mockStore.store.listTasks).toHaveBeenCalledWith({ slim: false, includeArchived: false });
+    });
+    expect(mocks.runAiMerge).not.toHaveBeenCalled();
+    expect(mockStore.store.listTasks.mock.calls.filter(([options]) => options?.slim === false)).toHaveLength(1);
+    const privateEngine = engine as unknown as {
+      mergeQueue: string[];
+      capacityDeferredMergeTaskIds: Set<string>;
+    };
+    expect(privateEngine.mergeQueue).not.toContain("FN-MERGE-WAITING");
+    expect(privateEngine.capacityDeferredMergeTaskIds.has("FN-MERGE-WAITING")).toBe(true);
+    expect(engine.isMergePending("FN-MERGE-WAITING")).toBe(true);
+
+    // An unrelated queue wake must not make the deferred task runnable before its timer.
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-OTHER-MERGE",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+      branch: "fusion/fn-other-merge",
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    engine.enqueueMerge("FN-OTHER-MERGE");
+    await vi.waitFor(() => {
+      expect(privateEngine.capacityDeferredMergeTaskIds.has("FN-OTHER-MERGE")).toBe(true);
+    });
+    expect(privateEngine.mergeQueue).not.toContain("FN-MERGE-WAITING");
+    expect(mocks.runAiMerge).not.toHaveBeenCalled();
+    await engine.stop();
+    expect(privateEngine.capacityDeferredMergeTaskIds.size).toBe(0);
+    expect(engine.isMergePending("FN-MERGE-WAITING")).toBe(false);
+  });
+
   it("records an audit event (not silent) when auto-promotion of a branch-group member fails (Fix #4)", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     // The dequeued + merged task is a shared branch-group member, so the engine
@@ -3796,8 +3864,8 @@ describe("U9 merge safeguards without prior coverage", () => {
       mergeRetries: 0,
       createdAt: new Date(0).toISOString(),
     });
-    const admitted = (await mergeProvider.refresh()) as Array<{ taskId: string }>;
-    expect(admitted.map((c) => c.taskId)).toEqual(["FN-paused"]);
+    const admitted = (await mergeProvider.refresh()) as Array<{ taskId: string; lane: string }>;
+    expect(admitted).toMatchObject([{ taskId: "FN-paused", lane: "review" }]);
 
     // Engine-level `paused` is the sibling half of the same filter.
     mockStore.store.getTask.mockResolvedValue({

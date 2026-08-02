@@ -147,14 +147,21 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
         target: "FN-8141",
         // FNXC:HonestBlockedExit 2026-08-01-01:45: `parkedAs` discriminates the dependency-free
         // auto-replan park from the failed park (both ids/outcomes-only).
-        metadata: { taskId: "FN-8141", blockedBy: ["FN-8145"], hasReason: true, parkedAs: "failed" },
+        // FNXC:HonestBlockedExit 2026-08-02-01:30: additive blockedClass/thrash fields stay ids/outcomes-only.
+        metadata: expect.objectContaining({
+          taskId: "FN-8141",
+          blockedBy: ["FN-8145"],
+          hasReason: true,
+          parkedAs: "failed",
+          blockedClass: "external",
+        }),
       }),
     );
     const auditCall = store.recordRunAuditEvent.mock.calls[0][0];
     expect(JSON.stringify(auditCall.metadata)).not.toContain("secret blocker prose");
   });
 
-  it("parks a dependency-free block as needs-replan (auto-replan), never as an alarming failed badge", async () => {
+  it("parks a dependency-free plan-defect block as needs-replan (auto-replan), never as an alarming failed badge", async () => {
     /*
     FNXC:HonestBlockedExit 2026-08-01-01:45 (operator report — FN-8634):
     No blockedBy = nothing external to wait for; the recovery is a replan, which the overseer was
@@ -172,6 +179,37 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
       expect.objectContaining({
         mutationType: "task:execution-blocked-parked",
         metadata: expect.objectContaining({ parkedAs: "auto-replan", blockedBy: [] }),
+      }),
+    );
+  });
+
+  it("parks file-claim / open-PR blocks as durable failed even with empty task blockedBy (FN-8700)", async () => {
+    /*
+    FNXC:HonestBlockedExit 2026-08-02-01:30:
+    Empty blockedBy + claim language must NOT auto-replan — that re-ran claimed paths forever.
+    */
+    const { store, tool } = await setup();
+
+    await tool.execute("id", {
+      outcome: "blocked",
+      reason: "Required path packages/core/src/task-store/reads.ts is actively claimed by PR #2398 (check-file-claimed).",
+      blockedBy: ["pr:2398"],
+    });
+
+    const patch = store.updateTask.mock.calls.find(([, p]: [string, Record<string, unknown>]) => p?.status === "failed")?.[1] as Record<string, unknown>;
+    expect(patch).toBeDefined();
+    expect(String(patch.error)).toMatch(/^BLOCKED:/);
+    expect(String(patch.error)).toContain("2398");
+    expect(patch.sourceMetadataPatch).toEqual(
+      expect.objectContaining({
+        blockedClass: "file-claim",
+        externalBlockers: expect.arrayContaining([expect.objectContaining({ kind: "github-pr", number: 2398 })]),
+      }),
+    );
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutationType: "task:execution-blocked-parked",
+        metadata: expect.objectContaining({ parkedAs: "failed", blockedClass: "file-claim" }),
       }),
     );
   });

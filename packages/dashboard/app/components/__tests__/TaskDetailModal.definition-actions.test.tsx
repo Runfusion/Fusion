@@ -454,10 +454,11 @@ describe("TaskDetailModal", () => {
   });
 
   describe("Plan Approval UI", () => {
-    it("shows Approve Plan and Reject Plan buttons for awaiting-approval tasks in triage", () => {
+    it("shows Approve Plan and Reject Plan buttons for awaiting-approval tasks in triage", async () => {
       render(
         <TaskDetailModal
           task={makeTask({
+            id: "FN-001",
             column: "triage",
             status: "awaiting-approval",
             prompt: "# Task Spec",
@@ -472,12 +473,39 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Approve Plan")).toBeTruthy();
-      expect(screen.getByText("Reject Plan")).toBeTruthy();
+      const { approvePlan, rejectPlan } = await import("../../api");
+      const mockApprovePlan = vi.mocked(approvePlan);
+      const mockRejectPlan = vi.mocked(rejectPlan);
+      mockApprovePlan.mockClear();
+      mockRejectPlan.mockClear();
+
       const banner = screen.getByTestId("detail-plan-approval-banner");
+      const bannerActions = screen.getByTestId("detail-plan-approval-banner-actions");
+      const bannerApprove = screen.getByTestId("detail-plan-approval-banner-approve");
+      const bannerReject = screen.getByTestId("detail-plan-approval-banner-reject");
+
       expect(banner.getAttribute("data-awaiting-approval-reason")).toBe("manual");
+      expect(banner.contains(bannerActions)).toBe(true);
+      expect(bannerActions.contains(bannerApprove)).toBe(true);
+      expect(bannerActions.contains(bannerReject)).toBe(true);
+      const approveButtons = screen.getAllByRole("button", { name: "Approve Plan" });
+      const rejectButtons = screen.getAllByRole("button", { name: "Reject Plan" });
+      expect(approveButtons).toHaveLength(2);
+      expect(rejectButtons).toHaveLength(2);
+      expect(approveButtons.some(button => !banner.contains(button))).toBe(true);
+      expect(rejectButtons.some(button => !banner.contains(button))).toBe(true);
       expect(screen.getByText("Approval needed before implementation")).toBeTruthy();
       expect(screen.getByText(/require a human decision before work starts/i)).toBeTruthy();
+
+      fireEvent.click(bannerApprove);
+      await waitFor(() => {
+        expect(mockApprovePlan).toHaveBeenCalledWith("FN-001", undefined);
+      });
+
+      fireEvent.click(bannerReject);
+      await waitFor(() => {
+        expect(mockRejectPlan).toHaveBeenCalledWith("FN-001", undefined);
+      });
     });
 
     /*
@@ -504,10 +532,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Approve Plan")).toBeTruthy();
-      expect(screen.getByText("Reject Plan")).toBeTruthy();
       const banner = screen.getByTestId("detail-plan-approval-banner");
       expect(banner.getAttribute("data-awaiting-approval-reason")).toBe("plan-review-replan-cap");
+      expect(banner.classList.contains("detail-plan-approval-banner--replan-cap")).toBe(true);
+      expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-actions"))).toBe(true);
+      expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-approve"))).toBe(true);
+      expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-reject"))).toBe(true);
       expect(screen.getByText("Approval needed: Plan Review did not converge")).toBeTruthy();
       expect(screen.getByText(/exhausted|without approving|stopped the replan loop/i)).toBeTruthy();
     });
@@ -537,8 +567,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Approve Plan")).toBeTruthy();
-      expect(screen.getByText("Reject Plan")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-banner-approve")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-banner-reject")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-footer-approve")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-footer-reject")).toBeTruthy();
       expect(screen.queryByText(/Awaiting release authorization/i)).toBeNull();
     });
 
@@ -584,6 +616,8 @@ describe("TaskDetailModal", () => {
 
       expect(screen.queryByText("Approve Plan")).toBeNull();
       expect(screen.queryByText("Reject Plan")).toBeNull();
+      expect(screen.queryByTestId("detail-plan-approval-banner")).toBeNull();
+      expect(screen.queryByTestId("detail-plan-approval-banner-actions")).toBeNull();
     });
 
     it("does not show approval buttons when task has no prompt", () => {
@@ -606,6 +640,7 @@ describe("TaskDetailModal", () => {
 
       expect(screen.queryByText("Approve Plan")).toBeNull();
       expect(screen.queryByText("Reject Plan")).toBeNull();
+      expect(screen.queryByTestId("detail-plan-approval-banner-actions")).toBeNull();
     });
 
     it("calls approvePlan API and shows success toast when Approve Plan is clicked", async () => {
@@ -632,7 +667,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Approve Plan"));
+      fireEvent.click(screen.getByTestId("detail-plan-approval-footer-approve"));
 
       await waitFor(() => {
         expect(mockApprovePlan).toHaveBeenCalledWith("FN-001", undefined);
@@ -668,7 +703,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Reject Plan"));
+      fireEvent.click(screen.getByTestId("detail-plan-approval-footer-reject"));
 
       expect(mockConfirm).toHaveBeenCalledWith({
         title: "Reject Plan",
@@ -714,7 +749,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Reject Plan"));
+      fireEvent.click(screen.getByTestId("detail-plan-approval-footer-reject"));
 
       expect(mockConfirm).toHaveBeenCalled();
       expect(mockRejectPlan).not.toHaveBeenCalled();
@@ -747,7 +782,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Approve Plan"));
+      fireEvent.click(screen.getByTestId("detail-plan-approval-footer-approve"));
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Network error", "error");
@@ -782,7 +817,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Reject Plan"));
+      fireEvent.click(screen.getByTestId("detail-plan-approval-footer-reject"));
 
       await waitFor(() => {
         expect(addToast).toHaveBeenCalledWith("Server error", "error");

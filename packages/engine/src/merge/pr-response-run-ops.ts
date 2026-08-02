@@ -132,6 +132,7 @@ export function makePrResponseAgentRunner(
       },
       defaultProvider: model.provider,
       defaultModelId: model.modelId,
+      ...(model.credentialInstanceId ? { credentialInstanceId: model.credentialInstanceId } : {}),
       fallbackProvider: mergerFallbackModel.provider,
       fallbackModelId: mergerFallbackModel.modelId,
       fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings, task?.mergerThinkingLevel),

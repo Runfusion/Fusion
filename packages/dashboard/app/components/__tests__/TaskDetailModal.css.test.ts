@@ -28,13 +28,20 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
   });
 
+  /*
+  FNXC:TaskDetailPadding 2026-08-01-03:20:
+  FN-8634 moved the canonical tab inset from the scrolling `.detail-body` to its
+  `.detail-body-content` child so scrollbar tracks remain outside the content inset.
+  FN-7408 must assert that visual contract at the owning element while chat and
+  planner variants remain forbidden from introducing competing outer padding.
+  */
   it("FN-7408 keeps task-detail tab body padding canonical across Activity, planner Chat, and Plan surfaces", async () => {
     const css = await loadAllAppCssBaseOnly();
-    const detailBodyBlock = getCssRuleBlock(css, ".detail-body");
+    const detailBodyContentBlock = getCssRuleBlock(css, ".detail-body-content");
     const rawBodyBlock = getCssRuleBlock(css, ".detail-body--agent-log");
     const planBlock = getCssRuleBlock(css, ".detail-section--plan-prompt");
 
-    expect(detailBodyBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
+    expect(detailBodyContentBlock).toContain("padding: calc(var(--space-lg) + var(--space-xs));");
     expectNoOuterPaddingOverride(css, ".detail-body--chat");
     expectNoOuterPaddingOverride(css, ".detail-body--planner-chat");
     expectNoOuterPaddingOverride(css, ".task-detail-content--chat-expanded .detail-body--chat");

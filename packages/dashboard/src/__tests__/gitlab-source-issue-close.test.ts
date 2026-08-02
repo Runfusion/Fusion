@@ -27,3 +27,11 @@ describe("GitLabSourceIssueCloseService", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+  it("keeps malformed tracking inert on the done-close path", async () => {
+    const fetchImpl = vi.fn(); vi.stubGlobal("fetch", fetchImpl);
+    const s = store(); new GitLabSourceIssueCloseService(s as any).start();
+    s.emit("task:moved", { task: { ...task(), source: { sourceMetadata: { projectPath: "g/p", iid: 2 } }, gitlabTracking: { item: { kind: "project_issue", iid: 2 } } }, from: "todo", to: "done" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });

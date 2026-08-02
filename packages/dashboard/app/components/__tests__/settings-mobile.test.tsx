@@ -54,7 +54,11 @@ vi.mock("../../api", () => ({
     { id: "anthropic-subscription", name: "Anthropic Subscription", authenticated: false, type: "oauth" },
     { id: "anthropic-api-key", name: "Anthropic API Key", authenticated: false, type: "api_key" },
   ] })),
+  // FNXC:SettingsCredentialInstance 2026-08-01-17:06: Mobile Authentication uses the same default-or-named instance key as desktop so responsive rendering cannot collapse provider action state.
+  formatProviderInstanceKey: ({ providerId, instanceId }: { providerId: string; instanceId: string }) => instanceId === "default" ? providerId : `${providerId}[${instanceId}]`,
   loginProvider: vi.fn(() => Promise.resolve({ url: "https://auth.example.com/login" })),
+  submitProviderManualCode: vi.fn(() => Promise.resolve({ success: true, submitted: true })),
+  cancelProviderLogin: vi.fn(() => Promise.resolve({ success: true, cancelled: true })),
   logoutProvider: vi.fn(() => Promise.resolve({ success: true })),
   saveApiKey: vi.fn(() => Promise.resolve({ success: true })),
   clearApiKey: vi.fn(() => Promise.resolve({ success: true })),
@@ -155,7 +159,7 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   })),
 }));
 
-import { fetchDashboardHealth, fetchSettings, updateSettings } from "../../api";
+import { fetchDashboardHealth, fetchSettings, loginProvider, saveApiKey, updateSettings } from "../../api";
 
 function setDocumentHidden(hidden: boolean): void {
   Object.defineProperty(document, "hidden", { configurable: true, value: hidden });
@@ -724,10 +728,12 @@ describe("SettingsModal mobile adaptations", () => {
 
     const subscriptionCard = (await findByTestId("auth-provider-icon-anthropic-subscription")).closest(".auth-provider-card") as HTMLElement;
     const apiKeyCard = (await findByTestId("auth-provider-icon-anthropic-api-key")).closest(".auth-provider-card") as HTMLElement;
-    expect(within(subscriptionCard).getByRole("button", { name: "Login" })).toBeTruthy();
+    await user.click(within(subscriptionCard).getByRole("button", { name: "Login" }));
+    expect(loginProvider).toHaveBeenCalledWith("anthropic-subscription");
     expect(within(subscriptionCard).queryByPlaceholderText("Enter API key")).toBeNull();
-    expect(within(apiKeyCard).getByPlaceholderText("Enter API key")).toBeTruthy();
-    expect(within(apiKeyCard).getByRole("button", { name: "Save" })).toBeTruthy();
+    await user.type(within(apiKeyCard).getByPlaceholderText("Enter API key"), "sk-mobile");
+    await user.click(within(apiKeyCard).getByRole("button", { name: "Save" }));
+    expect(saveApiKey).toHaveBeenCalledWith("anthropic-api-key", "sk-mobile");
   });
 
   it("renders notification provider cards responsively on mobile", async () => {

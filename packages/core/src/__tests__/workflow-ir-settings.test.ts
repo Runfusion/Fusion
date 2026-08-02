@@ -279,3 +279,69 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
     expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).buildTimeoutMs).toBe(300_000);
   });
 });
+
+describe("credential-instance workflow settings", () => {
+  it("accepts valid ids and atomically rejects malformed companion values", async () => {
+    const { validateSettingValuePatch } = await import("../workflow-settings.js");
+    const declarations: WorkflowSettingDefinition[] = [
+      { id: "executionCredentialInstanceId", name: "Instance", type: "string" },
+    ];
+    expect(validateSettingValuePatch(declarations, { executionCredentialInstanceId: "work" }).accepted)
+      .toEqual({ executionCredentialInstanceId: "work" });
+    for (const executionCredentialInstanceId of ["", "   ", "bad[id]", "x".repeat(257), 42]) {
+      const rejected = validateSettingValuePatch(declarations, { executionCredentialInstanceId });
+      expect(rejected.accepted).toEqual({});
+      expect(rejected.rejections).toHaveLength(1);
+    }
+  });
+});
+
+describe("credential-instance workflow node config", () => {
+  const valid = {
+    version: "v2" as const, name: "credential-instance", columns: [],
+    nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end", config: { credentialInstanceId: "work" } }],
+    edges: [{ from: "start", to: "end" }],
+  };
+
+  it("round-trips valid ids and preserves omission", () => {
+    expect(parseWorkflowIr(valid).nodes[1]?.config?.credentialInstanceId).toBe("work");
+    const omitted = parseWorkflowIr({ ...valid, nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end" }] });
+    expect(omitted.nodes[1]?.config).toBeUndefined();
+  });
+
+  it("rejects malformed and non-string ids", () => {
+    for (const credentialInstanceId of ["", "   ", "bad[id]", "x".repeat(257), 42]) {
+      expect(() => parseWorkflowIr({
+        ...valid,
+        nodes: [{ id: "start", kind: "start" }, { id: "end", kind: "end", config: { credentialInstanceId } }],
+      })).toThrow(WorkflowIrError);
+    }
+  });
+
+  it("validates credential instances inside foreach templates", () => {
+    const template = {
+      version: "v2" as const,
+      name: "credential-instance-template",
+      columns: [],
+      artifacts: [{ key: "plan" }],
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "steps", kind: "parse-steps", config: { artifact: "plan", parser: "step-headings" } },
+        { id: "each", kind: "foreach", config: { source: "task-steps", template: {
+          nodes: [{ id: "execute", kind: "step-execute", config: { credentialInstanceId: "template-instance" } }],
+          edges: [],
+        } } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [{ from: "start", to: "steps" }, { from: "steps", to: "each" }, { from: "each", to: "end" }],
+    };
+    expect(parseWorkflowIr(template).nodes[2]?.config?.template?.nodes[0]?.config?.credentialInstanceId).toBe("template-instance");
+    expect(() => parseWorkflowIr({
+      ...template,
+      nodes: [...template.nodes.slice(0, 2), { ...template.nodes[2], config: {
+        ...template.nodes[2].config,
+        template: { nodes: [{ id: "execute", kind: "step-execute", config: { credentialInstanceId: "bad[id]" } }], edges: [] },
+      } }, template.nodes[3]],
+    })).toThrow(WorkflowIrError);
+  });
+});

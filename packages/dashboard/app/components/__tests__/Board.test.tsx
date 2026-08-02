@@ -129,6 +129,22 @@ vi.mock("../Column", () => ({
   }),
 }));
 
+/*
+FNXC:TaskRevert 2026-08-01-20:06:
+The aggregate resolution section renders TaskCard directly rather than through the
+Column mock. Keep this focused Board suite isolated from TaskCard's badge-fetching
+hooks while exposing the card traits and Delete/Revise callbacks it must receive.
+*/
+vi.mock("../TaskCard", () => ({
+  TaskCard: ({ task, taskColumnFlags, onDeleteTask, onReviseTask }: { task: Task; taskColumnFlags?: { complete?: boolean }; onDeleteTask?: unknown; onReviseTask?: (task: Task) => void }) => (
+    <article data-testid={`board-resolution-card-${task.id}`} data-complete={String(taskColumnFlags?.complete === true)}>
+      <span>{task.title}</span>
+      {onDeleteTask ? <button type="button">Delete</button> : null}
+      {onReviseTask ? <button type="button" onClick={() => onReviseTask(task)}>Revise</button> : null}
+    </article>
+  ),
+}));
+
 // Mock Lane so the multi-lane Board tests assert grouping/ordering without
 // pulling in the full Column tree.
 vi.mock("../Lane", () => ({
@@ -1358,6 +1374,36 @@ describe("Board", () => {
       expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
       expect(screen.getByTestId("column-todo").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-in-progress").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
+    });
+
+    it("keeps reverted custom-complete tasks discoverable in All Workflows with resolution actions", async () => {
+      const projectId = "project-all-reverted-resolution";
+      const shippedWorkflow = {
+        id: "wf-shipped",
+        name: "Shipped Flow",
+        columns: [
+          { id: "intake", name: "Intake", flags: { intake: true } },
+          { id: "shipped", name: "Shipped", flags: { complete: true } },
+        ],
+      };
+      const reverted = mkTask({
+        id: "FN-REVERTED",
+        title: "Cancelled custom task",
+        column: "shipped",
+        sourceMetadata: { revertedAt: "2026-08-01T00:00:00.000Z" },
+      });
+      enableFlag({ [reverted.id]: shippedWorkflow.id }, [DEFAULT_WORKFLOW, shippedWorkflow]);
+      window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId), ALL_WORKFLOWS_BOARD_VIEW_ID);
+
+      renderBoard({ projectId, tasks: [reverted], onDeleteTask: vi.fn().mockResolvedValue(reverted), onReviseTask: vi.fn() });
+
+      await waitFor(() => expect(screen.getByTestId("column-shipped")).toBeDefined());
+      expect(screen.getByTestId("column-shipped")).not.toHaveAttribute("data-tasks", expect.stringContaining(reverted.id));
+      const resolution = screen.getByTestId("board-reverted-tasks");
+      expect(screen.getByTestId("board-resolution-card-FN-REVERTED")).toHaveAttribute("data-complete", "true");
+      expect(resolution).toHaveTextContent("Cancelled custom task");
+      expect(within(resolution).getByRole("button", { name: "Delete" })).toBeInTheDocument();
+      expect(within(resolution).getByRole("button", { name: "Revise" })).toBeInTheDocument();
     });
 
     it("passes auto-merge toggle to selected workflow human-review columns", async () => {

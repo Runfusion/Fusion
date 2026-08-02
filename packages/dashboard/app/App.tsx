@@ -2203,6 +2203,8 @@ function AppInner() {
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
               onMoveTask={moveTask}
+              /* FNXC:TaskRevert 2026-08-01-20:27: Popped-out detail preserves Delete-or-Revise recovery for reverted tasks. */
+              onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onDeleteTask={deleteTask}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}

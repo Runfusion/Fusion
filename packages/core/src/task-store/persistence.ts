@@ -38,12 +38,16 @@ export interface TaskRow {
   baseCommitSha: string | null;
   modelPresetId: string | null;
   modelProvider: string | null;
+  credentialInstanceId: string | null;
   modelId: string | null;
   validatorModelProvider: string | null;
+  validatorCredentialInstanceId: string | null;
   validatorModelId: string | null;
   planningModelProvider: string | null;
+  planningCredentialInstanceId: string | null;
   planningModelId: string | null;
   mergerModelProvider: string | null;
+  mergerCredentialInstanceId: string | null;
   mergerModelId: string | null;
   mergeRetries: number | null;
   workflowStepRetries: number | null;
@@ -255,12 +259,16 @@ export const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("baseCommitSha", (task) => task.baseCommitSha ?? null),
   defineTaskColumn("modelPresetId", (task) => task.modelPresetId ?? null),
   defineTaskColumn("modelProvider", (task) => task.modelProvider ?? null),
+  defineTaskColumn("credentialInstanceId", (task) => task.credentialInstanceId ?? null),
   defineTaskColumn("modelId", (task) => task.modelId ?? null),
   defineTaskColumn("validatorModelProvider", (task) => task.validatorModelProvider ?? null),
+  defineTaskColumn("validatorCredentialInstanceId", (task) => task.validatorCredentialInstanceId ?? null),
   defineTaskColumn("validatorModelId", (task) => task.validatorModelId ?? null),
   defineTaskColumn("planningModelProvider", (task) => task.planningModelProvider ?? null),
+  defineTaskColumn("planningCredentialInstanceId", (task) => task.planningCredentialInstanceId ?? null),
   defineTaskColumn("planningModelId", (task) => task.planningModelId ?? null),
   defineTaskColumn("mergerModelProvider", (task) => task.mergerModelProvider ?? null),
+  defineTaskColumn("mergerCredentialInstanceId", (task) => task.mergerCredentialInstanceId ?? null),
   defineTaskColumn("mergerModelId", (task) => task.mergerModelId ?? null),
   defineTaskColumn("mergeRetries", (task) => task.mergeRetries ?? null),
   defineTaskColumn("workflowStepRetries", (task) => task.workflowStepRetries ?? null),

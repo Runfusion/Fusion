@@ -107,8 +107,18 @@ const canRun = hasGit && hasPg;
     const updated = await fx.store.getTask(duplicate.id);
     expect(updated.paused).not.toBe(true);
     expect(updated.pausedReason ?? null).toBeNull();
-    expect(updated.status ?? null).toBeNull();
+    // needs-replan (not null) so the card cannot look planning-finished without PROMPT
+    expect(updated.status).toBe("needs-replan");
+    expect(updated.sourceMetadata).toEqual(expect.objectContaining({
+      nearDuplicateOf: canonicalId,
+      nearDuplicateDismissed: true,
+      duplicateSource: "triage-marker",
+    }));
     expect(existsSync(promptPath)).toBe(false);
+    expect(updated.log?.some((entry) =>
+      entry.action === "Duplicate marker cleared for re-specification"
+      && String(entry.outcome ?? "").includes(canonicalId),
+    )).toBe(true);
   });
 
   it.each([
@@ -146,7 +156,11 @@ const canRun = hasGit && hasPg;
     const updated = await fx.store.getTask(duplicate.id);
     expect(updated.paused).not.toBe(true);
     expect(updated.pausedReason ?? null).toBeNull();
-    expect(updated.sourceMetadata).toEqual(expect.objectContaining({ nearDuplicateOf: canonical.id.toLowerCase(), nearDuplicateDismissed: true }));
+    expect(updated.status).toBe("needs-replan");
+    expect(updated.sourceMetadata).toEqual(expect.objectContaining({
+      nearDuplicateOf: canonical.id,
+      nearDuplicateDismissed: true,
+    }));
     expect(existsSync(promptPath)).toBe(false);
   });
 

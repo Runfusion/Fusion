@@ -10,7 +10,8 @@ import type {
   Settings,
   Task,
 } from "@fusion/core";
-import { DASHBOARD_USER_ID, NotificationDispatcher, LifecycleColumns, WorkflowIrResolverStore, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask} from "@fusion/core";
+import type { LifecycleColumns, TaskMoveLanes, WorkflowIrResolverStore } from "@fusion/core";
+import { DASHBOARD_USER_ID, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
 import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
@@ -36,7 +37,7 @@ export interface NotificationServiceOptions {
 interface NotificationServiceStoreEvents {
   "task:created": [task: Task];
   "task:moved": [data: { task: Task; from: Column; to: Column }];
-  "task:updated": [task: Task];
+  "task:updated": [task: Task, meta?: { lanes?: TaskMoveLanes }];
   "task:merged": [result: MergeResult];
   "settings:updated": [payload: { settings: Settings; previous: Settings }];
 }
@@ -125,6 +126,13 @@ export class NotificationService {
   private failureNotificationMode: "sticky-only" | "all" | "terminal-only" = "sticky-only";
   /** Compatibility fallback for lightweight test stores without the durable TaskStore CAS. */
   private readonly activeWedgeReasons = new Map<string, string>();
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-01-15:35:
+  Lightweight stores lack the durable compare-and-set, but must retain the same
+  per-task, per-reason cooldown. Clearing an active episode deliberately does not
+  clear these timestamps: X -> Y -> X must not re-notify X inside its window.
+  */
+  private readonly fallbackWedgeNotificationTimestamps = new Map<string, Map<string, number>>();
   /*
   FNXC:TaskWedgeNotifications 2026-07-31-21:10:
   PER-TASK SERIALISATION OF WEDGE HANDLING — the blocker two earlier fleet passes recorded and
@@ -362,7 +370,7 @@ export class NotificationService {
     }
   };
 
-  private handleTaskUpdated = (task: Task): void => {
+  private handleTaskUpdated = (task: Task, meta?: { lanes?: TaskMoveLanes }): void => {
     /*
     FNXC:TaskWedgeNotifications 2026-07-22-20:00:
     FN-5627 transient merge failures retain an active recovery owner despite
@@ -456,7 +464,7 @@ export class NotificationService {
       );
     }
 
-    const workflowTransition = this.classifyWorkflowTransitionNotification(task);
+    const workflowTransition = this.classifyWorkflowTransitionNotification(task, meta?.lanes?.review);
     if (workflowTransition) {
       this.maybeNotify(
         task.id,
@@ -590,9 +598,8 @@ export class NotificationService {
       if (!claim.claimed || !claim.episodeId) return;
       episode = claim.episodeId;
     } else {
-      if (this.activeWedgeReasons.get(task.id) === descriptor.reasonKey) return;
-      this.activeWedgeReasons.set(task.id, descriptor.reasonKey);
-      episode = `${task.id}:${descriptor.reasonKey}:${task.updatedAt}`;
+      episode = this.claimFallbackWedgeNotificationEpisode(task.id, descriptor.reasonKey, task.updatedAt);
+      if (!episode) return;
     }
     const link = buildNtfyClickUrl({ dashboardHost: this.dashboardHost, projectId: this.options.projectId, taskId: task.id });
     const content = [
@@ -616,6 +623,22 @@ export class NotificationService {
     } catch (error) {
       schedulerLog.log(`[notify] ${task.id} wedge mailbox message failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  private claimFallbackWedgeNotificationEpisode(taskId: string, reasonKey: string, updatedAt: string): string | undefined {
+    if (this.activeWedgeReasons.get(taskId) === reasonKey) return undefined;
+
+    const now = Date.now();
+    const timestamps = this.fallbackWedgeNotificationTimestamps.get(taskId) ?? new Map<string, number>();
+    for (const [key, notifiedAt] of timestamps) {
+      if (!Number.isFinite(notifiedAt) || notifiedAt > now || now - notifiedAt >= WEDGE_RENOTIFY_COOLDOWN_MS) timestamps.delete(key);
+    }
+    this.activeWedgeReasons.set(taskId, reasonKey);
+    this.fallbackWedgeNotificationTimestamps.set(taskId, timestamps);
+    if (timestamps.has(reasonKey)) return undefined;
+
+    timestamps.set(reasonKey, now);
+    return `${taskId}:${reasonKey}:${updatedAt}`;
   }
 
   private isTriageDuplicateDecision(task: Task): boolean {
@@ -1148,7 +1171,10 @@ export class NotificationService {
       typeof task.mergeDetails?.mergedAt === "string";
   }
 
-  private classifyWorkflowTransitionNotification(task: Task): { event: NotificationEvent; metadata: Record<string, unknown> } | null {
+  private classifyWorkflowTransitionNotification(
+    task: Task,
+    reviewLane?: string,
+  ): { event: NotificationEvent; metadata: Record<string, unknown> } | null {
     /*
      * FNXC:WorkflowNotifications 2026-06-29-11:50:
      * Workflow-specific operator waits should notify from the durable task update that already represents the wait, not from a new lifecycle bus. Plan/remediation await-input, workflow CLI approval, manual merge holds, and workflow recovery requeues each use a stable dedupe key so repeated task:updated emissions stay quiet while unrelated task notifications can still fire.
@@ -1178,7 +1204,7 @@ export class NotificationService {
     }
 
     const typedWorkflowTransition = this.workflowTransitionNotificationMarker(task);
-    if (task.status !== "failed" && (this.isManualMergeHold(task) || typedWorkflowTransition?.kind === "manual-merge-hold")) {
+    if (task.status !== "failed" && (this.isManualMergeHold(task, reviewLane) || typedWorkflowTransition?.kind === "manual-merge-hold")) {
       return {
         event: "workflow-notify",
         metadata: {
@@ -1224,36 +1250,19 @@ export class NotificationService {
   }
 
   /*
-  FNXC:WorkflowResolvedColumns 2026-07-30-23:10 (fleet phase — FLAGGED AND LEFT COUNTED):
-  The last review-lane id in this file, and the one conversion that is not mechanical. This predicate is
-  SYNC and its only caller, `classifyWorkflowTransitionNotification`, is sync too — reached from the
-  `handleTaskUpdated` listener, which the store invokes as `(task: Task): void`.
+  FNXC:WorkflowResolvedColumns 2026-08-01-07:42:
+  `task:updated` remains a synchronous listener: its prologue schedules wedge and mailbox work before
+  notification classification, so resolving workflow IR here would defer that ordering and make the
+  lane conversion inert under PostgreSQL's default-only sync resolver.
 
-  Converting it therefore means making the whole chain async, which turns a synchronous listener body
-  into fire-and-forget and reorders notification classification against every other `task:updated`
-  handler. That is a behaviour change to notification ordering, not a column conversion, so it is out of
-  fleet scope.
-
-  Threading a pre-resolved `LifecycleColumns` in as a parameter is the likely fix — the resolution has to
-  happen in `handleTaskUpdated`, which would then pay it on every task update, so it wants the same
-  gate-placement judgement applied to the sites above rather than a mechanical pass.
-
-  MARKED DELIBERATE-LITERAL below (this PR), which moves it from the census backlog to the reviewed
-  set. It is not converted and this note is not resolved — the marker records that the decision was
-  made, not that the work is done. Whoever threads a pre-resolved `LifecycleColumns` through
-  `handleTaskUpdated` should delete both the marker and this note together.
+  FN-8658 instead carries the emitter's cache-warmed `TaskMoveLanes` answer on the event. The review
+  lane is passed explicitly through this synchronous chain, while `enqueueWedgeHandling` already
+  serializes resolve-then-claim wedge episodes per task. Missing or blank metadata means unknown, not
+  legacy, and preserves the established `in-review` fallback exactly.
   */
-  private isManualMergeHold(task: Task): boolean {
-    /* DELIBERATE-LITERAL — see the note above: this method and its only caller
-       (`classifyWorkflowTransitionNotification`) are SYNC, reached from the `handleTaskUpdated`
-       listener the store invokes as `(task: Task): void`. Resolving a lane here makes that whole
-       chain async, turning a synchronous listener body into fire-and-forget and reordering
-       notification classification against every other `task:updated` handler — a behaviour change to
-       notification ordering rather than a column conversion. */
-    if (task.column !== "in-review") {
-      return false;
-    }
-    return task.pausedReason === "manual-hold";
+  private isManualMergeHold(task: Task, reviewLane?: string): boolean {
+    const resolvedReviewLane = reviewLane?.trim() || "in-review";
+    return task.column === resolvedReviewLane && task.pausedReason === "manual-hold";
   }
 
   private workflowTransitionNotificationMarker(task: Task): Task["workflowTransitionNotification"] | undefined {

@@ -35,10 +35,21 @@ import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PR
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
+  pruneTaskLifecycleEvents,
+  isGhAvailable,
+  runGhJsonAsync,
 } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
+import {
+  TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+  buildInactiveDuplicateClearFeedback,
+  buildKeepDuplicateClearFeedback,
+  buildMarkerClearedReplanTaskPatch,
+  buildMarkerExhaustedFailedTaskPatch,
+  buildDuplicateReplanExhaustedError,
+} from "./duplicate-marker-clear.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { RemovalReason, classifyTaskWorktree, getRegisteredWorktreeBranchMap, getRegisteredWorktreePaths, hasUsableWorktreeShape, isUsableTaskWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, resolveWorktreeBackend, scanIdleWorktrees, scanOrphanedBranches } from "./worktree/worktree-pool.js";
 import {
@@ -915,6 +926,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private symbolLockNoActionAudited = false;
   private preservedQueuedOverlapLogged = new Map<string, string>();
   private maintenanceTickCounter = 0;
+  private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
   private lastDbCorruptionNotifiedAt: number | null = null;
 
@@ -2159,6 +2171,27 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     }, intervalMs);
   }
 
+  /*
+  FNXC:CrossProcessDeleteObservation 2026-08-01-11:39:
+  Periodic self-healing owns outbox retention. Each already-open PostgreSQL project is gated to
+  one bounded prune every six hours; failures stay diagnostic-only so retention never blocks
+  task execution or another maintenance step.
+  */
+  private async pruneTaskLifecycleEventsForMaintenance(): Promise<void> {
+    const layer = this.store.getAsyncLayer();
+    const projectId = layer?.projectId;
+    if (!layer || !projectId) return;
+    const now = Date.now();
+    const lastPrunedAt = this.taskLifecycleRetentionLastPrunedAt.get(projectId) ?? 0;
+    if (now - lastPrunedAt < 6 * 60 * 60 * 1000) return;
+    try {
+      await pruneTaskLifecycleEvents(layer, projectId);
+      this.taskLifecycleRetentionLastPrunedAt.set(projectId, now);
+    } catch (error) {
+      log.warn(`Task lifecycle retention failed for project ${projectId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private isPastInterruptedMergeGrace(task: Task, timeoutMs: number): boolean {
     const updatedAt = task.updatedAt ? Date.parse(task.updatedAt) : 0;
     if (!Number.isFinite(updatedAt) || updatedAt <= 0) return false;
@@ -2527,6 +2560,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       // Batch 1 — housekeeping (safe under pause: filesystem/db cleanup only)
       const batch1Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
         { name: "prune-worktrees", fn: () => this.pruneWorktrees() },
+        {
+          name: "prune-task-lifecycle-events",
+          fn: async () => this.pruneTaskLifecycleEventsForMaintenance(),
+        },
         { name: "cleanup-orphans", fn: () => this.cleanupOrphans() },
         {
           name: "cleanup-stale-temp-merge-worktrees",
@@ -2735,6 +2772,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity() },
           { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus() },
           { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause() },
+          { name: "reconcile-external-pr-blockers", fn: () => this.reconcileExternalPrBlockers() },
           // FNXC:OrphanedPendingSteps 2026-07-22-16:35 (FN-8492 review follow-up): also
           // steady-state — a step session can die without an engine restart, and startup-only
           // cadence left that case riding the 3×30-min stall escalator to a deadlock park.
@@ -7037,12 +7075,31 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const canonicalFlags = await resolveNearDuplicateCanonicalFlags(this.store, canonical);
           if (!isNearDuplicateCanonicalInactive(canonical ?? undefined, canonicalFlags)) continue;
 
-          await this.store.updateTask(task.id, {
-            paused: false,
-            pausedReason: null,
-            status: null,
-            sourceMetadataPatch: { nearDuplicateDismissed: true },
-          });
+          /*
+          FNXC:NearDuplicateDetection 2026-08-01-18:47:
+          Stale-decision recovery for an inactive canonical is the same writer as marker clear:
+          needs-replan (not status:null) plus dismissal so the card cannot look planning-finished
+          without a real PROMPT. Drop a still-present DUPLICATE marker file when present.
+          */
+          const promptPath = join(this.options.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+          if (existsSync(promptPath)) {
+            try {
+              const written = readFileSync(promptPath, "utf-8");
+              if (parseExplicitDuplicateMarker(written)) {
+                rmSync(promptPath, { force: true });
+              }
+            } catch {
+              // best-effort marker removal; status write still proceeds
+            }
+          }
+          await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalId));
+          if (typeof this.store.logEntry === "function") {
+            await Promise.resolve(this.store.logEntry(
+              task.id,
+              TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+              buildInactiveDuplicateClearFeedback(canonicalId),
+            )).catch(() => {});
+          }
           await createRunAuditor(this.store, {
             runId: generateSyntheticRunId("reconcile-stale-duplicate-decision", task.id),
             agentId: "self-healing",
@@ -13328,7 +13385,16 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       log.log(`Cleared drifted durable agent task link for ${agent.id} (${linkedTaskId}): ${reason}; file-scope lease preserved when present`);
     }
 
-    log.log(`Recovered ${clearedAgentIds.size} drifted durable agent task link(s)`);
+    /*
+    FNXC:EngineDiagnostics 2026-08-01-18:11:
+    Zero-recovery summary is a no-op sweep result — debug only (FUSION_DEBUG=self-healing).
+    Non-zero recoveries stay on log so operators still see real link repairs.
+    */
+    if (clearedAgentIds.size > 0) {
+      log.log(`Recovered ${clearedAgentIds.size} drifted durable agent task link(s)`);
+    } else {
+      log.debug(`Recovered ${clearedAgentIds.size} drifted durable agent task link(s)`);
+    }
     return clearedAgentIds.size;
   }
 
@@ -14334,6 +14400,79 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
     }
   }
 
+  /*
+  FNXC:HonestBlockedExit 2026-08-02-01:30:
+  Durable parks store github-pr externalBlockers (FN-8700 file-claim). When every blocking
+  PR is MERGED or CLOSED, clear the failed park so the scheduler can re-dispatch. Fail-soft
+  when gh is unavailable — leave the park for the operator.
+  */
+  async reconcileExternalPrBlockers(): Promise<number> {
+    try {
+      if (!(await isGhAvailable())) {
+        log.debug("reconcile-external-pr-blockers skipped — gh unavailable");
+        return 0;
+      }
+      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
+      let cleared = 0;
+      for (const task of tasks.slice(0, 80)) {
+        if (task.status !== "failed" || !task.error?.startsWith("BLOCKED:")) continue;
+        const meta = task.sourceMetadata;
+        const blockers = meta?.externalBlockers;
+        if (!Array.isArray(blockers) || blockers.length === 0) continue;
+        const prNumbers = blockers
+          .map((b) => (b && typeof b === "object" && (b as { kind?: string }).kind === "github-pr"
+            ? Number((b as { number?: unknown }).number)
+            : NaN))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        if (prNumbers.length === 0) continue;
+
+        let allResolved = true;
+        for (const n of prNumbers) {
+          try {
+            const pr = await runGhJsonAsync<{ state?: string; mergedAt?: string | null }>(
+              ["pr", "view", String(n), "--json", "state,mergedAt"],
+              { timeoutMs: 15_000 },
+            );
+            const state = String(pr?.state ?? "").toUpperCase();
+            const merged = Boolean(pr?.mergedAt) || state === "MERGED";
+            const closed = state === "CLOSED" || state === "MERGED";
+            if (!merged && !closed) {
+              allResolved = false;
+              break;
+            }
+          } catch {
+            allResolved = false;
+            break;
+          }
+        }
+        if (!allResolved) continue;
+
+        await this.store.updateTask(task.id, {
+          status: null,
+          error: null,
+          sourceMetadataPatch: {
+            externalBlockers: [],
+            blockedClass: null,
+            blockedThrashSignature: null,
+            blockedThrashCount: null,
+            externalPrBlockersClearedAt: new Date().toISOString(),
+            externalPrBlockersCleared: prNumbers,
+          },
+        });
+        await this.store.logEntry(
+          task.id,
+          `Auto-recovered: external PR blocker(s) ${prNumbers.map((n) => `#${n}`).join(", ")} merged/closed — cleared durable BLOCKED park for re-dispatch`,
+        );
+        log.log(`Cleared durable PR block for ${task.id} (prs=${prNumbers.join(",")})`);
+        cleared += 1;
+      }
+      return cleared;
+    } catch (error) {
+      log.warn(`reconcile-external-pr-blockers failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 0;
+    }
+  }
+
   async resolveExplicitDuplicateMarkerTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -14379,6 +14518,10 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           FN-8356 keeps maintenance from re-parking a marker against a missing, deleted, done,
           or archived canonical. Such a decision has no detail-banner action, so cleanup restores
           eligible work to planning while preserving explicit, implicit, and unrelated system pauses.
+
+          FNXC:NearDuplicateDetection 2026-08-01-18:47:
+          Mirror triage: marker clear leaves needs-replan + feedback + dismissal, never
+          status:null (FN-8704 replan storm when the scheduler wakes on planning→null without PROMPT).
           */
           const canClearInactiveMarker = task.userPaused !== true
             && (task.paused !== true || task.pausedReason === "duplicate-decision-required")
@@ -14387,7 +14530,22 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           if (!canonicalTask || isNearDuplicateCanonicalInactive(canonicalTask, canonicalFlags)) {
             if (canClearInactiveMarker) {
               rmSync(promptPath, { force: true });
-              await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null });
+              const priorClearCount = typeof task.sourceMetadata?.duplicateMarkerClearCount === "number"
+                ? task.sourceMetadata.duplicateMarkerClearCount
+                : 0;
+              const alreadyDismissed = isTriageDuplicateKeepAcknowledged(task.sourceMetadata, marker.canonicalId);
+              const exhausted = alreadyDismissed || priorClearCount >= 1;
+              const patch = exhausted
+                ? buildMarkerExhaustedFailedTaskPatch(marker.canonicalId, priorClearCount)
+                : buildMarkerClearedReplanTaskPatch(marker.canonicalId, priorClearCount);
+              await this.store.updateTask(task.id, patch);
+              if (typeof this.store.logEntry === "function") {
+                await Promise.resolve(this.store.logEntry(
+                  task.id,
+                  exhausted ? buildDuplicateReplanExhaustedError(marker.canonicalId) : TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+                  buildInactiveDuplicateClearFeedback(marker.canonicalId),
+                )).catch(() => {});
+              }
               resolved += 1;
             }
             continue;
@@ -14403,12 +14561,25 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
           if (resolution === "prompt" && isTriageDuplicateKeepAcknowledged(task.sourceMetadata, canonicalTask.id)) {
             if (canClearInactiveMarker) {
               rmSync(promptPath, { force: true });
-              await this.store.updateTask(task.id, {
-                paused: false,
-                pausedReason: null,
-                status: null,
-                sourceMetadataPatch: { nearDuplicateDismissed: true },
-              });
+              const priorKeepClears = typeof task.sourceMetadata?.duplicateMarkerClearCount === "number"
+                ? task.sourceMetadata.duplicateMarkerClearCount
+                : 0;
+              const keepExhausted = priorKeepClears >= 1;
+              await this.store.updateTask(
+                task.id,
+                keepExhausted
+                  ? buildMarkerExhaustedFailedTaskPatch(canonicalTask.id, priorKeepClears)
+                  : buildMarkerClearedReplanTaskPatch(canonicalTask.id, priorKeepClears),
+              );
+              if (typeof this.store.logEntry === "function") {
+                await Promise.resolve(this.store.logEntry(
+                  task.id,
+                  keepExhausted
+                    ? buildDuplicateReplanExhaustedError(canonicalTask.id)
+                    : TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+                  buildKeepDuplicateClearFeedback(canonicalTask.id),
+                )).catch(() => {});
+              }
               resolved += 1;
             }
             continue;
@@ -14420,7 +14591,14 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
             await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null });
           } else {
             rmSync(promptPath, { force: true });
-            await this.store.updateTask(task.id, { paused: false, pausedReason: null, status: null, sourceMetadataPatch: { nearDuplicateOf: canonicalTask.id, nearDuplicateScore: 1, duplicateSource: "triage-marker", nearDuplicateDismissed: true } });
+            await this.store.updateTask(task.id, buildMarkerClearedReplanTaskPatch(canonicalTask.id));
+            if (typeof this.store.logEntry === "function") {
+              await Promise.resolve(this.store.logEntry(
+                task.id,
+                TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+                buildKeepDuplicateClearFeedback(canonicalTask.id),
+              )).catch(() => {});
+            }
           }
           log.log(`[self-healing] resolved explicit duplicate marker ${task.id} → ${canonicalTask.id}`);
           resolved += 1;

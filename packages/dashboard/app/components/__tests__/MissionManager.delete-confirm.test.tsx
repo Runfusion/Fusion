@@ -18,6 +18,7 @@ const mockFetchAiSession = vi.fn();
 const mockFetchMissionInterviewDrafts = vi.fn();
 const mockDiscardMissionInterviewDraft = vi.fn();
 const mockDeleteMission = vi.fn();
+const mockDeleteAssertion = vi.fn();
 const mockSubscribeSse = vi.fn(() => vi.fn());
 
 vi.mock("../../hooks/useViewportMode", () => ({
@@ -68,6 +69,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchMissionInterviewDrafts: (...args: unknown[]) => mockFetchMissionInterviewDrafts(...args),
     discardMissionInterviewDraft: (...args: unknown[]) => mockDiscardMissionInterviewDraft(...args),
     deleteMission: (...args: unknown[]) => mockDeleteMission(...args),
+    deleteAssertion: (...args: unknown[]) => mockDeleteAssertion(...args),
     fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] }),
   };
 });
@@ -139,6 +141,7 @@ function setupMocks() {
   mockFetchMissionInterviewDrafts.mockResolvedValue([]);
   mockDiscardMissionInterviewDraft.mockResolvedValue({ removed: true });
   mockDeleteMission.mockResolvedValue(undefined);
+  mockDeleteAssertion.mockResolvedValue(undefined);
 }
 
 function renderMissionManager(addToast = vi.fn()) {
@@ -188,6 +191,49 @@ async function findMissionListItem(title: string): Promise<HTMLElement> {
   const item = titleNode.closest(".mission-list__item");
   expect(item).not.toBeNull();
   return item as HTMLElement;
+}
+
+function makeAssertion(id: string) {
+  return {
+    id,
+    milestoneId: "MS-001",
+    title: `Assertion ${id}`,
+    assertion: "The contract holds",
+    status: "pending" as const,
+    orderIndex: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function missionWithAssertions() {
+  return {
+    ...missionDetails.get("M-001"),
+    milestones: [{
+      id: "MS-001",
+      missionId: "M-001",
+      title: "Quality gate",
+      status: "active",
+      orderIndex: 0,
+      interviewState: "not_started",
+      dependencies: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      slices: [],
+    }],
+  };
+}
+
+async function openAssertionDeletePanel(assertionId: string) {
+  fireEvent.click(await findMissionListItem("Build Auth System"));
+  await screen.findByText("Quality gate");
+  const assertion = await screen.findByText(`Assertion ${assertionId}`);
+  const row = assertion.closest(".mission-assertion");
+  expect(row).not.toBeNull();
+  const deleteButton = (row as HTMLElement).querySelector('button[title="Delete assertion"]');
+  expect(deleteButton).not.toBeNull();
+  fireEvent.click(deleteButton as HTMLButtonElement);
+  return getConfirmPanel();
 }
 
 async function openListDeleteDialog(title: string, container: HTMLElement) {
@@ -284,6 +330,59 @@ describe("MissionManager mission delete confirmation", () => {
     });
     expect(screen.getByText("API Redesign")).toBeInTheDocument();
     expect(addToast).toHaveBeenCalledWith("delete failed upstream", "error");
+  });
+
+  it.each(["desktop", "mobile"] as const)("deletes an assertion and refreshes its milestone in the %s panel", async (viewport) => {
+    mockViewportMode.mockReturnValue(viewport);
+    mockFetchMission.mockResolvedValue(missionWithAssertions());
+    mockFetchAssertions.mockResolvedValue([makeAssertion("CA-CURRENT-0001-TEST")]);
+    renderMissionManager();
+
+    await openAssertionDeletePanel("CA-CURRENT-0001-TEST");
+    clickConfirmPanelAction("Delete");
+
+    await waitFor(() => {
+      expect(mockDeleteAssertion).toHaveBeenCalledWith("CA-CURRENT-0001-TEST", projectId);
+    });
+    await waitFor(() => {
+      expect(mockFetchAssertions.mock.calls.filter(([milestoneId]) => milestoneId === "MS-001")).toHaveLength(2);
+      expect(mockFetchMilestoneValidation).toHaveBeenCalledWith("MS-001", projectId);
+    });
+  });
+
+  it("surfaces an assertion delete failure instead of silently swallowing it", async () => {
+    const addToast = vi.fn();
+    mockFetchMission.mockResolvedValue(missionWithAssertions());
+    mockFetchAssertions.mockResolvedValue([makeAssertion("CA-CURRENT-0001-FAIL")]);
+    mockDeleteAssertion.mockRejectedValueOnce(new Error("assertion delete failed upstream"));
+    renderMissionManager(addToast);
+
+    const panel = await openAssertionDeletePanel("CA-CURRENT-0001-FAIL");
+    clickConfirmPanelAction("Delete");
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("assertion delete failed upstream", "error");
+    });
+    expect(panel).toBeInTheDocument();
+  });
+
+  it("keeps zero and multiple assertion states distinct", async () => {
+    mockFetchMission.mockResolvedValue(missionWithAssertions());
+    mockFetchAssertions.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      makeAssertion("CA-CURRENT-0001-FIRST"),
+      makeAssertion("CA-CURRENT-0002-SECOND"),
+    ]);
+    renderMissionManager();
+
+    fireEvent.click(await findMissionListItem("Build Auth System"));
+    const milestone = await screen.findByText("Quality gate");
+    await waitFor(() => {
+      expect(document.querySelectorAll(".mission-assertion")).toHaveLength(0);
+    });
+    fireEvent.click(milestone);
+    fireEvent.click(milestone);
+    expect(await screen.findByText("Assertion CA-CURRENT-0001-FIRST")).toBeInTheDocument();
+    expect(screen.getByText("Assertion CA-CURRENT-0002-SECOND")).toBeInTheDocument();
   });
 
   it("discards the selected desktop draft row without removing duplicate-titled drafts or missions", async () => {
