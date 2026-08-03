@@ -31,7 +31,6 @@ import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
-import { createCodeNodeRunner } from "./execution/code-node-runner.js";
 import { resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
 import { getActiveNotificationService } from "./util/notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
@@ -781,6 +780,10 @@ import { shouldDeferWorkflowStepCompletion as shouldDeferWorkflowStepCompletionI
 export { shouldDeferWorkflowStepCompletion as shouldDeferWorkflowStepCompletionFree } from "./executor/should-defer-workflow-step-completion.js";
 import { runProjectedGraphTaskStep as runProjectedGraphTaskStepImpl } from "./executor/run-projected-graph-task-step.js";
 export { runProjectedGraphTaskStep as runProjectedGraphTaskStepFree } from "./executor/run-projected-graph-task-step.js";
+import { buildCodeNodeRunner as buildCodeNodeRunnerImpl } from "./executor/build-code-node-runner.js";
+export { buildCodeNodeRunner as buildCodeNodeRunnerFree } from "./executor/build-code-node-runner.js";
+import { routeResetParsePinMismatchToRetry as routeResetParsePinMismatchToRetryImpl } from "./executor/route-reset-parse-pin-mismatch.js";
+export { routeResetParsePinMismatchToRetry as routeResetParsePinMismatchToRetryFree } from "./executor/route-reset-parse-pin-mismatch.js";
 
 
 
@@ -4621,43 +4624,10 @@ export class TaskExecutor {
    * in code-node-runner.ts.
    */
   private buildCodeNodeRunner(): CodeNodeRunner {
-    return createCodeNodeRunner({
-      resolveCwd: async (task): Promise<string> => {
-        try {
-          return (await this.store.getTask(task.id)).worktree || this.rootDir;
-        } catch {
-          return this.rootDir;
-        }
-      },
-      readArtifacts: async (task): Promise<Record<string, string>> => {
-        const out: Record<string, string> = {};
-        try {
-          const docs = await this.store.getTaskDocuments(task.id);
-          for (const doc of docs) out[doc.key] = doc.content;
-        } catch {
-          // No documents — pass an empty artifact map.
-        }
-        // Surface PROMPT.md from the task prompt when not already a document
-        // (shared artifact-read fallback — FIX 7).
-        if (out["PROMPT.md"] === undefined) {
-          const prompt = await this.readTaskArtifact(task.id, "PROMPT.md");
-          if (typeof prompt === "string") out["PROMPT.md"] = prompt;
-        }
-        return out;
-      },
-      writeCustomFields: async (task, patch) => {
-        if (typeof this.store.updateTaskCustomFields !== "function") {
-          return {
-            ok: false as const,
-            rejection: { code: "no-fields-defined" as const, fieldId: "", detail: "custom fields unsupported by store" },
-          };
-        }
-        const result = await this.store.updateTaskCustomFields(task.id, patch);
-        return result.ok ? { ok: true as const } : { ok: false as const, rejection: result.rejection };
-      },
-      audit: (reason, detail) => {
-        executorLog.warn(`[code-node] ${reason}: ${detail}`);
-      },
+    return buildCodeNodeRunnerImpl({
+      store: this.store,
+      rootDir: this.rootDir,
+      readTaskArtifact: (id, key) => this.readTaskArtifact(id, key),
     });
   }
 
@@ -8906,45 +8876,16 @@ export class TaskExecutor {
   }
 
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): Promise<boolean> {
-    /*
-    FNXC:WorkflowReset 2026-06-29-10:04:
-    A user reset/retry can race an aborting graph-owned foreach instance that persists after the route cleared pins. If the next run reaches parse and sees only stale foreach pins while the task has no implementation progress, recover by deleting all graph instance rows and requeueing to todo. Do not hand the task to in-review, because parse has not executed work or produced mergeable output.
-    */
-    if (live.deletedAt) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
-    const hasImplementationProgress =
-      (live.currentStep ?? 0) > 0
-      || (live.steps ?? []).some((step) => step.status === "done" || step.status === "in-progress" || step.status === "skipped");
-    if (hasImplementationProgress) return false;
-
-    const maybeStore = this.store as unknown as {
-      clearWorkflowRunStepInstancesAsync?: (taskId: string) => Promise<void>;
-      clearWorkflowRunStepInstances?: (taskId: string) => void;
-      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void;
-    };
-    try {
-      await (maybeStore.clearWorkflowRunStepInstancesAsync?.(live.id)
-        ?? maybeStore.clearWorkflowRunStepInstances?.(live.id));
-    } catch {
-      // Legacy stores may not persist graph step instances.
-    }
-    this.clearPausedAborted(live.id);
-    this.activeWorktrees.delete(live.id);
-    await this.store.updateTask(live.id, {
-      status: null,
-      error: null,
-      graphResumeRetryCount: 0,
-    }, this.getRunContextFor(live.id));
-    const reboundColumn = await resolveReboundColumnFor(this.store, live.id);
-    if (live.column !== reboundColumn) {
-      await this.store.moveTask(live.id, reboundColumn, { preserveProgress: false });
-    }
-    const message = "Auto-recovered: cleared stale workflow parse pins after reset/retry — task requeued before execution";
-    executorLog.warn(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    await this.persistTokenUsage(live.id);
-    return true;
+    return routeResetParsePinMismatchToRetryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        activeWorktrees: this.activeWorktrees,
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+    );
   }
 
   private async maybeDispatchWorkflowWorkEngine(task: Task): Promise<boolean> {
