@@ -135,16 +135,14 @@ import {
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
-import { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
 import {
   ActiveSessionPathHeldByForeignTaskError,
   acquireActiveSessionPath,
   activeSessionRegistry,
   executingTaskLock,
-  reconcileSelfOwnedActiveSessionForRemoval,
   type ActiveSessionKind,
 } from "./agents/active-session-registry.js";
 // CLI Agent Executor (U7): task ↔ CLI session orchestration seam.
@@ -161,10 +159,7 @@ import type { CliAdapterRegistry } from "./cli-agent/adapter.js";
 import type { CliSessionStore } from "@fusion/core";
 import {
   StaleWorktreeIndexLockError,
-  classifyStaleLock,
-  tryRemoveStaleLock,
 } from "./worktree/worktree-stale-lock.js";
-import { recoverStaleRegistration } from "./worktree/worktree-stale-registration.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -592,6 +587,22 @@ import { planSquashImportFromDep } from "./executor/worktree-squash-import-plan.
 export { planSquashImportFromDep } from "./executor/worktree-squash-import-plan.js";
 import { reconcileSelfOwnedBeforeRemove } from "./executor/worktree-self-owned-reconcile.js";
 export { reconcileSelfOwnedBeforeRemove } from "./executor/worktree-self-owned-reconcile.js";
+import {
+  emitStaleLockAudit,
+  recoverIndexLockIfStale,
+  recoverExecutorStaleRegistration,
+} from "./executor/worktree-stale-lock-recovery.js";
+export {
+  emitStaleLockAudit,
+  recoverIndexLockIfStale,
+  recoverExecutorStaleRegistration,
+} from "./executor/worktree-stale-lock-recovery.js";
+export type { StaleLockAuditEvent } from "./executor/worktree-stale-lock-recovery.js";
+import { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
+export { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
+import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
+export { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
+
 
 
 
@@ -18451,115 +18462,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     });
   }
 
-  private async emitStaleLockAudit(
-    taskId: string,
-    event:
-      | "worktree:stale-lock-detected"
-      | "worktree:stale-lock-recovered"
-      | "worktree:stale-lock-recovery-failed"
-      | "worktree:stale-lock-refused"
-      | "worktree:stale-registration-detected"
-      | "worktree:stale-registration-recovered"
-      | "worktree:stale-registration-recovery-failed",
-    targetPath: string,
-    metadata: Record<string, unknown>,
-  ): Promise<void> {
-    const runContext = this.getRunContextFor(taskId);
-    if (!runContext?.runId || !runContext.agentId) return;
-    const auditor = createRunAuditor(this.store, {
-      runId: runContext.runId,
-      agentId: runContext.agentId,
-      taskId,
-      phase: "execute",
-    });
-    await auditor.git({ type: event, target: targetPath, metadata });
-  }
 
-  private async recoverIndexLockIfStale(taskId: string, path: string, conflictInfo: { lockPath?: string; message?: string }): Promise<boolean> {
-    const lockPath = conflictInfo.lockPath;
-    if (!lockPath) return false;
-
-    const classification = await classifyStaleLock({
-      rootDir: this.rootDir,
-      lockPath,
-      activeSessionRegistry,
-    });
-    await this.emitStaleLockAudit(taskId, "worktree:stale-lock-detected", path, {
-      lockPath,
-      classification: classification.kind,
-      reason: classification.reason,
-      ageMs: classification.ageMs ?? null,
-      owningWorktreePath: classification.owningWorktreePath ?? null,
-    });
-
-    if (classification.kind !== "stale") {
-      await this.emitStaleLockAudit(taskId, "worktree:stale-lock-refused", path, {
-        lockPath,
-        classification: classification.kind,
-        reason: classification.reason,
-        ageMs: classification.ageMs ?? null,
-        owningWorktreePath: classification.owningWorktreePath ?? null,
-      });
-      throw new StaleWorktreeIndexLockError({
-        message: `Worktree creation blocked: index.lock at ${resolvePath(this.rootDir, lockPath)} is held by another git process (reason: ${classification.reason}, owning worktree ${classification.owningWorktreePath ?? "unknown"}). Resolve manually before retrying.`,
-        lockPath: resolvePath(this.rootDir, lockPath),
-        classification: classification.kind,
-        reason: classification.reason,
-      });
-    }
-
-    try {
-      const removed = await tryRemoveStaleLock({ lockPath: resolvePath(this.rootDir, lockPath) });
-      if (removed.removed) {
-        await this.emitStaleLockAudit(taskId, "worktree:stale-lock-recovered", path, { lockPath });
-        await this.store.logEntry(taskId, `Recovered stale worktree index.lock and retrying`, resolvePath(this.rootDir, lockPath), this.getRunContextFor(taskId));
-        return true;
-      }
-      await this.emitStaleLockAudit(taskId, "worktree:stale-lock-recovery-failed", path, {
-        lockPath,
-        reason: removed.reason ?? "not-removed",
-      });
-      return false;
-    } catch (error) {
-      await this.emitStaleLockAudit(taskId, "worktree:stale-lock-recovery-failed", path, {
-        lockPath,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
-  }
-
-  /**
-   * Single attempt to create a worktree with conflict detection and recovery.
-   * Returns the actual worktree path used (may differ from input if recovery generated new name).
-   */
-  private async recoverStaleRegistration(taskId: string, path: string, conflictInfo: { path?: string; message?: string }): Promise<boolean> {
-    const staleRegistrationPath = conflictInfo.path ?? path;
-    await this.emitStaleLockAudit(taskId, "worktree:stale-registration-detected", path, {
-      staleRegistrationPath,
-      worktreePath: path,
-    });
-
-    const recovery = await recoverStaleRegistration({
-      rootDir: this.rootDir,
-      worktreePath: path,
-      logger: executorLog,
-    });
-
-    if (recovery.recovered) {
-      await this.emitStaleLockAudit(taskId, "worktree:stale-registration-recovered", path, {
-        actions: recovery.actions,
-      });
-      await this.store.logEntry(taskId, "Recovered stale worktree registration and retrying", staleRegistrationPath, this.getRunContextFor(taskId));
-      return true;
-    }
-
-    await this.emitStaleLockAudit(taskId, "worktree:stale-registration-recovery-failed", path, {
-      actions: recovery.actions,
-      reason: recovery.reason ?? "unknown",
-    });
-    return false;
-  }
 
   private async tryCreateWorktree(
     branch: string,
@@ -18939,52 +18842,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     return null;
   }
 
-  private async normalizeReclaimableWorktreePath(
-    sourcePath: string,
-    targetPath: string,
-    taskId: string,
-    settings: Partial<Settings>,
-  ): Promise<string> {
-    const isRelocationActive = async (path: string) =>
-      this.hasActiveWorktreeBinding(taskId, path)
-      || await this.isLiveCleanupRefusal(path, taskId);
-    try {
-      const placement = await relocateReclaimableWorktreeIntoRoot({
-        rootDir: this.rootDir,
-        sourcePath,
-        targetPath,
-        taskId,
-        settings,
-        isPathActive: isRelocationActive,
-      });
-      if (placement.kind === "deferred-live") {
-        await this.store.logEntry(
-          taskId,
-          `[recovery] deferred relocation of active preserved worktree ${sourcePath}`,
-          sourcePath,
-        );
-        return placement.path;
-      }
-      if (placement.relocated) {
-        await this.store.logEntry(
-          taskId,
-          `[recovery] relocated preserved worktree from ${sourcePath} to ${placement.path}`,
-          placement.path,
-        );
-      }
-      return placement.path;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      await this.store.logEntry(
-        taskId,
-        `[recovery] failed to relocate preserved worktree from ${sourcePath} to ${targetPath}: ${detail}`,
-        sourcePath,
-      );
-      throw new NonRetryableWorktreeError(
-        `Could not relocate preserved ${taskId} worktree into the configured worktrees directory: ${detail}`,
-      );
-    }
-  }
 
   private async tryFreshWorktreeAfterLiveConflict(input: {
     conflictPath: string;
@@ -19095,6 +18952,74 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     );
   }
 
+  /*
+  FNXC:CodeOrganization 2026-08-03-14:50:
+  Thin facades over peeled stale-lock / reclaim / remove-own helpers (U4 Slice B).
+  */
+  private staleLockRecoveryDeps() {
+    return {
+      rootDir: this.rootDir,
+      store: this.store,
+      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+    };
+  }
+
+  private async emitStaleLockAudit(
+    taskId: string,
+    event: import("./executor/worktree-stale-lock-recovery.js").StaleLockAuditEvent,
+    targetPath: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    return emitStaleLockAudit(this.staleLockRecoveryDeps(), taskId, event, targetPath, metadata);
+  }
+
+  private async recoverIndexLockIfStale(taskId: string, path: string, conflictInfo: { lockPath?: string; message?: string }): Promise<boolean> {
+    return recoverIndexLockIfStale(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
+  }
+
+  private async recoverStaleRegistration(taskId: string, path: string, conflictInfo: { path?: string; message?: string }): Promise<boolean> {
+    return recoverExecutorStaleRegistration(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
+  }
+
+  private async normalizeReclaimableWorktreePath(
+    sourcePath: string,
+    targetPath: string,
+    taskId: string,
+    settings: Partial<Settings>,
+  ): Promise<string> {
+    return normalizeReclaimableWorktreePath(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        hasActiveWorktreeBinding: (tid, p) => this.hasActiveWorktreeBinding(tid, p),
+        isLiveCleanupRefusal: (p, tid) => this.isLiveCleanupRefusal(p, tid),
+      },
+      sourcePath,
+      targetPath,
+      taskId,
+      settings,
+    );
+  }
+
+  private async removeOwnWorktreeWithReconcile(input: {
+    worktreePath: string;
+    settings: Settings;
+    taskId: string;
+    reason: RemovalReason;
+    audit?: Parameters<typeof removeWorktree>[0]["audit"];
+  }): Promise<void> {
+    return removeOwnWorktreeWithReconcile(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        reconcileSelfOwnedBeforeRemove: (p, tid) => this.reconcileSelfOwnedBeforeRemove(p, tid),
+        hasActiveWorktreeBinding: (tid, p) => this.hasActiveWorktreeBinding(tid, p),
+      },
+      input,
+    );
+  }
+
+
 
 
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
@@ -19107,65 +19032,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     this.unregisterArchiveWorkspaceWorktreeDisposer = undefined;
   }
 
-  private async removeOwnWorktreeWithReconcile(input: {
-    worktreePath: string;
-    settings: Settings;
-    taskId: string;
-    reason: RemovalReason;
-    audit?: Parameters<typeof removeWorktree>[0]["audit"];
-  }): Promise<void> {
-    await this.reconcileSelfOwnedBeforeRemove(input.worktreePath, input.taskId);
-    const removeArgs = {
-      worktreePath: input.worktreePath,
-      rootDir: this.rootDir,
-      settings: input.settings,
-      taskId: input.taskId,
-      reason: input.reason,
-      audit: input.audit,
-      expectedOwnerTaskId: input.taskId,
-      liveOwnerProbe: (path: string, ownerTaskId: string) => this.hasActiveWorktreeBinding(ownerTaskId, path),
-      // FN-5256: route the worktree-backend defensive reconcile through the
-      // hardened gates (process-active + min-idle window).
-      processActiveProbe: (probeTaskId: string) => executingTaskLock.has(probeTaskId),
-    } as const;
-    try {
-      await removeWorktree(removeArgs);
-    } catch (error: unknown) {
-      if (
-        error instanceof ActiveSessionWorktreeRemovalError
-        && error.details.taskId === input.taskId
-        && !this.hasActiveWorktreeBinding(input.taskId, input.worktreePath)
-      ) {
-        // FN-5256: route the post-throw reconcile through the hardened path so
-        // process-active and too-recent signals also gate this leg.
-        const outcome = reconcileSelfOwnedActiveSessionForRemoval(
-          activeSessionRegistry,
-          input.worktreePath,
-          input.taskId,
-          (path, ownerTaskId) => this.hasActiveWorktreeBinding(ownerTaskId, path),
-          {
-            processActiveProbe: (probeTaskId) => executingTaskLock.has(probeTaskId),
-          },
-        );
-        if (outcome.action === "reconciled") {
-          await this.store.logEntry(
-            input.taskId,
-            "Reconciled stale self-owned active-session registration (post-throw)",
-            input.worktreePath,
-          );
-          await removeWorktree(removeArgs);
-          return;
-        }
-        if (outcome.action === "process-active-refuses" || outcome.action === "too-recent-refuses") {
-          executorLog.warn(
-            `[FN-5256] post-throw reconcile refused for ${input.taskId} at ${input.worktreePath}: action=${outcome.action}`,
-          );
-          // Refused — surface the original error so the caller can decide.
-        }
-      }
-      throw error;
-    }
-  }
 
   private async cleanupConflictingWorktree(
     worktreePath: string,
