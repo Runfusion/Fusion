@@ -15,7 +15,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -83,7 +83,6 @@ import {
   isEphemeralAgent,
   isMergeRequestContractShadowEnabled,
   resolvePersistAgentThinkingLog,
-  resolveEffectiveAgentPermissionPolicy,
   resolveAgentMemoryInclusionMode,
   loadWorkspaceConfig,
   type WorkspaceConfig,
@@ -99,7 +98,6 @@ import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorki
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
-import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
 import {
@@ -744,6 +742,8 @@ import { resumeTaskForAgent as resumeTaskForAgentImpl } from "./executor/resume-
 export { resumeTaskForAgent as resumeTaskForAgentFree } from "./executor/resume-task-for-agent.js";
 import { buildActionGateContext as buildActionGateContextImpl } from "./executor/build-action-gate-context.js";
 export { buildActionGateContext as buildActionGateContextFree } from "./executor/build-action-gate-context.js";
+import { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextImpl } from "./executor/build-permanent-agent-gating-context.js";
+export { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextFree } from "./executor/build-permanent-agent-gating-context.js";
 
 
 
@@ -1777,82 +1777,17 @@ export class TaskExecutor {
   }
 
   private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
-    const actorId = agent?.id ?? `executor-${taskId ?? "unknown"}`;
-    const actorName = agent?.name ?? `Task worker ${taskId ?? "unknown"}`;
-
-    return {
-      permissionPolicy: resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy),
-      requester: {
-        actorId,
-        actorType: "agent",
-        actorName,
+    return buildPermanentAgentGatingContextImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        approvalSuspended: this.approvalSuspended,
+        approvalRequestStore: this.approvalRequestStore,
       },
       taskId,
-      runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
-      // FNXC:AgentGating 2026-07-05-00:00:
-      // FN-7609: operators approving a gated action need the real command/args,
-      // and a stateless heartbeat retrying the same command must reuse a single
-      // pending approval instead of minting duplicates. `summary` is now
-      // payload-bearing (shared helper) and `approvalDedupeKey`/`command`/`cwd`
-      // are persisted into targetAction.context so findPendingApprovalRequest
-      // can match and the UI can render the payload without re-parsing.
-      createApprovalRequest: async ({ category, toolName, args, approvalDedupeKey }) => await this.approvalRequestStore.create({
-        requester: {
-          actorId,
-          actorType: "agent",
-          actorName,
-        },
-        taskId,
-        runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
-        targetAction: {
-          category,
-          action: toolName,
-          summary: buildAgentGatedActionSummary(toolName, args),
-          resourceType: "tool",
-          resourceId: toolName,
-          context: {
-            toolName,
-            toolArgs: args,
-            source: "agent-gating",
-            ...(approvalDedupeKey ? { approvalDedupeKey } : {}),
-            ...(typeof (args as Record<string, unknown> | undefined)?.command === "string"
-              ? { command: (args as Record<string, unknown>).command }
-              : {}),
-            ...(typeof (args as Record<string, unknown> | undefined)?.cwd === "string"
-              ? { cwd: (args as Record<string, unknown>).cwd }
-              : {}),
-          },
-        },
-      }),
-      findPendingApprovalRequest: async (dedupeKey) => {
-        const pending = await this.approvalRequestStore.list({ status: "pending", requesterActorId: actorId, taskId, limit: 100 });
-        return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
-      },
-      /*
-      FNXC:AgentGating 2026-07-26-14:50:
-      Audit finding (gate-path divergence): the permanent gate minted an
-      approval request but never paused, so the agent kept its turn while
-      "awaiting approval". Mirror the action gate's task-level hold (canonical
-      AWAITING_APPROVAL_PAUSE_REASON + approvalSuspended marker). Session
-      suspension is intentionally not wired here: the permanent gate only runs
-      in lanes WITHOUT an actionGateContext, where no executor in-flight
-      session surface exists to abort.
-      */
-      pauseForApproval: async ({ approvalRequestId, toolName }) => {
-        if (!taskId) return;
-        this.approvalSuspended.add(taskId);
-        try {
-          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
-          await this.store.logEntry(
-            taskId,
-            `Approval required for ${toolName}. Request ${approvalRequestId} created; task paused awaiting decision.`,
-          );
-        } catch (error) {
-          this.approvalSuspended.delete(taskId);
-          throw error;
-        }
-      },
-    };
+      agent,
+      projectDefaultPolicy,
+    );
   }
 
   /** Returns the set of task IDs currently being executed. */
