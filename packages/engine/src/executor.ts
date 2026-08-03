@@ -88,7 +88,6 @@ import {
 import { findWorktreeUser } from "./merger.js";
 import {
   summarizeVerificationOutput,
-  VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./execution/verification-utils.js";
 import { resolveWorktreesDir } from "./worktree/worktree-paths.js";
@@ -796,6 +795,8 @@ import { createSpawnAgentTool as createSpawnAgentToolImpl } from "./executor/cre
 export { createSpawnAgentTool as createSpawnAgentToolFree, spawnAgentParams as spawnAgentParamsFree } from "./executor/create-spawn-agent-tool.js";
 import { createTaskUpdateTool as createTaskUpdateToolImpl } from "./executor/create-task-update-tool.js";
 export { createTaskUpdateTool as createTaskUpdateToolFree } from "./executor/create-task-update-tool.js";
+import { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./executor/attempt-executor-verification-fix.js";
+export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./executor/attempt-executor-verification-fix.js";
 
 
 
@@ -12679,181 +12680,27 @@ export class TaskExecutor {
     maxRetries: number,
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
-    try {
-      executorLog.log(`${task.id}: spawning executor verification fix agent (attempt ${retryNumber}/${maxRetries})`);
-
-      const logger = new AgentLogger({
+    return attemptExecutorVerificationFixImpl(
+      {
         store: this.store,
-        taskId: task.id,
-        agent: "executor",
-        persistAgentToolOutput: settings.persistAgentToolOutput,
-        // Executor sessions are task-scoped ephemeral workers.
-        persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
+        agentStore: this.options.agentStore,
+        pluginRunner: this.options.pluginRunner,
         onAgentText: this.options.onAgentText,
         onAgentTool: this.options.onAgentTool,
-      });
-
-      // Build skill selection context
-      let skillContext: Awaited<ReturnType<typeof buildSessionSkillContext>> | undefined;
-      if (this.options.agentStore) {
-        try {
-          skillContext = await buildSessionSkillContext({
-            agentStore: this.options.agentStore,
-            task,
-            sessionPurpose: "executor",
-            projectRootDir: worktreePath,
-            pluginRunner: this.options.pluginRunner,
-          });
-        } catch {
-          // Graceful fallback - no skill selection
-        }
-      }
-
-      // Resolve model using the executor's model hierarchy
-      const assignedRuntimeConfig = await this.getAssignedAgentRuntimeConfig(task.assignedAgentId);
-      const executorSessionModel = resolveExecutorSessionModel(
-        task.modelProvider,
-        task.modelId,
-        settings,
-        assignedRuntimeConfig,
-        task.credentialInstanceId,
-      );
-      const { provider: executorProvider, modelId: executorModelId } = executorSessionModel;
-
-      const executorFallback = resolveExecutorFallbackModel(settings);
-
-      // Create the fix agent session
-      const { session } = await createResolvedAgentSession({
-        sessionPurpose: "executor",
-        pluginRunner: this.options.pluginRunner,
-        cwd: worktreePath, // Run in the task's worktree
-        systemPrompt: `You are a verification fix agent running during task execution in a worktree.
-
-All step-session steps completed successfully but the deterministic verification command failed. Your job is to fix the failing code directly in the working directory.
-
-## Scope
-Only fix what is required to make the failing verification pass.
-Do not refactor, rename broadly, or make opportunistic improvements.
-
-## Rules
-1. Read the error output carefully to understand what is failing before editing anything
-2. Before assuming a code fix is needed, check whether the failure is caused by stale/missing build artifacts in a sibling workspace package — typical signatures: \`Failed to resolve import "./X.js"\` pointing into another package's \`dist/\`, \`Cannot find module\`, or \`ERR_MODULE_NOT_FOUND\` referencing a workspace-internal path. In that case, rebuild the affected package(s) (e.g. \`pnpm --filter <pkg> build\`, or \`pnpm --filter "<scope>/*" build\` for a group) and re-run verification before editing source files.
-3. Make targeted fixes to the failing code path
-4. After fixing, run the verification command to confirm the fix works
-5. Do NOT make any git commits — just fix the code
-6. You MAY modify any files needed to make the verification pass, including files unrelated to this task's original change. Pre-existing build/test breakage is in scope: fix it. Prefer the smallest change that makes verification green.
-7. If you cannot fix the issue within scope, explain why and what evidence indicates a deeper/root problem`,
-        tools: "coding",
-        onText: logger.onText,
-        onThinking: logger.onThinking,
-        onToolStart: logger.onToolStart,
-        onToolEnd: logger.onToolEnd,
-        defaultProvider: executorProvider,
-        defaultModelId: executorModelId,
-        ...(executorSessionModel.credentialInstanceId ? { credentialInstanceId: executorSessionModel.credentialInstanceId } : {}),
-        fallbackProvider: executorFallback.provider,
-        fallbackModelId: executorFallback.modelId,
-        fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(task.thinkingLevel, settings),
-        defaultThinkingLevel: resolveExecutorThinkingLevel(task.thinkingLevel, settings),
-        runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
-        settings,
-        taskEnv: extraEnv,
-        mcpServers: await this.resolveMcpServers(undefined),
-        // FNXC:SessionRouting 2026-06-24-11:20:
-        // #1675: propagate task id so verification-fix requests carry the same
-        // X-Session-Id/X-Session-Affinity as the primary session.
-        taskId: task.id,
-        // FNXC:PluginSkills 2026-07-12-00:00: Verification-fix sessions share task skill selection; include plugin skill body dirs so fixes can use plugin-authored guidance.
-        ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
-        ...(skillContext && skillContext.additionalSkillPaths.length > 0 ? { additionalSkillPaths: skillContext.additionalSkillPaths } : {}),
-      });
-
-      await this.store.logEntry(
-        task.id,
-        `Executor verification fix agent started (model: ${describeModel(session)}, attempt ${retryNumber}/${maxRetries})`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-      await this.store.appendAgentLog(
-        task.id,
-        `Fix agent started (model: ${describeModel(session)}, attempt ${retryNumber}/${maxRetries})`,
-        "status",
-        undefined,
-        "executor",
-      );
-
-      try {
-        // Build the fix prompt
-        const fixPrompt = `Fix the failing ${failureContext.type} verification for task ${task.id}.
-
-## Failed command
-Command: \`${failureContext.command}\`
-Exit code: ${failureContext.exitCode}
-
-## Error output
-${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
-
-## Instructions
-1. Read the error output and identify the root cause
-2. Make targeted fixes to resolve the failure
-3. Run the verification command \`${failureContext.command}\` to confirm your fix works
-4. If the fix doesn't work, try a different approach
-5. Do NOT make any git commits`;
-
-        // Run the agent with rate limit retry
-        await withRateLimitRetry(async () => {
-          await promptWithFallback(session, fixPrompt);
-        }, {
-          onRetry: (attempt, delayMs, error) => {
-            const delaySec = Math.round(delayMs / 1000);
-            executorLog.warn(`⏳ ${task.id} executor fix agent rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
-          },
-        });
-        await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
-
-        // Re-run full deterministic verification (test AND build) after the fix attempt
-        executorLog.log(`${task.id}: re-running deterministic verification after fix attempt ${retryNumber}/${maxRetries}`);
-        await this.store.logEntry(
-          task.id,
-          `Re-running deterministic verification (attempt ${retryNumber}/${maxRetries})`,
-          undefined,
-          this.getRunContextFor(task.id),
-        );
-        await this.store.appendAgentLog(
-          task.id,
-          `Re-running verification (attempt ${retryNumber}/${maxRetries})`,
-          "status",
-          undefined,
-          "executor",
-        );
-        const reRunResult = await this.runExecutorDeterministicVerification(task, worktreePath, settings, extraEnv);
-
-        return reRunResult.allPassed;
-      } finally {
-        await logger.flush();
-        session.dispose();
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${task.id}: executor verification fix agent error: ${errorMessage}`);
-      await this.store.logEntry(
-        task.id,
-        `Executor verification fix agent encountered an error`,
-        errorMessage,
-        this.getRunContextFor(task.id),
-      );
-      await this.store.appendAgentLog(
-        task.id,
-        "Fix agent encountered an error",
-        "tool_error",
-        errorMessage,
-        "executor",
-      );
-      return false;
-    }
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        getAssignedAgentRuntimeConfig: (id) => this.getAssignedAgentRuntimeConfig(id),
+        resolveMcpServers: (id) => this.resolveMcpServers(id),
+        runExecutorDeterministicVerification: (t, wt, st, env) =>
+          this.runExecutorDeterministicVerification(t, wt, st, env),
+      },
+      task,
+      worktreePath,
+      failureContext,
+      settings,
+      retryNumber,
+      maxRetries,
+      extraEnv,
+    );
   }
 
   /**
