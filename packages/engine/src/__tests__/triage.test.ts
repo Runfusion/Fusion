@@ -67,6 +67,10 @@ vi.mock("../pi.js", () => {
     return suffixes.length ? `${model} ${suffixes.map((suffix) => `(${suffix})`).join(" ")}` : model;
   }),
   promptWithFallback: vi.fn().mockReturnValue("mock-prompt"),
+  wrapToolsWithRtkRewrite: vi.fn((tools: unknown) => tools),
+  wrapToolsWithActionGate: vi.fn((tools: unknown) => tools),
+  wrapToolsWithPermanentAgentGating: vi.fn((tools: unknown) => tools),
+  wrapToolsWithOutputBudget: vi.fn((tools: unknown) => tools),
   };
 });
 
@@ -4285,6 +4289,494 @@ describe("taskCreate tool model inheritance", () => {
         "FN-202",
         expect.stringContaining("Generated plan failed deterministic validation (PROMPT.md file not found or empty)"),
       );
+    });
+
+    /*
+    FNXC:TriagePlanningRetry 2026-08-03-00:02:
+    A syntactically valid PROMPT.md is not proof that the current planner attempt succeeded. These
+    fixtures hold an existing artifact or write one through a fallback, then assert that Plan Review
+    handoff remains unavailable until a clean, attempt-local primary write occurs.
+    */
+    it("retries a valid fallback-written plan instead of handing it to Plan Review", async () => {
+      const task = createTriageTask({ id: "FN-FALLBACK-VALID" });
+      const root = await createTriageFixtureRoot("fusion-triage-fallback-valid-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        await onFallbackModelUsed?.({
+          primaryModel: "openai/gpt-4o",
+          fallbackModel: "anthropic/claude-haiku",
+          triggerPoint: "prompt-time",
+        });
+        await writeFile(promptPath, "## Mission\n\nFallback-authored plan\n", "utf8");
+      });
+
+      try {
+        await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: null,
+          recoveryRetryCount: 1,
+          nextRecoveryAt: expect.any(String),
+        }));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("retries a fallback-written duplicate marker instead of closing the task", async () => {
+      const task = createTriageTask({ id: "FN-FALLBACK-DUPLICATE" });
+      const root = await createTriageFixtureRoot("fusion-triage-fallback-duplicate-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        await onFallbackModelUsed?.({
+          primaryModel: "openai/gpt-4o",
+          fallbackModel: "anthropic/claude-haiku",
+          triggerPoint: "prompt-time",
+        });
+        await writeFile(promptPath, "DUPLICATE: FN-CANONICAL\n", "utf8");
+      });
+
+      try {
+        await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: null,
+          recoveryRetryCount: 1,
+        }));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("retries an unchanged valid plan instead of treating inherited text as output", async () => {
+      const task = createTriageTask({ id: "FN-UNCHANGED-VALID" });
+      const root = await createTriageFixtureRoot("fusion-triage-unchanged-valid-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      await writeFile(promptPath, "## Mission\n\nPrior valid plan\n", "utf8");
+      const onSpecifyComplete = vi.fn();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockResolvedValue({
+        session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+      });
+
+      try {
+        await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: null,
+          recoveryRetryCount: 1,
+          nextRecoveryAt: expect.any(String),
+        }));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("awaits the runtime fallback-dispatch boundary before handoff", async () => {
+      const task = createTriageTask({ id: "FN-DEFERRED-FALLBACK" });
+      const root = await createTriageFixtureRoot("fusion-triage-deferred-fallback-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      let resolveFallbackDispatch!: () => void;
+      const fallbackDispatchSettled = new Promise<void>((resolve) => {
+        resolveFallbackDispatch = resolve;
+      });
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+          settleFallbackDispatch: () => fallbackDispatchSettled,
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        await writeFile(promptPath, "## Mission\n\nDeferred fallback-authored plan\n", "utf8");
+        // FNXC:TriagePlanningRetry 2026-08-03-01:01: Runtime dispatch settlement, rather than
+        // unrelated timer tracking, admits this nested callback before triage decides handoff.
+        setTimeout(() => {
+          setTimeout(() => {
+            setImmediate(() => {
+              void (async () => {
+                await onFallbackModelUsed?.({
+                  primaryModel: "openai/gpt-4o",
+                  fallbackModel: "anthropic/claude-haiku",
+                  triggerPoint: "prompt-time",
+                });
+                resolveFallbackDispatch();
+              })();
+            });
+          }, 0);
+        }, 40);
+      });
+
+      try {
+        await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: null,
+          recoveryRetryCount: 1,
+        }));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+        expect(store.appendAgentLog).toHaveBeenCalledWith(task.id, expect.stringContaining("[fallback] triage"), "status", undefined, "triage");
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("fails closed when a plugin runtime omits deferred fallback settlement", async () => {
+      const task = createTriageTask({
+        id: "FN-PLUGIN-NO-FALLBACK-BOUNDARY",
+        assignedAgentId: "agent-plugin",
+        planningModelProvider: "openai",
+        planningModelId: "gpt-4o",
+      });
+      const root = await createTriageFixtureRoot("fusion-triage-plugin-no-fallback-boundary-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      const pluginRuntime = {
+        id: "deferred-planner",
+        name: "Deferred planner",
+        createSession: vi.fn(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+          onFallbackModelUsed = options.onFallbackModelUsed;
+          return { session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() } };
+        }),
+        promptWithFallback: vi.fn(async () => {
+          await writeFile(promptPath, "## Mission\n\nPlugin-written plan\n", "utf8");
+          setTimeout(() => {
+            void onFallbackModelUsed?.({
+              primaryModel: "openai/gpt-4o",
+              fallbackModel: "anthropic/claude-haiku",
+              triggerPoint: "prompt-time",
+            });
+          }, 0);
+        }),
+        describeModel: vi.fn(() => "plugin/planner"),
+      };
+      const pluginRunner = {
+        getRuntimeById: vi.fn().mockReturnValue({
+          pluginId: "planner-plugin",
+          runtime: {
+            metadata: { runtimeId: "deferred-planner", name: "Deferred planner", description: "test", version: "1.0.0" },
+            factory: vi.fn().mockResolvedValue(pluginRuntime),
+          },
+        }),
+        createRuntimeContext: vi.fn().mockResolvedValue({}),
+        getPromptContributionsForSurface: vi.fn().mockReturnValue([]),
+        getPluginSkills: vi.fn().mockReturnValue([]),
+      };
+      const agentStore = {
+        getAgent: vi.fn().mockResolvedValue({
+          id: "agent-plugin",
+          name: "Plugin planner",
+          role: "triage",
+          runtimeConfig: { runtimeHint: "deferred-planner" },
+        }),
+      };
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        (session: { promptWithFallback: (prompt: string, options?: unknown) => Promise<void> }, prompt: string, options?: unknown) =>
+          session.promptWithFallback(prompt, options),
+      );
+
+      try {
+        await new TriageProcessor(store, root, {
+          onSpecifyComplete,
+          pluginRunner: pluginRunner as any,
+          agentStore: agentStore as any,
+        }).specifyTask(task);
+        expect(agentStore.getAgent).toHaveBeenCalledWith("agent-plugin");
+        expect(pluginRunner.getRuntimeById).toHaveBeenCalledWith("deferred-planner");
+        expect(pluginRuntime.createSession).toHaveBeenCalledTimes(1);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: null,
+          recoveryRetryCount: 1,
+          nextRecoveryAt: expect.any(String),
+        }));
+        expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("did not provide a fallback-dispatch settlement boundary"));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+        await delay(0);
+        expect(store.appendAgentLog).toHaveBeenCalledWith(task.id, expect.stringContaining("[fallback] triage"), "status", undefined, "triage");
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("does not let an unrelated one-shot runtime timer delay clean planning admission", async () => {
+      const task = createTriageTask({ id: "FN-FALLBACK-ONE-SHOT" });
+      const root = await createTriageFixtureRoot("fusion-triage-fallback-one-shot-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      let housekeepingTimer: ReturnType<typeof setTimeout> | undefined;
+      mockCreateFnAgent.mockResolvedValue({
+        session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        housekeepingTimer = setTimeout(() => undefined, 60_000);
+        await writeFile(promptPath, "## Mission\n\nClean plan beside runtime housekeeping\n", "utf8");
+      });
+
+      try {
+        await expect(Promise.race([
+          new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task),
+          delay(250).then(() => { throw new Error("planning waited for an unrelated one-shot timer"); }),
+        ])).resolves.toBeUndefined();
+        expect(onSpecifyComplete).toHaveBeenCalledTimes(1);
+      } finally {
+        if (housekeepingTimer) clearTimeout(housekeepingTimer);
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("allows a later clean changed attempt after fallback recovery", async () => {
+      const task = createTriageTask({ id: "FN-CLEAN-AFTER-FALLBACK" });
+      const retryTask = { ...task, recoveryRetryCount: 1 };
+      const root = await createTriageFixtureRoot("fusion-triage-clean-after-fallback-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn()
+          .mockResolvedValueOnce({ ...task, attachments: [], comments: [] })
+          .mockResolvedValue({ ...retryTask, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(async () => {
+          await onFallbackModelUsed?.({
+            primaryModel: "openai/gpt-4o",
+            fallbackModel: "anthropic/claude-haiku",
+            triggerPoint: "prompt-time",
+          });
+          await writeFile(promptPath, "## Mission\n\nFallback plan\n", "utf8");
+        })
+        .mockImplementationOnce(async () => {
+          await writeFile(promptPath, "## Mission\n\nClean primary plan\n", "utf8");
+        });
+
+      try {
+        const processor = new TriageProcessor(store, root, { onSpecifyComplete });
+        await processor.specifyTask(task);
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+
+        await processor.specifyTask(retryTask);
+        expect(onSpecifyComplete).toHaveBeenCalledTimes(1);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }));
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("keeps an obsolete fallback callback from contaminating a newer clean attempt", async () => {
+      const task = createTriageTask({ id: "FN-OBSOLETE-FALLBACK" });
+      const root = await createTriageFixtureRoot("fusion-triage-obsolete-fallback-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      const callbacks: Array<((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined> = [];
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: (payload: never) => Promise<void> }) => {
+        callbacks.push(options.onFallbackModelUsed as never);
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(async () => {
+          await writeFile(promptPath, "## Mission\n\nFirst clean plan\n", "utf8");
+        })
+        .mockImplementationOnce(async () => {
+          await writeFile(promptPath, "## Mission\n\nSecond clean plan\n", "utf8");
+          queueMicrotask(() => {
+            void callbacks[0]?.({
+              primaryModel: "openai/gpt-4o",
+              fallbackModel: "anthropic/claude-haiku",
+              triggerPoint: "prompt-time",
+            });
+          });
+        });
+
+      try {
+        const processor = new TriageProcessor(store, root, { onSpecifyComplete });
+        await processor.specifyTask(task);
+        await processor.specifyTask(task);
+        expect(onSpecifyComplete).toHaveBeenCalledTimes(2);
+        expect(store.appendAgentLog).toHaveBeenCalledWith(task.id, expect.stringContaining("[fallback] triage"), "status", undefined, "triage");
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("increments the shared fallback retry budget once per failed attempt", async () => {
+      const root = await createTriageFixtureRoot("fusion-triage-fallback-budget-");
+      const taskId = "FN-FALLBACK-BUDGET";
+      const promptPath = join(root, ".fusion", "tasks", taskId, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", taskId), { recursive: true });
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn().mockImplementation(async () => ({
+          ...createTriageTask({ id: taskId }), attachments: [], comments: [],
+        })),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        await onFallbackModelUsed?.({
+          primaryModel: "openai/gpt-4o",
+          fallbackModel: "anthropic/claude-haiku",
+          triggerPoint: "prompt-time",
+        });
+        await writeFile(promptPath, `## Mission\n\nFallback plan ${Date.now()}\n`, "utf8");
+      });
+
+      try {
+        const processor = new TriageProcessor(store, root);
+        for (const recoveryRetryCount of [0, 1, 2]) {
+          const task = createTriageTask({ id: taskId, recoveryRetryCount });
+          await processor.specifyTask(task);
+          expect(store.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({
+            recoveryRetryCount: recoveryRetryCount + 1,
+            nextRecoveryAt: expect.any(String),
+          }));
+        }
+        expect(store.updateTask).not.toHaveBeenCalledWith(taskId, expect.objectContaining({
+          recoveryRetryCount: 0,
+        }));
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
+    });
+
+    it("terminalizes a fallback-written plan when its shared retry budget is exhausted", async () => {
+      const task = createTriageTask({ id: "FN-FALLBACK-EXHAUSTED", recoveryRetryCount: 3 });
+      const root = await createTriageFixtureRoot("fusion-triage-fallback-exhausted-");
+      const promptPath = join(root, ".fusion", "tasks", task.id, "PROMPT.md");
+      await mkdir(join(root, ".fusion", "tasks", task.id), { recursive: true });
+      const onSpecifyComplete = vi.fn();
+      let onFallbackModelUsed: ((payload: {
+        primaryModel: string;
+        fallbackModel: string;
+        triggerPoint: "prompt-time";
+      }) => Promise<void>) | undefined;
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [], comments: [] }),
+      });
+      mockCreateFnAgent.mockImplementation(async (options: { onFallbackModelUsed?: typeof onFallbackModelUsed }) => {
+        onFallbackModelUsed = options.onFallbackModelUsed;
+        return {
+          session: { prompt: vi.fn(), dispose: vi.fn(), sessionManager: {}, navigateTree: vi.fn() },
+        };
+      });
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        await onFallbackModelUsed?.({
+          primaryModel: "openai/gpt-4o",
+          fallbackModel: "anthropic/claude-haiku",
+          triggerPoint: "prompt-time",
+        });
+        await writeFile(promptPath, "## Mission\n\nFallback plan\n", "utf8");
+      });
+
+      try {
+        await new TriageProcessor(store, root, { onSpecifyComplete }).specifyTask(task);
+        expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("Planner fallback engaged"),
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }));
+        expect(onSpecifyComplete).not.toHaveBeenCalled();
+      } finally {
+        await cleanupTriageFixtureRoot(root);
+      }
     });
 
     it("sets recoveryRetryCount and nextRecoveryAt on first transient error via specifyTask", async () => {

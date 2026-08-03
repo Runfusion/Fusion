@@ -2737,6 +2737,64 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isActive, onClose]);
 
+  /*
+  FNXC:MissionDraftDiscard 2026-08-03-02:16:
+  Discard posts the draft session id and optional projectId only (project-scoped API). A 409 lock
+  conflict keeps the draft visible and surfaces the "open in another tab" warning; 404 removes the
+  stale list row. No browser tab id is sent in the body.
+
+  FNXC:Missions 2026-08-03-02:01:
+  Hoisted above `if (!isActive) return null` so hide/show of the inline Missions tab does not change
+  the hook list (handleConfirmDelete depends on this callback).
+  */
+  const handleDiscardInterviewSession = useCallback(async (sessionId: string) => {
+    try {
+      await discardMissionInterviewDraft(sessionId, projectId);
+      setMissionInterviewDrafts((current) => current.filter((session) => session.id !== sessionId));
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) {
+        addToast(t("missions.draftOpenInAnotherTab", "Draft is open in another tab"), "error");
+        return;
+      }
+      if (err instanceof ApiRequestError && err.status === 404) {
+        setMissionInterviewDrafts((current) => current.filter((session) => session.id !== sessionId));
+        return;
+      }
+      addToast(getErrorMessage(err) || t("missions.draftDiscardFailed", "Failed to discard draft"), "error");
+      return;
+    } finally {
+      setDeleteConfirmId(null);
+    }
+  }, [addToast, projectId, t]);
+  /*
+  FNXC:MissionAssertions 2026-08-01-19:44:
+  Every deleteConfirmId type must dispatch a deletion, and the shared confirmation panel must surface rejected requests. Assertion deletion is an operator recovery path for validation failures, so a silent no-op would leave stale rollups unrepairable.
+
+  FNXC:Missions 2026-08-03-02:01:
+  This useCallback MUST stay above the `if (!isActive) return null` early return. Declaring it after
+  the return dropped a hook when the inline Missions tab was hidden (isOpen=false), which crashed
+  React with "Rendered fewer hooks than expected" on hide/show cycles.
+  */
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirmId) return;
+
+    try {
+      if (deleteConfirmId.type === "milestone") {
+        await handleDeleteMilestone(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "slice") {
+        await handleDeleteSlice(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "feature") {
+        await handleDeleteFeature(deleteConfirmId.id);
+      } else if (deleteConfirmId.type === "assertion" && deleteConfirmId.milestoneId) {
+        await handleDeleteAssertion(deleteConfirmId.id, deleteConfirmId.milestoneId);
+      } else if (deleteConfirmId.type === "interview_draft") {
+        await handleDiscardInterviewSession(deleteConfirmId.id);
+      }
+    } catch (err) {
+      addToast(getErrorMessage(err) || t("missions.deleteFailed", "Failed to delete item"), "error");
+    }
+  }, [addToast, deleteConfirmId, handleDeleteAssertion, handleDeleteFeature, handleDeleteMilestone, handleDeleteSlice, handleDiscardInterviewSession, t]);
+
   if (!isActive) return null;
 
   const renderMissionDetailContent = () => {
@@ -4448,30 +4506,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     setShowInterviewModal(false);
   };
 
-  const handleDiscardInterviewSession = async (sessionId: string) => {
-    try {
-      /*
-      FNXC:MissionDraftDiscard 2026-06-24-02:42:
-      The mission draft Discard confirmation must send the current browser tab id so a draft locked by this tab can be removed while a draft actively owned by another tab returns the lock warning and stays visible.
-      */
-      await discardMissionInterviewDraft(sessionId, projectId);
-      setMissionInterviewDrafts((current) => current.filter((session) => session.id !== sessionId));
-    } catch (err) {
-      if (err instanceof ApiRequestError && err.status === 409) {
-        addToast(t("missions.draftOpenInAnotherTab", "Draft is open in another tab"), "error");
-        return;
-      }
-      if (err instanceof ApiRequestError && err.status === 404) {
-        setMissionInterviewDrafts((current) => current.filter((session) => session.id !== sessionId));
-        return;
-      }
-      addToast(getErrorMessage(err) || t("missions.draftDiscardFailed", "Failed to discard draft"), "error");
-      return;
-    } finally {
-      setDeleteConfirmId(null);
-    }
-  };
-
   const renderInterviewSessionItems = () => missionInterviewDrafts.map((session) => {
     const isErrored = session.status === "error";
     const isGenerating = session.status === "generating";
@@ -5022,30 +5056,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
             </div>
     );
   };
-
-  /*
-  FNXC:MissionAssertions 2026-08-01-19:44:
-  Every deleteConfirmId type must dispatch a deletion, and the shared confirmation panel must surface rejected requests. Assertion deletion is an operator recovery path for validation failures, so a silent no-op would leave stale rollups unrepairable.
-  */
-  const handleConfirmDelete = useCallback(async () => {
-    if (!deleteConfirmId) return;
-
-    try {
-      if (deleteConfirmId.type === "milestone") {
-        await handleDeleteMilestone(deleteConfirmId.id);
-      } else if (deleteConfirmId.type === "slice") {
-        await handleDeleteSlice(deleteConfirmId.id);
-      } else if (deleteConfirmId.type === "feature") {
-        await handleDeleteFeature(deleteConfirmId.id);
-      } else if (deleteConfirmId.type === "assertion" && deleteConfirmId.milestoneId) {
-        await handleDeleteAssertion(deleteConfirmId.id, deleteConfirmId.milestoneId);
-      } else if (deleteConfirmId.type === "interview_draft") {
-        await handleDiscardInterviewSession(deleteConfirmId.id);
-      }
-    } catch (err) {
-      addToast(getErrorMessage(err) || t("missions.deleteFailed", "Failed to delete item"), "error");
-    }
-  }, [addToast, deleteConfirmId, handleDeleteAssertion, handleDeleteFeature, handleDeleteMilestone, handleDeleteSlice, handleDiscardInterviewSession, t]);
 
   const renderDeleteConfirmPanel = () => {
     if (deleteConfirmId?.type === "mission") {

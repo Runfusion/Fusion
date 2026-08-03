@@ -31,7 +31,6 @@ import {toJson} from "../db/db.js";
 import {GoalStore} from "../goals/goal-store.js";
 import {AsyncGoalStore} from "../async-stores/async-goal-store.js";
 import {normalizeTaskCommitAssociation} from "../tasks/task-lineage.js";
-import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
@@ -40,7 +39,7 @@ import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkf
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async/async-audit.js";
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async-comments-attachments.js";
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async/async-events.js";
-import type {TaskDocumentRow, GoalCitationRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
+import type { WorkflowWorkItemRow } from "../task-store/row-types.js";
 
 export async function recordGoalCitationsImpl(store: TaskStore, inputs: GoalCitationInput[]): Promise<GoalCitation[]> {
         const layer = store.asyncLayer!;

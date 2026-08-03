@@ -189,7 +189,12 @@ export class AutoClaimSnapshotManager {
     this.cache = null;
     this.staleReason = "invalidate";
     this.invalidatedAt = this.now();
-    this.logger.log(`invalidate reason=${reason}`);
+    /*
+    FNXC:EngineDiagnostics 2026-08-03-05:54:
+    Snapshot invalidation runs on every task create/update that changes the auto-claim
+    fingerprint. Cache bookkeeping only — default TUI should not reprint it.
+    */
+    this.logger.debug(`invalidate reason=${reason}`);
   }
 
   async getSnapshot(): Promise<AutoClaimSnapshot> {

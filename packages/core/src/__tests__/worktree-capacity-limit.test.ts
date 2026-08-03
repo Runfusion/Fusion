@@ -120,6 +120,45 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
         "enforceWorktreeCap: on-disk hygiene, not admission. Caps worktree DIRECTORIES at 2x and only "
         + "removes idle ones. Must keep applying in OFF mode or idle worktrees accumulate unbounded.",
     },
+    /*
+    FNXC:WorktreeCapacity 2026-08-03-02:01:
+    Planning admission and child-spawn paths now resolve/bound maxWorktrees the same way as the
+    scheduler executor gate. These are intentional admission readers (or aliases of resolveWorktreeCapacityLimit),
+    not raw second gates that bypass OFF mode.
+    */
+    {
+      file: "packages/engine/src/executor.ts",
+      expr: "heldWorktrees + this.totalSpawnedCount > spawnMaxWorktrees",
+      reason:
+        "Child-spawn worktree budget: spawnMaxWorktrees aliases settings.maxWorktrees ?? 4; the block "
+        + "is skipped when the resolved value is non-finite (worktrees-off / unset).",
+    },
+    {
+      file: "packages/engine/src/scheduler.ts",
+      expr: "maxWorktrees !== null && maxWorktrees <= maxConcurrent",
+      reason:
+        "Binding-gate discriminator after resolveWorktreeCapacityLimit: null means worktrees are not a "
+        + "capacity dimension, so this arm cannot bind in OFF mode.",
+    },
+    {
+      file: "packages/engine/src/triage.ts",
+      expr: "Math.max(0, maxWorktrees - claimed)",
+      reason:
+        "Planning admission worktreeRoom from resolveWorktreeCapacityLimit; only evaluated when the "
+        + "resolved limit is non-null.",
+    },
+    {
+      file: "packages/engine/src/triage.ts",
+      expr: "Math.min(projectRoom, worktreeRoom)",
+      reason:
+        "Planning maxToStart combines agent and worktree rooms; worktreeRoom is Infinity when limit is null.",
+    },
+    {
+      file: "packages/engine/src/triage.ts",
+      expr: "worktreeRoom <= 0 && projectRoom > 0",
+      reason:
+        "Throttle reason discriminator for plan:admission-throttled — names which gate bound, not a second limit.",
+    },
   ];
 
   /*
@@ -244,7 +283,12 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
     }
   });
 
-  it("admission has exactly one worktree-limit reader", async () => {
+  it("admission has exactly the known worktree-limit readers", async () => {
+    /*
+    FNXC:WorktreeCapacity 2026-08-03-02:01:
+    Scheduler execute admission and triage planning admission both resolve the same limit. A third
+    call site is a product change and must be audited here.
+    */
     const { execFileSync } = await import("node:child_process");
     const { resolve } = await import("node:path");
     const root = resolve(__dirname, "../../../..");
@@ -255,8 +299,9 @@ describe("worktrees-off is structural: no unaudited maxWorktrees bound", () => {
       { cwd: root, encoding: "utf-8" },
     ).split("\n").filter((l) => l && !l.includes("__tests__"));
 
-    expect(hits.length, `expected one admission reader, got:\n${hits.join("\n")}`).toBe(1);
-    expect(hits[0]).toContain("packages/engine/src/scheduler.ts");
+    expect(hits.length, `expected two admission readers, got:\n${hits.join("\n")}`).toBe(2);
+    expect(hits.some((h) => h.includes("packages/engine/src/scheduler.ts"))).toBe(true);
+    expect(hits.some((h) => h.includes("packages/engine/src/triage.ts"))).toBe(true);
   });
 });
 

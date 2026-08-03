@@ -132,6 +132,35 @@ describe("SettingsModal mobile embedded close button (FN-7627)", () => {
     expect(toggle).toBeChecked();
   });
 
+  /*
+  FNXC:ExecutorEscalation 2026-08-03-05:43:
+  Mobile Settings uses a section picker rather than the desktop rail. The one escalation model selector must remain in Models · Project after mobile navigation, while Scheduling retains policy and node routing without duplicate provider/model input shells.
+  */
+  it("keeps the sole escalation selector in Project Models when the mobile section picker changes", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockFetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      executorEscalationProvider: "anthropic",
+      executorEscalationModelId: "claude-sonnet-4-5",
+    });
+    mockFetchModels.mockResolvedValue({
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+      favoriteProviders: [],
+      favoriteModels: [],
+    });
+
+    renderModal({ presentation: "embedded", projectId: "proj-1", initialSection: "project-models" });
+    await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+    expect(await screen.findByLabelText("Executor Escalation Model")).toHaveTextContent("Claude Sonnet 4.5");
+    fireEvent.change(screen.getByLabelText("Settings Section"), { target: { value: "scheduling" } });
+
+    expect(await screen.findByRole("checkbox", { name: "Escalate after tool-failure retries" })).toBeVisible();
+    expect(screen.getByLabelText("Escalation node ID")).toBeVisible();
+    expect(screen.queryByLabelText("Escalation provider")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Escalation model ID")).not.toBeInTheDocument();
+  });
+
   it("still renders and calls onClose in embedded+mobile when opened without a selected projectId (overview entry)", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     const onClose = vi.fn();

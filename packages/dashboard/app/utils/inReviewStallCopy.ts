@@ -1,5 +1,4 @@
 import type { InReviewStallCode, InReviewStallSignal, Task } from "@fusion/core";
-import { isActiveMergeStatus } from "../../../core/src/merge/active-merge-status";
 import { isReviewColumnRole } from "./columnRoles";
 import { MAX_AUTO_MERGE_RETRIES } from "../hooks/useBlockerFanout";
 import { getTaskLogEntryAction } from "./taskLogEntryDisplay";

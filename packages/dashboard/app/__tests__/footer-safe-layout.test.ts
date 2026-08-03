@@ -56,11 +56,25 @@ describe("footer-safe project workspace layout", () => {
   // ── .project-content--with-footer (desktop) ────────────────────────
 
   describe(".project-content--with-footer desktop", () => {
-    const footerBlock = loadAllAppCssBaseOnly().match(
-      /\.project-content--with-footer\s*\{[^}]*\}/,
-    )?.[0];
+    /*
+    FNXC:ViewportChrome 2026-08-03-00:13:
+    Match the unscoped base rule only. Mode-scoped overrides
+    (`html[data-viewport-mode=…] .project-content--with-footer`) also contain the
+    class name and would otherwise win a first-match scan. Require both the 36px
+    token and padding-bottom so token-only mode overrides cannot satisfy this contract.
+    */
+    const baseCss = loadAllAppCssBaseOnly();
+    const footerBlock = [...baseCss.matchAll(/\.project-content--with-footer\s*\{[^}]*\}/g)]
+      .map((match) => match[0])
+      .find(
+        (block) =>
+          block.includes("--executor-footer-height: 36px") &&
+          block.includes("padding-bottom: var(--executor-footer-height)") &&
+          !block.includes("data-viewport-mode"),
+      );
 
     it("defines --executor-footer-height token as 36px", () => {
+      expect(footerBlock).toBeTruthy();
       expect(footerBlock).toContain("--executor-footer-height: 36px");
     });
 

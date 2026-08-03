@@ -3,63 +3,45 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 
-import {
-  evaluateReleaseAuthorization,
-  isReleaseAuthorizationPhrase,
-  RELEASE_AUTHORIZATION_PHRASE,
-} from "../lib/release-authorization-gate.mjs";
+import { evaluateReleaseAuthorization } from "../lib/release-authorization-gate.mjs";
 
-test("gate blocks a real release run non-interactively (no TTY)", () => {
-  const result = evaluateReleaseAuthorization({ dryRun: false, stdinIsTTY: false });
-
-  assert.equal(result.authorized, false);
-  assert.equal(result.mode, "blocked");
-  assert.match(result.reason ?? "", /non-interactively/);
-  assert.match(result.reason ?? "", /aborted before version bump, publish, push, or tag/);
+test("dry-run is authorized because it publishes nothing", () => {
+  assert.deepEqual(evaluateReleaseAuthorization({ dryRun: true }), {
+    authorized: true,
+    mode: "dry-run-bypass",
+  });
 });
 
-test("interactive real release requires the typed authorization phrase", () => {
-  const result = evaluateReleaseAuthorization({ dryRun: false, stdinIsTTY: true });
-
-  assert.deepEqual(result, { authorized: false, mode: "requires-confirmation" });
+test("real releases are authorized and proceed to operator confirm", () => {
+  assert.deepEqual(evaluateReleaseAuthorization({ dryRun: false }), {
+    authorized: true,
+    mode: "operator-confirm",
+  });
 });
 
-test("dry-run bypasses authorization because it publishes nothing", () => {
-  const result = evaluateReleaseAuthorization({ dryRun: true, stdinIsTTY: false });
-
-  assert.deepEqual(result, { authorized: true, mode: "dry-run-bypass" });
-});
-
-test("only the exact authorization phrase passes; anything else fails closed", () => {
-  assert.equal(isReleaseAuthorizationPhrase(RELEASE_AUTHORIZATION_PHRASE), true);
-  assert.equal(isReleaseAuthorizationPhrase("  Authorized  "), true);
-  assert.equal(isReleaseAuthorizationPhrase("AUTHORIZED\n"), true);
-
-  for (const value of ["", "   ", "yes", "y", "authorize", "authorized now", undefined, null]) {
-    assert.equal(
-      isReleaseAuthorizationPhrase(value),
-      false,
-      `expected ${JSON.stringify(value)} to be rejected`,
-    );
-  }
-});
-
-test("release script prompts for the authorization phrase before the first mutation", () => {
+test("release script no longer prompts for a typed authorization phrase", () => {
   const source = readFileSync(new URL("../release.mjs", import.meta.url), "utf8");
-  const importIndex = source.indexOf("./lib/release-authorization-gate.mjs");
   const dryRunExitIndex = source.indexOf("if (DRY_RUN) {");
-  const gateIndex = source.indexOf("evaluateReleaseAuthorization({");
-  const phraseCheckIndex = source.indexOf("isReleaseAuthorizationPhrase(");
-  const versionBumpIndex = source.indexOf("run(\"pnpm release:version\")");
+  const confirmIndex = source.indexOf("Proceed with ${CHANNEL} release");
+  const versionBumpIndex = source.indexOf('run("pnpm release:version")');
 
-  assert.notEqual(importIndex, -1, "release.mjs should import the authorization helper");
   assert.notEqual(dryRunExitIndex, -1, "release.mjs should retain the dry-run early exit");
-  assert.notEqual(gateIndex, -1, "release.mjs should call evaluateReleaseAuthorization()");
-  assert.notEqual(phraseCheckIndex, -1, "release.mjs should validate the typed authorization phrase");
+  assert.notEqual(confirmIndex, -1, "release.mjs should still confirm before mutation");
   assert.notEqual(versionBumpIndex, -1, "release.mjs should still run the version bump after gates");
-  assert.ok(dryRunExitIndex < gateIndex, "dry-run must exit before the authorization gate call site");
-  assert.ok(gateIndex < phraseCheckIndex, "the gate decision must precede the typed-phrase check");
-  assert.ok(phraseCheckIndex < versionBumpIndex, "authorization must be checked before the first mutation");
+  assert.ok(dryRunExitIndex < confirmIndex, "dry-run must exit before the confirm prompt");
+  assert.ok(confirmIndex < versionBumpIndex, "operator confirm must precede the first mutation");
+  assert.ok(
+    !source.includes("isReleaseAuthorizationPhrase"),
+    "typed-phrase check must be fully removed from release.mjs",
+  );
+  assert.ok(
+    !source.includes("RELEASE_AUTHORIZATION_PHRASE"),
+    "authorization phrase constant must not be used in release.mjs",
+  );
+  assert.ok(
+    !/Type "authorized"/i.test(source),
+    "release.mjs must not prompt the operator to type authorized",
+  );
 });
 
 test("env vars no longer influence release authorization", () => {
@@ -69,4 +51,5 @@ test("env vars no longer influence release authorization", () => {
   );
   assert.ok(!/FUSION_RELEASE_AUTHORIZED/.test(source), "the env signal must be fully removed");
   assert.ok(!/process\.env/.test(source), "the gate must not read process env");
+  assert.ok(!/RELEASE_AUTHORIZATION_PHRASE/.test(source), "typed phrase must be removed from the gate");
 });

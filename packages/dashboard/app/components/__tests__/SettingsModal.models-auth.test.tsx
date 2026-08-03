@@ -239,6 +239,100 @@ describe("SettingsModal", () => {
       });
     });
 
+    /*
+    FNXC:ExecutorEscalation 2026-08-03-05:43:
+    The original Scheduling text fields accepted incomplete provider/model pairs. The project-scoped picker must instead present one provider-qualified selection, save both legacy keys together, and clear both keys together.
+    */
+    it("selects and clears the executor escalation model as one project-scoped pair", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        executorEscalationProvider: "anthropic",
+        executorEscalationModelId: "claude-sonnet-4-5",
+      });
+      mockFetchSettingsByScope.mockResolvedValue({
+        global: defaultSettings,
+        project: {
+          executorEscalationProvider: "anthropic",
+          executorEscalationModelId: "claude-sonnet-4-5",
+        },
+      });
+
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+
+      const selector = screen.getByLabelText("Executor Escalation Model");
+      expect(selector).toHaveTextContent("Claude Sonnet 4.5");
+      await settingsModalUser.click(selector);
+      await settingsModalUser.click(await screen.findByText("GPT-4o"));
+      fireEvent.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executorEscalationProvider: "openai",
+          executorEscalationModelId: "gpt-4o",
+        }),
+        undefined,
+      ));
+
+      cleanup();
+      mockUpdateSettings.mockClear();
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByLabelText("Executor Escalation Model"));
+      await settingsModalUser.click(await screen.findByText("No escalation model"));
+      fireEvent.click(document.querySelector(".modal-close") as HTMLButtonElement);
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executorEscalationProvider: null,
+          executorEscalationModelId: null,
+        }),
+        undefined,
+      ));
+    });
+
+    it("disables the escalation selector while the catalog is loading or empty", async () => {
+      let resolveModels: ((value: { models: typeof MODEL_FIXTURE; favoriteProviders: string[]; favoriteModels: string[] }) => void) | undefined;
+      mockFetchModels.mockImplementation(() => new Promise((resolve) => {
+        resolveModels = resolve;
+      }));
+
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText("Executor Escalation Model")).toBeDisabled();
+      resolveModels?.({ models: MODEL_FIXTURE, favoriteProviders: [], favoriteModels: [] });
+      await waitFor(() => expect(screen.getByLabelText("Executor Escalation Model")).not.toBeDisabled());
+    });
+
+    it("treats incomplete legacy escalation pairs as unset and removes Scheduling model inputs", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        executorEscalationProvider: "anthropic",
+      });
+
+      renderModal({ initialSection: "project-models" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByLabelText("Executor Escalation Model")).toHaveTextContent("No escalation model");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Scheduling" }));
+
+      expect(screen.queryByLabelText("Escalation provider")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Escalation model ID")).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Escalate after tool-failure retries" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Escalation node ID")).toBeInTheDocument();
+    });
+
     it("renders and saves OpenRouter advanced settings", async () => {
       mockFetchModels.mockResolvedValue({
         models: MODEL_FIXTURE,

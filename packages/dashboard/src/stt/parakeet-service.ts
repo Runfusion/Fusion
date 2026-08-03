@@ -2,7 +2,8 @@ import type { VoiceModelManager } from "./model-manager.js";
 import { resolveVoiceLanguage, type VoiceModelId, type VoiceRuntimeStatus } from "./types.js";
 
 export class VoiceInputError extends Error { constructor(public readonly code: "unsupported-language" | "invalid-audio" | "unavailable", message: string) { super(message); } }
-export interface ParakeetService { getRuntimeStatus(): Promise<{ status: VoiceRuntimeStatus; unavailableReason?: string }>; createSession(options: { modelId: VoiceModelId; language: string }): Promise<ParakeetSession>; }
+export type VoiceRuntimeUnavailableReason = "model-not-installed" | "runtime-module-missing" | "runtime-platform-load-failed" | "runtime-incompatible";
+export interface ParakeetService { getRuntimeStatus(): Promise<{ status: VoiceRuntimeStatus; unavailableReason?: VoiceRuntimeUnavailableReason }>; createSession(options: { modelId: VoiceModelId; language: string }): Promise<ParakeetSession>; }
 export interface ParakeetSession { acceptChunk(pcm: Int16Array | Buffer, options: { final: boolean }): { partial?: string; text?: string; final?: true }; finish(): { text: string }; close(): void; }
 interface SherpaStream { acceptWaveform(options: { sampleRate: number; samples: Float32Array }): void; free?(): void; close?(): void; }
 interface SherpaRecognizer { createStream(): SherpaStream; getResult(stream: SherpaStream): { text?: string }; decode(stream: SherpaStream): void; free?(): void; close?(): void; }
@@ -10,24 +11,31 @@ interface SherpaOfflineRecognizerConstructor { new(config: { modelConfig: { tran
 interface SherpaBinding { OfflineRecognizer?: SherpaOfflineRecognizerConstructor; }
 export interface ParakeetServiceOptions { manager: VoiceModelManager; loadBinding?: () => Promise<SherpaBinding>; }
 
+function runtimeUnavailableReason(error: unknown): VoiceRuntimeUnavailableReason {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") return "runtime-module-missing";
+  return "runtime-platform-load-failed";
+}
+
 /**
- * FNXC:VoiceInput 2026-07-21-17:20:
- * Voice is opt-in and the sherpa addon is an optional, lazy runtime. Its fixed input is 16 kHz,
- * mono signed-16-bit little-endian PCM. Resolved model/language values are checked before use;
- * missing addon or model reports unavailable rather than preventing dashboard or engine boot.
+ * FNXC:VoiceInput 2026-08-03-05:45:
+ * FN-8753 keeps the sherpa addon lazy and fail-closed, but converts native import
+ * failures into stable operator-safe codes. Raw loader errors can disclose paths
+ * and differ by platform; Settings needs to distinguish an absent module, a
+ * platform addon failure, and an incompatible export without exposing either.
  */
 export function createParakeetService(options: ParakeetServiceOptions): ParakeetService {
   let bindingPromise: Promise<SherpaBinding> | undefined;
   const binding = () => bindingPromise ??= (options.loadBinding ? options.loadBinding() : new Function("specifier", "return import(specifier)")("sherpa-onnx-node") as Promise<SherpaBinding>);
-  const getRuntimeStatus = async () => {
+  const getRuntimeStatus = async (): Promise<{ status: VoiceRuntimeStatus; unavailableReason?: VoiceRuntimeUnavailableReason }> => {
     const model = await options.manager.getState();
-    if (model.status !== "installed" || !model.installedPath) return { status: "unavailable" as const, unavailableReason: model.errorReason ?? model.status };
+    if (model.status !== "installed" || !model.installedPath) return { status: "unavailable" as const, unavailableReason: "model-not-installed" };
     try {
       // A module resolving is not sufficient: a platform-mismatched or incompatible addon
       // can load without exporting the recognizer API required for transcription.
-      if (!(await binding()).OfflineRecognizer) return { status: "unavailable" as const, unavailableReason: "OfflineRecognizer unavailable" };
+      if (!(await binding()).OfflineRecognizer) return { status: "unavailable" as const, unavailableReason: "runtime-incompatible" };
       return { status: "available" as const };
-    } catch (error) { return { status: "unavailable" as const, unavailableReason: error instanceof Error ? error.message : "runtime-unavailable" }; }
+    } catch (error) { return { status: "unavailable" as const, unavailableReason: runtimeUnavailableReason(error) }; }
   };
   return {
     getRuntimeStatus,

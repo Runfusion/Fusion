@@ -40,7 +40,8 @@ the same failure shape as the regex that could not see the defect.
 import ts from "typescript";
 
 /** The module that owns the convention; the resolver's own `??` lives here. */
-export const CONVENTION_OWNER = "packages/core/src/workflow-capacity.ts";
+// FNXC:CodeOrganization 2026-08-02-22:30: Convention owner moved under workflows/ domain folder (wave17); keep this path in sync so the sentinel-fallback rule still exempts the resolver body.
+export const CONVENTION_OWNER = "packages/core/src/workflows/workflow-capacity.ts";
 
 /** The canonical resolver every pool-id derivation must go through. */
 export const RESOLVER = "resolveCapacityPoolId";

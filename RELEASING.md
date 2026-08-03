@@ -175,13 +175,12 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 |--------|-------------|
 | `pnpm changeset` | Add a new changeset |
 | `pnpm changeset status` | Check pending changesets |
-| `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags; Claude authors Highlights + a ≤280-char engagement X draft (soft deterministic fallback if Claude is offline) |
-| `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
+| `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then confirms with y/N before bump + build + publish + tag; Claude authors Highlights + a ≤280-char engagement X draft (soft deterministic fallback if Claude is offline) |
 | `pnpm release --dry-run` | Preview only — show changesets, proposed version, and Claude-authored X draft preview, then exit before any file/git/npm changes |
 | `pnpm release --channel beta` | Beta release from `main`: pre-mode version `X.Y.Z-beta.N`, npm dist-tag `beta`, GitHub prerelease; no Homebrew/X draft |
 | `pnpm release --channel stable` | Stable release: requires the `release` branch, publishes `latest`, marks the GitHub Release latest |
 
-Without `--channel`, `pnpm release` prompts for the channel and **defaults to beta** (also the silent default with `--yes` or a non-interactive dry-run). Stable releases are always an explicit choice.
+Without `--channel`, `pnpm release` prompts for the channel and **defaults to beta** (also the silent default for a non-interactive dry-run). Stable releases are always an explicit choice. There is no `--yes` path — every real release requires interactive confirmation.
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |

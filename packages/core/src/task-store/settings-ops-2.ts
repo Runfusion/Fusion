@@ -12,7 +12,6 @@ import {DEFAULT_SETTINGS, isGlobalOnlySettingsKey} from "../types.js";
 import {DEFAULT_PROJECT_SETTINGS} from "../config/settings-schema.js";
 import "../builtin-traits.js";
 import {resolveWorktrunkSettings} from "../config/worktrunk-settings.js";
-import {fromJson} from "../db/db.js";
 import {hasSyncPassphraseConfigured} from "../secrets/secrets-sync-passphrase.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {canonicalizeSettings} from "../task-store/settings-helpers.js";

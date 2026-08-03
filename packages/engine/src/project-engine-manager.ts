@@ -24,7 +24,6 @@ import type {
 import { ProjectEngine } from "./project-engine.js";
 import type { ProjectEngineOptions } from "./project-engine.js";
 import type { ProjectRuntimeConfig } from "./project/project-runtime.js";
-import { AgentSemaphore } from "./concurrency/concurrency.js";
 import {
   acquireEngineSingleton,
   EngineAlreadyRunningError,

@@ -91,6 +91,9 @@ const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
 
    * FNXC:SettingsNavigation 2026-07-14-20:15:
    * Title auto-summarization lives under Project Models but operators search for "summarize", "auto summarize", "title summarization", and related phrases that did not match the prior chat-only/summarization-model index. Advertise those terms and the control's i18n keys so Settings search finds this section.
+   *
+   * FNXC:ExecutorEscalation 2026-08-03-05:43:
+   * The executor alternate model is a project model selector, not a Scheduling text setting. Keep its discovery terms and label/help keys here so desktop navigation, the mobile picker, and external Settings metadata name the one canonical destination.
    */
   {
     id: "project-models",
@@ -101,6 +104,10 @@ const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
       "default provider",
       "default model",
       "workflow model lanes",
+      "executor escalation model",
+      "escalation model",
+      "alternate model",
+      "tool-failure retry model",
       "Plan/Triage",
       "Executor",
       "Reviewer",
@@ -149,6 +156,8 @@ const SETTINGS_SECTION_DEFINITIONS: readonly SettingsSectionDefinition[] = [
       "settings.projectModels.chatDefaultModel",
       "settings.projectModels.chatDefaultAgent",
       "settings.projectModels.aITitleAndGitCommitMessageSummarization",
+      "settings.projectModels.executorEscalationModel",
+      "settings.projectModels.executorEscalationModelHelp",
       "settings.projectModels.autoSummarizeLongDescriptionsAsTitles",
       "settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut",
       "settings.projectModels.aIMergeCommitSummaries",

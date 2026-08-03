@@ -177,6 +177,22 @@ describe("CLI package.json publishing config", () => {
     expect(publishedPkg.files).toContain("agent-browser.mjs");
   });
 
+  /*
+  FNXC:VoiceInput 2026-08-03-05:43:
+  FN-8753 requires the published CLI manifest to own the lazy sherpa native
+  addon. The private dashboard workspace dependency is not present after an
+  npm install, so retain the pinned optional dependency through prepack while
+  keeping private workspace tooling out of the consumer manifest.
+  */
+  it("keeps the optional voice runtime in the published manifest", () => {
+    const publishedPkg = applyPrepackTransform(pkg);
+
+    expect(pkg.optionalDependencies).toHaveProperty("sherpa-onnx-node", "1.13.4");
+    expect(publishedPkg.optionalDependencies).toHaveProperty("sherpa-onnx-node", "1.13.4");
+    expect(publishedPkg.devDependencies).not.toHaveProperty("@fusion/dashboard");
+    expect(publishedPkg.dependencies).not.toHaveProperty("@fusion/dashboard");
+  });
+
   /**
    * FNXC:Packaging 2026-06-13-16:36:
    * Standalone npm/pnpm installs may omit a package when the published manifest declares it as both a runtime dependency and an optional peer. Keep the pi runtime packages as plain dependencies so dist/bin.js and dist/extension.js can resolve their static imports outside the monorepo, while leaving typebox as the optional-peer control because Fusion does not import it at runtime.

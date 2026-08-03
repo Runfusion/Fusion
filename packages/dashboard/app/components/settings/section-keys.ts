@@ -140,8 +140,6 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "executorToolFailureRetryBackoffMs",
     "executorToolFailureThreshold",
     "executorModelEscalationEnabled",
-    "executorEscalationProvider",
-    "executorEscalationModelId",
     "executorEscalationNodeId",
     "groupOverlappingFiles",
     "heartbeatScopeDiscipline",
@@ -204,6 +202,8 @@ export const PROJECT_SECTION_KEYS: Readonly<Record<string, readonly string[]>> =
     "prTitlePromptInstructions",
     "tokenCap",
     "useAiMergeCommitSummary",
+    "executorEscalationProvider",
+    "executorEscalationModelId",
     ...MODEL_LANE_KEYS,
   ],
 };

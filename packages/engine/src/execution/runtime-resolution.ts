@@ -108,11 +108,22 @@ export class DefaultPiRuntime implements AgentRuntime {
     Forward the resolved session budget explicitly across the default-pi bridge. A project setting of 0 becomes null before this point and must reach createFnAgent so the pi wrapper skips clamping just like plugin runtimes.
     */
     const { toolOutputMaxChars, mcpServers, ...agentOptions } = options;
-    return createFnAgent({
+    const result = await createFnAgent({
       ...agentOptions,
       toolOutputMaxChars,
       mcpServers: normalizeAgentRuntimeMcpServers(mcpServers),
     });
+    /*
+    FNXC:TriagePlanningRetry 2026-08-03-01:10:
+    Pi dispatches fallback notification work before its prompt resolves, so it has a known finite
+    boundary even when older createFnAgent adapters do not return one. Preserve that explicit
+    guarantee here; configured plugin runtimes must provide their own boundary for triage instead
+    of being mistaken for the synchronous pi lifecycle.
+    */
+    return {
+      ...result,
+      settleFallbackDispatch: result.settleFallbackDispatch ?? (async () => undefined),
+    };
   }
 
   async promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
@@ -233,6 +244,7 @@ function wrapPluginRuntime(
         return {
           session: (result as AgentSessionResult).session ?? (result as AgentSession),
           sessionFile: (result as AgentSessionResult).sessionFile,
+          settleFallbackDispatch: (result as AgentSessionResult).settleFallbackDispatch,
         };
       }
       throw new Error(`Plugin runtime "${runtimeId}" does not implement createSession`);

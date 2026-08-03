@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { Column, ColumnId } from "../types.js";
+import type { ColumnId } from "../types.js";
 
 export interface DuplicateMatch {
   id: string;

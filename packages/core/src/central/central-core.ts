@@ -83,7 +83,7 @@ import type {
 } from "../types.js";
 import { getAppVersion, parseSemver } from "../i18n/app-version.js";
 import { validateDockerNodeConfig } from "../types.js";
-import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
+import { CentralDatabase, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "../config/global-settings.js";
 import { stripMovedSettingsKeys } from "../config/moved-settings.js";
 import { NodeConnection } from "../mesh/node-connection.js";

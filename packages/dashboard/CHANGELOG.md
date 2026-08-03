@@ -1,5 +1,71 @@
 # @fusion/dashboard
 
+## 0.74.0
+
+### Patch Changes
+
+- 8e50967: summary: GitHub tracking controls now stay expanded while same-task detail updates preserve disabled tracking state.
+  category: fix
+  dev: Reset GitHub tracking disclosure state only when the selected task id changes, and align the renamed-review CLI regression with the classifier's resolved-boolean contract.
+  - @fusion/core@0.74.0
+  - @fusion/engine@0.74.0
+  - @fusion/i18n@0.39.32
+  - @fusion-plugin-examples/claude-runtime@0.1.7
+  - @fusion-plugin-examples/cli-printing-press@0.1.49
+  - @fusion-plugin-examples/compound-engineering@0.1.32
+  - @fusion-plugin-examples/dependency-graph@0.1.63
+  - @fusion-plugin-examples/grok-runtime@0.2.10
+  - @fusion-plugin-examples/omp-runtime@0.1.7
+  - @fusion-plugin-examples/quality@0.1.7
+  - @fusion-plugin-examples/roadmap@0.1.51
+  - @fusion-plugin-examples/cursor-runtime@0.1.51
+  - @fusion-plugin-examples/droid-runtime@0.1.58
+  - @fusion-plugin-examples/hermes-runtime@0.2.82
+  - @fusion-plugin-examples/openclaw-runtime@0.2.82
+  - @fusion-plugin-examples/paperclip-runtime@0.2.82
+
+## 0.74.0-beta.9
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.9
+- @fusion/engine@0.74.0-beta.9
+- @fusion/i18n@0.39.32-beta.9
+- @fusion-plugin-examples/claude-runtime@0.1.7-beta.9
+- @fusion-plugin-examples/cli-printing-press@0.1.49-beta.9
+- @fusion-plugin-examples/compound-engineering@0.1.32-beta.9
+- @fusion-plugin-examples/dependency-graph@0.1.63-beta.9
+- @fusion-plugin-examples/grok-runtime@0.2.10-beta.9
+- @fusion-plugin-examples/omp-runtime@0.1.7-beta.9
+- @fusion-plugin-examples/quality@0.1.7-beta.9
+- @fusion-plugin-examples/roadmap@0.1.51-beta.9
+- @fusion-plugin-examples/cursor-runtime@0.1.51-beta.9
+- @fusion-plugin-examples/droid-runtime@0.1.58-beta.9
+- @fusion-plugin-examples/hermes-runtime@0.2.82-beta.9
+- @fusion-plugin-examples/openclaw-runtime@0.2.82-beta.9
+- @fusion-plugin-examples/paperclip-runtime@0.2.82-beta.9
+
+## 0.74.0-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.8
+- @fusion/engine@0.74.0-beta.8
+- @fusion/i18n@0.39.32-beta.8
+- @fusion-plugin-examples/claude-runtime@0.1.7-beta.8
+- @fusion-plugin-examples/cli-printing-press@0.1.49-beta.8
+- @fusion-plugin-examples/compound-engineering@0.1.32-beta.8
+- @fusion-plugin-examples/dependency-graph@0.1.63-beta.8
+- @fusion-plugin-examples/grok-runtime@0.2.10-beta.8
+- @fusion-plugin-examples/omp-runtime@0.1.7-beta.8
+- @fusion-plugin-examples/quality@0.1.7-beta.8
+- @fusion-plugin-examples/roadmap@0.1.51-beta.8
+- @fusion-plugin-examples/cursor-runtime@0.1.51-beta.8
+- @fusion-plugin-examples/droid-runtime@0.1.58-beta.8
+- @fusion-plugin-examples/hermes-runtime@0.2.82-beta.8
+- @fusion-plugin-examples/openclaw-runtime@0.2.82-beta.8
+- @fusion-plugin-examples/paperclip-runtime@0.2.82-beta.8
+
 ## 0.74.0-beta.7
 
 ### Patch Changes

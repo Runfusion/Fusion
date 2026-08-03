@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, Archive } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, PrInfo, ThinkingLevel } from "@fusion/core";
-import { COLUMNS, DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
+import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isWipColumnRole } from "../utils/columnRoles";

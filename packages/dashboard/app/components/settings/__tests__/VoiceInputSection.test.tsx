@@ -21,12 +21,20 @@ function renderSection(status: unknown, formOverrides: Partial<Settings> = {}) {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("VoiceInputSection", () => {
-  it("persists the opt-in toggle through the Settings form", async () => {
-    const { setForm, getForm } = renderSection(available("not-installed"));
-    await screen.findByText("Not installed");
-    fireEvent.click(screen.getByLabelText("Enable voice input"));
+  it("persists the opt-in toggle through the project Settings form without clobbering model fields", async () => {
+    const { setForm, getForm } = renderSection(available("installed"), { voiceInput: { model: "parakeet-v3", language: "en" } });
+    const toggle = await screen.findByLabelText("Enable voice input");
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
     expect(setForm).toHaveBeenCalledOnce();
-    expect(getForm().voiceInput?.enabled).toBe(true);
+    expect(getForm().voiceInput).toEqual({ model: "parakeet-v3", language: "en", enabled: true });
+  });
+
+  it("keeps the toggle disabled until the locally managed model is installed", async () => {
+    renderSection(available("not-installed"));
+    const toggle = await screen.findByLabelText("Enable voice input");
+    expect(toggle).toBeDisabled();
+    expect(screen.getByTestId("voice-input-runtime-unavailable")).toHaveTextContent("Download the Parakeet model");
   });
 
   it.each([
@@ -47,13 +55,27 @@ describe("VoiceInputSection", () => {
   });
 
   it("fails closed for unavailable runtime without rewriting a persisted preference", async () => {
-    const { setForm } = renderSection({ model: { status: "not-installed" }, runtime: { status: "unavailable" } }, { voiceInput: { enabled: true } });
+    const { setForm } = renderSection({ model: { status: "installed" }, runtime: { status: "unavailable", unavailableReason: "runtime-module-missing" } }, { voiceInput: { enabled: true } });
     const toggle = await screen.findByLabelText("Enable voice input");
     expect(toggle).toBeDisabled();
     expect(toggle).not.toBeChecked();
     expect(toggle.closest("div[data-effective-enabled]")).toHaveAttribute("data-effective-enabled", "false");
-    expect(screen.getByTestId("voice-input-runtime-unavailable")).toHaveTextContent("saved preference remains on");
+    expect(screen.getByTestId("voice-input-runtime-unavailable")).toHaveTextContent("includes the optional voice runtime");
     expect(setForm).not.toHaveBeenCalled();
+  });
+
+  it("removes the unavailable alert when model management refreshes to an installed compatible runtime", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ model: { status: "not-installed" }, runtime: { status: "unavailable", unavailableReason: "runtime-module-missing" } }))
+      .mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response(available("installed")));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<VoiceInputSection form={{} as SettingsFormState} setForm={vi.fn()} />);
+
+    await screen.findByTestId("voice-input-runtime-unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(screen.getByLabelText("Enable voice input")).toBeEnabled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([undefined, { nonsense: true }])("fails closed when status cannot be parsed", async (body) => {

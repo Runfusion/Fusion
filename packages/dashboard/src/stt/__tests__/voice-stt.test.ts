@@ -47,16 +47,35 @@ describe("voice STT graceful degradation", () => {
     expect(resolveVoiceLanguage(undefined)).toEqual({ language: "en" });
     expect(resolveVoiceLanguage("fr")).toEqual({ unsupported: "fr" });
   });
+  it("reports an uninstalled model without attempting to load the native binding", async () => {
+    const loadBinding = vi.fn();
+    const manager = { getState: async () => ({ status: "not-installed" as const }) } as ReturnType<typeof createVoiceModelManager>;
+    const service = createParakeetService({ manager, loadBinding });
+
+    await expect(service.getRuntimeStatus()).resolves.toEqual({ status: "unavailable", unavailableReason: "model-not-installed" });
+    expect(loadBinding).not.toHaveBeenCalled();
+  });
+
   it("reports a missing native binding as unavailable without throwing", async () => {
-    const manager = createVoiceModelManager({ cacheDir: "/unused" });
-    const service = createParakeetService({ manager, loadBinding: async () => { throw new Error("ERR_MODULE_NOT_FOUND"); } });
-    await expect(service.getRuntimeStatus()).resolves.toMatchObject({ status: "unavailable" });
+    const manager = { getState: async () => ({ status: "installed" as const, installedPath: "/model" }) } as ReturnType<typeof createVoiceModelManager>;
+    const missingModule = Object.assign(new Error("not exposed to operators"), { code: "ERR_MODULE_NOT_FOUND" });
+    const service = createParakeetService({ manager, loadBinding: async () => { throw missingModule; } });
+
+    await expect(service.getRuntimeStatus()).resolves.toEqual({ status: "unavailable", unavailableReason: "runtime-module-missing" });
+  });
+
+  it("reports a platform addon load failure without leaking the loader error", async () => {
+    const manager = { getState: async () => ({ status: "installed" as const, installedPath: "/model" }) } as ReturnType<typeof createVoiceModelManager>;
+    const platformFailure = Object.assign(new Error("dlopen /private/operator/path"), { code: "ERR_DLOPEN_FAILED" });
+    const service = createParakeetService({ manager, loadBinding: async () => { throw platformFailure; } });
+
+    await expect(service.getRuntimeStatus()).resolves.toEqual({ status: "unavailable", unavailableReason: "runtime-platform-load-failed" });
   });
 
   it("reports a loaded but incompatible native binding as unavailable", async () => {
     const manager = { getState: async () => ({ status: "installed" as const, installedPath: "/model" }) } as ReturnType<typeof createVoiceModelManager>;
     const service = createParakeetService({ manager, loadBinding: async () => ({}) });
-    await expect(service.getRuntimeStatus()).resolves.toEqual({ status: "unavailable", unavailableReason: "OfflineRecognizer unavailable" });
+    await expect(service.getRuntimeStatus()).resolves.toEqual({ status: "unavailable", unavailableReason: "runtime-incompatible" });
   });
 
   it("uses sherpa's OfflineRecognizer and stream API for incremental decoding", async () => {

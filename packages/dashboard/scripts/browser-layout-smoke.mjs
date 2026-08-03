@@ -24,6 +24,9 @@ const gitManagerAfterMobileScreenshotPath = process.env.FUSION_GIT_MANAGER_AFTER
 const gitHubImportBeforeMobileScreenshotPath = process.env.FUSION_GITHUB_IMPORT_BEFORE_MOBILE_SCREENSHOT;
 const gitHubImportAfterMobileScreenshotPath = process.env.FUSION_GITHUB_IMPORT_AFTER_MOBILE_SCREENSHOT;
 const gitHubImportAfterShortScreenshotPath = process.env.FUSION_GITHUB_IMPORT_AFTER_SHORT_SCREENSHOT;
+const resolvedGithubDesktopScreenshotPath = process.env.FUSION_RESOLVED_GITHUB_DESKTOP_SCREENSHOT;
+const resolvedGithubMobileScreenshotPath = process.env.FUSION_RESOLVED_GITHUB_MOBILE_SCREENSHOT;
+const smokeTheme = process.env.FUSION_BROWSER_SMOKE_THEME === "light" ? "light" : "dark";
 
 function log(message) {
   console.log(`[dashboard-browser-smoke] ${message}`);
@@ -205,6 +208,41 @@ export function createSmokeHtml() {
   Blink must measure the production responsive contract at each supported phone width because jsdom
   cannot detect wrapping, flex-track shrinkage, overflow, or touch-target geometry.
   */
+  /*
+  FNXC:CommandCenterGithub 2026-08-03-04:08:
+  FN-8750 needs a real-browser, production-CSS fixture because jsdom cannot measure fixed-table tracks,
+  long-word wrapping, or page overflow. The fixture mirrors URL/no-URL, exact/approximate, and title-fallback rows
+  so the desktop and mobile proof captures show the same resilient resolved-issue contract operators use.
+  */
+  const resolvedGithubTableFixture = `
+    <section class="command-center" data-smoke="github-resolved-table" aria-label="Resolved GitHub issues">
+      <div class="cc-tabpanel" role="tabpanel">
+        <section class="cc-area">
+          <div class="cc-area-section">
+            <h3 class="cc-area-section-title">Resolved issues</h3>
+            <div class="cc-table-wrap cc-github-resolved-table-wrap">
+              <table class="cc-table cc-github-resolved-table">
+                <thead><tr><th scope="col">Issue</th><th scope="col">Resolving task</th><th scope="col">Resolved at</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td class="cc-github-resolved-issue-cell"><a class="cc-github-resolved-issue-link" href="https://github.com/acme/a-deliberately-long-repository-reference/issues/123" target="_blank" rel="noopener noreferrer">acme/a-deliberately-long-repository-reference#123</a></td>
+                    <td class="cc-github-resolved-task-cell"><span class="cc-github-resolved-task"><span class="cc-github-resolved-task-title">Resolve a deliberately long imported GitHub issue title without forcing the Command Center table beyond its responsive container</span><span class="cc-stat-sub cc-github-resolved-task-id">FN-100</span></span></td>
+                    <td class="cc-github-resolved-date-cell"><span class="cc-github-resolved-date"><span>6/10/2026, 12:34 PM</span></span></td>
+                  </tr>
+                  <tr>
+                    <td class="cc-github-resolved-issue-cell"><span class="cc-github-resolved-issue-ref">(unknown)</span></td>
+                    <td class="cc-github-resolved-task-cell"><span class="cc-github-resolved-task"><span class="cc-github-resolved-task-title">FN-101</span></span></td>
+                    <td class="cc-github-resolved-date-cell"><span class="cc-github-resolved-date"><span>6/09/2026, 8:00 AM</span><span class="cc-stat-sub cc-github-resolved-date-approx">approx</span></span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  `;
+
   const githubImportMobileActionFixture = `
     <section data-smoke="github-import-mobile-actions" aria-label="GitHub issue detail actions">
       <div class="github-import-detail-actions" data-testid="github-import-detail-actions">
@@ -293,7 +331,7 @@ export function createSmokeHtml() {
     <title>Fusion dashboard browser smoke</title>
     <link rel="stylesheet" href="/app.css" />
   </head>
-  <body data-theme="dark">
+  <body data-theme="${smokeTheme}">
     <div id="root">
       ${gitManagerFixtures}
       ${gitHubImportFixtures}
@@ -375,6 +413,7 @@ export function createSmokeHtml() {
       </section>
 
       ${githubImportMobileActionFixture}
+      ${resolvedGithubTableFixture}
 
       <footer class="executor-status-bar">
         <div class="executor-status-bar__segment">
@@ -951,6 +990,31 @@ async function evaluate(page, expression) {
   return result.result.value;
 }
 
+/*
+FNXC:CommandCenterGithub 2026-08-03-04:32:
+FN-8750 proof captures must preserve the production fixture layout so overflow checks at later viewports
+measure the table rather than a temporary overlay. Render a disposable clone in an isolated host,
+which keeps unrelated dashboard UI out of the artifact without mutating the measured fixture.
+*/
+async function captureFixtureScreenshot(page, selector, outputPath) {
+  await evaluate(page, `(async () => {
+    const fixture = document.querySelector(${JSON.stringify(selector)});
+    const host = document.createElement("div");
+    host.dataset.smokeCaptureHost = "true";
+    host.style.cssText = "position: fixed; inset: 0; z-index: 9999; display: flex; overflow: auto; background: var(--bg);";
+    const clone = fixture.cloneNode(true);
+    host.append(clone);
+    document.body.append(host);
+    await new Promise(requestAnimationFrame);
+  })()`);
+  try {
+    const screenshot = await page.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
+  } finally {
+    await evaluate(page, "document.querySelector('[data-smoke-capture-host]').remove()");
+  }
+}
+
 function assertSmokeResult(name, passed, details) {
   if (!passed) {
     fail(`${name} failed: ${details}`);
@@ -1066,6 +1130,43 @@ async function runSmokeChecks(page, pageUrl) {
     const worker = fixture.querySelector('[data-smoke="ephemeral-agent-card"]');
     return { viewportWidth, controls, workerToggleCount: worker.querySelectorAll('[data-smoke="agent-heartbeat-toggle"]').length, fixtureOverflow: fixture.scrollWidth - fixture.clientWidth, documentOverflow: document.documentElement.scrollWidth - viewportWidth };
   })()`);
+
+  const collectResolvedGithubTableLayout = () => evaluate(page, `(() => {
+    const fixture = document.querySelector('[data-smoke="github-resolved-table"]');
+    const table = fixture.querySelector('.cc-github-resolved-table');
+    const title = fixture.querySelector('.cc-github-resolved-task-title');
+    const link = fixture.querySelector('.cc-github-resolved-issue-link');
+    const fixtureRect = fixture.getBoundingClientRect();
+    const titleRect = title.getBoundingClientRect();
+    const linkStyle = getComputedStyle(link);
+    return {
+      documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      fixtureOverflow: fixture.scrollWidth - fixture.clientWidth,
+      tableOverflow: table.scrollWidth - table.clientWidth,
+      titleHeight: titleRect.height,
+      titleWidth: titleRect.width,
+      fixtureWidth: fixtureRect.width,
+      linkColor: linkStyle.color,
+      linkTextDecoration: linkStyle.textDecorationLine,
+    };
+  })()`);
+
+  const mobileResolvedGithubTableLayout = await collectResolvedGithubTableLayout();
+  assertSmokeResult(
+    "resolved GitHub table wraps long content without mobile page overflow",
+    mobileResolvedGithubTableLayout.documentOverflow <= 1
+      && mobileResolvedGithubTableLayout.fixtureOverflow <= 1
+      && mobileResolvedGithubTableLayout.tableOverflow <= 1
+      && mobileResolvedGithubTableLayout.titleHeight > 0
+      && mobileResolvedGithubTableLayout.titleWidth <= mobileResolvedGithubTableLayout.fixtureWidth
+      && mobileResolvedGithubTableLayout.linkColor !== ""
+      && mobileResolvedGithubTableLayout.linkTextDecoration.includes("underline"),
+    JSON.stringify(mobileResolvedGithubTableLayout),
+  );
+  if (resolvedGithubMobileScreenshotPath) {
+    await captureFixtureScreenshot(page, '[data-smoke="github-resolved-table"]', resolvedGithubMobileScreenshotPath);
+    log(`saved resolved GitHub mobile screenshot to ${resolvedGithubMobileScreenshotPath}`);
+  }
 
   const mobileAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();
   assertSmokeResult(
@@ -1687,6 +1788,23 @@ async function runSmokeChecks(page, pageUrl) {
     mobile: false,
   });
   await evaluate(page, "document.fonts ? document.fonts.ready.then(() => true) : true");
+  const desktopResolvedGithubTableLayout = await collectResolvedGithubTableLayout();
+  assertSmokeResult(
+    "resolved GitHub table keeps readable desktop columns without overflow",
+    desktopResolvedGithubTableLayout.documentOverflow <= 1
+      && desktopResolvedGithubTableLayout.fixtureOverflow <= 1
+      && desktopResolvedGithubTableLayout.tableOverflow <= 1
+      && desktopResolvedGithubTableLayout.titleHeight > 0
+      && desktopResolvedGithubTableLayout.titleWidth <= desktopResolvedGithubTableLayout.fixtureWidth
+      && desktopResolvedGithubTableLayout.linkColor !== ""
+      && desktopResolvedGithubTableLayout.linkTextDecoration.includes("underline"),
+    JSON.stringify(desktopResolvedGithubTableLayout),
+  );
+  if (resolvedGithubDesktopScreenshotPath) {
+    await captureFixtureScreenshot(page, '[data-smoke="github-resolved-table"]', resolvedGithubDesktopScreenshotPath);
+    log(`saved resolved GitHub desktop screenshot to ${resolvedGithubDesktopScreenshotPath}`);
+  }
+
   const desktopAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();
   assertSmokeResult(
     "agent heartbeat controls stay visible on desktop and omit ephemeral shells",

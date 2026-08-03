@@ -4,7 +4,6 @@ const severityAuditLog = createLogger("core-activity-analytics");
 import { sql } from "drizzle-orm";
 import type { Database } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import type { WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
 import { resolveDefaultWorkflowIr } from "../workflows/builtin-workflows.js";
 

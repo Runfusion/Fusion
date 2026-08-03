@@ -44,6 +44,10 @@
   box-shadow: var(--shadow-md);
 }
 
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Show the bottom tab bar only when JS mode is mobile. Width-only `@media (max-width: 768px)` left a gap on tablet-class narrow viewports (mode=tablet mounts no MobileNavBar, CSS still reserved its height under the elevated footer). Also reveal the bar for landscape phones that stay mode=mobile above 768 CSS px. Keep the width media query as a no-JS/first-paint fallback for true phones.
+*/
 @media (max-width: 768px) {
   .mobile-nav-bar {
     display: flex;
@@ -80,6 +84,47 @@
       var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
     );
   }
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar {
+  display: flex;
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar--with-footer {
+  bottom: var(--icb-bottom-offset, 0px);
+}
+
+html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--keyboard-open,
+html[data-viewport-mode="mobile"] .mobile-nav-bar.mobile-nav-bar--with-footer.mobile-nav-bar--keyboard-open {
+  bottom: 0;
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-mobile-nav:not(.project-content--with-footer) {
+  padding-bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer.project-content--with-mobile-nav {
+  padding-bottom: calc(
+    var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px)
+  );
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .mobile-nav-bar {
+  display: none;
+}
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+If a stale project-content--with-mobile-nav class remains while mode is tablet/desktop, do not reserve phantom tab-bar stack space — only the desktop footer token applies.
+*/
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-mobile-nav:not(.project-content--with-footer) {
+  padding-bottom: 0;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer.project-content--with-mobile-nav {
+  padding-bottom: var(--executor-footer-height);
 }
 
 /* Individual tab button */

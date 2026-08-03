@@ -3,83 +3,96 @@ import {
   BLOCKED_THRASH_LIMIT,
   classifyBlockedExit,
   countBlockedThrashHits,
-  isDurableBlockedError,
   isDurableBlockedTask,
-  isFileClaimBlockedReason,
   partitionBlockedByRefs,
 } from "../execution-block-classifier.js";
 
+/*
+FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
+Blocked exits classify on Fusion task dependencies ONLY. PR refs and file-claim
+reason language must never produce a durable park — open PRs are not blockers.
+*/
+
 describe("partitionBlockedByRefs", () => {
-  it("splits task ids from pr refs", () => {
-    expect(partitionBlockedByRefs(["FN-8145", "pr:2398", "#2400", "PR-12", "  "])).toEqual({
+  it("keeps task ids and discards legacy pr refs and junk", () => {
+    expect(partitionBlockedByRefs(["FN-8145", "pr:2398", "#2400", "PR-12", "  ", "fn-8145"])).toEqual({
       taskIds: ["FN-8145"],
-      prNumbers: [2398, 2400, 12],
     });
   });
 });
 
 describe("classifyBlockedExit", () => {
-  it("allows auto-replan only for plan defects with empty blockers", () => {
+  it("allows auto-replan for empty blockers regardless of reason prose", () => {
     const c = classifyBlockedExit("requirements contradict each other", []);
     expect(c.allowAutoReplan).toBe(true);
     expect(c.class).toBe("plan-defect");
   });
 
-  it("rejects auto-replan for file-claim / PR language (FN-8700)", () => {
+  it("ignores file-claim / PR language — reason prose never makes a block durable", () => {
     const reason =
       "Required SQL finding packages/core/src/task-store/reads.ts:619 is actively claimed by PR #2398. " +
       "check-file-claimed reports collision policy.";
     const c = classifyBlockedExit(reason, []);
-    expect(c.allowAutoReplan).toBe(false);
-    expect(c.class).toBe("file-claim");
-    expect(c.prNumbers).toContain(2398);
-    expect(c.externalBlockers.some((b) => b.kind === "github-pr" && b.number === 2398)).toBe(true);
+    expect(c.allowAutoReplan).toBe(true);
+    expect(c.class).toBe("plan-defect");
   });
 
   it("rejects auto-replan when blockedBy carries task deps", () => {
     const c = classifyBlockedExit("waiting on upstream", ["FN-8145"]);
     expect(c.allowAutoReplan).toBe(false);
     expect(c.class).toBe("external");
+    expect(c.thrashSignature).toBe("tasks:FN-8145");
   });
 
-  it("accepts pr: refs in blockedBy without treating as plan defect", () => {
+  it("discards pr: refs in blockedBy — a PR-only block is a plan defect", () => {
     const c = classifyBlockedExit("files claimed", ["pr:2398"]);
-    expect(c.allowAutoReplan).toBe(false);
-    expect(c.prNumbers).toContain(2398);
+    expect(c.allowAutoReplan).toBe(true);
+    expect(c.class).toBe("plan-defect");
   });
 });
 
-describe("isFileClaimBlockedReason", () => {
-  it("matches claim policy language", () => {
-    expect(isFileClaimBlockedReason("actively claimed by PR #2398")).toBe(true);
-    expect(isFileClaimBlockedReason("check-file-claimed.mjs reports open PR")).toBe(true);
-    expect(isFileClaimBlockedReason("requirements contradict")).toBe(false);
-  });
-});
-
-describe("isDurableBlockedError / task", () => {
-  it("treats claim BLOCKED errors as durable", () => {
-    expect(isDurableBlockedError("BLOCKED: path actively claimed by PR #1")).toBe(true);
-    expect(isDurableBlockedError("BLOCKED: requirements contradict each other")).toBe(false);
+describe("isDurableBlockedTask", () => {
+  it("honors only metadata-classed external (task-dependency) parks", () => {
+    expect(
+      isDurableBlockedTask({
+        status: "failed",
+        error: "BLOCKED: waiting on FN-8145",
+        sourceMetadata: { blockedClass: "external" },
+      }),
+    ).toBe(true);
+    // Legacy FN-8700 file-claim parks are deliberately NOT durable anymore.
     expect(
       isDurableBlockedTask({
         status: "failed",
         error: "BLOCKED: actively claimed by PR #2398",
+        sourceMetadata: {
+          blockedClass: "file-claim",
+          externalBlockers: [{ kind: "github-pr", number: 2398 }],
+        },
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isDurableBlockedTask({ status: "failed", error: "BLOCKED: actively claimed by PR #2398" }),
+    ).toBe(false);
   });
 });
 
 describe("countBlockedThrashHits", () => {
-  it("counts recent claim BLOCKED log rows toward the thrash limit", () => {
+  it("counts recent BLOCKED log rows matching the task-dependency signature", () => {
     const now = Date.parse("2026-08-02T01:30:00.000Z");
     const log = [
-      { action: "BLOCKED: actively claimed by PR #2398", timestamp: "2026-08-02T01:00:00.000Z" },
-      { action: "BLOCKED: check-file-claimed collision on reads.ts PR #2398", timestamp: "2026-08-02T01:10:00.000Z" },
-      { action: "BLOCKED: actively claimed by PR #2398", timestamp: "2026-08-02T01:20:00.000Z" },
+      { action: "BLOCKED: waiting on FN-8145", timestamp: "2026-08-02T01:00:00.000Z" },
+      { action: "BLOCKED: still waiting on FN-8145", timestamp: "2026-08-02T01:10:00.000Z" },
+      { action: "BLOCKED: waiting on FN-8145", timestamp: "2026-08-02T01:20:00.000Z" },
       { action: "unrelated progress", timestamp: "2026-08-02T01:25:00.000Z" },
     ];
-    const sig = classifyBlockedExit("actively claimed by PR #2398", []).thrashSignature;
+    const sig = classifyBlockedExit("waiting on upstream", ["FN-8145"]).thrashSignature;
     expect(countBlockedThrashHits(log, sig, now)).toBeGreaterThanOrEqual(BLOCKED_THRASH_LIMIT);
+  });
+
+  it("never counts hits for the plan-defect signature", () => {
+    const now = Date.parse("2026-08-02T01:30:00.000Z");
+    const log = [{ action: "BLOCKED: anything", timestamp: "2026-08-02T01:20:00.000Z" }];
+    expect(countBlockedThrashHits(log, "plan-defect", now)).toBe(0);
   });
 });

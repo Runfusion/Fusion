@@ -39,7 +39,6 @@
 import { getTraitRegistry } from "./trait-registry.js";
 import type { LifecycleColumns } from "./workflow-lifecycle-traits.js";
 import type { TraitAuditWarning } from "./trait-registry.js";
-import { getTaskMergeBlocker } from "../merge/task-merge.js";
 import type { Settings, Task } from "../types.js";
 
 // ── Guard evaluation (sync, in-lock) ─────────────────────────────────────────

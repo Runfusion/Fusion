@@ -4,6 +4,9 @@ The GitHub Command Center area visualizes only locally persisted task-store data
 
 FNXC:CommandCenterGithub 2026-06-21-03:28:
 FN-6722 adds a resolved-issues detail list so operators can see which imported GitHub source issues were completed in the selected range. The UI must render only rows returned by the local task-store analytics endpoint, link out only when `sourceIssueUrl` exists, and mark `updatedAt` fallback dates as approximate.
+
+FNXC:CommandCenterGithub 2026-08-03-04:08:
+FN-8750 gives the resolved table its own responsive visual contract. Semantic outbound links retain their safe attributes while using the dashboard accent/focus treatment; long task titles wrap independently from compact task IDs and resolution metadata at desktop, tablet, and mobile widths.
 */
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -269,8 +272,8 @@ export function GithubArea({ range, projectId }: { range: DateRange; projectId?:
       {hasResolvedIssues ? (
         <div className="cc-area-section" data-testid="cc-github-resolved">
           <h3 className="cc-area-section-title">{t("commandCenter.github.resolvedTitle", "Resolved issues")}</h3>
-          <div className="cc-table-wrap">
-            <table className="cc-table">
+          <div className="cc-table-wrap cc-github-resolved-table-wrap" data-testid="cc-github-resolved-table-wrap">
+            <table className="cc-table cc-github-resolved-table" data-testid="cc-github-resolved-table">
               <thead>
                 <tr>
                   <th scope="col">{t("commandCenter.github.resolvedIssue", "Issue")}</th>
@@ -285,11 +288,13 @@ export function GithubArea({ range, projectId }: { range: DateRange; projectId?:
                     issue.resolvedAt,
                     t("commandCenter.github.resolvedAtUnknown", "Unknown"),
                   );
+                  const hasTaskTitle = Boolean(issue.taskTitle);
                   return (
                     <tr key={issue.taskId}>
-                      <td>
+                      <td className="cc-github-resolved-issue-cell">
                         {issue.url ? (
                           <a
+                            className="cc-github-resolved-issue-link"
                             href={issue.url}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -298,20 +303,24 @@ export function GithubArea({ range, projectId }: { range: DateRange; projectId?:
                             {issueRef}
                           </a>
                         ) : (
-                          <span>{issueRef}</span>
+                          <span className="cc-github-resolved-issue-ref">{issueRef}</span>
                         )}
                       </td>
-                      <td>
-                        <span>{issue.taskTitle || issue.taskId}</span>{" "}
-                        <span className="cc-stat-sub">({issue.taskId})</span>
+                      <td className="cc-github-resolved-task-cell">
+                        <span className="cc-github-resolved-task">
+                          <span className="cc-github-resolved-task-title">{issue.taskTitle || issue.taskId}</span>
+                          {hasTaskTitle ? <span className="cc-stat-sub cc-github-resolved-task-id">{issue.taskId}</span> : null}
+                        </span>
                       </td>
-                      <td>
-                        <span>{resolvedAt}</span>{" "}
-                        {!issue.resolvedAtExact ? (
-                          <span className="cc-stat-sub">
-                            {t("commandCenter.github.resolvedApprox", "approx")}
-                          </span>
-                        ) : null}
+                      <td className="cc-github-resolved-date-cell">
+                        <span className="cc-github-resolved-date">
+                          <span>{resolvedAt}</span>
+                          {!issue.resolvedAtExact ? (
+                            <span className="cc-stat-sub cc-github-resolved-date-approx">
+                              {t("commandCenter.github.resolvedApprox", "approx")}
+                            </span>
+                          ) : null}
+                        </span>
                       </td>
                     </tr>
                   );

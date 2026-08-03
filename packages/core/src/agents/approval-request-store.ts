@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { count, eq, desc, and } from "drizzle-orm";
 import type { Database } from "../db/db.js";
-import { fromJson, toJsonNullable } from "../db/db.js";
+import { fromJson } from "../db/db.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import * as asyncApprovalRequestStore from "../async-stores/async-approval-request-store.js";
 import * as schema from "../postgres/schema/index.js";

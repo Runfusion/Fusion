@@ -203,6 +203,23 @@ describe("settings search ranking", () => {
     expect(results.map((r) => r.key)).toEqual(["aCostThing", "showCostBadgeOnCards"]);
   });
 
+  it("routes escalation model discovery only to Project Models while keeping policy routing in Scheduling", () => {
+    const escalationResults = rankSettingsSearchResults(SETTINGS_SEARCH_ENTRIES, "alternate model", resolveEnglish);
+    expect(escalationResults.map((result) => `${result.sectionId}:${result.key}`)).toContain(
+      "project-models:executorEscalationModel",
+    );
+    expect(escalationResults.some((result) => result.sectionId === "scheduling" && /Escalation (provider|model ID)/.test(result.label))).toBe(false);
+
+    const policyResults = rankSettingsSearchResults(SETTINGS_SEARCH_ENTRIES, "escalate after tool-failure retries", resolveEnglish);
+    expect(policyResults.map((result) => `${result.sectionId}:${result.key}`)).toContain(
+      "scheduling:executorModelEscalationEnabled",
+    );
+    const nodeResults = rankSettingsSearchResults(SETTINGS_SEARCH_ENTRIES, "escalation node", resolveEnglish);
+    expect(nodeResults.map((result) => `${result.sectionId}:${result.key}`)).toContain(
+      "scheduling:executorEscalationNodeId",
+    );
+  });
+
   it("finds the real 'summarize' miss that motivated the rewrite", () => {
     // FN-7907 / 2026-07-14: operators searched "summarize"; the section's
     // keyword list did not carry it, so Project Models did not surface.

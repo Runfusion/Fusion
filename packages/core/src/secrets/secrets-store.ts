@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import type { Database as ProjectDatabase } from "../db/db.js";
 import type { CentralDatabase } from "../central/central-db.js";
-import { createSecretCipher, SecretCryptoError, type MasterKeyProvider } from "./secrets-crypto.js";
+import { createSecretCipher, type MasterKeyProvider } from "./secrets-crypto.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 import * as asyncSecretsStore from "../async-stores/async-secrets-store.js";
 import { createLogger } from "../process/logger.js";

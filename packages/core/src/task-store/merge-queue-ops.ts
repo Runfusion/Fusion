@@ -17,7 +17,6 @@ import {resolveReviewColumns, resolveTaskLifecycleColumns} from "../workflows/wo
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {assertSafeGitBranchName, assertSafeAbsolutePath} from "../task-store/shell-safety.js";
 import {acquireMergeQueueLease as acquireMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 
 export type StepStartDisposition = "started" | "resumed" | "blocked" | "terminal";
 

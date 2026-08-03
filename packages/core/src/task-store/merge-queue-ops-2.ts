@@ -9,10 +9,8 @@
 import {TaskStore, storeLog} from "../store.js";
 import type {Task, Column, MergeResult, MergeQueueReleaseOutcome, MergeRequestState} from "../types.js";
 import "../builtin-traits.js";
-import {normalizeTaskPriority} from "../tasks/task-priority.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {releaseMergeQueueLease as releaseMergeQueueLeaseAsync} from "../task-store/async/async-merge-coordination.js";
-import type {MergeQueueRow} from "../task-store/row-types.js";
 import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 
 export function isValidMergeRequestTransitionImpl(store: TaskStore, from: MergeRequestState, to: MergeRequestState): boolean {

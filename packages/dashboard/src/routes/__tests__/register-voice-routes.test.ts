@@ -19,6 +19,45 @@ async function harness(enabled: boolean, ready = false, projectId = "project-a")
 afterEach(async () => { await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve())))); });
 
 describe("voice route authorization split", () => {
+  it("reports a loadable installed runtime and honors the project voice override", async () => {
+    const app = express();
+    const router = express.Router();
+    app.use(router);
+    const manager = {
+      getState: async () => ({ status: "installed" as const, installedPath: "/model" }),
+      peekState: () => ({ status: "installed" as const, installedPath: "/model" }),
+      scheduleDownload: () => ({ accepted: true as const, state: { status: "installed" as const } }),
+      remove: async () => {},
+      download: async () => ({ status: "installed" as const }),
+      subscribe: () => () => {},
+    };
+    const service = {
+      getRuntimeStatus: async () => ({ status: "available" as const }),
+      createSession: async () => ({ acceptChunk: () => ({ partial: "ok" }), finish: () => ({ text: "ok" }), close: () => {} }),
+    };
+    createRegisterVoiceRoutes({ manager, service })({
+      router,
+      getScopedStore: async () => ({
+        getSettings: async () => ({ voiceInput: { enabled: true, language: "en" } }),
+        getGlobalSettingsStore: () => ({ getSettings: async () => ({ voiceInput: { enabled: false, model: "parakeet-v3" } }) }),
+      }),
+      getProjectIdFromRequest: () => "project-voice-override",
+    } as unknown as ApiRoutesContext);
+    const server = app.listen(0); servers.push(server);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    const response = await fetch(`http://127.0.0.1:${port}/voice/status`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      enabled: true,
+      modelId: "parakeet-v3",
+      language: "en",
+      model: { status: "installed" },
+      runtime: { status: "available" },
+    });
+  });
+
   it("allows lifecycle inspection while dictation is disabled", async () => {
     const request = await harness(false);
     expect((await request("/voice/status")).status).toBe(200);

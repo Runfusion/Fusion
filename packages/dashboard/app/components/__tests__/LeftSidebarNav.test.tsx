@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { LeftSidebarNav } from "../LeftSidebarNav";
 import type { PluginDashboardViewEntry, ProjectInfo } from "../../api";
 import type { TaskView } from "../../hooks/useViewState";
+import { loadComponentCss } from "../../test/cssFixture";
 
 const projects: ProjectInfo[] = [
   {
@@ -28,7 +27,7 @@ const projects: ProjectInfo[] = [
   },
 ];
 
-const leftSidebarNavCss = readFileSync(resolve(__dirname, "../LeftSidebarNav.css"), "utf8");
+const leftSidebarNavCss = loadComponentCss("LeftSidebarNav.css");
 const obsoleteCollapseToggleFloatingClass = "left-sidebar-nav__collapse-toggle--" + "floating";
 const newTaskSurfaceEnumeration = [
   "[x] Components that render the affordance: Grep confirms LeftSidebarNav is the only persistent sidebar renderer and App.tsx mounts it once.",
@@ -542,6 +541,27 @@ describe("LeftSidebarNav", () => {
     expect(collapsedToggle).toHaveAttribute("title", "Expand sidebar");
     expect(collapsedToggle.querySelector("svg")).not.toBeNull();
     expect(within(sidebar).getAllByRole("button").at(-1)).toBe(screen.getByTestId("sidebar-nav-settings"));
+  });
+
+  it("keeps expanded depth above board content while collapsed and mobile navigation remain flat", () => {
+    const { unmount } = renderSidebar();
+    const expandedSidebar = screen.getByTestId("left-sidebar-nav");
+    const expandedRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav");
+    const collapsedRule = getCssRuleBlock(leftSidebarNavCss, ".left-sidebar-nav--collapsed");
+
+    expect(expandedSidebar).not.toHaveClass("left-sidebar-nav--collapsed");
+    expect(expandedRule).toContain("position: relative");
+    expect(expandedRule).toContain("z-index: 1");
+    expect(expandedRule).toContain("box-shadow: var(--shadow-lg)");
+    expect(expandedRule).not.toMatch(/\d+px|#|rgb\(/i);
+
+    unmount();
+    window.localStorage.setItem("fusion:left-sidebar-collapsed", "true");
+    renderSidebar();
+    expect(screen.getByTestId("left-sidebar-nav")).toHaveClass("left-sidebar-nav--collapsed");
+    expect(collapsedRule).toContain("box-shadow: none");
+    expect(leftSidebarNavCss).toMatch(/@media \(max-width: 768px\)\s*\{\s*\.left-sidebar-nav\s*\{\s*display:\s*none;/);
+    expect(leftSidebarNavCss).toMatch(/html\[data-viewport-mode="mobile"\] \.left-sidebar-nav\s*\{\s*display:\s*none;/);
   });
 
   it("keeps collapse toggle styling tokenized and removes the floating modifier", () => {

@@ -14,8 +14,7 @@ import {resolveEntryColumnId, WorkflowSwitchRehomeFailedError, buildSwitchReconc
 import { pruneAgentLogFiles as pruneAgentLogFileEntries, readAgentLogEntriesByTimeRange } from "../agents/agent-log-file-store.js";
 import { BUILTIN_WORKFLOWS, DEFAULT_WORKFLOW_ID, resolveDefaultWorkflowIr, getBuiltinWorkflow, getRequiredPluginIdForBuiltinWorkflow, isBuiltinWorkflowDeprecated, isBuiltinWorkflowEnabled, isBuiltinWorkflowId, isBuiltinWorkflowPluginGated } from "../workflows/builtin-workflows.js";
 import { CentralCore } from "../central/central-core.js";
-import { fromJson } from "../db/db.js";
-import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } from "../tasks/distributed-task-id.js";
+import { type DistributedTaskIdAllocator } from "../tasks/distributed-task-id.js";
 import { ExperimentSessionStore } from "../eval/experiment-session-store.js";
 import { MasterKeyManager } from "../secrets/master-key.js";
 import { MissionStore } from "../missions/mission-store.js";
@@ -37,7 +36,7 @@ import { type TaskRow } from "./persistence.js";
 import { ActivityLogEntry, AgentLogEntry, ArchivedTaskEntry, DEFAULT_SETTINGS, Settings } from "../types.js";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
-import { normalizeWorkflowIcon, type StoredWorkflowRow, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflows/workflow-definition-types.js";
+import { normalizeWorkflowIcon, type WorkflowDefinition, type WorkflowDefinitionInput, type WorkflowNodeLayout } from "../workflows/workflow-definition-types.js";
 import { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
 import { resolveDefaultOnOptionalGroupIds } from "../workflows/workflow-optional-steps.js";
@@ -948,7 +947,7 @@ export async function getSecretsStoreImpl(store: TaskStore): Promise<SecretsStor
     }
     store.secretsStore = new SecretsStore(store.db, centralDb, masterKeyProvider);
     const noopDb = { prepare: () => { throw new Error("sync DB not available in backend mode"); }, bumpLastModified: () => {} } as unknown as import("../db/db.js").Database;
-    const noopCentral = noopDb as unknown as import("../central/central-db.js").CentralDatabase;
+    const _noopCentral = noopDb as unknown as import("../central/central-db.js").CentralDatabase;
     return store.secretsStore;
 }
 

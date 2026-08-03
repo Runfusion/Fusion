@@ -18,10 +18,8 @@ import type {ArchivedTaskDocumentAdditionInput, ArchivedTaskDocumentAdditionResu
 import {validateDocumentKey} from "../types.js";
 import {ArchivedTaskDocumentPublicationRejectedError, validateArchivedTaskDocumentAddition, validateTaskDocumentPreconditions} from "../task-document-concurrency.js";
 import "../builtin-traits.js";
-import {toJsonNullable} from "../db/db.js";
 import {__setTaskActivityLogLimitsForTesting, isBootstrapPromptStub} from "../task-store/comments.js";
 import {getLiveTaskColumn, publishArchivedTaskDocumentAddition as publishArchivedTaskDocumentAdditionAsync, upsertTaskDocument as upsertTaskDocumentAsync} from "../task-store/async/async-comments-attachments.js";
-import type {TaskDocumentRow} from "../task-store/row-types.js";
 import {resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
 import {resolveLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";

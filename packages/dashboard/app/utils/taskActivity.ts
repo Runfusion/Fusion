@@ -1,5 +1,5 @@
 import type { Task } from "@fusion/core";
-import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask } from "../../../core/src/live-agent-count";
+import { enrichRunningAgentTaskShapeFromFlags, isRunningAgentTask } from "../../../core/src/agents/live-agent-count";
 import { isArchivedColumnRole, isCompleteColumnRole } from "./columnRoles";
 
 /** The shared status vocabulary for active task phases and lock/model policy. */

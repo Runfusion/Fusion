@@ -11,7 +11,6 @@
  */
 
 import { TaskStore } from "../store.js";
-import { resolveCapacityPoolId } from "../workflows/workflow-capacity.js";
 import { isBuiltinWorkflowId } from "../workflows/builtin-workflows.js";
 import { InsightStore } from "../insights/insight-store.js";
 import { ResearchStore } from "../research/research-store.js";

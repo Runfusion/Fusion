@@ -67,22 +67,36 @@ export function VoiceInputSection({ form, setForm }: SectionBaseProps) {
     return () => window.clearInterval(interval);
   }, [loadStatus, modelStatus]);
 
+  const downloading = modelStatus === "downloading" || modelStatus === "queued";
+  const progress = status?.model.progress;
+  const statusLoading = status === null && !statusUnavailable;
+  const modelReady = modelStatus === "installed";
   const runtimeUnavailable = status?.runtime.status === "unavailable";
-  const unavailable = statusUnavailable || runtimeUnavailable;
+  const unavailable = statusLoading || statusUnavailable || !modelReady || runtimeUnavailable;
   const storedEnabled = form.voiceInput?.enabled === true;
   const effectiveEnabled = storedEnabled && !unavailable;
+  const runtimeReason = status?.runtime.unavailableReason;
   const unavailableMessage = statusUnavailable
     ? t("settings.voiceInput.statusUnavailable", "Voice runtime status could not be determined; voice mode stays disabled.")
-    : t("settings.voiceInput.runtimeUnavailable", storedEnabled
-      ? "Voice mode is inactive because the sherpa-onnx runtime is unavailable. Your saved preference remains on."
-      : "The sherpa-onnx runtime is unavailable, so voice mode stays disabled.");
+    : !modelReady
+      ? (downloading
+        ? t("settings.voiceInput.modelPreparing", "Voice input becomes available after the model installation finishes.")
+        : modelStatus === "error"
+          ? t("settings.voiceInput.modelFailed", "Fix or retry the model installation before enabling voice input.")
+          : t("settings.voiceInput.modelRequired", "Download the Parakeet model before enabling voice input."))
+      : runtimeReason === "runtime-module-missing"
+        ? t("settings.voiceInput.runtimeModuleMissing", "Install a Fusion release that includes the optional voice runtime, then reopen Settings.")
+        : runtimeReason === "runtime-platform-load-failed"
+          ? t("settings.voiceInput.runtimePlatformLoadFailed", "Reinstall Fusion for this platform so the optional voice runtime can load.")
+          : runtimeReason === "runtime-incompatible"
+            ? t("settings.voiceInput.runtimeIncompatible", "Update or reinstall Fusion because the installed voice runtime is incompatible.")
+            : t("settings.voiceInput.runtimeUnavailable", storedEnabled
+              ? "Voice mode is inactive because the sherpa-onnx runtime is unavailable. Your saved preference remains on."
+              : "The sherpa-onnx runtime is unavailable, so voice mode stays disabled.");
 
   const performModelAction = async (path: string, method: "POST" | "DELETE") => {
     try { await api(path, { method }); } finally { await loadStatus(); }
   };
-  const downloading = modelStatus === "downloading" || modelStatus === "queued";
-  const progress = status?.model.progress;
-
   return <section className="voice-input-section" data-testid="voice-input-section">
     <h4 className="settings-section-heading">{t("settings.voiceInput.title", "Voice Input")}</h4>
     <div data-effective-enabled={effectiveEnabled ? "true" : "false"}>
@@ -98,7 +112,7 @@ export function VoiceInputSection({ form, setForm }: SectionBaseProps) {
         onChange={(enabled) => setForm((current) => ({ ...current, voiceInput: { ...(current.voiceInput ?? {}), enabled: enabled === true } }))}
       />
     </div>
-    {unavailable && <p className="voice-input-section__message" role="alert" data-testid={statusUnavailable ? "voice-input-status-unavailable" : "voice-input-runtime-unavailable"}>{unavailableMessage}</p>}
+    {!statusLoading && unavailable && <p className="voice-input-section__message" role="alert" data-testid={statusUnavailable ? "voice-input-status-unavailable" : "voice-input-runtime-unavailable"}>{unavailableMessage}</p>}
     <SettingsFieldRow
       label={t("settings.voiceInput.modelStatus", "Parakeet v3 model status")}
       help={t("settings.voiceInput.modelStatusHelp", "The speech model is installed and managed locally on this device.")}

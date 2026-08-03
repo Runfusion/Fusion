@@ -1,166 +1,81 @@
 /**
  * Classify honest-blocked exits so the engine does not auto-replan (or thrash
- * re-execute) work that is blocked by an external claim or open PR.
+ * re-execute) work that is blocked behind other Fusion board tasks.
  *
- * FNXC:HonestBlockedExit 2026-08-02-01:30:
- * FN-8700 looped forever: agent correctly parked on `check-file-claimed` / PR #2398
- * with empty blockedBy (no FN-#### dependency). Empty blockedBy was treated as a plan
- * defect → needs-replan → re-execute → same claim → BLOCKED. File-claim and open-PR
- * blocks are durable external waits, not plan defects. Classify them so:
- *   (A) empty blockedBy does NOT auto-replan for claim/PR classes
- *   (B) PR numbers from reason/blockedBy refs are stored as externalBlockers metadata
- *   (C) graph-resume and thrash detectors can leave durable parks alone
+ * FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
+ * FN-8700 previously treated "file claim / open PR" language as a durable external
+ * block: agents were instructed to check open GitHub PRs for files they were about to
+ * touch and park blocked on collisions, and self-healing cleared the park when the PR
+ * merged/closed. That made board tasks wait on unrelated PRs. File-scope conflicts are
+ * arbitrated ONLY by Fusion's own board (file-scope leases, task dependencies) — an
+ * open PR is never a claim on a task's file scope. All PR/file-claim classification,
+ * pr:N blockedBy refs, and the gh-backed PR-clear sweep are removed. Blocked exits now
+ * classify on task dependencies alone: task deps → durable external park (requeues
+ * when the deps complete); no deps → plan defect → auto-replan (FN-8634).
  */
 
-export type ExternalBlocker =
-  | { kind: "github-pr"; number: number }
-  | { kind: "file-claim"; prNumber?: number };
-
-export type BlockedExitClass =
-  | "plan-defect"
-  | "file-claim"
-  | "external"
-  | "unknown-external";
+export type BlockedExitClass = "plan-defect" | "external";
 
 export type BlockedExitClassification = {
   /** Only plan defects may use the empty-blockedBy → needs-replan path. */
   allowAutoReplan: boolean;
   class: BlockedExitClass;
-  externalBlockers: ExternalBlocker[];
   /** Compact signature for thrash detection (ids/outcomes only — no free prose). */
   thrashSignature: string;
-  /** PR numbers extracted from reason and blockedBy refs. */
-  prNumbers: number[];
 };
 
 const TASK_ID_RE = /^[A-Z][A-Z0-9]*-\d+$/i;
 /**
- * FNXC:ExecutionBlockClassification 2026-08-01-18:45:
- * Bare PR blockers accept pr:2398, pr#2398, pr-2398, #2398, and PR-2398 while excluding FN-#### task IDs. Keep the hyphen last in the character class so ESLint does not require an unnecessary escape.
+ * FNXC:HonestBlockedExit 2026-08-02-23:59:
+ * Legacy PR refs (pr:2398, pr#2398, pr-2398, #2398, PR-2398) are recognized only to be
+ * DISCARDED — without this filter "PR-12" would match TASK_ID_RE and become a dependency
+ * edge on a nonexistent "PR-12" task row, wedging the card forever.
  */
-const PR_REF_RE = /^(?:pr[:#-]|#|PR-)(\d+)$/i;
-const PR_IN_TEXT_RE = /\bPR\s*#?\s*(\d+)\b/gi;
-const CLAIM_REASON_RE =
-  /check-file-claimed|actively claimed|file[- ]claim|claimed by (?:open )?pr|open pr\s*#?\s*\d+|collision policy|claimed paths?|file claims?/i;
+const LEGACY_PR_REF_RE = /^(?:pr[:#-]|#|PR-)(\d+)$/i;
 
 /**
- * Split blockedBy entries into real task IDs vs external refs (pr:2398, #2398, PR-2398).
+ * Extract Fusion task IDs from blockedBy entries. Non-task tokens — including legacy
+ * pr:N / #N PR refs — are ignored: open PRs are not valid blockers.
  */
 export function partitionBlockedByRefs(blockedBy: readonly string[]): {
   taskIds: string[];
-  prNumbers: number[];
 } {
   const taskIds: string[] = [];
-  const prNumbers: number[] = [];
   for (const raw of blockedBy) {
     const id = raw.trim();
     if (!id) continue;
-    const prMatch = id.match(PR_REF_RE);
-    // Prefer PR refs before task-id matching (PR-12 would otherwise match TASK_ID_RE).
-    if (prMatch) {
-      prNumbers.push(Number(prMatch[1]));
-      continue;
-    }
+    if (LEGACY_PR_REF_RE.test(id)) continue;
     if (TASK_ID_RE.test(id)) {
       const m = id.toUpperCase().match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
       taskIds.push(m ? `${m[1]}-${m[2]}` : id.toUpperCase());
-      continue;
     }
-    // Ignore unknown tokens for dependency edges
+    // Ignore other unknown tokens for dependency edges
   }
-  return {
-    taskIds: [...new Set(taskIds)],
-    prNumbers: [...new Set(prNumbers.filter((n) => Number.isFinite(n) && n > 0))],
-  };
-}
-
-export function extractPrNumbersFromText(text: string): number[] {
-  const found: number[] = [];
-  for (const match of text.matchAll(PR_IN_TEXT_RE)) {
-    const n = Number(match[1]);
-    if (Number.isFinite(n) && n > 0) found.push(n);
-  }
-  return [...new Set(found)];
-}
-
-export function isFileClaimBlockedReason(reason: string): boolean {
-  return CLAIM_REASON_RE.test(reason);
+  return { taskIds: [...new Set(taskIds)] };
 }
 
 /**
- * Classify a blocked exit for parking policy.
+ * Classify a blocked exit for parking policy. Reason prose never affects the
+ * classification — only real task dependencies make a block durable.
  */
 export function classifyBlockedExit(
-  reason: string,
+  _reason: string,
   blockedBy: readonly string[] = [],
 ): BlockedExitClassification {
-  const trimmed = reason.trim();
-  const partitioned = partitionBlockedByRefs(blockedBy);
-  const prFromText = extractPrNumbersFromText(trimmed);
-  const prNumbers = [...new Set([...partitioned.prNumbers, ...prFromText])];
-  const isClaim = isFileClaimBlockedReason(trimmed) || prNumbers.length > 0 && /claim/i.test(trimmed);
-
-  if (isClaim || prNumbers.length > 0 && isFileClaimBlockedReason(trimmed)) {
-    const externalBlockers: ExternalBlocker[] = [
-      ...prNumbers.map((number) => ({ kind: "github-pr" as const, number })),
-    ];
-    if (externalBlockers.length === 0 && isClaim) {
-      externalBlockers.push({
-        kind: "file-claim",
-        prNumber: prNumbers[0],
-      });
-    } else if (isClaim) {
-      // Also record a file-claim tag when claim language is present
-      for (const n of prNumbers) {
-        if (!externalBlockers.some((b) => b.kind === "github-pr" && b.number === n)) {
-          externalBlockers.push({ kind: "github-pr", number: n });
-        }
-      }
-      if (prNumbers.length === 0) {
-        externalBlockers.push({ kind: "file-claim" });
-      }
-    }
-    const thrashSignature = [
-      "file-claim",
-      ...prNumbers.map((n) => `pr:${n}`).sort(),
-      ...partitioned.taskIds.slice().sort(),
-    ].join("|");
-    return {
-      allowAutoReplan: false,
-      class: "file-claim",
-      externalBlockers,
-      thrashSignature: thrashSignature || "file-claim",
-      prNumbers,
-    };
-  }
-
-  if (partitioned.taskIds.length > 0) {
+  const { taskIds } = partitionBlockedByRefs(blockedBy);
+  if (taskIds.length > 0) {
     return {
       allowAutoReplan: false,
       class: "external",
-      externalBlockers: [],
-      thrashSignature: `tasks:${partitioned.taskIds.slice().sort().join(",")}`,
-      prNumbers,
+      thrashSignature: `tasks:${taskIds.slice().sort().join(",")}`,
     };
   }
 
-  if (prNumbers.length > 0) {
-    return {
-      allowAutoReplan: false,
-      class: "external",
-      externalBlockers: prNumbers.map((number) => ({ kind: "github-pr" as const, number })),
-      thrashSignature: prNumbers.map((n) => `pr:${n}`).sort().join("|"),
-      prNumbers,
-    };
-  }
-
-  // Empty blockedBy + no claim language → plan defect, auto-replan is OK
+  // Empty blockedBy → plan defect, auto-replan is OK
   return {
     allowAutoReplan: true,
     class: "plan-defect",
-    externalBlockers: [],
     thrashSignature: "plan-defect",
-    prNumbers: [],
   };
 }
 
@@ -173,7 +88,7 @@ export const BLOCKED_THRASH_WINDOW_MS = 60 * 60 * 1000;
 export type TaskLogLike = { action?: string; timestamp?: string };
 
 /**
- * Count recent log rows that match a durable block signature or BLOCKED: claim text.
+ * Count recent log rows that match a durable block signature.
  */
 export function countBlockedThrashHits(
   log: readonly TaskLogLike[] | undefined,
@@ -182,6 +97,7 @@ export function countBlockedThrashHits(
   windowMs: number = BLOCKED_THRASH_WINDOW_MS,
 ): number {
   if (!log?.length) return 0;
+  if (signature === "plan-defect") return 0;
   const cutoff = nowMs - windowMs;
   let count = 0;
   for (const entry of log) {
@@ -194,19 +110,7 @@ export function countBlockedThrashHits(
         continue;
       }
     }
-    // Signature match via pr:N tokens or claim class
-    if (signature === "plan-defect") continue;
-    if (signature.includes("file-claim") || signature.startsWith("pr:") || signature.includes("|pr:")) {
-      if (isFileClaimBlockedReason(action) || /PR\s*#?\s*\d+/i.test(action) || action.includes("durable external block")) {
-        count += 1;
-        continue;
-      }
-    }
     for (const part of signature.split("|")) {
-      if (part.startsWith("pr:") && action.includes(`PR #${part.slice(3)}`)) {
-        count += 1;
-        break;
-      }
       if (part.startsWith("tasks:") && part.slice(6).split(",").some((id) => id && action.includes(id))) {
         count += 1;
         break;
@@ -216,30 +120,27 @@ export function countBlockedThrashHits(
   return count;
 }
 
-export function isDurableBlockedError(error: string | null | undefined): boolean {
-  if (!error?.startsWith("BLOCKED:")) return false;
-  const reason = error.slice("BLOCKED:".length).trim();
-  const classification = classifyBlockedExit(reason, []);
-  return !classification.allowAutoReplan;
-}
-
 export function isDurableBlockedTask(task: {
   status?: string | null;
   error?: string | null;
   sourceMetadata?: Record<string, unknown> | null;
 }): boolean {
-  if (task.status === "failed" && isDurableBlockedError(task.error)) return true;
+  /*
+  FNXC:HonestBlockedExit 2026-08-02-23:59:
+  Only metadata-classed "external" (task-dependency) parks are durable. Legacy
+  "file-claim" parks and externalBlockers metadata from the removed FN-8700 PR-claim
+  path are deliberately NOT honored, so previously PR-blocked rows become recoverable
+  by normal graph-resume/scheduler paths instead of waiting on a merged/closed PR sweep.
+  */
   const meta = task.sourceMetadata;
   if (!meta || typeof meta !== "object") return false;
-  if (meta.blockedClass === "file-claim" || meta.blockedClass === "external") {
-    if (task.status === "failed" || task.status === "needs-replan") return true;
-  }
-  const blockers = meta.externalBlockers;
-  return Array.isArray(blockers) && blockers.length > 0 && task.status === "failed";
+  if (meta.blockedClass !== "external") return false;
+  return task.status === "failed" || task.status === "needs-replan";
 }
 
 /**
  * Build sourceMetadata patch for a durable external block park.
+ * `externalBlockers` is always cleared — the PR-claim blocker list is removed.
  */
 export function buildExternalBlockMetadataPatch(
   classification: BlockedExitClassification,
@@ -249,6 +150,6 @@ export function buildExternalBlockMetadataPatch(
     blockedClass: classification.class,
     blockedThrashSignature: classification.thrashSignature,
     blockedThrashCount: thrashCount,
-    externalBlockers: classification.externalBlockers,
+    externalBlockers: [],
   };
 }

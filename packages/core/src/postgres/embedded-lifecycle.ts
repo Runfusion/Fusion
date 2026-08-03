@@ -1421,9 +1421,8 @@ export class EmbeddedPostgresLifecycle {
     // Check if PG is already running for this data dir. If so, reuse it.
     const existing = await isAlreadyRunning(this.options.dataDir, this.options.onLog);
     if (existing) {
-      this.options.onLog(
-        `embedded postgres: already running on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`,
-      );
+      // FNXC:EngineDiagnostics 2026-08-03-05:54: multi-process rejoin is expected; keep "starting embedded PostgreSQL" as the boot-visible line.
+      log.debug(`embedded postgres: already running on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`);
       this.resolvedPort = existing.port;
       this.running = false; // We didn't start it, so we won't stop it
       this.ownsProcess = false;

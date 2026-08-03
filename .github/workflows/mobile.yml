@@ -47,7 +47,7 @@ jobs:
             ${{ runner.os }}-derived-data-
 
       - name: Download dashboard artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dashboard-dist-client
           path: packages/dashboard/dist/client
@@ -128,7 +128,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Download dashboard artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dashboard-dist-client
           path: packages/dashboard/dist/client

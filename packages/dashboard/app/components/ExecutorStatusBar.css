@@ -417,6 +417,10 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
 }
 
 /* Responsive: collapse on small screens */
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Elevating the fixed footer above `--mobile-nav-height` is only correct when the mobile tab bar is actually mounted (JS mode=mobile). Tablet-class devices in the ≤768 CSS px band stay mode=tablet with a left sidebar and no bottom tab bar; the width-only rule left a dead band under the footer and made it paint over board content. Keep width media as a no-JS fallback for true phones, then reassert desktop bottom/height when mode is tablet or desktop.
+*/
 @media (max-width: 768px) {
   /*
   FNXC:MobileFooter 2026-06-23-22:10:
@@ -463,6 +467,45 @@ FN-6887 makes the footer status bar the canonical desktop/tablet terminal launch
     max-width: min(26ch, 30vw);
   }
 
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer {
+  --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+}
+
+html[data-viewport-mode="mobile"] .executor-status-bar {
+  padding: var(--space-xs) var(--space-md);
+  gap: 4px;
+  font-size: 11px;
+  height: calc(var(--space-lg) * 2 + var(--space-xs));
+  overflow: hidden;
+  bottom: calc(var(--icb-bottom-offset, 0px) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), 12px) + var(--standalone-bottom-gap));
+}
+
+html[data-viewport-mode="mobile"] .executor-status-bar.executor-status-bar--keyboard-open {
+  bottom: 0;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+  --executor-footer-height: 36px;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar {
+  bottom: var(--icb-bottom-offset, 0px);
+  height: 36px;
+  padding: var(--space-xs) var(--space-lg);
+  gap: var(--space-sm);
+  font-size: 12px;
+  overflow: visible;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar__segment--time {
+  display: flex;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .executor-status-bar.executor-status-bar--keyboard-open {
+  bottom: var(--icb-bottom-offset, 0px);
 }
 
 /* Light theme support */

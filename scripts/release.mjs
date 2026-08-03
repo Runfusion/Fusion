@@ -11,14 +11,12 @@
 //     `release` for stable), up to date with origin
 //   - at least one pending changeset in .changeset/
 //   - `npm login` already completed (publish uses the active npm token)
-//   - real releases require a live operator to type the authorization phrase
-//     ("authorized") at an interactive prompt; they cannot run non-interactively.
-//     Dry-runs skip this because they make no file/git/npm changes
+//   - real releases always prompt y/N before mutation (no --yes skip)
+//     Dry-runs make no file/git/npm changes
 //
 // Usage:
-//   pnpm release                  # interactive: review changesets, accept or override version, type the authorization phrase, then confirm before mutation
-//   pnpm release --yes            # accept the proposed version, skip the y/N confirmation prompt, but STILL require the typed authorization phrase before mutation
-//   pnpm release --dry-run        # preview only; non-interactive by default; no authorization or file/git/npm changes
+//   pnpm release                  # interactive: review changesets, accept or override version, then confirm before mutation
+//   pnpm release --dry-run        # preview only; non-interactive by default; no file/git/npm changes
 //   pnpm release --dry-run --interactive
 //                                 # preview only, but exercise the version prompt override
 //   pnpm release --channel beta   # beta release from `main`: enters changesets pre-mode,
@@ -29,7 +27,7 @@
 //                                 # GitHub release marked latest, bumps Homebrew tap
 //
 //   Without --channel, the script prompts for the channel; the default answer
-//   (and the silent default for --yes / non-interactive dry-runs) is BETA.
+//   (and the silent default for non-interactive dry-runs) is BETA.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
@@ -38,11 +36,6 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-import {
-  evaluateReleaseAuthorization,
-  isReleaseAuthorizationPhrase,
-  RELEASE_AUTHORIZATION_PHRASE,
-} from "./lib/release-authorization-gate.mjs";
 import { extractVersionNotes, replaceVersionSection } from "./lib/extract-version-notes.mjs";
 import { parseChangesetFile } from "./lib/changeset-schema.mjs";
 import { distillReleaseNotes } from "./lib/distill-release-notes.mjs";
@@ -74,8 +67,17 @@ const args = new Set(argv);
  * `--dry-run` must not read stdin in the default agent-shell path; `--interactive` is the explicit maintainer override for prompt coverage while preserving real-release prompts.
  */
 const DRY_RUN = args.has("--dry-run");
-const AUTO_YES = args.has("--yes") || args.has("-y");
 const INTERACTIVE = args.has("--interactive");
+/*
+ * FNXC:ReleaseScript 2026-08-03-02:57:
+ * `--yes` / `-y` is removed. Real releases must confirm interactively; agents must not release
+ * (AGENTS.md → Releasing). Fail closed if the old flag is passed so muscle-memory does not skip
+ * the proceed prompt by accident.
+ */
+if (args.has("--yes") || args.has("-y")) {
+  console.error("✗ `--yes` / `-y` was removed from `pnpm release`. Run interactively and confirm with y.");
+  process.exit(1);
+}
 
 /*
  * FNXC:UpdateChannels 2026-07-19-13:20:
@@ -104,11 +106,11 @@ if (CHANNEL !== null && CHANNEL !== "stable" && CHANNEL !== "beta") {
  * default is BETA: day-to-day releases are betas cut from main, while stable
  * promotions are deliberate (release branch) and must be chosen explicitly
  * (answer "stable" or pass --channel stable). The prompt obeys the same gate
- * as the version prompt (shouldPromptForVersion): non-interactive dry-runs and
- * --yes runs never read stdin and silently default to beta.
+ * as the version prompt (shouldPromptForVersion): non-interactive dry-runs
+ * never read stdin and silently default to beta.
  */
 if (CHANNEL === null) {
-  if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
+  if (shouldPromptForVersion({ dryRun: DRY_RUN, interactive: INTERACTIVE })) {
     while (true) {
       const answer = (await ask("Release channel — beta or stable? [beta]: ")).toLowerCase();
       if (answer === "" || answer === "beta" || answer === "b") {
@@ -262,7 +264,6 @@ function parseVersionKey(key) {
 }
 
 async function confirm(prompt) {
-  if (AUTO_YES) return true;
   const rl = createInterface({ input: stdin, output: stdout });
   const answer = (await rl.question(`${prompt} [y/N] `)).trim().toLowerCase();
   rl.close();
@@ -648,7 +649,7 @@ if (!IS_BETA && run("git rev-parse --abbrev-ref HEAD", { capture: true }).stdout
     promoteTarget = "HEAD";
   }
 
-  if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
+  if (shouldPromptForVersion({ dryRun: DRY_RUN, interactive: INTERACTIVE })) {
     const answer = await ask(`Promote which commit/tag to 'release'? [${promoteTarget}]: `);
     if (answer !== "") promoteTarget = answer;
   } else {
@@ -698,11 +699,10 @@ if (!IS_BETA && run("git rev-parse --abbrev-ref HEAD", { capture: true }).stdout
   info("Installing dependencies in the promotion worktree (fresh checkout)…");
   run("pnpm install --prefer-offline", { cwd: promoteDir });
 
-  info("Re-running the release inside the promotion worktree (authorization prompts continue there)…");
+  info("Re-running the release inside the promotion worktree (interactive prompts continue there)…");
   const passThroughArgs = [
     join("scripts", "release.mjs"),
     "--channel", "stable",
-    ...(AUTO_YES ? ["--yes"] : []),
     ...(INTERACTIVE ? ["--interactive"] : []),
   ];
   const child = spawnSync(process.execPath, passThroughArgs, {
@@ -931,7 +931,7 @@ if (!isVersionAheadOfStable(proposedVersion, LATEST_STABLE_VERSION)) {
 }
 
 let chosenVersion = proposedVersion;
-if (shouldPromptForVersion({ dryRun: DRY_RUN, autoYes: AUTO_YES, interactive: INTERACTIVE })) {
+if (shouldPromptForVersion({ dryRun: DRY_RUN, interactive: INTERACTIVE })) {
   while (true) {
     const answer = await ask(`Release version [${proposedVersion}]: `);
     if (answer === "") break;
@@ -978,30 +978,11 @@ if (DRY_RUN) {
 }
 
 /*
- * FNXC:ReleaseScript 2026-07-08-11:20:
- * FN-6469 showed `main`-branch preflight is bypassable by cloning a clean `main`. A real release now requires a live human to type the authorization phrase at an interactive prompt before any version bump, publish, push, tag, GitHub Release, or Homebrew tap mutation can begin. This replaces the removed `FUSION_RELEASE_AUTHORIZED` env signal, which was self-grantable and leaked into non-interactive shells. `--yes` does not bypass this prompt; a non-interactive shell is blocked outright. Dry-run exits above so agents can still inspect release plans without authorization.
+ * FNXC:ReleaseScript 2026-08-03-02:56:
+ * The typed "authorized" phrase is removed. Real releases always require the operator y/N
+ * confirmation below (no --yes skip). Dry-run exits above so agents can still inspect release
+ * plans. Agents must not run real releases (AGENTS.md → Releasing).
  */
-const releaseAuthorization = evaluateReleaseAuthorization({
-  dryRun: DRY_RUN,
-  stdinIsTTY: process.stdin.isTTY === true,
-});
-if (releaseAuthorization.mode === "blocked") {
-  fail(
-    `${releaseAuthorization.reason ?? "Release is not authorized."}\n` +
-    "Releases are not agent-initiable and cannot run non-interactively.",
-  );
-}
-if (releaseAuthorization.mode === "requires-confirmation") {
-  const typed = await ask(
-    `Type "${RELEASE_AUTHORIZATION_PHRASE}" to authorize this real release (build, publish, tag): `,
-  );
-  if (!isReleaseAuthorizationPhrase(typed)) {
-    fail(
-      `Authorization phrase not entered ("${RELEASE_AUTHORIZATION_PHRASE}" required); aborted before version bump, publish, push, or tag.`,
-    );
-  }
-}
-
 if (!(await confirm(`Proceed with ${CHANNEL} release v${chosenVersion} (build, publish to npm tag '${NPM_DIST_TAG}', tag)?`))) {
   warn("Aborted by user.");
   process.exit(0);

@@ -36,8 +36,6 @@ import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PR
   resolveProjectColumnsForRoles,
   REVIEW_ROLES,
   pruneTaskLifecycleEvents,
-  isGhAvailable,
-  runGhJsonAsync,
 } from "@fusion/core";
 import { finalizePlanningSegment } from "@fusion/core";
 import type { MeshLeaseManager } from "./project/mesh-lease-manager.js";
@@ -2772,7 +2770,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           { name: "reconcile-done-task-integrity", fn: () => this.reconcileDoneTaskIntegrity() },
           { name: "reconcile-stale-merger-status", fn: () => this.reconcileStaleMergerStatus() },
           { name: "reconcile-stale-duplicate-decision", fn: () => this.reconcileStaleDuplicateDecisionPause() },
-          { name: "reconcile-external-pr-blockers", fn: () => this.reconcileExternalPrBlockers() },
           // FNXC:OrphanedPendingSteps 2026-07-22-16:35 (FN-8492 review follow-up): also
           // steady-state — a step session can die without an engine restart, and startup-only
           // cadence left that case riding the 3×30-min stall escalator to a deadlock park.
@@ -4687,8 +4684,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async reclaimStaleActiveBranches(): Promise<number> {
-    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an archived card must not have its branch reclaimed, whatever that lane is named. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an archived card must not have its branch reclaimed, whatever that lane is named. Keyed on the literal this sweep answered "no" for every card on a renamed board.
+
+    FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+    Complete-lane cards used to hit the unique-commit rescue-needed warn every maintenance sweep after squash/AI merge (feature tip SHAs are not ancestors of main). That spam was not actionable — the work already landed — and left local fusion/* refs forever. Resolve complete columns and force-delete their stale branches once the no-worktree / no-session gates pass; keep rescue-needed only for non-terminal columns where unique commits may still be real unmerged work. Archived still skips entirely (archive cleanup owns those refs).
+    */
     const reclaimArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
+    const reclaimCompleteColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
@@ -4803,10 +4806,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const inspection = await this.inspectOrphanedBranch(branch);
         if (!inspection) continue;
 
-        if (inspection.uniqueCommitCount > 0) {
+        const isCompleteColumn = reclaimCompleteColumns.has(task.column);
+        if (inspection.uniqueCommitCount > 0 && !isCompleteColumn) {
           log.warn(`[recovery] stale-active-branch-rescue-needed ${task.id} branch=${branch} unique=${inspection.uniqueCommitCount} tip=${inspection.tipSha.slice(0, 12)}`);
           continue;
         }
+
+        const reclaimReason = inspection.uniqueCommitCount > 0
+          ? "complete-column-unique-commits-force"
+          : "zero-unique-commits-no-worktree";
 
         await execAsync(`git branch -D ${JSON.stringify(branch)}`, {
           cwd: this.options.rootDir,
@@ -4829,7 +4837,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         });
         await this.store.logEntry(
           task.id,
-          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=zero-unique-commits-no-worktree`,
+          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=${reclaimReason}`,
         );
 
         try {
@@ -4848,7 +4856,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               branch,
               tipSha: inspection.tipSha,
               uniqueCommitCount: inspection.uniqueCommitCount,
-              reason: "zero-unique-commits-no-worktree",
+              reason: reclaimReason,
             },
           });
         } catch (auditErr: unknown) {
@@ -4888,6 +4896,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
 
   private async clearCompletionBranchIfSubsumed(task: Task, branchName: string): Promise<boolean> {
+    /*
+    FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+    Completion fan-out used to skip deletion when the tip still had unique commits vs the integration base. Squash / AI-merge always leaves that shape (new main SHA, old fusion/* tip still "unique"), so done tasks kept local branches forever and reclaimStaleActiveBranches warned rescue-needed every sweep. After a successful complete, force-delete the task branch regardless of unique commit count; the landed content is already on the integration branch under a different SHA. Log unique-count force deletes at info, not as an open rescue.
+    */
     try {
       await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
         cwd: this.options.rootDir,
@@ -4900,10 +4912,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const baseBranch = task.baseBranch || await resolveIntegrationBranch(this.options.rootDir, undefined);
     const comparison = await listUniqueBranchCommits(this.options.rootDir, baseBranch, branchName);
     if (comparison.commits.length > 0) {
-      log.warn(
-        `[self-healing] reconcileCompletedTask ${task.id}: branch ${branchName} has ${comparison.commits.length} unique commit(s) vs ${comparison.mainRef}; skip deletion`,
+      log.log(
+        `[self-healing] reconcileCompletedTask ${task.id}: branch ${branchName} has ${comparison.commits.length} unique commit(s) vs ${comparison.mainRef}; force-deleting post-completion (squash-safe)`,
       );
-      return false;
     }
 
     try {
@@ -14401,77 +14412,12 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
   }
 
   /*
-  FNXC:HonestBlockedExit 2026-08-02-01:30:
-  Durable parks store github-pr externalBlockers (FN-8700 file-claim). When every blocking
-  PR is MERGED or CLOSED, clear the failed park so the scheduler can re-dispatch. Fail-soft
-  when gh is unavailable — leave the park for the operator.
+  FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
+  The FN-8700 `reconcile-external-pr-blockers` sweep (gh-backed clearing of PR-claim parks)
+  is REMOVED with the whole PR/file-claim blocking mechanism. Open PRs are never blockers;
+  file-scope conflicts are arbitrated only by Fusion's own board. Legacy PR-claim parks are
+  no longer honored by isDurableBlockedTask, so normal recovery paths reclaim them.
   */
-  async reconcileExternalPrBlockers(): Promise<number> {
-    try {
-      if (!(await isGhAvailable())) {
-        log.debug("reconcile-external-pr-blockers skipped — gh unavailable");
-        return 0;
-      }
-      const tasks = await this.store.listTasks({ slim: true, includeArchived: false, limit: 500 });
-      let cleared = 0;
-      for (const task of tasks.slice(0, 80)) {
-        if (task.status !== "failed" || !task.error?.startsWith("BLOCKED:")) continue;
-        const meta = task.sourceMetadata;
-        const blockers = meta?.externalBlockers;
-        if (!Array.isArray(blockers) || blockers.length === 0) continue;
-        const prNumbers = blockers
-          .map((b) => (b && typeof b === "object" && (b as { kind?: string }).kind === "github-pr"
-            ? Number((b as { number?: unknown }).number)
-            : NaN))
-          .filter((n) => Number.isFinite(n) && n > 0);
-        if (prNumbers.length === 0) continue;
-
-        let allResolved = true;
-        for (const n of prNumbers) {
-          try {
-            const pr = await runGhJsonAsync<{ state?: string; mergedAt?: string | null }>(
-              ["pr", "view", String(n), "--json", "state,mergedAt"],
-              { timeoutMs: 15_000 },
-            );
-            const state = String(pr?.state ?? "").toUpperCase();
-            const merged = Boolean(pr?.mergedAt) || state === "MERGED";
-            const closed = state === "CLOSED" || state === "MERGED";
-            if (!merged && !closed) {
-              allResolved = false;
-              break;
-            }
-          } catch {
-            allResolved = false;
-            break;
-          }
-        }
-        if (!allResolved) continue;
-
-        await this.store.updateTask(task.id, {
-          status: null,
-          error: null,
-          sourceMetadataPatch: {
-            externalBlockers: [],
-            blockedClass: null,
-            blockedThrashSignature: null,
-            blockedThrashCount: null,
-            externalPrBlockersClearedAt: new Date().toISOString(),
-            externalPrBlockersCleared: prNumbers,
-          },
-        });
-        await this.store.logEntry(
-          task.id,
-          `Auto-recovered: external PR blocker(s) ${prNumbers.map((n) => `#${n}`).join(", ")} merged/closed — cleared durable BLOCKED park for re-dispatch`,
-        );
-        log.log(`Cleared durable PR block for ${task.id} (prs=${prNumbers.join(",")})`);
-        cleared += 1;
-      }
-      return cleared;
-    } catch (error) {
-      log.warn(`reconcile-external-pr-blockers failed: ${error instanceof Error ? error.message : String(error)}`);
-      return 0;
-    }
-  }
 
   async resolveExplicitDuplicateMarkerTasks(): Promise<number> {
     try {

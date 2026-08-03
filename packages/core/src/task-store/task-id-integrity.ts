@@ -13,7 +13,6 @@ import { TaskStore } from "../store.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { ArchiveDatabase } from "../db/archive-db.js";
-import { validateBranchGroupBranchName } from "../branch/branch-assignment.js";
 import { CentralCore } from "../central/central-core.js";
 import { Database, fromJson, toJsonNullable } from "../db/db.js";
 import { reconcileTaskIdState, resolveLocalNodeId } from "../tasks/distributed-task-id.js";
@@ -32,7 +31,7 @@ import { purgeTaskWorkflowSelectionRowsAsyncImpl } from "./workflow-definitions.
 import { resolveProjectColumnsForRoles } from "../project-lane-vocabulary.js";
 import { ConfigRow } from "./row-types.js";
 import { ARCHIVE_AGENT_LOG_SNAPSHOT_LIMIT } from "./serialization.js";
-import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, Column, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
+import { ActivityLogEntry, ArchiveAgentLogMode, ArchivedTaskEntry, BoardConfig, BranchGroup, BranchGroupCreateInput, GoalCitationInput, GoalCitationSurface, RunAuditEventInput, Settings, Task, TaskCreateInput } from "../types.js";
 import { resolveAllOptionalGroupIds } from "../workflows/workflow-optional-steps.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";

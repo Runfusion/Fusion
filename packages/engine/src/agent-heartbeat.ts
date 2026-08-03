@@ -4964,13 +4964,18 @@ export class HeartbeatTriggerScheduler {
 
       try {
         if (!isHeartbeatManaged(agent)) {
-          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (ephemeral/internal)`);
+          /*
+          FNXC:EngineDiagnostics 2026-08-03-05:54:
+          Ephemeral/internal, disabled, and active-run skips are expected guard outcomes on
+          assignment events — not operator-actionable. Mirror timer-tick skip gates (debug).
+          */
+          heartbeatLog.debug(`Assignment trigger skipped for ${agent.id} (ephemeral/internal)`);
           return;
         }
 
         const runtimeConfig = (agent.runtimeConfig ?? {}) as { enabled?: boolean; allowParallelExecution?: boolean };
         if (runtimeConfig.enabled === false) {
-          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (disabled)`);
+          heartbeatLog.debug(`Assignment trigger skipped for ${agent.id} (disabled)`);
           return;
         }
 
@@ -4980,7 +4985,7 @@ export class HeartbeatTriggerScheduler {
         const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
         if (activeRun) {
           this.pendingAssignments.set(agent.id, { taskId });
-          heartbeatLog.log(`Assignment trigger skipped for ${agent.id} (active run)`);
+          heartbeatLog.debug(`Assignment trigger skipped for ${agent.id} (active run)`);
           return;
         }
 

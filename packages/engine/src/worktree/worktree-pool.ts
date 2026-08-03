@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, isAbsolute } from "node:path";
-import type { ColumnId, SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
+import type { SecretsStore, Settings, TaskStore, WorktrunkSettings } from "@fusion/core";
 import { assertCleanBranchAtBase, inspectBranchConflict } from "../execution/branch-conflicts.js";
 import { worktreePoolLog } from "../logger.js";
 /*

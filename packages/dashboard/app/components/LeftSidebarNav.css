@@ -4,11 +4,15 @@ The experimental sidebar is a persistent desktop/tablet navigation replacement f
 
 FNXC:Navigation 2026-06-22-18:00:
 The border between left sidebar and main content should be invisible while the sidebar remains draggable. Keep the resize handle's invisible hit target and hover/focus accent, but remove the persistent vertical rule and footer divider so the shell reads as one continuous surface.
+
+FNXC:Navigation 2026-08-03-05:34:
+Expanded desktop/tablet navigation needs the same tokenized floating depth as the unpinned right dock so board cards paint beneath its outer edge. Keep the shell above adjacent content without changing its flex sizing or resize hit target; rail mode explicitly removes the shadow and stays flat.
 */
 .left-sidebar-nav {
   --left-sidebar-nav-width: calc(var(--space-2xl) * 7);
   --left-sidebar-nav-rail-width: calc(var(--space-2xl) * 2);
   position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -17,6 +21,7 @@ The border between left sidebar and main content should be invisible while the s
   min-height: 0;
   background: var(--surface);
   color: var(--text);
+  box-shadow: var(--shadow-lg);
   font-family: var(--font-primary);
 }
 
@@ -273,6 +278,7 @@ The footer has no top divider; it remains a functional footer cluster but should
 .left-sidebar-nav--collapsed {
   width: var(--left-sidebar-nav-rail-width);
   min-width: var(--left-sidebar-nav-rail-width);
+  box-shadow: none;
 }
 
 .left-sidebar-nav--collapsed .left-sidebar-nav__label,
@@ -290,8 +296,20 @@ The footer has no top divider; it remains a functional footer cluster but should
   justify-content: center;
 }
 
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Width-only hide was wrong for tablet-class devices in the 601–768 CSS px band: JS mounts the left sidebar (mode=tablet) while this media query hid it and MobileNavBar returned null — operators lost every primary nav surface. Prefer the published viewport mode; keep the width rule as a no-JS/first-paint fallback for true phones.
+*/
 @media (max-width: 768px) {
   .left-sidebar-nav {
     display: none;
   }
+}
+
+html[data-viewport-mode="mobile"] .left-sidebar-nav {
+  display: none;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .left-sidebar-nav {
+  display: flex;
 }
