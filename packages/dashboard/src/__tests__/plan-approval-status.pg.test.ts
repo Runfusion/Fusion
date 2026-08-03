@@ -91,6 +91,11 @@ pgDescribe("plan approval status persistence", () => {
   });
 
   it("keeps the approval hold when the rejected plan cannot be removed", async () => {
+    /*
+     * FNXC:PlanApproval 2026-08-03-19:12 UTC:
+     * A rejected plan stays blocked and retains its approved fingerprint when
+     * PROMPT.md removal fails; only a successful removal may release the hold.
+     */
     const task = await store.createTask({ description: "Reject a plan that cannot be removed" });
     await store.updateTask(task.id, {
       status: "awaiting-approval",
@@ -105,9 +110,14 @@ pgDescribe("plan approval status persistence", () => {
     const response = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
 
     expect(response.status).toBe(500);
+    expect(response.body.error).toContain("PROMPT.md");
     const persisted = await store.getTask(task.id);
     expect(persisted.status).toBe("awaiting-approval");
     expect(isTaskBlockedOnApproval(persisted)).toBe(true);
     expect(persisted.approvedPlanFingerprint).toBe("rejected-fingerprint");
+    expect(persisted.log).toContainEqual(expect.objectContaining({
+      action: "Plan rejected by user",
+      outcome: "Specification will be regenerated",
+    }));
   });
 });
