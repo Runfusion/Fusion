@@ -10,8 +10,8 @@ import {
   updateTodoItem,
   deleteTodoItem,
   reorderTodoItems,
-} from "../api";
-import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
+} from "./api.js";
+import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "./swrCache.js";
 
 type ToastType = "info" | "success" | "error" | "warning";
 

@@ -186,6 +186,8 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     const retiredStashRecoveryView = migrateRetiredStashRecoveryView(saved);
     if (retiredStashRecoveryView) return retiredStashRecoveryView;
     if (saved === "roadmaps") return migrateLegacyRoadmapsView(saved);
+    // FNXC:TodoPluginEnablement 2026-08-03-16:00: static registrations must not revive a disabled project's legacy Todo view.
+    if (saved === "todos") return "board";
     if (isTaskView(saved)) return resolveLandingTaskView(normalizeTaskView(saved));
     return "board";
   });
@@ -221,6 +223,9 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
       setTaskView(retiredStashRecoveryView);
     } else if (saved === "roadmaps") {
       setTaskView(migrateLegacyRoadmapsView(saved));
+    } else if (saved === "todos") {
+      // FNXC:TodoPluginEnablement 2026-08-03-16:00: a disabled project's persisted legacy Todo view must fall back to Board.
+      setTaskView("board");
     } else if (isTaskView(saved)) {
       const preserveLegacyOnFirstScopedHydration =
         !hasHydratedScopedTaskViewRef.current && saved === "devserver";

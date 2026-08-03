@@ -246,9 +246,6 @@ vi.mock("../../components/EvalsView", () => ({
   EvalsView: () => <div data-testid="evals-view">Evals</div>,
 }));
 
-vi.mock("../../components/TodoView", () => ({
-  TodoView: () => <div data-testid="todo-view">Todo</div>,
-}));
 
 vi.mock("../../components/QuickChatFAB", () => ({
   QuickChatFAB: () => null,

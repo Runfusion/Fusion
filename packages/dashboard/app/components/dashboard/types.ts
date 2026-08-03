@@ -30,6 +30,7 @@ import type {
   ProjectInfoWithSource,
   RevertTaskOptions,
   RevertTaskResult,
+  PluginDashboardViewEntry,
 } from "../../api";
 import type { FusionShellApi } from "../../types/native-shell";
 import type { DetailTaskOpenOptions, DetailTaskTab, ModalManager } from "../../hooks/useModalManager";
@@ -59,7 +60,6 @@ import { ResearchView } from "../ResearchView";
 import { ScheduledTasksModal } from "../ScheduledTasksModal";
 import { SecretsView } from "../SecretsView";
 import { SkillsView } from "../SkillsView";
-import { TodoView } from "../TodoView";
 import { WorkflowNodeEditor } from "../WorkflowNodeEditor";
 
 export interface MainContentProps {
@@ -81,6 +81,8 @@ export interface MainContentProps {
   handleRetryProjects: () => Promise<void>;
   shellApi: FusionShellApi | null;
   taskView: TaskView;
+  /** Project-enabled plugin views; static registrations alone must not bypass enablement. */
+  pluginDashboardViews: PluginDashboardViewEntry[];
   modalManager: ModalManager;
   handleChangeTaskView: (newView: TaskView) => void;
   refreshAppSettings: () => Promise<void>;
@@ -162,7 +164,6 @@ export interface MainContentProps {
   memoryEnabled: boolean;
   goalsEnabled: boolean;
   handleOpenMission: (missionId: string) => void;
-  todosEnabled: boolean;
   openPlanningWithInitialPlanWithNav: (initialPlan: string, workflowId?: string | null) => void;
   ingestCreatedTasks: (tasks: Task[]) => void;
   nodesEnabled: boolean;
@@ -257,7 +258,6 @@ export interface MainContentProps {
   ResearchView: LazyExoticComponent<typeof ResearchView>;
   SecretsView: LazyExoticComponent<typeof SecretsView>;
   SkillsView: LazyExoticComponent<typeof SkillsView>;
-  TodoView: LazyExoticComponent<typeof TodoView>;
   _AutomationsView: LazyExoticComponent<typeof ScheduledTasksModal>;
   _ImportTasksView: LazyExoticComponent<typeof GitHubImportModal>;
   _SettingsView: LazyExoticComponent<typeof SettingsView>;

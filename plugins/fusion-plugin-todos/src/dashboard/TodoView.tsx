@@ -18,12 +18,12 @@ import {
   EyeOff,
 } from "lucide-react";
 import { getErrorMessage, type Task, type TaskCreateInput, type TodoItem, type TodoList } from "@fusion/core";
-import { createTask, fetchAgents } from "../api";
-import type { Agent } from "../api";
-import { useTodoLists } from "../hooks/useTodoLists";
-import { useConfirm } from "../hooks/useConfirm";
-import { LoadingSpinner } from "./LoadingSpinner";
-import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { createTask, fetchAgents } from "./api.js";
+import type { Agent } from "./api.js";
+import { useTodoLists } from "./useTodoLists.js";
+import { useConfirm } from "./useConfirm.js";
+import { LoadingSpinner } from "./LoadingSpinner.js";
+import { getScopedItem, setScopedItem } from "./projectStorage.js";
 import "./TodoView.css";
 
 interface TodoViewProps {
@@ -345,7 +345,7 @@ export function TodoView({
         description: item.text,
         source: { sourceType: "dashboard_ui" },
       };
-      const task: Task = await createTask(input, projectId);
+      const task: Task = await createTask({ ...input, todoItemId: item.id }, projectId);
       onTaskCreated?.(task);
       addToast(t("todo.taskCreatedFromTodo", "Created {{id}} from todo", { id: task.id }), "success");
     } catch (err) {
@@ -361,7 +361,7 @@ export function TodoView({
         assignedAgentId: agentId,
         source: { sourceType: "dashboard_ui" },
       };
-      const task: Task = await createTask(input, projectId);
+      const task: Task = await createTask({ ...input, todoItemId: item.id }, projectId);
       onTaskCreated?.(task);
       const assignedAgent = agents.find((agent) => agent.id === agentId);
       const agentLabel = assignedAgent?.name ?? agentId;

@@ -882,7 +882,7 @@ describe("canonical triage policy prompt", () => {
 
 describe("FN-5893 invariant regression wording", () => {
   const corePromptSource = readFileSync(
-    fileURLToPath(new URL("../../../core/src/agent-prompts.ts", import.meta.url)),
+    fileURLToPath(new URL("../../../core/src/agents/agent-prompts.ts", import.meta.url)),
     "utf8",
   );
 
@@ -1757,6 +1757,38 @@ Planner rewrote mission without the raw request.
     processor.start();
     processor.stop();
     // Should not throw
+  });
+
+  /*
+  FNXC:PlanningModeScheduling 2026-08-03-09:44:
+  Planning Mode may create into a selected workflow whose intake and hold lanes are renamed.
+  The creation event must carry that durable lane answer so the normal wake reaches triage without
+  a route-specific scheduler call; paused work remains gated before the poll is requested.
+  */
+  it("wakes normal planning admission for a created task in a custom workflow lane", () => {
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const triageStore = createMockStore({
+      on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+        listeners.set(event, listener);
+        return triageStore;
+      }),
+      off: vi.fn(),
+    });
+    const triageProcessor = trackProcessor(new TriageProcessor(triageStore, rootDir));
+    const requestImmediatePoll = vi.spyOn(triageProcessor, "requestImmediatePoll").mockReturnValue(true);
+
+    triageProcessor.start();
+    listeners.get("task:created")?.(
+      createTriageTask({ id: "FN-PLANNING-CREATED", column: "planning-inbox" }),
+      { lanes: { intake: "planning-inbox", hold: "ready-to-plan" } },
+    );
+    listeners.get("task:created")?.(
+      createTriageTask({ id: "FN-PLANNING-PAUSED", column: "planning-inbox", paused: true }),
+      { lanes: { intake: "planning-inbox", hold: "ready-to-plan" } },
+    );
+
+    expect(requestImmediatePoll).toHaveBeenCalledTimes(1);
+    triageProcessor.stop();
   });
 
   it("handles settings:updated event for globalPause", () => {

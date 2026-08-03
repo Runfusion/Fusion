@@ -50,6 +50,7 @@ const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 const CURSOR_PLUGIN_ID = "fusion-plugin-cursor-runtime";
 const GROK_PLUGIN_ID = "fusion-plugin-grok-runtime";
 const ROADMAP_PLUGIN_ID = "fusion-plugin-roadmap";
+const TODOS_PLUGIN_ID = "fusion-plugin-todos";
 const REPORTS_PLUGIN_ID = "fusion-plugin-reports";
 const LINEAR_IMPORT_PLUGIN_ID = "fusion-plugin-linear-import";
 
@@ -188,6 +189,7 @@ beforeEach(() => {
 describe("ensureBundledPluginInstalled (host-agnostic shared helper)", () => {
   it("includes the full bundled plugin id set", () => {
     expect(BUNDLED_PLUGIN_IDS).toContain(ROADMAP_PLUGIN_ID);
+    expect(BUNDLED_PLUGIN_IDS).toContain(TODOS_PLUGIN_ID);
     expect(BUNDLED_PLUGIN_IDS).toContain(REPORTS_PLUGIN_ID);
     expect(BUNDLED_PLUGIN_IDS).toContain(LINEAR_IMPORT_PLUGIN_ID);
     expect(BUNDLED_PLUGIN_IDS).toContain(HERMES_PLUGIN_ID);

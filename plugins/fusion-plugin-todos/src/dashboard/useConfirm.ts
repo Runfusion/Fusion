@@ -1,0 +1,1 @@
+export function useConfirm() { return { confirm: async (input: string | { title?: string; message?: string; danger?: boolean }): Promise<boolean> => window.confirm(typeof input === "string" ? input : [input.title, input.message].filter(Boolean).join("\n\n")) }; }

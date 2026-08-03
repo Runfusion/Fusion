@@ -59,6 +59,10 @@ export interface PluginDashboardViewContext {
   columnFlagsByTaskId?: ReadonlyMap<string, Partial<TraitFlags>>;
   renderTaskCard?: (task: Task | TaskDetail) => ReactNode;
   addToast?: (message: string, type?: PluginToastType) => void;
+  /** Open the host planning flow from an enabled plugin view. */
+  openPlanningMode?: (initialPlan: string) => void;
+  /** Feed plugin-created tasks into the host's canonical live task cache. */
+  onTaskCreated?: (task: Task | TaskDetail) => void;
   /**
    * Subscribe to this plugin's custom SSE events (the host forwards
    * `plugin:custom` events a plugin pushed via `ctx.emitEvent`, scoped to the

@@ -15,7 +15,6 @@ export const DASHBOARD_VIEW_IDS = [
   "evals",
   "ideation",
   "goalsView",
-  "todos",
   "planning",
   "skills",
   "mailbox",
@@ -68,11 +67,6 @@ export const DASHBOARD_VIEWS: readonly DashboardViewMetadata[] = [
   */
   { id: "ideation", label: "Ideation", labelKey: "nav.ideation" },
   { id: "goalsView", label: "Goals", labelKey: "header.goalsView" },
-  /*
-  FNXC:ViewState 2026-06-21-09:14:
-  FN-6829 promotes project Todos from modal-only state into the persisted built-in task-view registry so dashboard navigation can dock it in the right content area.
-  */
-  { id: "todos", label: "Todos", labelKey: "header.todosView" },
   /*
   FNXC:Navigation 2026-06-21-00:00:
   FN-6886 promotes Planning Mode into a persisted top-level docked task view instead of treating it as a modal-only overlay.

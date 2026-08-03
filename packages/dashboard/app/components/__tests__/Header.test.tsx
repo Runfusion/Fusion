@@ -272,11 +272,6 @@ describe("Header", () => {
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
     });
 
-    it("shows the Todos entry in view overflow when todos are enabled", () => {
-      renderHeader({ onChangeView: noop, todosEnabled: true });
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
-    });
 
     it("does not render the retired Stash Recovery view overflow item", () => {
       renderHeader({ onChangeView: noop, todosEnabled: true, stashOrphanCount: 4 });
@@ -580,43 +575,6 @@ describe("Header", () => {
     });
   });
 
-  describe("todos navigation", () => {
-    for (const tier of ["desktop", "tablet"] as const) {
-      it(`shows Todos only in More views and Mailbox only top-level on ${tier}`, () => {
-        renderHeader({ onChangeView: noop, todosEnabled: true }, tier);
-
-        expect(screen.queryByTestId("todos-toggle-btn")).toBeNull();
-        expect(screen.getByTitle("Mailbox view")).toBeInTheDocument();
-
-        fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-        expect(screen.getAllByText("Todos")).toHaveLength(1);
-        expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
-        expect(screen.queryByTestId("view-overflow-mailbox")).toBeNull();
-      });
-    }
-
-    it("does not show Todos entry in More views when disabled", () => {
-      renderHeader({ onChangeView: noop, todosEnabled: false }, "desktop");
-      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-      expect(screen.queryByTestId("view-overflow-todos")).toBeNull();
-    });
-
-    it("routes to todos from More views and marks active state", () => {
-      const onChangeView = vi.fn();
-      renderHeader({ onChangeView, view: "todos", todosEnabled: true }, "desktop");
-
-      const trigger = screen.getByTestId("view-toggle-overflow-trigger");
-      expect(trigger.className).toContain("active");
-      fireEvent.click(trigger);
-
-      const todosItem = screen.getByTestId("view-overflow-todos");
-      expect(todosItem.className).toContain("active");
-      fireEvent.click(todosItem);
-
-      expect(onChangeView).toHaveBeenCalledWith("todos");
-      expect(screen.queryByTestId("view-overflow-todos")).toBeNull();
-    });
-  });
 
   describe("pause controls", () => {
     it("does not render the retired header engine control affordance", () => {

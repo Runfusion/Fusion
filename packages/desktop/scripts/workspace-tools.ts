@@ -110,6 +110,7 @@ export const DASHBOARD_RUNTIME_PLUGIN_PACKAGES = [
   "plugins/fusion-plugin-omp-runtime",
   "plugins/fusion-plugin-droid-runtime",
   "plugins/fusion-plugin-roadmap",
+  "plugins/fusion-plugin-todos",
 ] as const;
 
 export async function buildDashboardRuntimePlugins(): Promise<void> {

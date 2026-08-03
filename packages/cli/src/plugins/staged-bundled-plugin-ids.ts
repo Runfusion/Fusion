@@ -19,6 +19,7 @@ export const ALL_STAGED_BUNDLED_IDS = [
   ...RUNTIME_PLUGIN_IDS,
   "fusion-plugin-dependency-graph",
   "fusion-plugin-roadmap",
+  "fusion-plugin-todos",
   "fusion-plugin-compound-engineering",
   "fusion-plugin-whatsapp-chat",
   "fusion-plugin-reports",

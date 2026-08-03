@@ -60,6 +60,8 @@ const whatsappChatPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plu
 const whatsappChatPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-whatsapp-chat");
 const roadmapPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-roadmap");
 const roadmapPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-roadmap");
+const todosPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-todos");
+const todosPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-todos");
 const reportsPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-reports");
 const reportsPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-reports");
 const cliPrintingPressPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-cli-printing-press");
@@ -600,6 +602,12 @@ const cliBuildConfig = {
       pluginId: "fusion-plugin-roadmap",
       srcDir: roadmapPluginSrc,
       destDir: roadmapPluginDest,
+    });
+
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-todos",
+      srcDir: todosPluginSrc,
+      destDir: todosPluginDest,
     });
 
     await bundlePluginEntry({

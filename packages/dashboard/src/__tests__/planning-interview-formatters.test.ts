@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { PlanningQuestion } from "@fusion/core";
+import { parsePlanningPlanMd, type PlanningQuestion, type PlanningSummary } from "@fusion/core";
 import {
   formatInitialPlanRequestForAgent,
   formatInitialRunningPlanRequestForAgent,
   formatInterviewQA,
+  formatPlanningTaskHandoff,
   formatResponseForAgent,
   normalizePlanningSummaryPayload,
 } from "../planning";
@@ -120,5 +121,47 @@ describe("planning interview formatter Other answers", () => {
     expect(prompt).toContain("Selected: Speed, Quality, Keep the review checkpoint (user's own answer)");
     expect(prompt).toMatch(/Preserve free-text Other verbatim as steering/i);
     expect(prompt).toMatch(/every accumulated decision/i);
+  });
+});
+
+describe("planning task handoff formatter", () => {
+  const summary: PlanningSummary = {
+    title: "Ship planning handoff",
+    description: "Preserve the lean plan.",
+    suggestedSize: "M",
+    suggestedDependencies: [],
+    keyDeliverables: ["Persist decisions"],
+  };
+
+  it("includes every ordered answer once without mutating the lean summary", () => {
+    const longOther = "Long operator decision ".repeat(20);
+    const history = [
+      { question: singleSelectQuestion, response: { scope: "mvp", _other: longOther, _comment: "Keep this comment" } },
+      { question: multiSelectQuestion, response: { priorities: ["speed", "quality"] } },
+      { question: confirmQuestion, response: { proceed: true } },
+    ];
+
+    const handoff = formatPlanningTaskHandoff(summary, history);
+    const qa = formatInterviewQA(history);
+
+    expect(handoff).toContain(qa);
+    expect(handoff.match(/## Planning Interview Context/g)).toHaveLength(1);
+    expect(handoff).toContain("MVP");
+    expect(handoff).toContain("Speed, Quality");
+    expect(handoff).toContain("Yes");
+    expect(handoff).toContain(longOther);
+    expect(handoff).toContain("Keep this comment");
+    expect(summary.description).toBe("Preserve the lean plan.");
+    expect(parsePlanningPlanMd(handoff)).toMatchObject({
+      title: summary.title,
+      description: expect.stringContaining(longOther),
+    });
+    expect(formatPlanningTaskHandoff({ ...summary, description: `${summary.description}\n\n${qa}` }, history).match(/## Planning Interview Context/g)).toHaveLength(1);
+  });
+
+  it("keeps empty interview handoffs canonical without an empty context shell", () => {
+    const handoff = formatPlanningTaskHandoff(summary, []);
+    expect(handoff).not.toContain("Planning Interview Context");
+    expect(parsePlanningPlanMd(handoff)).toMatchObject({ description: summary.description });
   });
 });

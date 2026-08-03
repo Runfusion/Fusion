@@ -1166,21 +1166,6 @@ export type {
 } from "./missions/mission-interview.js";
 
 /*
- * FNXC:CodeOrganization 2026-07-18-14:00:
- * Preserve legacy `todo` imports while implementations live in todo.ts.
- */
-export {
-  createTodoItem,
-  createTodoList,
-  deleteTodoItem,
-  deleteTodoList,
-  fetchTodoLists,
-  reorderTodoItems,
-  updateTodoItem,
-  updateTodoList,
-} from "./system/todo.js";
-
-/*
  * FNXC:CodeOrganization 2026-07-19-12:00:
  * Preserve legacy `ai-sessions` imports while implementations live in ai-sessions.ts.
  */

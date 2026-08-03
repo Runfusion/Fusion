@@ -40,7 +40,6 @@ const EXPECTED_DOCUMENTED_VIEWS = new Set([
   "ResearchView",
   "CommandCenter",
   "EvalsView",
-  "TodoView",
   "GoalsView",
   "PullRequestView",
   "SetupWizardModal",
@@ -63,7 +62,6 @@ const EXPECTED_APP_LEVEL_VIEWS = new Set([
   "SecretsView",
   "CommandCenter",
   "DevServerView",
-  "TodoView",
   "GoalsView",
   "PullRequestView",
 ]);
@@ -120,7 +118,7 @@ const EXPECTED_EXCLUDED_LAZY = [
      * FNXC:DashboardLazyViews 2026-06-27-00:00:
      * The right-dock chat tab re-imports ChatView through the overflow registry, but ChatView remains counted once as the App-level Chat chunk in the curated AGENTS inventory.
      */
-    symbols: ["DevServerView", "SecretsView", "TodoView", "PullRequestView", "ChatView"],
+    symbols: ["DevServerView", "SecretsView", "PullRequestView", "ChatView"],
     reason: "right-dock overflow re-imports of App-level chunks already counted once",
     countedBy: "../App.tsx",
   },
@@ -188,14 +186,13 @@ describe("AGENTS lazy-loaded views inventory", () => {
     const section = extractLazyLoadedSection(agentsDoc);
     const countMatch = section.match(/These\s+(\d+)\s+views\s+are lazy-loaded/);
     expect(countMatch).toBeTruthy();
-    expect(Number(countMatch?.[1])).toBe(20);
+    expect(Number(countMatch?.[1])).toBe(19);
 
     const documentedViews = extractBacktickedNamesFromBullets(section);
     expect(new Set(documentedViews)).toEqual(EXPECTED_DOCUMENTED_VIEWS);
-    expect(documentedViews).toHaveLength(20);
+    expect(documentedViews).toHaveLength(19);
 
     expect(section).toContain("`ResearchView`");
-    expect(section).toContain("`TodoView`");
     expect(section).toContain("`SettingsModal`");
     expect(section).toContain("`WorkflowNodeEditor`");
     expect(section).toContain("`_ImportTasksView`");

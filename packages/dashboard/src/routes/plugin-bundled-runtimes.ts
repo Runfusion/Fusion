@@ -41,6 +41,7 @@ const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-reports",
   "fusion-plugin-whatsapp-chat",
   "fusion-plugin-roadmap",
+  "fusion-plugin-todos",
   "fusion-plugin-hermes-runtime",
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",

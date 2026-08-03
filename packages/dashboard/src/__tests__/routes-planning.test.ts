@@ -2619,6 +2619,11 @@ describe("Planning Mode Routes", () => {
           responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
         }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", `/api/planning/${sessionId}/validate`, undefined, { "Content-Type": "application/json" });
+        const completedSession = await planningModule.getSession(sessionId);
+        completedSession!.history = [{
+          question: { id: "handoff", type: "text", question: "What must remain durable?" },
+          response: "Must have login",
+        }];
 
         // Create task from planning
         const res = await REQUEST(
@@ -2631,6 +2636,10 @@ describe("Planning Mode Routes", () => {
 
         expect(res.status).toBe(201);
         expect(store.createTask).toHaveBeenCalled();
+        const [createInput] = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0]!;
+        expect(createInput.description).toContain("## Planning Interview Context");
+        expect(createInput.description).toContain("Must have login");
+        expect(createInput.description.match(/## Planning Interview Context/g)).toHaveLength(1);
       });
 
       it("terminalizes a not-yet-validated session when Proceed with plan creates its task", async () => {
@@ -3266,6 +3275,16 @@ describe("Planning Mode Routes", () => {
         (store.logEntry as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
         const planningSessionId = await createCompletedPlanningSession();
+        const planningSession = await planningModule.getSession(planningSessionId);
+        planningSession!.history = [{
+          question: {
+            id: "retention",
+            type: "single_select",
+            question: "Which retention policy?",
+            options: [{ id: "full", label: "Keep full interview context" }],
+          },
+          response: { retention: "full", _other: "Preserve every custom answer", _comment: "No truncation" },
+        }];
         const breakdownRes = await REQUEST(
           buildApp(),
           "POST",
@@ -3309,9 +3328,16 @@ describe("Planning Mode Routes", () => {
 
         expect(res.status).toBe(201);
         expect(res.body.tasks).toHaveLength(2);
+        for (const [input] of (store.createTask as ReturnType<typeof vi.fn>).mock.calls) {
+          expect(input.description).toContain("## Planning Interview Context");
+          expect(input.description).toContain("Keep full interview context");
+          expect(input.description).toContain("Preserve every custom answer");
+          expect(input.description).toContain("No truncation");
+          expect(input.description.match(/## Planning Interview Context/g)).toHaveLength(1);
+        }
       });
 
-      it("keeps the completed planning session in history after multi-task creation", async () => {
+      it("keeps the completed planning session in history after multi-task creation",  async () => {
         // Bug C: /planning/create-tasks used cleanupSession() which deleted the
         // persisted ai_sessions row, so a session that ran to completion AND
         // created tasks vanished from the saved-sessions history. It must instead

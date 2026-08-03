@@ -106,6 +106,18 @@ export function resetPlanningAutoRetryAttemptsForTests(): void {
 
 const MAX_PLANNING_CREATE_CLAIM_RETRIES = 20;
 
+const DUPLICATE_RESPONSE_GENERATION_MESSAGE = "Generation already in progress for this response";
+
+/**
+ * FNXC:PlanningTurnReconciliation 2026-08-03-07:27:
+ * The duplicate-response turn conflict means another request already owns this exact answer,
+ * not that the operator's plan failed. Rehydrate its durable question or generation progress
+ * silently; all other submission failures remain actionable in the shared error banner.
+ */
+function isDuplicateResponseGenerationConflict(error: unknown): boolean {
+  return getErrorMessage(error) === DUPLICATE_RESPONSE_GENERATION_MESSAGE;
+}
+
 function isPlanningCreateClaimConflict(error: unknown): boolean {
   return typeof error === "object"
     && error !== null
@@ -768,6 +780,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     && (selectedSessionId !== null || planningSessions.length > 0);
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<"question" | "plan">("question");
+  /*
+  FNXC:PlanningMode 2026-08-03-09:21:
+  Mobile interviews earn a reversible Plan preview shortcut only after five actual completed
+  question-and-response pairs. Reasoning-only, malformed, and blank response records never
+  advance the threshold; Review plan only selects the already-mounted plan tab, so it neither
+  submits nor clears the operator's current answer and Questions can restore that same form.
+  */
+  const answeredQuestionCount = useMemo(() => conversationHistory.filter((entry) => (
+    typeof entry.question?.id === "string"
+    && entry.question.id.trim().length > 0
+    && entry.response !== null
+    && typeof entry.response === "object"
+    && !Array.isArray(entry.response)
+    && Object.keys(entry.response).length > 0
+  )).length, [conversationHistory]);
   /*
   FNXC:PlanningMode 2026-07-20-21:50:
   Refine accepts one freeform instruction instead of generated category choices. The instruction
@@ -2845,6 +2872,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         }
       } catch (err) {
         const errorMessage = getErrorMessage(err) || t("planning.failedSubmitResponse", "Failed to submit response");
+        const isDuplicateResponseConflict = isDuplicateResponseGenerationConflict(err);
         /*
         FNXC:PlanningTurnReconciliation 2026-07-20-10:36:
         A rejected HTTP response is ambiguous: the server may have accepted the answer before
@@ -2876,7 +2904,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               .map((entry) => entry.response)
               .filter((response): response is QuestionResponse => Boolean(response && typeof response === "object" && !Array.isArray(response))));
             setRunningSummary(summary);
-            setError(errorMessage);
+            setError(isDuplicateResponseConflict ? null : errorMessage);
             setWorkspaceQuestion(currentQuestion);
             setView({ type: "question", session: { sessionId, currentQuestion, summary } });
             return;
@@ -2890,7 +2918,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             runningSummaryRef.current = summary;
             setConversationHistory(history);
             setRunningSummary(summary);
-            setError(errorMessage);
+            setError(isDuplicateResponseConflict ? null : errorMessage);
             setView({ type: "loading" });
             return;
           }
@@ -4097,6 +4125,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                       ? conversationHistory.find((entry) => entry.question?.id === editingQuestionId)?.response
                       : undefined}
                     onSubmit={handleSubmitResponse}
+                    showMobilePlanReview={isMobile && answeredQuestionCount >= 5}
+                    onReviewPlan={() => setMobileWorkspaceTab("plan")}
                   />
                 </section>
               )}
@@ -4313,12 +4343,16 @@ interface QuestionFormProps {
   question: PlanningQuestion;
   initialResponse?: QuestionResponse;
   onSubmit: (responses: QuestionResponse) => void;
+  /** Enables the parent-owned mobile Plan preview transition after five completed answers. */
+  showMobilePlanReview?: boolean;
+  /** Changes only the parent-owned workspace tab; it must not submit this form. */
+  onReviewPlan?: () => void;
   projectId?: string;
 }
 
 // FNXC:VoiceInput 2026-07-25-19:20: Export the real interview surface for dictation
 // contract tests instead of substituting a fixture that could drift from this textarea.
-export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit, projectId }: QuestionFormProps) {
+export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit, showMobilePlanReview = false, onReviewPlan, projectId }: QuestionFormProps) {
   const { t } = useTranslation("app");
   const question = normalizeQuestionOptions(rawQuestion);
   const questionOptions = question.options ?? [];
@@ -4667,9 +4701,16 @@ export function QuestionForm({ question: rawQuestion, initialResponse, onSubmit,
           onClick={handleSubmit}
           disabled={!isValid()}
         >
-          {t("planning.nextQuestion", "Next")}
+          {showMobilePlanReview
+            ? t("planning.nextQuestionAction", "Next question")
+            : t("planning.nextQuestion", "Next")}
           <ArrowRight size={16} className="icon-ml-4" />
         </button>
+        {showMobilePlanReview && (
+          <button className="btn" type="button" onClick={onReviewPlan}>
+            {t("planning.reviewPlan", "Review plan")}
+          </button>
+        )}
       </div>
     </div>
   );

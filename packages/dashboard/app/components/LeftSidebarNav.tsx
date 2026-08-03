@@ -107,7 +107,6 @@ export interface LeftSidebarNavProps {
   onChangeView: (view: TaskView) => void;
   onNewTask?: () => void;
   onOpenSettings?: () => void;
-  todosEnabled?: boolean;
   mailboxUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;

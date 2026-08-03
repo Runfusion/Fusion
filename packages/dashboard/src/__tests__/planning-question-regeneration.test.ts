@@ -266,8 +266,43 @@ describe("planning question regeneration instead of no-active-question errors", 
       createTask,
     } as unknown as TaskStore;
 
+    const session = await getSession(sessionId);
+    const longOther = "Lossless custom decision ".repeat(20);
+    session!.history = [
+      {
+        question: {
+          id: "direction",
+          type: "single_select",
+          question: "Which direction?",
+          options: [{ id: "safe", label: "Safe rollout" }],
+        },
+        response: { direction: "safe", _other: longOther, _comment: "Keep the audit trail" },
+      },
+      {
+        question: {
+          id: "priorities",
+          type: "multi_select",
+          question: "Which priorities?",
+          options: [{ id: "quality", label: "Quality" }, { id: "speed", label: "Speed" }],
+        },
+        response: { priorities: ["quality", "speed"] },
+      },
+      {
+        question: { id: "confirm", type: "confirm", question: "Proceed?" },
+        response: { confirm: true },
+      },
+    ];
+
     const first = await createTaskFromPlanSession(sessionId, taskStore);
     expect(first.alreadyCreated).toBe(false);
+    const firstDescription = createTask.mock.calls[0]![0].description;
+    expect(firstDescription).toContain("## Planning Interview Context");
+    expect(firstDescription).toContain("Safe rollout");
+    expect(firstDescription).toContain("Quality, Speed");
+    expect(firstDescription).toContain("Yes");
+    expect(firstDescription).toContain(longOther);
+    expect(firstDescription).toContain("Keep the audit trail");
+    expect(firstDescription.match(/## Planning Interview Context/g)).toHaveLength(1);
     expect(createTask).toHaveBeenCalledTimes(1);
     expect(createTask.mock.calls[0][0].proposalClaimId).toBe(`planning-session:${sessionId}`);
     expect((await getSession(sessionId))?.validated).toBe(true);

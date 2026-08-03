@@ -425,13 +425,6 @@ vi.mock("../../components/EvalsView", () => ({
   EvalsView: () => <div data-testid="evals-view">Evals</div>,
 }));
 
-vi.mock("../../components/TodoView", () => ({
-  TodoView: ({ onPlanningMode }: { onPlanningMode?: (initialPlan: string) => void }) => (
-    <div className="todo-view" data-testid="todo-view">
-      <button type="button" data-testid="todo-planning-button" onClick={() => onPlanningMode?.("Seed from todo")}>Plan from todo</button>
-    </div>
-  ),
-}));
 
 vi.mock("../../components/GoalsView", () => ({
   GoalsView: () => <div data-testid="goals-view">Goals View</div>,

@@ -8,7 +8,11 @@
       "author": "Fusion",
       "category": "runtime",
       "path": "./plugins/fusion-plugin-hermes-runtime",
-      "tags": ["runtime", "cli", "hermes"]
+      "tags": [
+        "runtime",
+        "cli",
+        "hermes"
+      ]
     },
     {
       "id": "fusion-plugin-paperclip-runtime",
@@ -18,7 +22,10 @@
       "author": "Fusion",
       "category": "runtime",
       "path": "./plugins/fusion-plugin-paperclip-runtime",
-      "tags": ["runtime", "agent"]
+      "tags": [
+        "runtime",
+        "agent"
+      ]
     },
     {
       "id": "fusion-plugin-openclaw-runtime",
@@ -28,7 +35,10 @@
       "author": "Fusion",
       "category": "runtime",
       "path": "./plugins/fusion-plugin-openclaw-runtime",
-      "tags": ["runtime", "openclaw"]
+      "tags": [
+        "runtime",
+        "openclaw"
+      ]
     },
     {
       "id": "fusion-plugin-droid-runtime",
@@ -38,7 +48,11 @@
       "author": "Fusion",
       "category": "runtime",
       "path": "./plugins/fusion-plugin-droid-runtime",
-      "tags": ["runtime", "cli", "droid"]
+      "tags": [
+        "runtime",
+        "cli",
+        "droid"
+      ]
     },
     {
       "id": "fusion-plugin-dependency-graph",
@@ -48,7 +62,11 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-dependency-graph",
-      "tags": ["dashboard", "visualization", "dependencies"]
+      "tags": [
+        "dashboard",
+        "visualization",
+        "dependencies"
+      ]
     },
     {
       "id": "fusion-plugin-reports",
@@ -58,7 +76,11 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-reports",
-      "tags": ["dashboard", "reports", "exports"]
+      "tags": [
+        "dashboard",
+        "reports",
+        "exports"
+      ]
     },
     {
       "id": "fusion-plugin-whatsapp-chat",
@@ -68,7 +90,11 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-whatsapp-chat",
-      "tags": ["chat", "whatsapp", "bridge"]
+      "tags": [
+        "chat",
+        "whatsapp",
+        "bridge"
+      ]
     },
     {
       "id": "fusion-plugin-cli-printing-press",
@@ -78,7 +104,11 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-cli-printing-press",
-      "tags": ["cli", "wizard", "definitions"]
+      "tags": [
+        "cli",
+        "wizard",
+        "definitions"
+      ]
     },
     {
       "id": "fusion-plugin-compound-engineering",
@@ -88,7 +118,10 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-compound-engineering",
-      "tags": ["dashboard", "compound-engineering"]
+      "tags": [
+        "dashboard",
+        "compound-engineering"
+      ]
     },
     {
       "id": "fusion-plugin-roadmap",
@@ -98,7 +131,10 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-roadmap",
-      "tags": ["planning", "roadmap"]
+      "tags": [
+        "planning",
+        "roadmap"
+      ]
     },
     {
       "id": "fusion-plugin-linear-import",
@@ -108,7 +144,12 @@
       "author": "Fusion",
       "category": "integration",
       "path": "./plugins/fusion-plugin-linear-import",
-      "tags": ["linear", "import", "issues", "dashboard"]
+      "tags": [
+        "linear",
+        "import",
+        "issues",
+        "dashboard"
+      ]
     },
     {
       "id": "fusion-plugin-agent-browser",
@@ -117,7 +158,11 @@
       "version": "0.1.0",
       "author": "Fusion",
       "category": "integration",
-      "tags": ["browser", "agents", "setup"]
+      "tags": [
+        "browser",
+        "agents",
+        "setup"
+      ]
     },
     {
       "id": "fusion-plugin-slack-bridge",
@@ -127,7 +172,11 @@
       "author": "Fusion Labs",
       "category": "integration",
       "homepage": "https://runfusion.ai/plugins/slack-bridge",
-      "tags": ["chat", "slack", "bridge"]
+      "tags": [
+        "chat",
+        "slack",
+        "bridge"
+      ]
     },
     {
       "id": "fusion-plugin-github-insights",
@@ -137,7 +186,11 @@
       "author": "Fusion Labs",
       "category": "integration",
       "homepage": "https://runfusion.ai/plugins/github-insights",
-      "tags": ["github", "insights", "reports"]
+      "tags": [
+        "github",
+        "insights",
+        "reports"
+      ]
     },
     {
       "id": "fusion-plugin-local-llm-runtime",
@@ -147,7 +200,25 @@
       "author": "Fusion Labs",
       "category": "runtime",
       "homepage": "https://runfusion.ai/plugins/local-llm-runtime",
-      "tags": ["runtime", "local", "llm"]
+      "tags": [
+        "runtime",
+        "local",
+        "llm"
+      ]
+    },
+    {
+      "id": "fusion-plugin-todos",
+      "name": "Todo Lists",
+      "description": "Project-scoped todo lists that hand items into Fusion planning.",
+      "version": "0.1.0",
+      "author": "Fusion",
+      "category": "integration",
+      "path": "./plugins/fusion-plugin-todos",
+      "tags": [
+        "todos",
+        "planning",
+        "dashboard"
+      ]
     }
   ]
 }

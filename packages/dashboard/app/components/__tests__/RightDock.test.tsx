@@ -51,7 +51,7 @@ function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin"> & P
 
 /*
 FNXC:Navigation 2026-06-22-16:00:
-The right dock is now an all-inline tools rail sourced from STATIC_OVERFLOW_VIEW_ENTRIES in overflowViewRegistry. The roster, in registry order, is tasks, files, chat, activity-log, git-manager, devserver (gated on devServerView), secrets, todos (gated on todosEnabled), pull-requests. The earlier usage/github-import/automation launcher actions were removed, so every visible tab is an inline view that switches the dock body and can expand into the modal.
+The right dock is an all-inline tools rail sourced from STATIC_OVERFLOW_VIEW_ENTRIES. Todos is plugin-provided, so it appears only in the project-enabled plugin view list rather than as a static entry.
 */
 const toolTabIds = [
   "right-dock-tab-tasks",
@@ -61,7 +61,6 @@ const toolTabIds = [
   "right-dock-tab-git-manager",
   "right-dock-tab-devserver",
   "right-dock-tab-secrets",
-  "right-dock-tab-todos",
   "right-dock-tab-pull-requests",
 ];
 
@@ -631,16 +630,19 @@ describe("RightDock", () => {
             goalsView: true,
           },
           showSkillsTab: true,
-          todosEnabled: true,
+          pluginDashboardViews: [{ pluginId: "fusion-plugin-todos", view: { viewId: "todos", label: "Todos", placement: "overflow", order: 70 } }],
         }}
       />,
     );
 
     /*
     FNXC:Navigation 2026-06-22-16:00:
-    With devServerView and todosEnabled both on, the full nine-entry roster renders in registry order. Tasks, Files, Chat, Activity Log, Git Manager, Dev Server, Secrets, Todos, and Pull Requests are all inline views.
+    With Dev Server enabled and Todo supplied by the enabled plugin list, the nine-entry roster renders in registry order.
     */
-    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual(toolTabIds);
+    expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
+      ...toolTabIds,
+      "right-dock-tab-plugin-fusion-plugin-todos-todos",
+    ]);
     expect(screen.getByTestId("right-dock-tab-tasks")).toHaveAttribute("aria-label", "Tasks");
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-label", "Files");
     expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-label", "Chat");
@@ -648,17 +650,17 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-label", "Git Manager");
     expect(screen.getByTestId("right-dock-tab-devserver")).toHaveAttribute("aria-label", "Dev Server");
     expect(screen.getByTestId("right-dock-tab-secrets")).toHaveAttribute("aria-label", "Secrets");
-    expect(screen.getByTestId("right-dock-tab-todos")).toHaveAttribute("aria-label", "Todos");
+    expect(screen.getByTestId("right-dock-tab-plugin-fusion-plugin-todos-todos")).toHaveAttribute("aria-label", "Todos");
     expect(screen.getByTestId("right-dock-tab-pull-requests")).toHaveAttribute("aria-label", "Pull Requests");
     for (const removedId of removedViewTabIds) {
       expect(screen.queryByTestId(removedId)).toBeNull();
     }
   });
 
-  it("gates devserver and todos tabs behind their visibility flags", () => {
+  it("gates devserver behind its visibility flag and omits disabled Todo plugins", () => {
     /*
     FNXC:Navigation 2026-06-22-16:00:
-    devserver is gated on experimentalFeatures.devServerView and todos on todosEnabled. With both unset (default renderProps), the dock renders only the seven always-on inline tools.
+    Dev Server is feature-gated, while Todo is absent unless the project-enabled plugin list supplies it. With neither, the dock renders seven static inline tools.
     */
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([

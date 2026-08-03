@@ -184,6 +184,17 @@ describe("useViewState", () => {
     }
   });
 
+  it("falls back to board for persisted Todo state even when its static bundle is registered", async () => {
+    vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(true);
+    localStorage.setItem("kb-dashboard-task-view", "todos");
+
+    const { result } = renderHook(() => useViewState(createOptions()));
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("board");
+    });
+  });
+
   it("migrates legacy roadmaps state to plugin view when registered", async () => {
     vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(true);
     localStorage.setItem("kb-dashboard-task-view", "roadmaps");

@@ -2004,3 +2004,7 @@ mcpServers: [{
 ```
 
 `enabledByDefault` defaults to `true`. Plugin declarations cannot set `enabled`: project settings own enablement. Effective precedence is global settings, enabled plugin declarations, then project settings by name. A project definition overrides a plugin declaration and a same-named project `enabled:false` entry tombstones it. Use Fusion secret references for sensitive `env` or `headers`; never ship plaintext credentials. Missing commands retain normal per-server MCP spawn-failure isolation.
+
+## Todo Lists: second first-party extraction
+
+`plugins/fusion-plugin-todos` is the second first-party extraction after Roadmaps. It demonstrates an atomic vertical boundary: the plugin owns its `/api/plugins/fusion-plugin-todos/todos/*` route definitions and dashboard view, while the host owns only generic plugin loading, project enablement, and a narrow dashboard callback context for opening planning and ingesting created tasks. Do not retain a host route or feature flag when extracting a surface: enabled plugin state must be the sole authority for both API registration and navigation visibility.

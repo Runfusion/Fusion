@@ -115,6 +115,18 @@ async function loadQualityView(): Promise<{ default: PluginViewComponent }> {
   return { default: component as PluginViewComponent };
 }
 
+/*
+FNXC:TodoPluginOwnership 2026-08-03-15:16:
+The host uses a literal import for the manifest-declared Todo view so Vite can split the plugin-owned UI while project plugin state remains the visibility authority.
+*/
+async function loadTodoView(): Promise<{ default: PluginViewComponent }> {
+  const moduleId = "@fusion-plugin-examples/todos/dashboard-view";
+  const exportName = "TodoDashboardView";
+  const mod = await import("@fusion-plugin-examples/todos/dashboard-view") as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
+  const component = mod[exportName];
+  return { default: component ? component as PluginViewComponent : createMissingPluginView(moduleId, exportName) };
+}
+
 export function registerBundledPluginViews(): void {
   if (registered) return;
   registered = true;
@@ -159,6 +171,12 @@ export function registerBundledPluginViews(): void {
     "fusion-plugin-roadmap",
     "roadmaps",
     lazy(loadRoadmapView),
+  );
+
+  registerPluginView(
+    "fusion-plugin-todos",
+    "todos",
+    lazy(loadTodoView),
   );
 }
 

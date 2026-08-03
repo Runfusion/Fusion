@@ -1,6 +1,5 @@
 import {
   DEFAULT_TASK_PRIORITY,
-  formatPlanningPlanMd,
   resolveEffectiveSettingsDetailedById,
   resolvePlanningSettingsModel,
   TASK_PRIORITIES,
@@ -1203,6 +1202,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         releasePlanningTaskCreation,
         validateSession,
         planningProposalClaimId,
+        formatPlanningTaskHandoff,
       } = await import("../planning.js");
 
       let session = await getSession(sessionId);
@@ -1433,7 +1433,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       FN-8441 hands the current lean plan to triage as task description plus a plan
       document. The raw session request remains a separate original-description document.
       */
-      const planMd = formatPlanningPlanMd(summary);
+      const planMd = formatPlanningTaskHandoff(summary, session?.history ?? []);
       // Persisted legacy sessions can lack initialPlan; retain the pre-format plan body,
       // never the session title, as the only fail-soft operator-request substitute.
       const originalRequest = typeof initialPlan === "string" && initialPlan.trim()
@@ -1598,7 +1598,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       const { store: scopedStore } = await getProjectContext(req);
-      const { getSession, releaseSession, formatInterviewQA, mergePlanningSubtaskDrafts } = await import("../planning.js");
+      const { getSession, releaseSession, formatInterviewQA, formatPlanningTaskHandoff, mergePlanningSubtaskDrafts } = await import("../planning.js");
 
       const session = await getSession(planningSessionId);
       if (!session) {
@@ -1695,13 +1695,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       for (const item of mergedSubtasks) {
         const itemDescription = typeof item.description === "string" ? item.description.trim() : item.title.trim();
-        const planMd = formatPlanningPlanMd({
+        const planMd = formatPlanningTaskHandoff({
           title: item.title.trim(),
           description: itemDescription,
           suggestedSize: item.suggestedSize ?? session.summary.suggestedSize,
           suggestedDependencies: item.dependsOn ?? [],
           keyDeliverables: [itemDescription],
-        });
+        }, session.history);
         const { workingBranch: taskBranch } = resolveEntryPointBranchAssignment({
           assignmentMode: branchMode,
           resolvedBranch,

@@ -1,0 +1,6 @@
+{
+  "id": "fusion-plugin-todos",
+  "name": "Todo Lists",
+  "version": "0.1.0",
+  "description": "Project-scoped todo lists that hand items into Fusion planning."
+}

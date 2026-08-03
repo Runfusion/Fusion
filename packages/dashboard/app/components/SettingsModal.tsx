@@ -496,7 +496,6 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   skillsView: "Skills View",
   nodesView: "Nodes View",
   devServerView: "Dev Server",
-  todoView: "Todo List",
   researchView: "Research View",
   evalsView: "Evals View",
   /*
@@ -544,7 +543,6 @@ const HIDDEN_EXPERIMENTAL_FEATURE_KEYS = new Set<string>([
   "roadmap",
   "rightDock",
   "skillsView",
-  "todoView",
   "workflowColumns",
   "workflowGraphExecutor",
   "workflowInterpreterDualObserve",

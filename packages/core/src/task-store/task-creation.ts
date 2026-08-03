@@ -24,8 +24,8 @@ import {getErrorMessage} from "../process/error-message.js";
 import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate, type SameAgentDuplicateCandidate} from "../duplicates/duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh/mesh-task-replication.js";
-import {resolveWorkflowIrById} from "../workflows/workflow-ir-resolver.js";
-import {resolveTaskLifecycleColumns} from "../workflows/workflow-lifecycle-traits.js";
+import {resolveWorkflowIrById, resolveWorkflowIrForTask} from "../workflows/workflow-ir-resolver.js";
+import {resolveTaskLifecycleColumns, toTaskMoveLanes} from "../workflows/workflow-lifecycle-traits.js";
 import type {WorkflowIr} from "../workflows/workflow-ir-types.js";
 import {DEFAULT_WORKFLOW_ID} from "../workflows/builtin-workflows.js";
 import {columnsWithFlag} from "../workflows/workflow-lifecycle-traits.js";
@@ -320,6 +320,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     });
 
     let task: Task;
+    let insertedTask = false;
     try {
       await store.assertNoDependencyCycle(reservation.taskId, input.dependencies ?? [], "createTask");
       task = await store._createTaskInternalBackend(
@@ -327,7 +328,13 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         title,
         resolvedWorkflowSteps,
         reservation.taskId,
-        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization, resolvedEntryColumn, onProposalClaimConflict: options?.onProposalClaimConflict },
+        {
+          deferTaskCreatedEvent: true,
+          invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization,
+          onProposalClaimConflict: options?.onProposalClaimConflict,
+          onTaskInserted: () => { insertedTask = true; },
+          resolvedEntryColumn,
+        },
       );
       await allocator.commitDistributedTaskIdReservation({
         reservationId: reservation.reservationId,
@@ -351,6 +358,26 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
           taskId: task.id,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+    }
+
+    /*
+    FNXC:PlanningModeScheduling 2026-08-03-09:44:
+    A task:created listener runs synchronously and is the authoritative wake for triage admission.
+    Planning Mode creates through a project-scoped TaskStore, so emitting before the selected
+    workflow row exists leaves a custom intake lane indistinguishable from an unknown legacy lane.
+    Persist selection first, then publish the resolved lanes through the shared store event; the
+    listener only requests its normal poll, preserving pause, dependency, and capacity gates.
+
+    Proposal-claim replays return an existing row from the internal create path. They deliberately
+    do not re-emit task:created, so idempotent Planning Mode retries cannot schedule duplicate work.
+    */
+    if (insertedTask) {
+      const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, task.id).catch(() => undefined));
+      store.laneCache.set(task.id, lanes);
+      store.emitTaskLifecycleEventSafely("task:created", [task, { lanes }]);
+      if (shouldInvokeTaskCreatedHook && !hasPendingSummarization) {
+        await store.invokeTaskCreatedHook(task);
       }
     }
 
@@ -411,7 +438,7 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
     return task;
   }
 
-export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; },): Promise<Task> {
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; resolvedEntryColumn?: string; onProposalClaimConflict?: (task: Task) => void; deferTaskCreatedEvent?: boolean; onTaskInserted?: (task: Task) => void; },): Promise<Task> {
     const layer = store.asyncLayer!;
     const now = options?.createdAt ?? new Date().toISOString();
     const normalizedTitle = normalizeTitleForTaskId(title, id);
@@ -707,10 +734,13 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
       await store._maybeAutoArchiveSameAgentDuplicateBackend(task, input);
     }
 
-    store.emitTaskLifecycleEventSafely("task:created", [task]);
-    if (options?.invokeTaskCreatedHook !== false) {
-      await store.invokeTaskCreatedHook(task);
+    if (!options?.deferTaskCreatedEvent) {
+      store.emitTaskLifecycleEventSafely("task:created", [task]);
+      if (options?.invokeTaskCreatedHook !== false) {
+        await store.invokeTaskCreatedHook(task);
+      }
     }
+    options?.onTaskInserted?.(task);
     return task;
   }
 

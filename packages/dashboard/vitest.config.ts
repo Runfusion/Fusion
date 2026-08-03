@@ -657,6 +657,14 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-omp-runtime/src/index.ts",
       ),
+      "@fusion-plugin-examples/todos/dashboard-view": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-todos/src/dashboard-view.tsx",
+      ),
+      "@fusion-plugin-examples/todos": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-todos/src/index.ts",
+      ),
       "@fusion-plugin-examples/roadmap/roadmap-suggestions": resolve(
         __dirname,
         "../../plugins/fusion-plugin-roadmap/src/roadmap-suggestions.ts",

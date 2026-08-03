@@ -33,7 +33,6 @@ export const MOBILE_NAV_SELECTABLE_ITEMS = [
   */
   "ideation",
   "goals",
-  "todos",
   "dev-server",
 ] as const;
 
@@ -66,7 +65,6 @@ export const MOBILE_NAV_SELECTABLE_ITEM_LABEL_KEYS: Record<MobileNavSelectableIt
   evals: "nav.evals",
   ideation: "nav.ideation",
   goals: "nav.goals",
-  todos: "nav.todos",
   "dev-server": "nav.devServer",
 };
 

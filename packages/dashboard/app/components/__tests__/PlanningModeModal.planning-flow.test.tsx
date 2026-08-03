@@ -38,6 +38,13 @@ const summaryWithRefinements = {
   suggestedRefinements: ["Security boundaries", "Rollout strategy", "Failure recovery", "Accessibility", "Observability"],
 };
 
+function answeredHistory(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    question: { id: `answered-${index}`, type: "text", question: `Answered question ${index + 1}` },
+    response: { [`answered-${index}`]: `Answer ${index + 1}` },
+  }));
+}
+
 describe("PlanningModeModal sequential flow", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -843,6 +850,194 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.getByRole("region", { name: "Question and answer history" })).toBeInTheDocument();
     expect(screen.getByText("No history yet")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close history" }));
+  });
+
+  it.each([
+    { answerCount: 0, label: "no answered questions" },
+    { answerCount: 4, label: "four answered questions" },
+  ])("keeps the single Next action on mobile with $label", async ({ answerCount }) => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-threshold", type: "text", question: "What should mobile prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: JSON.stringify(answeredHistory(answerCount)),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Next question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Review plan" })).toBeNull();
+  });
+
+  it.each([5, 6])("shows both mobile actions after %i completed answers", async (answerCount) => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-threshold", type: "text", question: "What should mobile prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: JSON.stringify(answeredHistory(answerCount)),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    expect(await screen.findByRole("button", { name: "Next question" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review plan" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+  });
+
+  it("counts only populated question-and-response entries for the mobile review shortcut", async () => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-history-shape", type: "text", question: "What should mobile prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: JSON.stringify([
+        ...answeredHistory(4),
+        { thinkingOutput: "Reasoning does not answer a question" },
+        { question: { id: "malformed", type: "text", question: "Malformed" }, response: {} },
+        { question: { type: "text", question: "Missing id" }, response: { answer: "Ignored" } },
+      ]),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Review plan" })).toBeNull();
+  });
+
+  it("keeps desktop on its single Next action after five answered questions", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-desktop", type: "text", question: "What should desktop prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: JSON.stringify(answeredHistory(5)),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    expect(await screen.findByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Next question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Review plan" })).toBeNull();
+  });
+
+  it("opens Plan preview without submitting and preserves the current mobile answer on return", async () => {
+    mockViewportMode.mockReturnValue("mobile");
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify({ id: "q-review", type: "text", question: "What should mobile prioritize?" }),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: JSON.stringify(answeredHistory(5)),
+      inputPayload: "{}",
+    });
+
+    renderSession();
+
+    const answer = await screen.findByPlaceholderText("Type your answer here...");
+    fireEvent.change(answer, { target: { value: "Keep this unsent answer" } });
+    expect(screen.getByRole("button", { name: "Next question" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Review plan" }));
+    expect(screen.getByRole("tab", { name: "Plan preview", hidden: true })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("planning-workspace")).toHaveClass("planning-workspace--mobile-tab-plan");
+    expect(mockRespondToPlanning).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Questions", hidden: true }));
+    expect(screen.getByTestId("planning-workspace")).toHaveClass("planning-workspace--mobile-tab-question");
+    expect(screen.getByPlaceholderText("Type your answer here...")).toHaveValue("Keep this unsent answer");
+    expect(mockRespondToPlanning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { viewport: "desktop", status: "awaiting_input", label: "a durable next question" },
+    { viewport: "mobile", status: "awaiting_input", label: "a durable next question" },
+    { viewport: "desktop", status: "generating", label: "generation progress" },
+    { viewport: "mobile", status: "generating", label: "generation progress" },
+  ] as const)("silently reconciles duplicate-response generation conflicts on $viewport with $label", async ({ viewport, status }) => {
+    mockViewportMode.mockReturnValue(viewport);
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which outcome matters most?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    const durableQuestion = {
+      id: "q-durable",
+      type: "text",
+      question: "What should the durable session ask next?",
+    };
+    let requestWasRejected = false;
+    mockFetchAiSession.mockImplementation(async () => ({
+      ...base,
+      status: requestWasRejected ? status : "awaiting_input",
+      currentQuestion: requestWasRejected && status === "generating"
+        ? null
+        : JSON.stringify(requestWasRejected ? durableQuestion : submittedQuestion),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: "[]",
+      inputPayload: JSON.stringify({ generationPurpose: "plan_update" }),
+    }));
+    mockRespondToPlanning.mockImplementation(async () => {
+      requestWasRejected = true;
+      throw new Error("Generation already in progress for this response");
+    });
+
+    renderSession();
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    if (status === "awaiting_input") {
+      expect(await screen.findByText("What should the durable session ask next?")).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText("Generating plan…")).toBeInTheDocument();
+    }
+    expect(screen.queryByText("Generation already in progress for this response")).toBeNull();
+    expect(document.querySelector(".planning-error")).toBeNull();
+  });
+
+  it("retains an actionable response error after durable question reconciliation", async () => {
+    const submittedQuestion = {
+      id: "q-submitted",
+      type: "single_select",
+      question: "Which outcome matters most?",
+      options: [{ id: "secure", label: "Secure defaults" }],
+    };
+    const durableQuestion = {
+      id: "q-durable",
+      type: "text",
+      question: "What should the durable session ask next?",
+    };
+    let requestWasRejected = false;
+    mockFetchAiSession.mockImplementation(async () => ({
+      ...base,
+      status: "awaiting_input",
+      currentQuestion: JSON.stringify(requestWasRejected ? durableQuestion : submittedQuestion),
+      result: JSON.stringify(summaryWithRefinements),
+      conversationHistory: "[]",
+      inputPayload: "{}",
+    }));
+    mockRespondToPlanning.mockImplementation(async () => {
+      requestWasRejected = true;
+      throw new Error("Response submission timed out");
+    });
+
+    renderSession();
+    fireEvent.click(await screen.findByLabelText("Secure defaults"));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByText("What should the durable session ask next?")).toBeInTheDocument();
+    expect(screen.getByText("Response submission timed out")).toBeInTheDocument();
+    expect(document.querySelector(".planning-error")).toBeInTheDocument();
   });
 
   it("keeps both panes visible under a generating-plan overlay after Next", async () => {

@@ -1519,7 +1519,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // surrounding route handlers. registerIntegratedRouters() mounts:
   // - /missions
   // - /insights
-  // - /todos
   registrarMounter.mount("registerIntegratedRouters", () => registerIntegratedRouters({
     router,
     store,

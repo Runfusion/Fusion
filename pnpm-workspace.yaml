@@ -63,6 +63,7 @@ packages:
   - "plugins/fusion-plugin-agent-browser"
   - "plugins/fusion-plugin-whatsapp-chat"
   - "plugins/fusion-plugin-roadmap"
+  - "plugins/fusion-plugin-todos"
   - "plugins/fusion-plugin-even-realities-glasses"
   - "plugins/fusion-plugin-reports"
   - "plugins/fusion-plugin-compound-engineering"

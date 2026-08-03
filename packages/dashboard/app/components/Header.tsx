@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, CheckSquare, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
+import { Settings, LayoutGrid, List, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Workflow, Bot, Target, Grid3X3, Mail, MessageSquare, Check, Zap, Sparkles, FileText, Brain, Lock, Gauge, Lightbulb, ChevronDown, ChevronRight, PanelRight, Star } from "lucide-react";
 import "./Header.css";
 // ProjectSelector styles used by the imported standalone component.
 import "./ProjectSelector.css";
@@ -72,7 +72,6 @@ export interface HeaderProps {
   /** Opens the top-level workspace-aware file browser modal. */
   onOpenFiles?: () => void;
   filesOpen?: boolean;
-  todosEnabled?: boolean;
   view?: TaskView;
   onChangeView?: (view: TaskView) => void;
   /** Whether to show the skills tab in the view toggle */
@@ -136,7 +135,6 @@ export function Header({
   onOpenGitManager,
   onOpenWorkflowEditor,
   onOpenFiles,
-  todosEnabled,
   view = "board",
   onChangeView,
   showSkillsTab,
@@ -285,7 +283,6 @@ export function Header({
       onChangeView ||
       experimentalFeatures?.researchView ||
       experimentalFeatures?.ideationView ||
-      todosEnabled ||
       experimentalFeatures?.insights ||
 
       showSkillsTab ||
@@ -295,7 +292,7 @@ export function Header({
       isTablet ||
       pluginDashboardViews.some((entry) => entry.view.placement !== "primary")
     );
-  }, [onChangeView, experimentalFeatures, todosEnabled, showSkillsTab, hideFullNav, isTablet, pluginDashboardViews]);
+  }, [onChangeView, experimentalFeatures, showSkillsTab, hideFullNav, isTablet, pluginDashboardViews]);
 
   // Keep mobile search open if there's an active search query
   const shouldShowMobileSearch = isMobileSearchOpen || searchQuery.length > 0;
@@ -825,7 +822,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${(["research", "ideation", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "todos"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
+                  className={`view-toggle-btn${(["research", "ideation", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
                   onClick={() => {
                     setIsViewOverflowOpen((prev) => !prev);
                   }}
@@ -982,20 +979,6 @@ export function Header({
                         <Monitor size={14} />
                         <span>{t("header.devServerView", "Dev Server")}</span>
                         <span className="visually-hidden" data-testid="view-toggle-dev-server" />
-                      </button>
-                    )}
-                    {todosEnabled && onChangeView && (
-                      <button
-                        className={`view-toggle-overflow-item${view === "todos" ? " active" : ""}`}
-                        onClick={() => {
-                          onChangeView("todos");
-                          setIsViewOverflowOpen(false);
-                        }}
-                        role="menuitem"
-                        data-testid="view-overflow-todos"
-                      >
-                        <CheckSquare size={14} />
-                        <span>{t("header.todosView", "Todos")}</span>
                       </button>
                     )}
                     {pluginDashboardViews

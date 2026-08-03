@@ -3874,15 +3874,12 @@ function formatInterviewAnswer(question: PlanningQuestion, responseValue: unknow
     case "text":
       return typeof responseValue === "string" ? responseValue : String(responseValue ?? "");
 
-    case "single_select":
-      if (other.length > 0) {
-        return `${other} (user's own answer)`;
-      }
-      if (typeof responseValue === "string") {
-        const option = question.options?.find((candidate) => candidate.id === responseValue);
-        return option?.label || responseValue;
-      }
-      return String(responseValue ?? "");
+    case "single_select": {
+      const selected = typeof responseValue === "string"
+        ? question.options?.find((candidate) => candidate.id === responseValue)?.label || responseValue
+        : String(responseValue ?? "");
+      return [selected, other.length > 0 ? `${other} (user's own answer)` : ""].filter(Boolean).join(", ");
+    }
 
     case "multi_select": {
       const selected = Array.isArray(responseValue) ? responseValue.map((id) => {
@@ -3898,8 +3895,10 @@ function formatInterviewAnswer(question: PlanningQuestion, responseValue: unknow
       return selected.length > 0 ? selected.join(", ") : String(responseValue ?? "");
     }
 
-    case "confirm":
-      return other.length > 0 ? `${other} (user's own answer)` : responseValue === true ? "Yes" : "No";
+    case "confirm": {
+      const selected = responseValue === true ? "Yes" : "No";
+      return [selected, other.length > 0 ? `${other} (user's own answer)` : ""].filter(Boolean).join(", ");
+    }
 
     default:
       return JSON.stringify(responseValue);
@@ -3930,6 +3929,25 @@ export function formatInterviewQA(
   });
 
   return `## Planning Interview Context\n\n${entries.join("\n\n")}`;
+}
+
+/*
+FNXC:PlanningMode 2026-08-03-10:03:
+Every task created from Planning Mode must retain the ordered interview decisions that shaped its
+lean plan. Compose a copy for the task handoff so the authoritative running summary stays lean,
+empty sessions add no shell, and replaying an already-composed child cannot duplicate Q&A.
+*/
+export function formatPlanningTaskHandoff(
+  summary: PlanningSummary,
+  history: Array<{ question: PlanningQuestion; response: unknown }>,
+): string {
+  const qaSection = formatInterviewQA(history);
+  const description = summary.description.trim();
+  const handoffDescription = qaSection && !description.includes(qaSection)
+    ? `${description}\n\n${qaSection}`
+    : description;
+
+  return formatPlanningPlanMd({ ...summary, description: handoffDescription });
 }
 
 /**
@@ -4191,7 +4209,7 @@ export async function createTaskFromPlanSession(
   // FNXC:PlanningMultiTask 2026-07-24-03:40: review finding — a post-insert failure (e.g. finalize) lands in the raced-insert catch; without this marker the task WE created was mislabeled alreadyCreated:true.
   let insertedTask: Task | undefined;
   try {
-    const planMd = formatPlanningPlanMd(summary);
+    const planMd = formatPlanningTaskHandoff(summary, session.history);
     const originalRequest = session.initialPlan?.trim() || summary.description.trim();
     const task = await store.createTask({
       title: summary.title,
