@@ -4684,8 +4684,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   }
 
   async reclaimStaleActiveBranches(): Promise<number> {
-    /* FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an archived card must not have its branch reclaimed, whatever that lane is named. Keyed on the literal this sweep answered "no" for every card on a renamed board. */
+    /*
+    FNXC:WorkflowLifecycleColumns 2026-07-31-22:30 (self-healing cluster): an archived card must not have its branch reclaimed, whatever that lane is named. Keyed on the literal this sweep answered "no" for every card on a renamed board.
+
+    FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+    Complete-lane cards used to hit the unique-commit rescue-needed warn every maintenance sweep after squash/AI merge (feature tip SHAs are not ancestors of main). That spam was not actionable — the work already landed — and left local fusion/* refs forever. Resolve complete columns and force-delete their stale branches once the no-worktree / no-session gates pass; keep rescue-needed only for non-terminal columns where unique commits may still be real unmerged work. Archived still skips entirely (archive cleanup owns those refs).
+    */
     const reclaimArchivedColumns = await resolveProjectColumnsForRoles(this.store, ["archived"]);
+    const reclaimCompleteColumns = await resolveProjectColumnsForRoles(this.store, ["complete"]);
     try {
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return 0;
@@ -4800,10 +4806,15 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         const inspection = await this.inspectOrphanedBranch(branch);
         if (!inspection) continue;
 
-        if (inspection.uniqueCommitCount > 0) {
+        const isCompleteColumn = reclaimCompleteColumns.has(task.column);
+        if (inspection.uniqueCommitCount > 0 && !isCompleteColumn) {
           log.warn(`[recovery] stale-active-branch-rescue-needed ${task.id} branch=${branch} unique=${inspection.uniqueCommitCount} tip=${inspection.tipSha.slice(0, 12)}`);
           continue;
         }
+
+        const reclaimReason = inspection.uniqueCommitCount > 0
+          ? "complete-column-unique-commits-force"
+          : "zero-unique-commits-no-worktree";
 
         await execAsync(`git branch -D ${JSON.stringify(branch)}`, {
           cwd: this.options.rootDir,
@@ -4826,7 +4837,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         });
         await this.store.logEntry(
           task.id,
-          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=zero-unique-commits-no-worktree`,
+          `[recovery] stale-active-branch-reclaim ${task.id} branch=${branch} reason=${reclaimReason}`,
         );
 
         try {
@@ -4845,7 +4856,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               branch,
               tipSha: inspection.tipSha,
               uniqueCommitCount: inspection.uniqueCommitCount,
-              reason: "zero-unique-commits-no-worktree",
+              reason: reclaimReason,
             },
           });
         } catch (auditErr: unknown) {
@@ -4885,6 +4896,10 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
    */
 
   private async clearCompletionBranchIfSubsumed(task: Task, branchName: string): Promise<boolean> {
+    /*
+    FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+    Completion fan-out used to skip deletion when the tip still had unique commits vs the integration base. Squash / AI-merge always leaves that shape (new main SHA, old fusion/* tip still "unique"), so done tasks kept local branches forever and reclaimStaleActiveBranches warned rescue-needed every sweep. After a successful complete, force-delete the task branch regardless of unique commit count; the landed content is already on the integration branch under a different SHA. Log unique-count force deletes at info, not as an open rescue.
+    */
     try {
       await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
         cwd: this.options.rootDir,
@@ -4897,10 +4912,9 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     const baseBranch = task.baseBranch || await resolveIntegrationBranch(this.options.rootDir, undefined);
     const comparison = await listUniqueBranchCommits(this.options.rootDir, baseBranch, branchName);
     if (comparison.commits.length > 0) {
-      log.warn(
-        `[self-healing] reconcileCompletedTask ${task.id}: branch ${branchName} has ${comparison.commits.length} unique commit(s) vs ${comparison.mainRef}; skip deletion`,
+      log.log(
+        `[self-healing] reconcileCompletedTask ${task.id}: branch ${branchName} has ${comparison.commits.length} unique commit(s) vs ${comparison.mainRef}; force-deleting post-completion (squash-safe)`,
       );
-      return false;
     }
 
     try {
