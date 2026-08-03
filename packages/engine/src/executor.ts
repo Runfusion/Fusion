@@ -666,6 +666,15 @@ import { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstr
 export { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsFree } from "./executor/workflow-step-failure-injection.js";
 import { sendTaskBackForFix as sendTaskBackForFixImpl } from "./executor/send-task-back-for-fix.js";
 export { sendTaskBackForFix as sendTaskBackForFixFree } from "./executor/send-task-back-for-fix.js";
+import {
+  clearStalePauseAbortBeforeDispatch as clearStalePauseAbortBeforeDispatchImpl,
+  clearPauseAbortStateForManualRetry as clearPauseAbortStateForManualRetryImpl,
+} from "./executor/stale-pause-abort.js";
+export {
+  clearStalePauseAbortBeforeDispatch as clearStalePauseAbortBeforeDispatchFree,
+  clearPauseAbortStateForManualRetry as clearPauseAbortStateForManualRetryFree,
+} from "./executor/stale-pause-abort.js";
+
 
 
 
@@ -1217,33 +1226,21 @@ export class TaskExecutor {
   }
 
   private async clearStalePauseAbortBeforeDispatch(task: Task): Promise<void> {
-    if (!this.pausedAborted.has(task.id)) return;
-    let globalPause = false;
-    try {
-      globalPause = (await this.store.getSettings()).globalPause === true;
-    } catch {
-      globalPause = false;
-    }
-    if (task.paused === true || task.userPaused === true || globalPause) return;
-    /*
-     * FNXC:WorkflowLifecycle 2026-06-29-10:35:
-     * A stale pause-abort marker must not survive into a fresh unpaused dispatch.
-     * FN-7225/FN-7226 showed graph-owned execution failures being narrated as
-     * pause/resume cleanup even though the task row was not paused. Clear the
-     * volatile marker silently at dispatch entry so the task log names the real
-     * workflow failure (`step-execute`, parse, review, etc.) instead of implying
-     * the engine actually paused.
-     */
-    this.clearPausedAborted(task.id);
-    executorLog.log(`${task.id}: cleared stale pause-abort marker before unpaused execution dispatch`);
+    return clearStalePauseAbortBeforeDispatchImpl(
+      {
+        store: this.store,
+        hasPausedAborted: (taskId: string) => this.pausedAborted.has(taskId),
+        clearPausedAborted: (taskId: string) => this.clearPausedAborted(taskId),
+      },
+      task,
+    );
   }
 
   clearPauseAbortStateForManualRetry(taskId: string): void {
-    /*
-    FNXC:ManualRetry 2026-06-29-00:57:
-    User retry is a fresh execution boundary. Clear volatile pause-abort provenance so retries cannot inherit stale engine pause/resume classification from a prior run.
-    */
-    this.clearPausedAborted(taskId);
+    clearPauseAbortStateForManualRetryImpl(
+      { clearPausedAborted: (id: string) => this.clearPausedAborted(id) },
+      taskId,
+    );
   }
 
   /*
