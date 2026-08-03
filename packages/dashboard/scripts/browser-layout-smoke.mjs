@@ -379,7 +379,7 @@ export function createSmokeHtml() {
 
       <main class="project-content project-content--with-footer project-content--with-mobile-nav">
         <section class="board" data-smoke="board">${columnMarkup}</section>
-        <!-- FNXC:ListView 2026-08-03-06:41: Mirror ListView's measured single-pane marker so the native mobile smoke exercises the production CSS selector introduced by FN-8754 instead of rendering both the table and cards. -->
+        <!-- FNXC:ListView 2026-08-03-06:41: Mirror ListView's measured single-pane marker so the native mobile smoke exercises the production CSS selector introduced by FN-8754 instead of showing both the table and cards. -->
         <section class="list-view list-view--single-pane" data-smoke="list" hidden>
           <div class="list-create-area">
             <div class="quick-entry-box quick-entry-box--collapsed" data-testid="quick-entry-box">
