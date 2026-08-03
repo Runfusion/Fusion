@@ -15,7 +15,6 @@ import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore,
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
-import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./execution/replan-target.js";
@@ -36,7 +35,6 @@ import {
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
   SEAM_SKILL_NAME_CONTEXT_KEY,
   SEAM_THINKING_LEVEL_CONTEXT_KEY,
-  SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflows/workflow-node-handlers.js";
@@ -50,15 +48,12 @@ import {
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
 import { workflowNodeRequiresWorktree } from "./workflows/workflow-node-execution-needs.js";
 import type {
-  AuditPrimitiveInput,
   PreparedWorktree,
-  WorkflowPrimitiveContext,
   WorkflowRuntimePrimitives,
 } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
 import { WorkflowCustomNodeExecutionService } from "./workflows/workflow-custom-node-execution.js";
 import { WorkflowReviewService } from "./workflows/workflow-review-service.js";
-import { WorkflowPlanningService } from "./workflows/workflow-planning-service.js";
 import {
   buildPlanVerifiedMessage,
   buildReviewUnavailableMessage,
@@ -97,7 +92,6 @@ import {
   resolveValidatorFallbackThinkingLevel,
 } from "./agents/agent-session-helpers.js";
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
-import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
 import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agents/agent-user-comments.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -169,8 +163,6 @@ import type { PluginRunner } from "./plugins/plugin-runner.js";
 import { isContextLimitError } from "./errors/context-limit-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import {
-  makeAncestryBlastRadiusGuard,
-  resetStepToBaseline,
   type RunTaskStepResult,
 } from "./execution/step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
@@ -823,6 +815,12 @@ import { isLiveSharedBranchGroupMember as isLiveSharedBranchGroupMemberImpl } fr
 export { isLiveSharedBranchGroupMember as isLiveSharedBranchGroupMemberFree } from "./executor/is-live-shared-branch-group-member.js";
 import { resolveEffectivePrincipalId as resolveEffectivePrincipalIdImpl } from "./executor/resolve-effective-principal-id.js";
 export { resolveEffectivePrincipalId as resolveEffectivePrincipalIdFree } from "./executor/resolve-effective-principal-id.js";
+import { createAuthoritativeWorkflowPrimitivesFromExecutor as createAuthoritativeWorkflowPrimitivesFromExecutorImpl } from "./executor/create-authoritative-workflow-primitives.js";
+export { createAuthoritativeWorkflowPrimitivesFromExecutor as createAuthoritativeWorkflowPrimitivesFromExecutorFree } from "./executor/create-authoritative-workflow-primitives.js";
+import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
+export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
+import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
+export { resolveMcpServers as resolveMcpServersFree } from "./executor/resolve-mcp-servers.js";
 
 
 
@@ -2187,21 +2185,7 @@ export class TaskExecutor {
   }
 
   private async resolveMcpServers(agentId?: string | null) {
-    /*
-     * FNXC:McpConfig 2026-06-25-22:20:
-     * Executor-owned lanes (main execution, retry, workflow model nodes, self-fix, and spawned child sessions) resolve the same trusted MCP server set from the task store immediately before session creation so secret material is never persisted in task state.
-     *
-     * FNXC:McpConfig 2026-07-12-17:02:
-     * Secret-resolution failures remain content-free and observable. The
-     * resolver excludes each affected server so it cannot connect with missing
-     * credentials, while healthy MCP servers and task execution continue.
-     */
-    const resolved = await resolveMcpServersForStore(this.store, { agentId: agentId ?? undefined });
-    if (resolved.errors.length > 0) {
-      const serverNames = [...new Set(resolved.errors.map((error) => error.serverName))].sort();
-      executorLog.warn(`MCP executor resolution failed: servers=${serverNames.join(",")} count=${serverNames.length} reason=secret-materialization`);
-    }
-    return resolved.servers;
+    return resolveMcpServersImpl({ store: this.store }, agentId);
   }
 
   /**
@@ -4195,24 +4179,7 @@ export class TaskExecutor {
    * fully in-memory — purely additive, same posture as buildBranchPersistence.
    */
   private buildStepInstancePersistence(): WorkflowStepInstancePersistence | undefined {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:40: async store methods; the
-    // persistence interface awaits Promise-returning impls.
-    const store = this.store as unknown as {
-      saveWorkflowRunStepInstanceAsync?: (state: WorkflowStepInstanceState) => Promise<void>;
-      loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
-      clearWorkflowRunStepInstancesAsync?: (taskId: string, keepRunId: string) => Promise<void>;
-      saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
-      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
-      clearWorkflowRunStepInstances?: (taskId: string, keepRunId: string) => void;
-    };
-    if (typeof store.saveWorkflowRunStepInstanceAsync !== "function" && typeof store.saveWorkflowRunStepInstance !== "function") return undefined;
-    return {
-      saveInstanceState: (state) => store.saveWorkflowRunStepInstanceAsync?.(state) ?? store.saveWorkflowRunStepInstance?.(state),
-      loadInstanceStates: async (taskId, runId) =>
-        await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId) ?? store.loadWorkflowRunStepInstances?.(taskId, runId) ?? [],
-      clearStaleInstanceStates: (taskId, keepRunId) =>
-        store.clearWorkflowRunStepInstancesAsync?.(taskId, keepRunId) ?? store.clearWorkflowRunStepInstances?.(taskId, keepRunId),
-    };
+    return buildStepInstancePersistenceImpl({ store: this.store });
   }
 
   /*
@@ -4589,434 +4556,31 @@ export class TaskExecutor {
   }
 
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
-    const logAudit = async (taskId: string | undefined, input: AuditPrimitiveInput): Promise<void> => {
-      if (!taskId) return;
-      try {
-        await this.store.logEntry(taskId, input.message, input.metadata ? JSON.stringify(input.metadata) : undefined);
-      } catch {
-        // Audit is diagnostic-only and must not affect workflow execution.
-      }
-    };
-    const planningService = new WorkflowPlanningService();
-
-    return {
-      prepareWorktree: async (_ctx, task) => {
-        const live = await this.store.getTask(task.id).catch(() => null);
-        const liveTask = live?.id === task.id ? live : null;
-        /*
-        FNXC:WorkflowExecution 2026-06-23-11:49:
-        The workflow execute node must not perform a second worktree acquisition ahead of the authoritative executor. Passing the repo root as a prepared worktree makes the inner execute() reject a valid fresh-worktree task as repo-root reuse; pass only an existing task worktree and let execute() acquire when none exists.
-
-        FNXC:WorkflowExecution 2026-06-23-22:31:
-        Upgrade safety requires the graph primitive to tolerate older or minimal stores that return null or a mismatched row during startup/cutover. Only trust the live row when it is for the requested task; otherwise fall back to the runner snapshot.
-        */
-        const prepared: PreparedWorktree = {
-          worktreePath: liveTask?.worktree || task.worktree || "",
-          branchName: liveTask?.branch || task.branch,
-        };
-        return { outcome: "success", value: "worktree-ready", data: prepared };
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into the free-function deps bag */
+    return createAuthoritativeWorkflowPrimitivesFromExecutorImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
+        graphStepActiveContext: this.graphStepActiveContext,
+        pausedAborted: this.pausedAborted,
+        mergeRequester: this.mergeRequester,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        buildParseStepsDeps: (...args: unknown[]) => (this as any).buildParseStepsDeps(...args),
+        createAuthoritativeWorkflowSeams: (...args: unknown[]) => (this as any).createAuthoritativeWorkflowSeams(...args),
+        ensureWorkflowMergeBoundaryTask: (...args: unknown[]) => (this as any).ensureWorkflowMergeBoundaryTask(...args),
+        getWorkflowMergeImplementationProofFailure: (...args: unknown[]) => (this as any).getWorkflowMergeImplementationProofFailure(...args),
+        handoffTaskToReview: (...args: unknown[]) => (this as any).handoffTaskToReview(...args),
+        markPausedAborted: (...args: unknown[]) => (this as any).markPausedAborted(...args),
+        persistTokenUsage: (...args: unknown[]) => (this as any).persistTokenUsage(...args),
+        runImplementationPhase: (...args: unknown[]) => (this as any).runImplementationPhase(...args),
+        runProjectedGraphTaskStep: (...args: unknown[]) => (this as any).runProjectedGraphTaskStep(...args),
       },
-      readArtifact: async (_ctx, task, key) => {
-        const deps = this.buildParseStepsDeps(`${task.id}:artifact-read`);
-        return deps.readArtifact(task, key);
-      },
-      writeArtifact: async (ctx, task, key, content) => {
-        const writer = (this.store as unknown as {
-          writeTaskDocument?: (taskId: string, key: string, content: string) => Promise<void>;
-        }).writeTaskDocument;
-        if (!writer) {
-          await logAudit(task.id, {
-            type: "artifact-write-unavailable",
-            message: `Workflow node ${ctx.node.node.id} could not write artifact ${key}: store writer unavailable`,
-          });
-          return { outcome: "failure", value: "artifact-write-unavailable" };
-        }
-        await writer.call(this.store, task.id, key, content);
-        return { outcome: "success", value: "artifact-written", data: { key } };
-      },
-      runPlanningSession: (ctx, task) => planningService.runPlanningSession(ctx, task),
-      runCodingSession: async (ctx, task, prepared) => {
-        const governingNodeId = ctx.node.context?.[SEAM_GOVERNING_NODE_CONTEXT_KEY];
-        if (typeof governingNodeId === "string") {
-          this.graphSeamGoverningNodeId.set(task.id, governingNodeId);
-        }
-        let result: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit };
-        try {
-          result = await this.runImplementationPhase(task, prepared);
-        } finally {
-          this.graphSeamGoverningNodeId.delete(task.id);
-        }
-        /*
-        FNXC:WorkflowExecutionOwnership 2026-07-29-16:20 (U8 / R4, R5):
-        THIS is the live implementation node, not the identically-shaped `execute` entry in
-        `createAuthoritativeWorkflowSeams`. `createDefaultNodeHandlers` prefers the PRIMITIVES
-        handler whenever `deps.primitives` is set, and `executeWorkflowGraph` always sets it — so
-        the legacy-seams prompt handler is unreachable for prompt nodes and anything wired only
-        there never runs. The exit announcement was wired only there; it is announced here now.
-
-        Measured, not assumed: instrumenting the seam and `createPromptLikeHandler` produced no
-        output for a graph run that demonstrably visited `steps#0:step-execute`, while a
-        module-load write from the same file appeared — so the negative was real and not swallowed
-        output.
-        */
-        emitWorkflowLifecycleEvent({
-          type: "NodeCompleted",
-          taskId: task.id,
-          at: new Date().toISOString(),
-          runId: this.getRunContextFor(task.id)?.runId,
-          nodeId: typeof governingNodeId === "string" ? governingNodeId : ctx.node.node.id,
-          outcome: result.taskDone ? "success" : "failure",
-          ...(result.exit ? { exit: result.exit } : {}),
-        });
-        if (result.taskDone) {
-          return { outcome: "success", value: "implemented", data: result };
-        }
-        let paused = this.pausedAborted.has(task.id);
-        if (!paused) {
-          try {
-            paused = Boolean((await this.store.getTask(task.id)).paused);
-          } catch {
-            // Best-effort pause probe; fall through to the failure value.
-          }
-        }
-        /*
-        FNXC:WorkflowExecutionOwnership 2026-07-29-18:45 (U8 / R4):
-        THE PENDING-REVIEW ENDING IS A ROUTED OUTCOME, not a transition this phase performs. The
-        implementation phase used to call `handoffTaskToReview` itself and let the graph discover
-        the move afterwards; it now reports and stops, and this value routes the run to the
-        workflow's `review-pending-handoff` node, which performs the handoff and ends the run —
-        the same two effects in the same order, with the graph as the owner. Checked before the
-        pause probe because a pending-review stop is not a pause.
-        */
-        if (result.exit === "review-handoff-pending-review") {
-          return { outcome: "failure", value: "review-pending", data: result };
-        }
-        return {
-          outcome: "failure",
-          value: paused ? "implementation-paused" : "implementation-incomplete",
-          data: result,
-        };
-      },
-      runTaskStep: async (ctx, task, stepIndex) => {
-        const context = ctx.node.context ?? {};
-        const active = context[FOREACH_ACTIVE_CONTEXT_KEY] as ForeachActiveContext | undefined;
-        if (!active || typeof active.stepIndex !== "number") {
-          return { outcome: "failure" };
-        }
-        const live = await this.store.getTask(task.id);
-        /*
-        FNXC:WorkflowResume 2026-06-29-08:53:
-        `step-execute` is a workflow node and must be idempotent on replay. If the live projection already says this foreach instance is terminal, return success before invoking the step runner so retries/restarts cannot fail a fully completed task on a stale step snapshot.
-        */
-        const liveStatus = live.steps[stepIndex]?.status;
-        if (liveStatus === "done" || liveStatus === "skipped") {
-          return {
-            outcome: "success",
-            value: "step-already-terminal",
-            data: { status: liveStatus },
-          };
-        }
-        this.graphStepActiveContext.set(graphActiveContextKey(task.id, active.instanceId), active);
-        const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
-        const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
-        return await this.runProjectedGraphTaskStep(
-          task,
-          live,
-          stepIndex,
-          active,
-          typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
-          undefined,
-          typeof seamSkillName === "string" && seamSkillName.trim() ? seamSkillName.trim() : undefined,
-        );
-      },
-      resetTaskStep: async (ctx, task, stepIndex, baselineSha, checkpointId) => {
-        const active = ctx.node.context?.[FOREACH_ACTIVE_CONTEXT_KEY] as ForeachActiveContext | undefined;
-        const branchScoped = typeof active?.worktreePath === "string" && active.worktreePath.length > 0;
-        let worktreePath = active?.worktreePath ?? this.rootDir;
-        if (!branchScoped) {
-          try {
-            worktreePath = (await this.store.getTask(task.id)).worktree || this.rootDir;
-          } catch {
-            // Best-effort worktree resolution; fall back to rootDir.
-          }
-        }
-        const liveSteps = await this.store.getTask(task.id).then((t) => t.steps).catch(() => []);
-        return await resetStepToBaseline(
-          {
-            store: this.store,
-            worktreePath,
-            sessionRef: { current: null },
-            reviewType: "code",
-            blastRadiusGuard: branchScoped
-              ? undefined
-              : makeAncestryBlastRadiusGuard({
-                  worktreePath,
-                  task: { id: task.id, steps: liveSteps },
-                  stepIndex,
-                }),
-          },
-          { id: task.id, steps: liveSteps },
-          stepIndex,
-          baselineSha,
-          checkpointId,
-        );
-      },
-      runReview: async (ctx, task, input) => {
-        if (typeof input.stepIndex === "number") {
-          const context = ctx.node.context ?? {};
-          const active = context[FOREACH_ACTIVE_CONTEXT_KEY] as ForeachActiveContext | undefined;
-          if (!active || typeof active.stepIndex !== "number") {
-            return {
-              outcome: "success",
-              value: "unavailable",
-              data: { verdict: "UNAVAILABLE", review: "no active step instance" },
-            };
-          }
-          const config = {
-            type: input.type,
-            advisory: context[SPLIT_ACTIVE_CONTEXT_KEY] === true,
-          } as const;
-          const seamResult = await this.createAuthoritativeWorkflowSeams(settings).stepReview?.(
-            task,
-            context,
-            config,
-          );
-          return {
-            outcome: "success",
-            value: seamResult?.verdict === "APPROVE" ? "approve" : seamResult?.verdict === "REVISE" ? "revise" : seamResult?.verdict === "RETHINK" ? "rethink" : "unavailable",
-            data: seamResult ?? { verdict: "UNAVAILABLE", review: "step review unavailable" },
-          };
-        }
-        const live = await this.store.getTask(task.id);
-        await this.persistTokenUsage(task.id);
-        await this.handoffTaskToReview(live, "workflow-graph-review");
-        return {
-          outcome: "success",
-          value: "in-review",
-          data: { verdict: "APPROVE", summary: "Task handed off for merge review" },
-        };
-      },
-      runVerification: async () => ({ outcome: "success", value: "verification-skipped", data: {
-        verdict: "skipped",
-      } }),
-      // FNXC:WorkflowExecution 2026-06-25-00:00: U4 (KTD-2) — the legacy
-      // `runWorkflowStep` primitive + the `workflow-step` seam it served were
-      // removed. Workflow quality gates run as the graph's own optional-group /
-      // gate nodes (builtin:coding already routes through them), which record
-      // results into `task.workflowStepResults` directly (U2). No `runWorkflowStep`
-      // primitive remains in `WorkflowRuntimePrimitives`.
-      updateSteps: async (_ctx, task, steps) => {
-        await this.store.updateTask(task.id, { steps });
-        return { outcome: "success", value: "steps-updated", data: { count: steps.length } };
-      },
-      transitionTask: async (_ctx, task, input) => {
-        const taskStore = this.store;
-        const patch: Partial<TaskDetail> = {};
-        /*
-        FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
-        Resolve a requested ROLE to this task's own column, because the seam that asks cannot.
-
-        `workflow-node-handlers.ts`'s review-handoff seam is a pure function over an IR node and a
-        task — no store — so it could only name `in-review`. Post-U12 `moveTask` REJECTS a destination
-        the workflow does not declare, so on a renamed review lane that transition threw
-        `TransitionRejectionError` and killed the walk mid-run. Not a silent wrong answer for once: a
-        hard failure in the middle of a workflow, which is why it outranked the rest of the backlog.
-
-        Resolved per task from its OWN selection, so there is one authority — the mistake that took
-        #2843 five review rounds was answering one question with two reads. `column` still wins when
-        both are supplied, and an unresolvable role falls back to the legacy id rather than failing
-        the transition, which is exactly the behaviour callers had before.
-        */
-        let targetColumn = input.column;
-        if (targetColumn === undefined && input.columnRole === "review") {
-          targetColumn = (await resolveTaskLifecycleColumns(taskStore, task.id))?.review ?? "in-review";
-        }
-        /*
-        FNXC:WorkflowNotifications 2026-06-29-08:50:
-        Workflow graph lifecycle transitions must use TaskStore move semantics, not raw `updateTask({ column })`, because ntfy/webhook notification delivery is subscribed to `task:moved`. Direct column writes make graph-owned tasks invisible to in-review/done lifecycle notifications and bypass column hooks.
-        */
-        if (targetColumn !== undefined) {
-          const moveOptions = {
-            preserveProgress: input.preserveProgress,
-            moveSource: "engine" as const,
-            workflowMoveSource: "workflow-graph",
-            workflowMoveMetadata: {
-              reason: input.reason,
-              nodeId: _ctx.node.node.id,
-              workflowId: _ctx.run.workflowId,
-              runId: _ctx.run.runId,
-            },
-          };
-          const storeWithMove = taskStore as typeof taskStore & {
-            moveTask?: typeof taskStore.moveTask;
-          };
-          if (typeof storeWithMove.moveTask === "function") {
-            await storeWithMove.moveTask(task.id, targetColumn, moveOptions);
-          } else {
-            patch.column = targetColumn;
-          }
-        }
-        if (input.status !== undefined && input.status !== null) patch.status = input.status;
-        if (Object.keys(patch).length > 0) {
-          await taskStore.updateTask(task.id, patch);
-        }
-        return { outcome: "success", value: input.reason };
-      },
-      requestMerge: async (ctx, task) => {
-        if (!this.mergeRequester) {
-          return { outcome: "failure", value: "merge-unavailable", data: { status: "failed", reason: "merge-unavailable" } };
-        }
-        /*
-        FNXC:WorkflowCancellation 2026-07-15-10:42:
-        Fail fast on an already-cancelled walk BEFORE any side effect. `ensureWorkflowMergeBoundaryTask` mutates the task row and the requester enqueues a real merge; neither may run for a walk the engine has already abandoned. `merge-cancelled` is deliberately not `data.status: "failed"` — `classifyMergeFailure` would read an unknown reason as `merge-failed` and route a cancellation into bounded auto-merge retry.
-        */
-        if (ctx.signal?.aborted) {
-          return { outcome: "failure", value: "merge-cancelled" };
-        }
-        const mergeTask = await this.ensureWorkflowMergeBoundaryTask(task, {
-          reason: "workflow-merge-boundary",
-          nodeId: ctx.node.node.id,
-          workflowId: ctx.run.workflowId,
-          runId: ctx.run.runId,
-        });
-        /*
-        FNXC:WorkflowMerge 2026-06-29-23:18:
-        FN-7261 reached the merge node in fast mode with every legacy implementation step still pending, producing a no-op merge proof for work that never ran. A graph-native workflow may project its checklist at the merge boundary only when node workflow results prove implementation completed; otherwise incomplete legacy steps are authoritative and merge must fail before the merger can create stale no-op proof.
-
-        FNXC:WorkflowMerge 2026-06-30-00:38:
-        Fast default Coding tasks must still execute implementation work. FN-7260/FN-7271 reached merge with no parsed task steps, no foreach instances, and no implementation proof, then finalized through no-op merge. The workflow merge boundary must fail before requesting merge when a coding workflow has not produced implementation evidence; fast mode only bypasses review/verification gates.
-        */
-        const missingImplementationProof = await this.getWorkflowMergeImplementationProofFailure(mergeTask);
-        if (missingImplementationProof) {
-          await this.store.logEntry(
-            mergeTask.id,
-            `Workflow merge blocked before requester: ${missingImplementationProof}`,
-            undefined,
-            this.getRunContextFor(mergeTask.id),
-          );
-          return {
-            outcome: "failure",
-            value: "implementation-incomplete",
-            data: { status: "failed", reason: "implementation-incomplete" },
-          };
-        }
-        if (hasNonTerminalWorkflowSteps(mergeTask)) {
-          await this.store.logEntry(
-            mergeTask.id,
-            "Workflow merge blocked before requester: implementation steps are incomplete",
-            undefined,
-            this.getRunContextFor(mergeTask.id),
-          );
-          return {
-            outcome: "failure",
-            value: "implementation-incomplete",
-            data: { status: "failed", reason: "implementation-incomplete" },
-          };
-        }
-        /*
-        FNXC:WorkflowCancellation 2026-07-15-10:42:
-        The timeout bounds a wedged merge queue; it is NOT the cancellation path. `ctx.signal` (graph abort) is linked in via `AbortSignal.any` so a hard-cancel collapses the merge node immediately instead of after the full timeout, and is raced separately so the walk returns rather than waiting on a requester that may not settle on abort. Keep both signals live: dropping the timeout re-strands the walk behind a wedged queue, dropping the cancel link restores the 30-minute stall.
-        */
-        const GRAPH_MERGE_TIMEOUT_MS = 30 * 60 * 1000;
-        const controller = new AbortController();
-        const mergeSignal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
-        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<"timeout">((resolve) => {
-          timeoutHandle = setTimeout(() => {
-            controller.abort();
-            resolve("timeout");
-          }, GRAPH_MERGE_TIMEOUT_MS);
-          timeoutHandle.unref?.();
-        });
-        let onGraphAbort: (() => void) | undefined;
-        const cancelled = new Promise<"cancelled">((resolve) => {
-          if (!ctx.signal) return;
-          onGraphAbort = () => resolve("cancelled");
-          ctx.signal.addEventListener("abort", onGraphAbort, { once: true });
-        });
-        try {
-          const result = await Promise.race([this.mergeRequester(mergeTask.id, { signal: mergeSignal }), timeout, cancelled]);
-          if (result === "cancelled") {
-            executorLog.warn(`${mergeTask.id}: workflow merge primitive cancelled by graph abort`);
-            return { outcome: "failure", value: "merge-cancelled" };
-          }
-          if (result === "timeout") {
-            executorLog.warn(`${mergeTask.id}: workflow merge primitive timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
-            return { outcome: "failure", value: "merge-timeout", data: { status: "timeout" } };
-          }
-          if (result.merged || result.noOp) {
-            /*
-            FNXC:WorkflowMerge 2026-06-29-09:24:
-            The workflow merge primitive owns the normal lifecycle transition after a graph merge node succeeds. Finalize the proven landed task here so `mergeConfirmed` cannot strand a card in `in-progress`; executor preflight recovery is only a fallback for rows already stranded by older runs.
-            */
-            const finalization = await finalizeProvenAutoMergeTask({
-              store: this.store,
-              taskId: mergeTask.id,
-              result,
-              rootDir: this.rootDir,
-              audit: createRunAuditor(this.store, {
-                runId: ctx.run.runId,
-                agentId: "executor",
-                taskId: mergeTask.id,
-                taskLineageId: mergeTask.lineageId,
-                phase: "workflow-merge",
-              }),
-              auditAgentId: "executor",
-              auditPhase: "workflow-merge",
-              source: "workflow-graph-merge-finalize",
-              log: (message) => executorLog.warn(message),
-            });
-            if (finalization.outcome === "blocked" || finalization.outcome === "missing") {
-              return {
-                outcome: "failure",
-                value: `merge-finalize-${finalization.outcome}`,
-                data: { status: "failed", reason: finalization.reason ?? finalization.outcome },
-              };
-            }
-            return {
-              outcome: "success",
-              value: result.noOp ? "merge-noop" : "merged",
-              data: { status: "merged", noOp: result.noOp },
-            };
-          }
-          return {
-            outcome: "failure",
-            value: result.reason ?? result.error ?? "merge-failed",
-            data: { status: "failed", reason: result.reason ?? result.error ?? "merge-failed" },
-          };
-        } finally {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          // FNXC:WorkflowCancellation 2026-07-15-10:42: the graph signal outlives this node; leaving the listener attached leaks one per merge attempt across a retry loop.
-          if (onGraphAbort) ctx.signal?.removeEventListener("abort", onGraphAbort);
-          await logAudit(mergeTask.id, {
-            type: "merge-requested",
-            message: `Workflow node ${ctx.node.node.id} requested merge`,
-          });
-        }
-      },
-      abortRun: async (_ctx, task, input) => {
-        if (input.hardCancel) {
-          this.markPausedAborted(task.id, "merge-seam", "workflow-abort-run:merge-seam");
-        }
-        await this.store.updateTask(task.id, {
-          paused: true,
-          pausedReason: input.reason,
-        } as Partial<TaskDetail>);
-        return { outcome: "success", value: "aborted" };
-      },
-      audit: async (ctx: WorkflowPrimitiveContext, input) => {
-        await logAudit(ctx.run.taskId, input);
-      },
-    };
+      settings,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-  /*
-  FNXC:WorkflowMerge 2026-07-19-04:30 (U5a / R1 / KTD-7):
-  Resolve the merge boundary's target column from the merge NODE's own IR column.
-  builtin:coding places its merge-class nodes in `in-review` (parity oracle); a
-  user workflow (benchmark) places the merge node in `Merging`. Resolution failure
-  falls back to `in-review` so a bad IR never strands the merge boundary.
-  */
   private async resolveMergeBoundaryColumn(taskId: string, nodeId: string): Promise<string> {
     try {
       const ir = await resolveWorkflowIrForTask(this.store, taskId);
@@ -13295,9 +12859,6 @@ export {
   hasUnsatisfiedExplicitEnabledWorkflowSteps,
   areEnabledPreMergeWorkflowStepsSatisfied,
   preservePreExecutionWorkflowStepResults,
-} from "./executor/workflow-step-satisfaction.js";
-import {
-  hasNonTerminalWorkflowSteps,
 } from "./executor/workflow-step-satisfaction.js";
 
 export {
