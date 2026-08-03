@@ -13,7 +13,6 @@ import { delimiter, join, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
-import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
@@ -674,6 +673,9 @@ export {
   clearStalePauseAbortBeforeDispatch as clearStalePauseAbortBeforeDispatchFree,
   clearPauseAbortStateForManualRetry as clearPauseAbortStateForManualRetryFree,
 } from "./executor/stale-pause-abort.js";
+import { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetImpl } from "./executor/dependency-dispatch-gate.js";
+export { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetFree } from "./executor/dependency-dispatch-gate.js";
+
 
 
 
@@ -10952,48 +10954,13 @@ export class TaskExecutor {
   }
 
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): Promise<boolean> {
-    if (!task.dependencies || task.dependencies.length === 0) return false;
-
-    const settings = await this.store.getSettings();
-    const tasks = await this.store.listTasks({ includeArchived: false, slim: true });
-    const liveTask = tasks.find((candidate) => candidate.id === task.id) ?? task;
-    const markerAcceptedByTaskId = new Map<string, boolean>();
-    if (settings.mergeRequestContractShadowEnabled === true) {
-      for (const depId of liveTask.dependencies) {
-        markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
-      }
-    }
-    const unmetDeps = getUnmetSchedulingDependencies(
-      liveTask,
-      tasks,
-      settings.mergeRequestContractShadowEnabled === true ? { markerAcceptedByTaskId } : undefined,
+    return blockOuterDispatchWhenDependenciesUnmetImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      },
+      task,
     );
-    if (unmetDeps.length === 0) return false;
-
-    /*
-    FNXC:DependencyGating 2026-06-20-07:30:
-    Workflow-graph and workflow-authoritative executor dispatches can be invoked outside the classic scheduler loop, so they must re-apply the shared scheduling dependency gate before graph routing, column-agent seams, or review handoff can run.
-    Requeue with blockedBy instead of executing so missing or soft-deleted dependency residue keeps the scheduler helper's non-blocking semantics while live todo/queued/in-progress/triage dependencies block every dispatch surface.
-    */
-    const reboundColumn = await resolveReboundColumnFor(this.store, liveTask.id);
-    if (liveTask.column !== reboundColumn) {
-      await this.store.moveTask(liveTask.id, reboundColumn, {
-        preserveProgress: true,
-        preserveWorktree: true,
-        preserveResumeState: true,
-        moveSource: "engine",
-        recoveryRehome: true,
-      });
-    }
-    await this.store.updateTask(liveTask.id, { status: "queued", blockedBy: unmetDeps[0] }, this.getRunContextFor(liveTask.id));
-    await this.store.logEntry(
-      liveTask.id,
-      `queued — unmet dependencies: ${unmetDeps.join(", ")}`,
-      "Executor pre-dispatch dependency gate blocked workflow/authoritative execution.",
-      this.getRunContextFor(liveTask.id),
-    );
-    executorLog.log(`${liveTask.id}: executor dispatch blocked by unmet dependencies: ${unmetDeps.join(", ")}`);
-    return true;
   }
 
   /*
