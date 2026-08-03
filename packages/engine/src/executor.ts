@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 import { delimiter } from "node:path";
-import { existsSync } from "node:fs";
 import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { resolveWorkflowIrForTask, resolveEffectiveAgent, AgentStore } from "@fusion/core";
@@ -17,7 +16,7 @@ import type { WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMove
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
-import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflows/workflow-graph-branches.js";
+import type { WorkflowBranchPersistence } from "./workflows/workflow-graph-branches.js";
 import type {
   WorkflowStepInstancePersistence,
 } from "./workflows/workflow-graph-foreach.js";
@@ -35,7 +34,7 @@ import type {
   WorkflowRuntimePrimitives,
 } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
-import { ApprovalRequestStore, loadWorkspaceConfig, type WorkspaceConfig, type RunCommandResult } from "@fusion/core";
+import { ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult } from "@fusion/core";
 import { type VerificationResult } from "./execution/verification-utils.js";
 import { resolveExecutorSessionModel } from "./agents/agent-session-helpers.js";
 import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
@@ -52,10 +51,7 @@ import {
 import { RemovalReason, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
 import {
-  ActiveSessionPathHeldByForeignTaskError,
-  acquireActiveSessionPath,
   activeSessionRegistry,
-  executingTaskLock,
   type ActiveSessionKind,
 } from "./agents/active-session-registry.js";
 // CLI Agent Executor (U7): task ↔ CLI session orchestration seam.
@@ -68,7 +64,7 @@ import type { CliAdapterRegistry } from "./cli-agent/adapter.js";
 import type { CliSessionStore } from "@fusion/core";
 import { BranchConflictError, BranchCrossContaminationError } from "./execution/branch-conflicts.js";
 
-import { executorLog, formatError } from "./logger.js";
+import { executorLog } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { type UsageLimitPauser } from "./errors/usage-limit-detector.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
@@ -81,7 +77,7 @@ import {
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 
 import type { AgentReflectionService } from "./agents/agent-reflection.js";
-import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
+import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { createArtifactListTool as sharedCreateArtifactListTool, createArtifactRegisterTool as sharedCreateArtifactRegisterTool, createArtifactViewTool as sharedCreateArtifactViewTool, createTaskCreateTool as sharedCreateTaskCreateTool, createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool, createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool, createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool, createTaskFileScopeAddTool as sharedCreateTaskFileScopeAddTool, createTaskLogTool as sharedCreateTaskLogTool, createTaskLogsReadTool as sharedCreateTaskLogsReadTool, createWorkflowListTool as sharedCreateWorkflowListTool, createWorkflowGetTool as sharedCreateWorkflowGetTool, createWorkflowValidateTool as sharedCreateWorkflowValidateTool, createWorkflowSelectTool as sharedCreateWorkflowSelectTool, createTaskPromoteTool as sharedCreateTaskPromoteTool, createWorkflowCreateTool as sharedCreateWorkflowCreateTool, createWorkflowUpdateTool as sharedCreateWorkflowUpdateTool, createWorkflowDeleteTool as sharedCreateWorkflowDeleteTool, createWorkflowSettingsTool as sharedCreateWorkflowSettingsTool, createTraitListTool as sharedCreateTraitListTool } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
@@ -157,7 +153,7 @@ const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
 export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
-import { isTaskWorkComplete, createSeenSteeringIds, graphActiveContextKey } from "./executor/task-predicates.js";
+import { isTaskWorkComplete, createSeenSteeringIds } from "./executor/task-predicates.js";
 export {
   isTaskWorkComplete,
   isNoProgressNoTaskDoneFailure,
@@ -667,6 +663,34 @@ export {
   loadMergeBoundaryInstances as loadMergeBoundaryInstancesFree,
   shouldCompleteChecklistAtWorkflowMerge as shouldCompleteChecklistAtWorkflowMergeFree,
 } from "./executor/workflow-merge-boundary-helpers.js";
+import { markPausedAborted as markPausedAbortedImpl } from "./executor/mark-paused-aborted.js";
+export { markPausedAborted as markPausedAbortedFree } from "./executor/mark-paused-aborted.js";
+import { acquireSessionRegistryPath as acquireSessionRegistryPathImpl } from "./executor/acquire-session-registry-path.js";
+export { acquireSessionRegistryPath as acquireSessionRegistryPathFree } from "./executor/acquire-session-registry-path.js";
+import { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseImpl } from "./executor/should-defer-completion-for-global-pause.js";
+export { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseFree } from "./executor/should-defer-completion-for-global-pause.js";
+import { parkApprovalSuspension as parkApprovalSuspensionImpl } from "./executor/park-approval-suspension.js";
+export { parkApprovalSuspension as parkApprovalSuspensionFree } from "./executor/park-approval-suspension.js";
+import { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededImpl } from "./executor/resume-approval-after-unwind.js";
+export { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededFree } from "./executor/resume-approval-after-unwind.js";
+import { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningImpl } from "./executor/ensure-task-worktree-for-planning.js";
+export { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningFree } from "./executor/ensure-task-worktree-for-planning.js";
+import { foreachActiveForTask as foreachActiveForTaskImpl } from "./executor/foreach-active-for-task.js";
+export { foreachActiveForTask as foreachActiveForTaskFree } from "./executor/foreach-active-for-task.js";
+import { buildBranchPersistence as buildBranchPersistenceImpl } from "./executor/build-branch-persistence.js";
+export { buildBranchPersistence as buildBranchPersistenceFree } from "./executor/build-branch-persistence.js";
+import {
+  buildBranchConflictHandleDeps,
+  buildWorktreeCreateConflictDeps,
+  buildWorktreeInvariantDeps,
+  buildNonContinuableSessionDeps,
+} from "./executor/deps-bags.js";
+export {
+  buildBranchConflictHandleDeps as buildBranchConflictHandleDepsFree,
+  buildWorktreeCreateConflictDeps as buildWorktreeCreateConflictDepsFree,
+  buildWorktreeInvariantDeps as buildWorktreeInvariantDepsFree,
+  buildNonContinuableSessionDeps as buildNonContinuableSessionDepsFree,
+} from "./executor/deps-bags.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -1109,20 +1133,16 @@ export class TaskExecutor {
     provenance: PausedAbortProvenance = "hard-cancel",
     source = "unspecified",
   ): void {
-    const previousProvenance = this.pausedAbortProvenance.get(taskId);
-    const alreadyMarked = this.pausedAborted.has(taskId);
-    this.pausedAborted.add(taskId);
-    this.pausedAbortProvenance.set(taskId, provenance);
-    if (!alreadyMarked || previousProvenance !== provenance) {
-      /*
-      FNXC:WorkflowLifecycle 2026-07-01-22:24:
-      Pause aborts are frequent enough that operators need task-log breadcrumbs at the marker source, not only at the later graph-failure sink. Log first-mark/provenance-change events so a task card shows why a workflow was interrupted and which code path owned the abort.
-      */
-      this.safeLogEntry(
-        taskId,
-        `Pause abort marked: provenance=${provenance} source=${source}${previousProvenance && previousProvenance !== provenance ? ` previous=${previousProvenance}` : ""}`,
-      );
-    }
+    markPausedAbortedImpl(
+      {
+        pausedAborted: this.pausedAborted,
+        pausedAbortProvenance: this.pausedAbortProvenance,
+        safeLogEntry: (id, message) => this.safeLogEntry(id, message),
+      },
+      taskId,
+      provenance,
+      source,
+    );
   }
 
   private markCompletionFinalized(taskId: string): void {
@@ -1203,26 +1223,16 @@ export class TaskExecutor {
   the staleness floor, so the reclaim only ever fires on proven-dead, aged entries.
   */
   private acquireSessionRegistryPath(taskId: string, registryPath: string, kind: ActiveSessionKind, ownerKey: string): void {
-    const outcome = acquireActiveSessionPath(activeSessionRegistry, registryPath, { taskId, kind, ownerKey }, {
-      holderLiveProbe: (holderTaskId) => this.hasLiveTaskSessionSurface(holderTaskId) || executingTaskLock.has(holderTaskId),
-    });
-    if (outcome.action === "contended") {
-      throw new ActiveSessionPathHeldByForeignTaskError(registryPath, outcome.holderTaskId, taskId);
-    }
-    if (outcome.action === "reclaimed-stale-foreign") {
-      executorLog.warn(
-        `${taskId}: reclaimed a stale active-session entry on ${registryPath} from dead task ${outcome.holderTaskId} (idle ${outcome.ageMs}ms)`,
-      );
-      void this.store.recordRunAuditEvent?.({
-        taskId,
-        agentId: "executor",
-        runId: generateSyntheticRunId("session-path-reclaim", taskId),
-        domain: "database",
-        mutationType: "session:reclaim-stale-foreign-path",
-        target: taskId,
-        metadata: { taskId, holderTaskId: outcome.holderTaskId, kind, ageMs: outcome.ageMs },
-      })?.catch?.(() => undefined);
-    }
+    acquireSessionRegistryPathImpl(
+      {
+        store: this.store,
+        hasLiveTaskSessionSurface: (id) => this.hasLiveTaskSessionSurface(id),
+      },
+      taskId,
+      registryPath,
+      kind,
+      ownerKey,
+    );
   }
 
   private setActiveSession(taskId: string, sessionState: ActiveExecutorSessionState, worktreePath: string): void {
@@ -1357,20 +1367,15 @@ export class TaskExecutor {
     taskId: string,
     context: string,
   ): Promise<boolean> {
-    const settings = await this.store.getSettings();
-    if (!settings.globalPause) {
-      return false;
-    }
-
-    this.clearCompletedTaskWatchdog(taskId);
-    executorLog.log(`${taskId}: completion handoff deferred — global pause active (${context})`);
-    await this.store.logEntry(
+    return shouldDeferCompletionForGlobalPauseImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
+      },
       taskId,
-      `Completion handoff deferred — global pause active (${context})`,
-      undefined,
-      this.getRunContextFor(taskId),
-    ).catch(() => undefined);
-    return true;
+      context,
+    );
   }
 
   private async shouldDeferWorkflowStepCompletion(
@@ -1867,16 +1872,16 @@ export class TaskExecutor {
    * Paused tasks are moved back to `todo` rather than marked as `failed`.
    */
   private async parkApprovalSuspension(taskId: string, surface: string): Promise<boolean> {
-    if (!this.approvalSuspended.has(taskId)) return false;
-    this.clearPausedAborted(taskId);
-    await this.store.logEntry(
+    return parkApprovalSuspensionImpl(
+      {
+        store: this.store,
+        approvalSuspended: this.approvalSuspended,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+      },
       taskId,
-      `Execution suspended for approval — ${surface} disposed; task remains in progress for decision resume`,
-      undefined,
-      this.getRunContextFor(taskId),
+      surface,
     );
-    executorLog.log(`${taskId}: approval suspension parked after ${surface} disposal`);
-    return true;
   }
 
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
@@ -1903,23 +1908,15 @@ export class TaskExecutor {
   }
 
   private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
-    /*
-    FNXC:ApprovalResume 2026-07-12-18:35:
-    MAIN-008 review: this runs from execute()'s outer finally. A getTask throw
-    (hard-deleted task between deferral and consume) must not escape finally and
-    mask the original execute outcome — treat unreadable tasks as no deferred resume.
-    */
-    if (!this.approvalResumeAfterUnwind.delete(taskId)) return false;
-    let latestTask;
-    try {
-      latestTask = await this.store.getTask(taskId);
-    } catch (error) {
-      executorLog.warn(`${taskId}: failed to read latest task state for deferred approval resume: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
-    }
-    if (latestTask.paused || latestTask.userPaused
-      || latestTask.column !== (await this.resolveResumeLanes(taskId)).wip) return false;
-    return this.dispatchUnpauseResume(latestTask);
+    return resumeApprovalAfterUnwindIfNeededImpl(
+      {
+        store: this.store,
+        approvalResumeAfterUnwind: this.approvalResumeAfterUnwind,
+        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
+        dispatchUnpauseResume: (t) => this.dispatchUnpauseResume(t),
+      },
+      taskId,
+    );
   }
 
   private async resolveMcpServers(agentId?: string | null) {
@@ -2883,7 +2880,7 @@ export class TaskExecutor {
   }
 
   private nonContinuableSessionDeps() {
-    return {
+    return buildNonContinuableSessionDeps({
       store: this.store,
       getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
       resolveResumeLanes: (taskId: string) => this.resolveResumeLanes(taskId),
@@ -2892,7 +2889,7 @@ export class TaskExecutor {
       signalTaskComplete: (task: Task) => this.signalTaskComplete(task),
       handoffTaskToReview: (task: Task, reason: string) => this.handoffTaskToReview(task, reason),
       markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
-    };
+    });
   }
 
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
@@ -3485,20 +3482,7 @@ export class TaskExecutor {
   }
 
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
-    // FNXC:PostgresOnlyDataAccess 2026-07-16-12:40: the store methods are now
-    // async (PostgreSQL routing); the persistence interfaces already accept
-    // Promise-returning impls and await them.
-    const store = this.store as unknown as {
-      saveWorkflowRunBranch?: (state: WorkflowBranchRunState) => void | Promise<void>;
-      loadWorkflowRunBranches?: (taskId: string, runId: string) => WorkflowBranchRunState[] | Promise<WorkflowBranchRunState[]>;
-      clearWorkflowRunBranches?: (taskId: string, keepRunId: string) => void | Promise<void>;
-    };
-    if (typeof store.saveWorkflowRunBranch !== "function") return undefined;
-    return {
-      saveBranchState: (state) => store.saveWorkflowRunBranch?.(state),
-      loadBranchStates: async (taskId, runId) => (await store.loadWorkflowRunBranches?.(taskId, runId)) ?? [],
-      clearStaleBranchStates: (taskId, keepRunId) => store.clearWorkflowRunBranches?.(taskId, keepRunId),
-    };
+    return buildBranchPersistenceImpl({ store: this.store });
   }
 
   /**
@@ -3773,20 +3757,11 @@ export class TaskExecutor {
    *  through the foreach sub-walk; we surface it via a per-task slot the
    *  step-execute seam stamps. Returns undefined outside a foreach instance. */
   private foreachActiveForTask(taskId: string, instanceId?: string): ForeachActiveContext | undefined {
-    if (typeof instanceId === "string") {
-      const byInstance = this.graphStepActiveContext.get(graphActiveContextKey(taskId, instanceId));
-      if (byInstance) return byInstance;
-    }
-    // Fallback (single-instance / no instanceId threaded): return the sole slot
-    // owned by this task if exactly one exists.
-    const prefix = `${taskId}:`;
-    let only: ForeachActiveContext | undefined;
-    for (const [key, value] of this.graphStepActiveContext) {
-      if (!key.startsWith(prefix)) continue;
-      if (only) return undefined; // ambiguous: more than one instance active
-      only = value;
-    }
-    return only;
+    return foreachActiveForTaskImpl(
+      { graphStepActiveContext: this.graphStepActiveContext },
+      taskId,
+      instanceId,
+    );
   }
 
   /**
@@ -4218,25 +4193,16 @@ export class TaskExecutor {
 
 
   public async ensureTaskWorktreeForPlanning(taskId: string): Promise<string | null> {
-    try {
-      if (this.workspaceConfig === undefined) {
-        this.workspaceConfig = await loadWorkspaceConfig(this.rootDir);
-      }
-      if (this.workspaceConfig && (this.workspaceConfig.repos.length ?? 0) > 0) return null;
-
-      const live = await this.store.getTask(taskId);
-      if (live.worktree && existsSync(live.worktree)) return live.worktree;
-
-      const settings = await this.store.getSettings();
-      const acquisitionTask = live.worktree
-        ? ({ ...live, worktree: undefined, sessionFile: undefined } as TaskDetail)
-        : live;
-      const acquired = await this.ensureGraphCustomNodeWorktree(acquisitionTask, settings, "planning");
-      return acquired.worktree || null;
-    } catch (error) {
-      executorLog.warn(`${taskId}: could not acquire a planning worktree — planning falls back to the repo root: ${formatError(error)}`);
-      return null;
-    }
+    return ensureTaskWorktreeForPlanningImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        getWorkspaceConfig: () => this.workspaceConfig,
+        setWorkspaceConfig: (cfg) => { this.workspaceConfig = cfg; },
+        ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
+      },
+      taskId,
+    );
   }
 
   private async prepareGraphNodeExecution(
@@ -5154,19 +5120,15 @@ export class TaskExecutor {
   Thin facades over peeled verifyWorktreeInvariants / emitWorktreeReanchoredAudit (U4 Slice B).
   */
   private worktreeInvariantDeps() {
-    return {
+    return buildWorktreeInvariantDeps({
       rootDir: this.rootDir,
       store: this.store,
       workspaceConfig: this.workspaceConfig,
-      getActiveWorktreePaths: (taskId: string) => this.getActiveWorktreePaths(taskId),
-      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-      emitWorktreeReanchoredAudit: (
-        taskId: string,
-        fromPath: string,
-        toPath: string,
-        source: "verify-worktree-invariants" | "executor-liveness-gate",
-      ) => this.emitWorktreeReanchoredAudit(taskId, fromPath, toPath, source),
-    };
+      getActiveWorktreePaths: (taskId) => this.getActiveWorktreePaths(taskId),
+      getRunContextFor: (taskId) => this.getRunContextFor(taskId),
+      emitWorktreeReanchoredAudit: (taskId, fromPath, toPath, source) =>
+        this.emitWorktreeReanchoredAudit(taskId, fromPath, toPath, source),
+    });
   }
 
   private async verifyWorktreeInvariants(
@@ -5540,25 +5502,20 @@ export class TaskExecutor {
   Thin facades over peeled branch-conflict reclaim/handle + missing session-start recovery (U4 Slice B).
   */
   private branchConflictHandleDeps() {
-    return {
+    return buildBranchConflictHandleDeps({
       rootDir: this.rootDir,
       store: this.store,
       getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-      findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) =>
+      findActiveWorktreeOwner: (worktreePath, requestingTaskId) =>
         this.findActiveWorktreeOwner(worktreePath, requestingTaskId),
-      normalizeReclaimableWorktreePath: (
-        sourcePath: string,
-        targetPath: string,
-        taskId: string,
-        settings: Partial<Settings>,
-      ) => this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
-      cleanupConflictingWorktree: (worktreePath: string, branch: string, taskId: string) =>
+      normalizeReclaimableWorktreePath: (sourcePath, targetPath, taskId, settings) =>
+        this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
+      cleanupConflictingWorktree: (worktreePath, branch, taskId) =>
         this.cleanupConflictingWorktree(worktreePath, branch, taskId),
-      getAutoRecoveryDispatcher: (audit: RunAuditor) => this.getAutoRecoveryDispatcher(audit),
-      createRunAuditor: (runContext: EngineRunContext | undefined) => createRunAuditor(this.store, runContext),
-      persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
+      getAutoRecoveryDispatcher: (audit) => this.getAutoRecoveryDispatcher(audit),
+      persistTokenUsage: (taskId) => this.persistTokenUsage(taskId),
       onError: this.options.onError,
-    };
+    });
   }
 
   private async reclaimExistingWorktree(
@@ -5755,7 +5712,7 @@ export class TaskExecutor {
   (U4 Slice B). Shared deps bag wires circular callbacks through this.
   */
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
-    return {
+    return buildWorktreeCreateConflictDeps({
       rootDir: this.rootDir,
       store: this.store,
       maxWorktreeRetries: this.MAX_WORKTREE_RETRIES,
@@ -5778,7 +5735,7 @@ export class TaskExecutor {
       normalizeReclaimableWorktreePath: (sourcePath, targetPath, taskId, settings) =>
         this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
       isLiveCleanupRefusal: (worktreePath, taskId) => this.isLiveCleanupRefusal(worktreePath, taskId),
-    };
+    });
   }
 
   private async tryCreateWorktree(
