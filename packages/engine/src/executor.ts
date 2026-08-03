@@ -625,6 +625,15 @@ import { executeScriptWorkflowStep as executeScriptWorkflowStepImpl } from "./ex
 export { executeScriptWorkflowStep as executeScriptWorkflowStepFree } from "./executor/workflow-script-step.js";
 import { reviewWorkspacePerRepo as reviewWorkspacePerRepoImpl } from "./executor/workspace-review-per-repo.js";
 export { reviewWorkspacePerRepo as reviewWorkspacePerRepoFree } from "./executor/workspace-review-per-repo.js";
+import {
+  workflowInputRepliesAfterWatermark as workflowInputRepliesAfterWatermarkImpl,
+  resolveWorkflowInputMarkerForGraphNode as resolveWorkflowInputMarkerForGraphNodeImpl,
+} from "./executor/workflow-input-markers.js";
+export {
+  workflowInputRepliesAfterWatermark as workflowInputRepliesAfterWatermarkFree,
+  resolveWorkflowInputMarkerForGraphNode as resolveWorkflowInputMarkerForGraphNodeFree,
+} from "./executor/workflow-input-markers.js";
+
 
 
 
@@ -16403,46 +16412,18 @@ ${scopeGuard}
   }
 
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
-    const pausedReason = task.pausedReason ?? "";
-    const watermark = (() => {
-      const match = pausedReason.slice(marker.length).match(/^@(\d+)/);
-      const parsed = match ? Number(match[1]) : NaN;
-      return Number.isFinite(parsed) ? parsed : undefined;
-    })();
-    const steering = Array.isArray(task.steeringComments) ? task.steeringComments : [];
-    return watermark === undefined
-      ? steering
-      : steering.filter((comment) => {
-          const created = Date.parse((comment as { createdAt?: string }).createdAt ?? "");
-          return Number.isFinite(created) ? created >= watermark : false;
-        });
+    return workflowInputRepliesAfterWatermarkImpl(task, marker);
   }
 
   private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): Promise<"clear" | "waiting" | "none"> {
-    const pausedReason = live.pausedReason ?? "";
-    if (!pausedReason.startsWith("workflow-input:")) return "none";
-    const markerMatch = /^workflow-input:([^:@\s]+)(?:@\d+)?[:]/.exec(pausedReason);
-    if (!markerMatch) return "none";
-    const marker = `workflow-input:${markerMatch[1]}`;
-    const replies = this.workflowInputRepliesAfterWatermark(live, marker);
-    if (live.paused || replies.length === 0) {
-      await this.store.updateTask(live.id, { status: "awaiting-user-input", paused: true }, this.getRunContextFor(live.id));
-      return "waiting";
-    }
-    /*
-     * FNXC:WorkflowInput 2026-06-29-10:00:
-     * A workflow graph can restart at an earlier node after pause/resume recovery while the durable pausedReason still points at the later skill node that asked the question. If the user already supplied a post-watermark reply, clear that stale marker before any node executes so Compound Engineering cannot loop at Plan while Commit & open PR's answered question remains attached.
-     */
-    await this.store.updateTask(live.id, { status: null, pausedReason: null }, this.getRunContextFor(live.id));
-    await this.store.logEntry(
-      live.id,
-      marker === `workflow-input:${nodeId}`
-        ? `Workflow input received for step '${nodeId}' — resuming`
-        : `Workflow input marker '${markerMatch[1]}' already has a reply — clearing stale marker before step '${nodeId}'`,
-      undefined,
-      this.getRunContextFor(live.id),
+    return resolveWorkflowInputMarkerForGraphNodeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      },
+      live,
+      nodeId,
     );
-    return "clear";
   }
 
   /**
