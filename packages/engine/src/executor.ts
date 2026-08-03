@@ -698,6 +698,9 @@ import { disposeSubagentsForTask as disposeSubagentsForTaskImpl } from "./execut
 export { disposeSubagentsForTask as disposeSubagentsForTaskFree } from "./executor/dispose-subagents.js";
 import { ensureWorkflowMergeBoundaryTask as ensureWorkflowMergeBoundaryTaskImpl } from "./executor/workflow-merge-boundary.js";
 export { ensureWorkflowMergeBoundaryTask as ensureWorkflowMergeBoundaryTaskFree } from "./executor/workflow-merge-boundary.js";
+import { scheduleCompletedTaskWatchdog as scheduleCompletedTaskWatchdogImpl } from "./executor/completed-task-watchdog.js";
+export { scheduleCompletedTaskWatchdog as scheduleCompletedTaskWatchdogFree } from "./executor/completed-task-watchdog.js";
+
 
 
 
@@ -3559,71 +3562,25 @@ export class TaskExecutor {
   }
 
   private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
-    this.clearCompletedTaskWatchdog(taskId);
-
-    const handle = setTimeout(async () => {
-      this.completedTaskWatchdogs.delete(taskId);
-
-      // Claim recovery slot atomically (synchronously) before any async work.
-      // Without this, two paths can pass the in-flight guards on the same
-      // event-loop turn and both call recoverCompletedTask() concurrently.
-      if (
-        this.recoveringCompleted.has(taskId)
-        || this.executing.has(taskId)
-        || this.activeSessions.has(taskId)
-        || this.activeStepExecutors.has(taskId)
-        || this.activeWorkflowStepSessions.has(taskId)
-        || this.resumingUnpaused.has(taskId)
-      ) {
-        return;
-      }
-      this.recoveringCompleted.add(taskId);
-
-      try {
-        const pauseLabel = await this.getExecutionPauseLabel();
-        if (pauseLabel) {
-          return;
-        }
-
-        let currentTask: Task | null = null;
-        try {
-          currentTask = await this.store.getTask(taskId);
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          executorLog.warn(`${taskId}: completed-task watchdog could not read latest task state: ${errorMessage}`);
-          return;
-        }
-
-        if (!currentTask || currentTask.paused
-          || currentTask.column !== (await this.resolveResumeLanes(taskId)).wip) {
-          return;
-        }
-        if (!isTaskWorkComplete(currentTask)) {
-          return;
-        }
-
-        executorLog.warn(
-          `${taskId}: completed-task watchdog fired after ${COMPLETED_TASK_WATCHDOG_MS / 1000}s ` +
-          `(${trigger}) — attempting direct recovery to in-review`,
-        );
-        await this.store.logEntry(
-          taskId,
-          `Watchdog: task remained in-progress ${COMPLETED_TASK_WATCHDOG_MS / 1000}s after ${trigger} — attempting direct recovery to in-review`,
-        ).catch(() => undefined);
-
-        const recovered = await this.recoverCompletedTask(currentTask);
-        if (!recovered) {
-          await this.store.logEntry(
-            taskId,
-            "Watchdog recovery attempt could not finalize completed task — leaving for follow-up recovery",
-          ).catch(() => undefined);
-        }
-      } finally {
-        this.recoveringCompleted.delete(taskId);
-      }
-    }, COMPLETED_TASK_WATCHDOG_MS);
-
-    this.completedTaskWatchdogs.set(taskId, handle);
+    scheduleCompletedTaskWatchdogImpl(
+      {
+        store: this.store,
+        completedTaskWatchdogs: this.completedTaskWatchdogs,
+        recoveringCompleted: this.recoveringCompleted,
+        executing: this.executing,
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        resumingUnpaused: this.resumingUnpaused,
+        completedTaskWatchdogMs: COMPLETED_TASK_WATCHDOG_MS,
+        clearCompletedTaskWatchdog: (id: string) => this.clearCompletedTaskWatchdog(id),
+        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
+        resolveResumeLanes: (id: string) => this.resolveResumeLanes(id),
+        recoverCompletedTask: (task: Task) => this.recoverCompletedTask(task),
+      },
+      taskId,
+      trigger,
+    );
   }
 
   /**
