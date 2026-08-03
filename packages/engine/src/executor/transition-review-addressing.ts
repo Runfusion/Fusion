@@ -29,6 +29,13 @@ export async function transitionReviewAddressing(
       return record;
     }
     changed = true;
+    /*
+    FNXC:ReviewAddressing 2026-07-30-16:40 DELIBERATE-LITERAL:
+    `to` is a review-addressing RECORD STATUS (`queued` | `in-progress` | `addressed` | `failed`),
+    NOT a board column — the next lines test against `"addressed"` and `"failed"`, which are not
+    columns at all. The lifecycle-column census matches the bare string; resolving it to a
+    workflow role would be nonsense.
+    */
     return {
       ...record,
       status: to,
