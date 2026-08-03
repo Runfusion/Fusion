@@ -702,8 +702,14 @@ import { scheduleCompletedTaskWatchdog as scheduleCompletedTaskWatchdogImpl } fr
 export { scheduleCompletedTaskWatchdog as scheduleCompletedTaskWatchdogFree } from "./executor/completed-task-watchdog.js";
 import { scheduleWorkflowRerun as scheduleWorkflowRerunImpl } from "./executor/workflow-rerun-watchdog.js";
 export { scheduleWorkflowRerun as scheduleWorkflowRerunFree } from "./executor/workflow-rerun-watchdog.js";
-import { recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsImpl } from "./executor/required-artifact-recovery.js";
-export { recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsFree } from "./executor/required-artifact-recovery.js";
+import {
+  recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsImpl,
+  isRequiredArtifactRecoveryProtected as isRequiredArtifactRecoveryProtectedImpl,
+} from "./executor/required-artifact-recovery.js";
+export {
+  recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsFree,
+  isRequiredArtifactRecoveryProtected as isRequiredArtifactRecoveryProtectedFree,
+} from "./executor/required-artifact-recovery.js";
 
 
 
@@ -4464,29 +4470,11 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: made ASYNC to own its resolution):
-  This predicate protects a card from artifact-recovery replanning, and three of its conditions are
-  lifecycle columns: the terminal pair, and a review row whose auto-merge is off (a human owns it). As
-  literals they all read false on a renamed board — so a FINISHED card, or a review row a human was
-  holding, could be moved to the replan column and have its status rewritten to needs-replan.
-
-  ASYNC rather than lane parameters: all four callers already `await store.getTask` immediately before
-  calling this, so there is no new I/O ordering, and a parameter list would put the resolution in four
-  places that must agree. The archived half is why the SYNC planner-lane resolver was not an option — it
-  exposes no archived lane — and widening a shared resolver from inside a call-site sweep is scope creep
-  that makes a conversion unreviewable.
-  */
   private async isRequiredArtifactRecoveryProtected(task: Task): Promise<boolean> {
-    const terminalColumns = await resolveTerminalColumnsFor(this.store, task.id);
-    const protectionReviewLane = (await this.resolveResumeLanes(task.id)).review;
-    return Boolean(
-      task.deletedAt
-      || task.paused
-      || task.userPaused === true
-      || terminalColumns.includes(task.column)
-      || task.mergeDetails?.mergeConfirmed === true
-      || (task.column === protectionReviewLane && task.autoMerge === false),
+    return isRequiredArtifactRecoveryProtectedImpl(
+      this.store,
+      (taskId: string) => this.resolveResumeLanes(taskId),
+      task,
     );
   }
 

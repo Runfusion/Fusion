@@ -7,6 +7,7 @@ import type { Task, TaskStore } from "@fusion/core";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "../healing/recovery-policy.js";
 import { moveTaskToReplanColumn, resolveReplanTargetColumn } from "../execution/replan-target.js";
 import { generateSyntheticRunId, type EngineRunContext } from "../util/run-audit.js";
+import { resolveTerminalColumnsFor } from "./lifecycle-columns.js";
 
 export type RequiredArtifactRecoveryDeps = {
   store: TaskStore;
@@ -14,6 +15,36 @@ export type RequiredArtifactRecoveryDeps = {
   isRequiredArtifactRecoveryProtected: (task: Task) => Promise<boolean>;
   workflowLifecycleMovesInFlight: Set<string>;
 };
+
+/**
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: made ASYNC to own its resolution):
+ * This predicate protects a card from artifact-recovery replanning, and three of its conditions are
+ * lifecycle columns: the terminal pair, and a review row whose auto-merge is off (a human owns it). As
+ * literals they all read false on a renamed board — so a FINISHED card, or a review row a human was
+ * holding, could be moved to the replan column and have its status rewritten to needs-replan.
+ *
+ * ASYNC rather than lane parameters: all four callers already `await store.getTask` immediately before
+ * calling this, so there is no new I/O ordering, and a parameter list would put the resolution in four
+ * places that must agree. The archived half is why the SYNC planner-lane resolver was not an option — it
+ * exposes no archived lane — and widening a shared resolver from inside a call-site sweep is scope creep
+ * that makes a conversion unreviewable.
+ */
+export async function isRequiredArtifactRecoveryProtected(
+  store: TaskStore,
+  resolveResumeLanes: (taskId: string) => Promise<{ review: string }>,
+  task: Task,
+): Promise<boolean> {
+  const terminalColumns = await resolveTerminalColumnsFor(store, task.id);
+  const protectionReviewLane = (await resolveResumeLanes(task.id)).review;
+  return Boolean(
+    task.deletedAt
+    || task.paused
+    || task.userPaused === true
+    || terminalColumns.includes(task.column)
+    || task.mergeDetails?.mergeConfirmed === true
+    || (task.column === protectionReviewLane && task.autoMerge === false),
+  );
+}
 
 export async function recoverMissingRequiredArtifacts(
   deps: RequiredArtifactRecoveryDeps,
