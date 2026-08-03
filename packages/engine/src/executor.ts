@@ -675,6 +675,9 @@ export {
 } from "./executor/stale-pause-abort.js";
 import { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetImpl } from "./executor/dependency-dispatch-gate.js";
 export { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetFree } from "./executor/dependency-dispatch-gate.js";
+import { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskImpl } from "./executor/merge-confirmed-finalize.js";
+export { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskFree } from "./executor/merge-confirmed-finalize.js";
+
 
 
 
@@ -8172,62 +8175,15 @@ export class TaskExecutor {
   }
 
   private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
-    const live = await this.store.getTask(taskId).catch(() => null);
-    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === await resolveCompleteColumnFor(this.store, live.id)) return false;
-    /*
-    FNXC:WorkflowMerge 2026-06-29-08:32:
-    A workflow graph merge node can await a successful ProjectEngine merge request and return before the row reaches `done`. Merge confirmation is durable proof of landing; the executor must finalize that row from any non-terminal column instead of re-running parse or clearing mergeDetails.
-    */
-    await this.store.logEntry(
+    return finalizeMergeConfirmedWorkflowGraphTaskImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        getRunContextFor: (id: string) => this.getRunContextFor(id),
+      },
       taskId,
-      `Workflow graph observed confirmed merge while task was '${live.column}' — finalizing to done (${reason})`,
-      undefined,
-      this.getRunContextFor(taskId),
+      reason,
     );
-    const finalization = await finalizeProvenAutoMergeTask({
-      store: this.store,
-      taskId,
-      result: {
-        task: live,
-        ok: true,
-        merged: true,
-        commitSha: live.mergeDetails?.commitSha,
-        noOp: live.mergeDetails?.noOpMerge === true,
-        reason: live.mergeDetails?.noOpReason,
-        mergeConfirmed: true,
-      } as MergeResult,
-      rootDir: this.rootDir,
-      audit: createRunAuditor(this.store, {
-        runId: generateSyntheticRunId("workflow-graph-merge-finalize", taskId),
-        agentId: "executor",
-        taskId,
-        taskLineageId: live.lineageId,
-        phase: "workflow-graph-merge-finalize",
-      }),
-      auditAgentId: "executor",
-      auditPhase: "workflow-graph-merge-finalize",
-      source: "workflow-graph-merge-finalize",
-      log: (message) => executorLog.warn(message),
-    });
-    if (finalization.outcome === "blocked") {
-      executorLog.warn(`${taskId}: workflow graph merge-confirmed finalization blocked — ${finalization.reason ?? "unknown"}`);
-      await this.store.logEntry(
-        taskId,
-        `Workflow graph merge-confirmed finalization blocked — ${finalization.reason ?? "unknown"}`,
-        undefined,
-        this.getRunContextFor(taskId),
-      );
-      if (finalization.reason === "task has incomplete steps" && live.mergeDetails?.noOpMerge === true && !live.mergeDetails?.commitSha) {
-        /*
-        FNXC:WorkflowMerge 2026-06-29-23:12:
-        FN-7261 exposed stale no-op proof as a re-execution blocker: a reopened task with incomplete implementation steps and only no-op merge proof must fall through to merge-state cleanup/reverification, not consume execute() by repeatedly trying blocked finalization.
-        */
-        return false;
-      }
-      return true;
-    }
-    executorLog.log(`${taskId}: workflow graph merge-confirmed task finalized (${finalization.outcome})`);
-    return true;
   }
 
   /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
