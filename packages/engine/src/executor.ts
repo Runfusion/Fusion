@@ -470,7 +470,6 @@ export {
   isTransientResumeAfterRestartGraphFailure,
   isBenignInReviewPauseAbort,
 } from "./executor/graph-resume-predicates.js";
-import { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
 export { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
 import {
   preExecutionWorktreeHasWork,
@@ -663,6 +662,9 @@ import { reopenLastStepForRevision as reopenLastStepForRevisionImpl } from "./ex
 export { reopenLastStepForRevision as reopenLastStepForRevisionFree } from "./executor/reopen-last-step-for-revision.js";
 import { runExecutorDeterministicVerification as runExecutorDeterministicVerificationImpl } from "./executor/deterministic-verification.js";
 export { runExecutorDeterministicVerification as runExecutorDeterministicVerificationFree } from "./executor/deterministic-verification.js";
+import { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsImpl } from "./executor/workflow-step-failure-injection.js";
+export { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsFree } from "./executor/workflow-step-failure-injection.js";
+
 
 
 
@@ -15902,80 +15904,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     stepName: string,
     retry: { attempt: number; max?: number },
   ): Promise<void> {
-    const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
-
-    // Read existing PROMPT.md
-    let content: string;
-    try {
-      content = await readFile(promptPath, "utf-8");
-    } catch {
-      executorLog.warn(`${task.id}: PROMPT.md not found at ${promptPath}, skipping workflow failure injection`);
-      return;
-    }
-
-    const retryLabel = retry.max === undefined ? "unbounded" : String(retry.max);
-    const remainingRetries = retry.max === undefined ? "unlimited" : String(Math.max(0, retry.max - retry.attempt));
-    const failureSectionHeader = "## Workflow Step Failure";
-    const scopeGuard = buildWorkflowFailureScopeGuard(task, content);
-    const failureSectionContent = `${failureSectionHeader}
-
-The following workflow step failed and requires implementation fixes:
-
-**Step:** ${stepName}
-
-**Failure Feedback:**
-${failureFeedback}
-
-${scopeGuard}
-
-**Retry:** ${retry.attempt}/${retryLabel} (${remainingRetries} remaining)
-
-**Important:** This is a workflow step failure — fix the issues above by making the necessary code changes. The task has been sent back to in-progress for remediation. The executor will attempt to fix the issues on the next pass.
-
-`;
-
-    let newContent: string;
-    if (content.includes(failureSectionHeader)) {
-      // Replace existing section
-      const sectionRegex = new RegExp(
-        `${failureSectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`,
-        "i"
-      );
-      if (sectionRegex.test(content)) {
-        newContent = content.replace(sectionRegex, failureSectionContent);
-      } else {
-        // Fallback: append at end
-        newContent = content + "\n" + failureSectionContent;
-      }
-    } else {
-      // Remove any existing Workflow Revision Instructions section first (conflicting state)
-      const revisionSectionHeader = "## Workflow Revision Instructions";
-      if (content.includes(revisionSectionHeader)) {
-        const revisionRegex = new RegExp(
-          `${revisionSectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`,
-          "i"
-        );
-        content = content.replace(revisionRegex, "");
-      }
-
-      // Append new section before any closing markers or at end
-      const acceptanceCriteriaMatch = content.match(/\n##\s+Acceptance Criteria\n/);
-      if (acceptanceCriteriaMatch) {
-        const insertIdx = acceptanceCriteriaMatch.index!;
-        newContent = content.slice(0, insertIdx) + "\n" + failureSectionContent + content.slice(insertIdx);
-      } else {
-        newContent = content + "\n" + failureSectionContent;
-      }
-    }
-
-    // Write updated content
-    try {
-      await writeFile(promptPath, newContent);
-      executorLog.log(`${task.id}: injected workflow step failure instructions into PROMPT.md (retry ${retry.attempt}/${retryLabel})`);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.error(`${task.id}: failed to inject workflow step failure instructions: ${errorMessage}`);
-    }
+    return injectWorkflowStepFailureInstructionsImpl(this.store, task, failureFeedback, stepName, retry);
   }
 
   private async captureModifiedFiles(
