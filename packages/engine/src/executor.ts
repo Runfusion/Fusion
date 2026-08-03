@@ -176,7 +176,7 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
-import { isNonContinuableSessionError, isNonPlanDefectPlanReviewFailure, isSessionContentionError, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
+import { isNonPlanDefectPlanReviewFailure, isSessionContentionError, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import {
@@ -457,7 +457,6 @@ export {
 import { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 import {
-  isTaskAlreadyCompleteForNonContinuableSession,
   evaluateImplicitCompletionRefusal,
   skipBypassTaintUpdateForRefusal,
 } from "./executor/completion-predicates.js";
@@ -643,6 +642,15 @@ export {
   getCompletedTaskFinalizationDecision as getCompletedTaskFinalizationDecisionFree,
   shouldFinalizeCompletedTask as shouldFinalizeCompletedTaskFree,
 } from "./executor/completion-finalization.js";
+import {
+  handleNonContinuableSessionError as handleNonContinuableSessionErrorImpl,
+  handleNonContinuableSessionRetry as handleNonContinuableSessionRetryImpl,
+} from "./executor/non-continuable-session.js";
+export {
+  handleNonContinuableSessionError as handleNonContinuableSessionErrorFree,
+  handleNonContinuableSessionRetry as handleNonContinuableSessionRetryFree,
+} from "./executor/non-continuable-session.js";
+
 
 
 
@@ -3820,89 +3828,25 @@ export class TaskExecutor {
     return shouldFinalizeCompletedTaskImpl(this.completionFinalizationDeps(), taskId, taskDone);
   }
 
+  private nonContinuableSessionDeps() {
+    return {
+      store: this.store,
+      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      resolveResumeLanes: (taskId: string) => this.resolveResumeLanes(taskId),
+      persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
+      clearCompletedTaskWatchdog: (taskId: string) => this.clearCompletedTaskWatchdog(taskId),
+      signalTaskComplete: (task: Task) => this.signalTaskComplete(task),
+      handoffTaskToReview: (task: Task, reason: string) => this.handoffTaskToReview(task, reason),
+      markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
+    };
+  }
+
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
-    if (!isNonContinuableSessionError(errorMessage)) {
-      return false;
-    }
-
-    const liveTask = await this.store.getTask(task.id);
-    const nonContinuableLanes = await this.resolveResumeLanes(task.id);
-    if (!liveTask || !isTaskAlreadyCompleteForNonContinuableSession(liveTask, taskDone, nonContinuableLanes.review)) {
-      return false;
-    }
-
-    const diagnosticMessage = "Post-done session continuation suppressed — session not continuable (last role assistant); task work already complete, leaving clean in-review";
-    executorLog.warn(`${task.id} ${diagnosticMessage}`);
-    await this.store.logEntry(task.id, diagnosticMessage, errorMessage, this.getRunContextFor(task.id));
-
-    if (liveTask.status === "failed" || liveTask.error) {
-      await this.store.updateTask(task.id, { status: null, error: null });
-    }
-
-    await this.persistTokenUsage(task.id);
-
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2703 review — greptile P1, and it is the same split
-    I have been fixing all day, in code I wrote an hour earlier):
-    ONE SNAPSHOT. The eligibility check above already resolved this task's lanes
-    (`nonContinuableLanes`), and this branch resolved them AGAIN. A workflow selection or review-column
-    edit between the two makes eligibility accept the card on the old board while this branch reads the new
-    one — the card is then handed to `handoffTaskToReview`, reprocessing a row already in review.
-
-    Writing the second resolution was not carelessness about the rule; it is that the rule is invisible at
-    the call site. That is the argument for the structural ratchet in
-    `executor-graph-failure-lanes-resolved.test.ts` rather than for trying harder.
-    */
-    if (liveTask.column === nonContinuableLanes.review) {
-      this.clearCompletedTaskWatchdog(task.id);
-      this.signalTaskComplete(liveTask);
-      return true;
-    }
-
-    const refreshedTask = await this.store.getTask(task.id);
-    await this.handoffTaskToReview(refreshedTask ?? liveTask, "post-done-noncontinuable");
-    this.clearCompletedTaskWatchdog(task.id);
-    this.signalTaskComplete(refreshedTask ?? liveTask);
-    return true;
+    return handleNonContinuableSessionErrorImpl(this.nonContinuableSessionDeps(), task, taskDone, errorMessage);
   }
 
   private async handleNonContinuableSessionRetry(task: Task, errorMessage: string): Promise<boolean> {
-    if (!isNonContinuableSessionError(errorMessage)) {
-      return false;
-    }
-
-    const liveTask = await this.store.getTask(task.id);
-    if (!liveTask) {
-      return false;
-    }
-
-    const decision = computeRecoveryDecision({
-      recoveryRetryCount: liveTask.recoveryRetryCount,
-      nextRecoveryAt: liveTask.nextRecoveryAt,
-    });
-
-    if (decision.shouldRetry) {
-      const attempt = decision.nextState.recoveryRetryCount;
-      const delay = formatDelay(decision.delayMs);
-      executorLog.warn(`⚡ ${task.id} non-continuable session — fresh-session retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}`);
-      await this.store.logEntry(task.id, `Non-continuable session — fresh-session retry (${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}): ${errorMessage}`, undefined, this.getRunContextFor(task.id));
-      await this.store.updateTask(task.id, {
-        recoveryRetryCount: decision.nextState.recoveryRetryCount,
-        nextRecoveryAt: decision.nextState.nextRecoveryAt,
-        sessionFile: null,
-      });
-      this.markGraphExecuteSelfRequeued(task.id);
-      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveResumeState: true });
-      return true;
-    }
-
-    executorLog.error(`✗ ${task.id} non-continuable session fresh-session retries exhausted (${MAX_RECOVERY_RETRIES} attempts): ${errorMessage}`);
-    await this.store.logEntry(task.id, `Non-continuable session fresh-session retries exhausted after ${MAX_RECOVERY_RETRIES} attempts: ${errorMessage}`, undefined, this.getRunContextFor(task.id));
-    await this.store.updateTask(task.id, {
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    });
-    return false;
+    return handleNonContinuableSessionRetryImpl(this.nonContinuableSessionDeps(), task, errorMessage);
   }
 
   private async getTaskCompletionBlocker(task: Task): Promise<string | undefined> {
