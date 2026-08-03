@@ -4,11 +4,24 @@ import { evaluateTaskDoneRefusal } from "../executor.js";
 
 describe("FN-4946 shared task_done refusal helper invariant", () => {
   it("keeps a single helper implementation and routes explicit+implicit paths through it", () => {
-    const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
-    const invocations = source.match(/evaluateTaskDoneRefusal\(/g) ?? [];
-    const helperDecl = source.match(/\bfunction evaluateTaskDoneRefusal\b/g) ?? [];
+    /*
+    FNXC:CodeOrganization 2026-08-03-07:30:
+    Wave18 peels evaluateTaskDoneRefusal into executor/task-done-refusal.ts; executor.ts
+    re-exports it. The single-implementation invariant still holds: one export function
+    declaration in the domain module, multiple call sites in the executor facade.
+    */
+    const facade = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+    const helper = readFileSync(new URL("../executor/task-done-refusal.ts", import.meta.url), "utf8");
+    // Call sites only — skip re-export/import lines.
+    const callLines = facade.split("\n").filter((line) =>
+      /evaluateTaskDoneRefusal\s*\(/.test(line)
+      && !line.includes("from \"./executor/task-done-refusal")
+      && !/^\s*(import|export)\b/.test(line.trim())
+      && !/evaluateTaskDoneRefusal,/.test(line),
+    );
+    const helperDecl = helper.match(/\bexport function evaluateTaskDoneRefusal\b/g) ?? [];
 
-    expect(invocations.length).toBeGreaterThanOrEqual(3);
+    expect(callLines.length).toBeGreaterThanOrEqual(2);
     expect(helperDecl).toHaveLength(1);
   });
 

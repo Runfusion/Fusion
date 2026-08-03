@@ -401,66 +401,7 @@ function isWorkflowStepSkillDiscoverable(
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
-function getPromptSection(prompt: string, heading: string): string {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = prompt.match(new RegExp(`^##\\s+${escapedHeading}\\s*$([\\s\\S]*?)(?=^##\\s+|$(?![\\s\\S]))`, "im"));
-  return match?.[1]?.trim() ?? "";
-}
-
-function promptDeclaresReviewLevelOnePlanOnly(prompt: string): boolean {
-  return /^##\s+Review Level:\s*1\b[^\n]*\bPlan Only\b/im.test(prompt);
-}
-
-function promptDeclaresNoSourceChangeIntent(prompt: string): boolean {
-  const normalized = prompt.toLowerCase();
-  return [
-    /should\s+not\s+change\s+(?:product\s+)?source/,
-    /do\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?source/,
-    /no\s+(?:source|code)\s+changes?\s+(?:are\s+)?(?:expected|required|needed|allowed)/,
-    /must\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?(?:source|code)/,
-  ].some((pattern) => pattern.test(normalized));
-}
-
-function promptLooksCoordinationOnly(prompt: string): boolean {
-  const titleMatch = prompt.match(/^#\s+Task:\s+[^\n]+/im)?.[0] ?? "";
-  const mission = getPromptSection(prompt, "Mission");
-  const assessment = prompt.match(/^\*\*Assessment:\*\*\s*([^\n]+)/im)?.[1] ?? "";
-  const coordinationText = `${titleMatch}\n${mission}\n${assessment}`.toLowerCase();
-  const hasCoordinationIntent = /\b(coordination|routing|route|handoff|assign(?:ment)?|owner|triage|select exactly one|record (?:the )?intentional block)\b/.test(coordinationText);
-  const missionLower = mission.toLowerCase()
-    .replace(/do\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?source/g, "")
-    .replace(/should\s+not\s+change\s+(?:product\s+)?source/g, "")
-    .replace(/must\s+not\s+(?:edit|modify|change)\s+(?:product\s+)?(?:source|code)/g, "");
-  const hasImplementationDirective = /\b(implement|fix|add|change|modify|refactor|build|create|delete|remove)\b/.test(missionLower);
-  return hasCoordinationIntent && !hasImplementationDirective;
-}
-
-function promptFileScopeIsBoardOnly(prompt: string): boolean {
-  const fileScope = getPromptSection(prompt, "File Scope");
-  if (!fileScope.trim()) return false;
-  const normalized = fileScope.toLowerCase();
-  const sourcePathPattern = /(?:^|[\s`'"(])(?:packages|src|source|sources|app|apps|lib|libs|components|scripts|docs|\.github|config|test|tests|__tests__)\//m;
-  const sourceExtensionPattern = /\.(?:ts|tsx|js|jsx|mjs|cjs|swift|kt|java|py|go|rs|rb|php|cs|cpp|c|h|hpp|json|ya?ml|toml|mdx?|css|scss|html|sql|sh)\b/m;
-  if (sourcePathPattern.test(normalized) || sourceExtensionPattern.test(normalized)) return false;
-  const allowedBoardOnlyPattern = /(?:^|[^\w/])(?:task[- ]?board|board task|task document|task documents|task metadata|task logs|fusion task tools|fn_task_[\w-]*|\.fusion\/tasks|attachments?)(?=$|[^\w/-])/;
-  return allowedBoardOnlyPattern.test(normalized);
-}
-
-function getNoCommitEligibilityReason(task: Task): "explicit noCommitsExpected=true" | "prompt-derived coordination-only no-source scope" | null {
-  if (task.noCommitsExpected === true) return "explicit noCommitsExpected=true";
-  const rawPrompt = task.prompt;
-  const prompt = typeof rawPrompt === "string" ? rawPrompt : "";
-  if (!prompt.trim()) return null;
-  if (
-    promptDeclaresReviewLevelOnePlanOnly(prompt) &&
-    promptLooksCoordinationOnly(prompt) &&
-    promptDeclaresNoSourceChangeIntent(prompt) &&
-    promptFileScopeIsBoardOnly(prompt)
-  ) {
-    return "prompt-derived coordination-only no-source scope";
-  }
-  return null;
-}
+import { getNoCommitEligibilityReason } from "./executor/no-commit-eligibility.js";
 
 /**
  * How long to wait after engine startup before spawning AI agent sessions for
@@ -571,21 +512,6 @@ const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 /** Upper bound for in-process loop recovery before falling through to kill/requeue. */
 const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
-const TASK_DONE_REFUSAL_SUFFIX = "Either finish the work and resubmit, or do not call fn_task_done — exit the session and the engine will requeue.";
-
-type TaskDoneRefusalClass =
-  | "bulk-step-completion-without-review"
-  | "pending-code-review-revise";
-
-type TaskDoneRefusalResult =
-  | { ok: true }
-  | {
-    ok: false;
-    refusalClass: TaskDoneRefusalClass;
-    message: string;
-    reason: string;
-  };
-
 type PendingReviewBlockResult =
   | {
     blocked: true;
@@ -652,170 +578,33 @@ function detectPendingReviewBlock(
   return { blocked: false };
 }
 
-function formatTaskDoneRefusal(refusalClass: TaskDoneRefusalClass, reason: string): string {
-  /*
-  FNXC:Lifecycle 2026-07-16-10:20:
-  FN-8141 — when the bulk-completion gate refuses (steps lack APPROVE verdicts), the agent must NOT reach for
-  skip-every-step-then-complete as the escape hatch (that is exactly how FN-8141 laundered a failure into `done`).
-  Name the honest blocked exit in the refusal so the sanctioned path is the advertised one.
-  */
-  const blockedHint = refusalClass === "bulk-step-completion-without-review"
-    ? " If the work genuinely cannot proceed, do NOT skip the remaining steps to force completion — call fn_task_done(outcome=\"blocked\", reason=\"...\") instead."
-    : "";
-  return `fn_task_done refused (${refusalClass}): ${reason}. ${TASK_DONE_REFUSAL_SUFFIX}${blockedHint}`;
-}
+export {
+  evaluateTaskDoneRefusal,
+  determineRevisionResetStart,
+} from "./executor/task-done-refusal.js";
+import {
+  evaluateTaskDoneRefusal,
+  determineRevisionResetStart,
+  formatTaskDoneRefusal,
+  buildSkipBypassTaintRefusal,
+} from "./executor/task-done-refusal.js";
 
-export function evaluateTaskDoneRefusal(
-  task: Task,
-  _params: { summary?: string },
-  codeReviewVerdicts: Map<number, ReviewVerdict>,
-): TaskDoneRefusalResult {
-  const pendingSteps: number[] = [];
-  for (let stepIndex = 0; stepIndex < task.steps.length; stepIndex++) {
-    const step = task.steps[stepIndex];
-    if (!step || step.status === "done" || step.status === "skipped") {
-      continue;
-    }
-    pendingSteps.push(stepIndex);
-    if (codeReviewVerdicts.get(stepIndex) === "REVISE") {
-      const reason = `Step ${stepIndex} (${step.name}) has a pending code review verdict of REVISE`;
-      return {
-        ok: false,
-        refusalClass: "pending-code-review-revise",
-        reason,
-        message: formatTaskDoneRefusal("pending-code-review-revise", reason),
-      };
-    }
-  }
-
-  if (pendingSteps.length >= 2) {
-    const allPendingApproved = pendingSteps.every((stepIndex) => codeReviewVerdicts.get(stepIndex) === "APPROVE");
-    if (!allPendingApproved) {
-      const reason = `attempted to auto-complete ${pendingSteps.length} pending steps without APPROVE verdicts on all of them`;
-      return {
-        ok: false,
-        refusalClass: "bulk-step-completion-without-review",
-        reason,
-        message: formatTaskDoneRefusal("bulk-step-completion-without-review", reason),
-      };
-    }
-  }
-
-  return { ok: true };
-}
-
-/*
-FNXC:Lifecycle 2026-07-16-21:40:
-FN-8141 — synthesize a refusal for an IMPLICIT (agent-exited, no explicit
-fn_task_done) completion whose skipped steps are skip-bypass tainted. Only the
-implicit/auto paths consult this; an explicit accepted fn_task_done stays the
-honest exit that clears the taint. Reuses the bulk-step-completion class so the
-existing refusal budget/park machinery applies unchanged.
-*/
-function buildSkipBypassTaintRefusal(
-  evaluation: ReturnType<typeof evaluateSkipBypassTaint>,
-): Extract<TaskDoneRefusalResult, { ok: false }> {
-  const reason = evaluation.reason
-    ?? "skipped steps after a bulk-step-completion refusal cannot auto-complete the task";
-  return {
-    ok: false,
-    refusalClass: "bulk-step-completion-without-review",
-    reason,
-    message: formatTaskDoneRefusal("bulk-step-completion-without-review", reason),
-  };
-}
-
-/**
- * Determines the step index from which revision should restart given a set of
- * completed steps and user feedback. Exported for unit tests; no longer called
- * from the executor (revision is now handled via `reopenLastStepForRevision`).
- */
-export function determineRevisionResetStart(
-  steps: ReadonlyArray<{ name: string }>,
-  feedback: string,
-): number {
-  const total = steps.length;
-  if (total === 0) return 0;
-  const skipPreflight = /preflight/i.test(steps[0].name);
-  const firstCandidate = skipPreflight ? 1 : 0;
-  if (firstCandidate >= total) return total;
-  const fb = feedback.toLowerCase();
-  for (let i = firstCandidate; i < total; i++) {
-    const tokens = steps[i].name.toLowerCase().match(/[a-z][a-z]{4,}/g) ?? [];
-    if (tokens.some((t) => fb.includes(t))) return i;
-  }
-  return firstCandidate;
-}
-
-export interface WorkflowRevisionFeedbackPartition {
-  inScopeFeedback: string;
-  outOfScopeFeedback: string;
-  inScopeSegments: string[];
-  outOfScopeSegments: string[];
-  detectedPaths: string[];
-}
 
 const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
-const WORKFLOW_FEEDBACK_PATH_REGEX = /`([^`\n]+)`|(?<![A-Za-z0-9_.-])((?:\.\.?\/)?(?:@?[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?:\.[A-Za-z0-9._-]+)?)/g;
 
-// FNXC:Workspace 2026-06-21-15:00: F8 — delegate to the single shared normalizer (workspace-paths.ts).
-// Was a near-duplicate that did NOT strip a leading slash and only collapsed a single trailing slash;
-// the shared `normalizeRepoRelPath` additionally strips leading slashes and collapses repeated trailing
-// slashes. For repo-relative inputs (the only inputs in practice) the result is unchanged; the extra
-// canonicalization only hardens absolute/trailing-slash edge cases so workspace and non-workspace scope
-// matching agree. Kept as a thin alias so existing call sites stay put.
-function normalizeWorkflowScopePath(pathValue: string): string {
-  return normalizeRepoRelPath(pathValue);
-}
+export {
+  extractReferencedPathsFromWorkflowFeedback,
+  isAlwaysAllowedScopeLeakPath,
+  workflowPathMatchesDeclaredScope,
+} from "./executor/workflow-feedback-paths.js";
+export type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
+import {
+  extractReferencedPathsFromWorkflowFeedback,
+  isAlwaysAllowedScopeLeakPath,
+  workflowPathMatchesDeclaredScope,
+} from "./executor/workflow-feedback-paths.js";
+import type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
 
-function stripTrailingPathPunctuation(pathValue: string): string {
-  return pathValue.replace(/[),.:;!?]+$/g, "");
-}
-
-export function extractReferencedPathsFromWorkflowFeedback(feedback: string): string[] {
-  const extracted: string[] = [];
-  const seen = new Set<string>();
-  for (const match of feedback.matchAll(WORKFLOW_FEEDBACK_PATH_REGEX)) {
-    const candidate = stripTrailingPathPunctuation(match[1] ?? match[2] ?? "");
-    const normalized = normalizeWorkflowScopePath(candidate);
-    if (!normalized.includes("/") || !normalized) continue;
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    extracted.push(normalized);
-  }
-  return extracted;
-}
-
-/**
- * FN-4811 follow-up: paths the scope-leak guard never flags, regardless of declared
- * scope. These are file types every task may legitimately touch as part of standard
- * delivery (e.g., `.changeset/` per AGENTS.md's "Finalizing Changes" section).
- * Cross-task contamination of these paths is caught by stronger guards downstream
- * (file-scope invariant at squash commit, branch-tip checks, post-merge audit).
- */
-export function isAlwaysAllowedScopeLeakPath(filePath: string): boolean {
-  const normalizedPath = normalizeWorkflowScopePath(filePath);
-  return normalizedPath.startsWith(".changeset/");
-}
-
-export function workflowPathMatchesDeclaredScope(filePath: string, scopePatterns: readonly string[]): boolean {
-  const normalizedPath = normalizeWorkflowScopePath(filePath);
-  for (const rawPattern of scopePatterns) {
-    const pattern = normalizeWorkflowScopePath(rawPattern);
-    if (!pattern) continue;
-    if (/\/\*+$/.test(pattern)) {
-      const directory = pattern.replace(/\/\*+$/, "");
-      if (normalizedPath === directory || normalizedPath.startsWith(`${directory}/`)) return true;
-      continue;
-    }
-    if (pattern.endsWith("/")) {
-      if (normalizedPath.startsWith(pattern)) return true;
-      continue;
-    }
-    if (normalizedPath === pattern) return true;
-  }
-  return false;
-}
 
 export function parseReviewLevelFromPrompt(prompt: string): number {
   const reviewMatch = prompt.match(/##\s*Review Level[:\s]*(\d)/);
@@ -1142,48 +931,15 @@ const spawnAgentParams = Type.Object({
  * pause/resume machinery as an `awaitInput` node (U6). Returns the question text,
  * or null when no well-formed sentinel is present.
  */
-export function parseAwaitInputSentinel(output: string | undefined): string | null {
-  if (!output) return null;
-  const m = output.match(/===FUSION_AWAIT_INPUT===\s*([\s\S]*?)\s*===END_FUSION_AWAIT_INPUT===/);
-  const question = m?.[1]?.trim();
-  return question ? question : null;
-}
+export {
+  parseAwaitInputSentinel,
+  parseAwaitInputQuestionToolCall,
+} from "./executor/await-input-parse.js";
+import {
+  parseAwaitInputSentinel,
+  parseAwaitInputQuestionToolCall,
+} from "./executor/await-input-parse.js";
 
-const USER_QUESTION_TOOL_NAMES = new Set([
-  "askuserquestion",
-  "ask_user",
-  "ask_followup_question",
-  "request_user_input",
-  "elicit",
-  "ask_question",
-  "fn_ask_question",
-]);
-
-/**
- * Normalize a question-tool invocation into the same durable await-input
- * contract used by skill sentinels. Some runtimes expose an interactive
- * question tool even though Fusion workflow-step sessions have no synchronous
- * listener; detecting the call at the session event boundary prevents the
- * task from continuing after the unanswered question is rendered.
- */
-export function parseAwaitInputQuestionToolCall(
-  toolName: string,
-  args: Record<string, unknown> | undefined,
-): string | null {
-  if (!USER_QUESTION_TOOL_NAMES.has(toolName.trim().toLowerCase()) || !args) return null;
-
-  const records = Array.isArray(args.questions) ? args.questions : [args];
-  const questions = records.flatMap((value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-    const record = value as Record<string, unknown>;
-    const question = [record.question, record.prompt, record.message, record.text, record.title]
-      .find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)
-      ?.trim();
-    return question ? [question] : [];
-  });
-
-  return questions.length > 0 ? questions.join("\n\n") : null;
-}
 
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
@@ -1200,21 +956,26 @@ export function parseAwaitInputQuestionToolCall(
  * `../` traversal before reading, since the file body is injected verbatim into a
  * child's system prompt (a filesystem prompt-injection surface otherwise).
  */
-export const FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE = `## Fusion workflow-step conventions
-
-You are running as a Fusion autonomous workflow step — NOT an interactive Claude Code session. Follow these conventions; they override any contrary instruction in the skill body below.
-
-1. Asking the user: there is no interactive listener here. \`AskUserQuestion\` / \`request_user_input\` go into the void. When you must ask the user a question, emit EXACTLY ONE block of the form:
-   ===FUSION_AWAIT_INPUT===
-   <your question for the user>
-   ===END_FUSION_AWAIT_INPUT===
-   and then STOP. Fusion parks the task awaiting the user's answer and re-runs this step with their reply.
-
-2. Headless runs: when the environment variable \`FUSION_HEADLESS=1\` is set, do NOT ask the user anything. Record a reasonable assumption explicitly in your output and proceed — never emit the await-input block in this mode.
-
-3. Dispatching a \`ce-<persona>\` subagent: do NOT use a raw \`Task ce-*(...)\` call. Instead, read the persona definition from \`$FUSION_CE_AGENTS_DIR/<persona>.md\`, strip its YAML frontmatter, and pass the remaining body as the \`systemPromptOverride\` argument to the \`fn_spawn_agent\` tool. Resolve the path strictly inside \`$FUSION_CE_AGENTS_DIR\` — reject any \`<persona>\` containing \`/\` or \`..\` (path traversal), and skip a def whose body is empty or implausibly large. If \`fn_spawn_agent\` is not available (a readonly step), do the persona's work inline yourself instead of spawning.
-
-`;
+export {
+  FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
+  parseWorkflowStepVerdict,
+  inferWorkflowStepVerdictFromProse,
+  parseWorkflowStepOutput,
+} from "./executor/workflow-step-verdict.js";
+export type {
+  WorkflowStepOutcome,
+  WorkflowStepResult,
+} from "./executor/workflow-step-verdict.js";
+import {
+  FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
+  parseWorkflowStepVerdict,
+  inferWorkflowStepVerdictFromProse,
+  parseWorkflowStepOutput,
+} from "./executor/workflow-step-verdict.js";
+import type {
+  WorkflowStepOutcome,
+  WorkflowStepResult,
+} from "./executor/workflow-step-verdict.js";
 
 /** Result returned from fn_spawn_agent tool */
 interface SpawnAgentResult {
@@ -1225,157 +986,6 @@ interface SpawnAgentResult {
   message: string;
 }
 
-/**
- * Outcome of a single workflow step execution.
- * Supports three states: pass, hard failure, or revision requested with feedback.
- */
-export interface WorkflowStepOutcome {
-  success: boolean;
-  revisionRequested?: boolean;
-  output?: string;
-  error?: string;
-  /** Machine-readable verdict extracted from structured JSON output. */
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  /** Notes extracted from structured JSON output (distinct from raw output). */
-  notes?: string;
-  /** Set when the call exceeded `settings.workflowStepTimeoutMs`. Signals the
-   *  caller to escalate to the fallback model rather than treat the failure
-   *  as a generic revision request. */
-  timedOut?: boolean;
-  /** True when no structured or prose verdict could be inferred. */
-  malformed?: boolean;
-  /** Machine-readable graph failure used for deterministic recovery routing. */
-  failureValue?: string;
-}
-
-/**
- * Result of running all pre-merge workflow steps.
- * Returns true if all passed, false if any hard failure, or a structured
- * revision result if a revision was requested.
- */
-export type WorkflowStepResult =
-  | { allPassed: true }
-  | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
-  | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
-
-export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string } | null {
-  const trimmed = rawOutput.trim();
-  const candidates: string[] = [];
-  const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
-  for (const match of fencedMatches) {
-    candidates.push(match[1].trim());
-  }
-  /*
-  FNXC:ReviewLeniency 2026-07-01-23:30:
-  Prefer a balanced, string-aware object scan over a greedy `\{[\s\S]*\}` match: models that emit reasoning PROSE (which may itself contain braces) followed by a trailing `{"verdict":...}` payload broke the greedy span into invalid JSON. extractJsonObjectCandidates returns each top-level object in document order; iterating last→first prefers the trailing verdict payload.
-  */
-  candidates.push(...extractJsonObjectCandidates(trimmed));
-
-  for (let i = candidates.length - 1; i >= 0; i -= 1) {
-    try {
-      const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown };
-      if (!parsed || typeof parsed.verdict !== "string") continue;
-      /*
-      FNXC:ReviewLeniency 2026-07-01-23:30:
-      "Any approved" — accept approval-family verdict variants (APPROVE, APPROVED, APPROVE_WITH_NOTES, approve_with_verdict, …), not just the exact WORKFLOW_STEP_VERDICTS strings. A token starting with APPROVE maps to APPROVE_WITH_NOTES when it mentions notes, else APPROVE; REVISE-family → REVISE; anything else (e.g. "PASS") is not a verdict and the candidate is skipped.
-      */
-      const token = parsed.verdict.trim().toUpperCase();
-      let verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | null = null;
-      if (token.startsWith("APPROVE") || token.startsWith("APPROVAL")) {
-        verdict = token.includes("NOTE") ? "APPROVE_WITH_NOTES" : "APPROVE";
-      } else if (token.startsWith("REVISE") || token.startsWith("REQUEST_REVISION") || token.startsWith("REJECT")) {
-        verdict = "REVISE";
-      }
-      if (!verdict) continue;
-      return {
-        verdict,
-        notes: typeof parsed.notes === "string" ? parsed.notes : "",
-      };
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
-}
-
-export function inferWorkflowStepVerdictFromProse(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string } | null {
-  const trimmed = rawOutput.trim();
-  const revisionMatch = trimmed.match(/^REQUEST REVISION\s*\n*/i);
-  if (revisionMatch) {
-    return { verdict: "REVISE", notes: trimmed.slice(revisionMatch[0].length).trim() || "Revision requested" };
-  }
-  /*
-   * FNXC:PlanReview 2026-06-29-02:05:
-   * Plan Review runs through reviewer-style agents that often emit a markdown
-   * section such as `### Verdict: APPROVE` even when the prompt asks for trailing
-   * JSON. Treat that explicit verdict as authoritative so a real approval does
-   * not collapse into a synthetic pre-execution plan failure loop.
-   */
-  const explicitVerdictMatch = trimmed.match(/(?:^|\n)\s*(?:#{1,6}\s*)?(?:verdict|status)\s*:\s*(APPROVE_WITH_NOTES|APPROVE|REVISE)\b/i);
-  if (explicitVerdictMatch) {
-    return {
-      verdict: explicitVerdictMatch[1].toUpperCase() as "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE",
-      notes: "",
-    };
-  }
-  /*
-  FNXC:ReviewLeniency 2026-07-01-22:15:
-  A gate review (code-review, browser-verification) whose text clearly approves must PASS even when it is not perfectly structured. Delegate to the shared proseSignalsClearApproval detector so this parser and the reviewer/plan-review parser agree on what "clearly approved" means, and so a prose rejection ("not approved", "please revise", "reject") is never promoted to APPROVE. Replaces the prior narrow approve/approved/looks good/no issues/out of scope regex (now a subset of the shared detector).
-  */
-  if (proseSignalsClearApproval(trimmed)) {
-    return { verdict: "APPROVE", notes: "" };
-  }
-  return null;
-}
-
-/**
- * FNXC:WorkflowGates 2026-06-17-18:22:
- * Gate-class workflow steps must emit a parseable JSON or prose verdict before they can approve pre-merge completion. A fully malformed response is surfaced explicitly so blocking gates fail while advisory gates can record a non-blocking advisory failure.
- */
-export function parseWorkflowStepOutput(rawOutput: string): {
-  output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  notes?: string;
-  malformed?: boolean;
-};
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict: false }): {
-  output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  notes?: string;
-  malformed?: boolean;
-};
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean } = {}): {
-  output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  notes?: string;
-  malformed?: boolean;
-} {
-  const trimmed = rawOutput.trim();
-  const parsed = parseWorkflowStepVerdict(trimmed);
-  if (parsed) {
-    return {
-      output: parsed.notes || "",
-      verdict: parsed.verdict,
-      notes: parsed.notes,
-    };
-  }
-
-  const inferred = inferWorkflowStepVerdictFromProse(trimmed);
-  if (inferred) {
-    return {
-      output: inferred.notes || trimmed,
-      verdict: inferred.verdict,
-      notes: inferred.notes,
-    };
-  }
-
-  if (options.requireVerdict === false) {
-    return { output: trimmed };
-  }
-
-  return { output: trimmed, malformed: true };
-}
 
 /*
 FNXC:ExecutorPrompt 2026-06-21-03:59:
