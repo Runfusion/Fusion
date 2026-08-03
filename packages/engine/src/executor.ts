@@ -690,6 +690,9 @@ export {
   runAwaitInputNode as runAwaitInputNodeFree,
   pauseForCliApproval as pauseForCliApprovalFree,
 } from "./executor/await-input-node.js";
+import { recoverApprovedStepsOnResume as recoverApprovedStepsOnResumeImpl } from "./executor/recover-approved-steps-on-resume.js";
+export { recoverApprovedStepsOnResume as recoverApprovedStepsOnResumeFree } from "./executor/recover-approved-steps-on-resume.js";
+
 
 
 
@@ -17045,59 +17048,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
    * advances to the next actually-pending step.
    */
   private async recoverApprovedStepsOnResume(taskId: string): Promise<void> {
-    let detail: TaskDetail;
-    try {
-      detail = await this.store.getTask(taskId);
-    } catch (err) {
-      executorLog.warn(`${taskId}: recoverApprovedStepsOnResume getTask failed: ${err instanceof Error ? err.message : String(err)}`);
-      return;
-    }
-    const log = detail.log ?? [];
-    if (log.length === 0) return;
-
-    let recovered = 0;
-    for (let i = 0; i < detail.steps.length; i++) {
-      if (detail.steps[i].status !== "in-progress") continue;
-
-      let lastPendingAt = -1;
-      let lastApproveAt = -1;
-      const stepName = detail.steps[i].name;
-      // Matches "Step 3 (My Step) → pending"; name is user-controlled, so match
-      // on prefix rather than a regex built from the name.
-      const transitionPrefix = `Step ${i} (${stepName}) → `;
-      const approvePrefix = `code review Step ${i}:`;
-      for (let j = 0; j < log.length; j++) {
-        const action = log[j].action || "";
-        if (action.startsWith(transitionPrefix)) {
-          const status = action.slice(transitionPrefix.length).trim();
-          if (status === "pending") lastPendingAt = j;
-        } else if (action.startsWith(approvePrefix) && action.includes("APPROVE")) {
-          lastApproveAt = j;
-        }
-      }
-
-      if (lastApproveAt > lastPendingAt) {
-        executorLog.log(
-          `${taskId}: step ${i} ("${stepName}") already has an approved code review — marking done on resume (skipping review replay)`,
-        );
-        try {
-          await this.store.logEntry(
-            taskId,
-            `Step ${i} (${stepName}) recovered as done on resume — code review had already approved before the engine stopped`,
-          );
-          await this.store.updateStep(taskId, i, "done");
-          recovered++;
-        } catch (err) {
-          executorLog.warn(
-            `${taskId}: failed to recover step ${i} on resume: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-    }
-
-    if (recovered > 0) {
-      executorLog.log(`${taskId}: recovered ${recovered} approved step(s) on resume`);
-    }
+    return recoverApprovedStepsOnResumeImpl(this.store, taskId);
   }
 
   /**
