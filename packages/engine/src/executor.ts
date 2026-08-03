@@ -373,9 +373,6 @@ retries): a lease is held for as long as the holder's own work takes — minutes
 attempts backing off 5s→60s covers ~8 minutes of waiting, after which the task is left queued for
 ordinary re-dispatch rather than parked.
 */
-const MAX_SESSION_CONTENTION_HOLD_RETRIES = 10;
-const SESSION_CONTENTION_HOLD_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 5_000;
-const SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS = 60_000;
 /** How long to wait before recovering a completed task still stuck in in-progress. */
 const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
@@ -677,6 +674,19 @@ import { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDepend
 export { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetFree } from "./executor/dependency-dispatch-gate.js";
 import { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskImpl } from "./executor/merge-confirmed-finalize.js";
 export { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskFree } from "./executor/merge-confirmed-finalize.js";
+import {
+  holdForSessionContention as holdForSessionContentionImpl,
+  MAX_SESSION_CONTENTION_HOLD_RETRIES,
+  SESSION_CONTENTION_HOLD_BACKOFF_MS,
+  SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS,
+} from "./executor/session-contention-hold.js";
+export {
+  holdForSessionContention as holdForSessionContentionFree,
+  MAX_SESSION_CONTENTION_HOLD_RETRIES,
+  SESSION_CONTENTION_HOLD_BACKOFF_MS,
+  SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS,
+} from "./executor/session-contention-hold.js";
+
 
 
 
@@ -8795,51 +8805,20 @@ export class TaskExecutor {
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
   ): Promise<void> {
-    const detail = graphFailureErrorTexts(result).find((text) => isSessionContentionError(text));
-    const priorAttempts = this.sessionContentionHoldAttempts.get(task.id) ?? 0;
-    const attempt = priorAttempts + 1;
-
-    if (attempt > MAX_SESSION_CONTENTION_HOLD_RETRIES) {
-      this.clearSessionContentionHold(task.id);
-      const message = `Still waiting on another task to release a shared session path after ${MAX_SESSION_CONTENTION_HOLD_RETRIES} attempts — leaving the task queued for normal re-dispatch (not a failure)${detail ? `: ${detail}` : ""}`;
-      executorLog.warn(`${task.id}: ${message}`);
-      await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-      if (live.status != null || live.error != null) {
-        await this.store.updateTask(task.id, { status: null, error: null }, this.getRunContextFor(task.id));
-      }
-      return;
-    }
-
-    this.sessionContentionHoldAttempts.set(task.id, attempt);
-    const message = `Waiting on another task to release a shared session path — retrying in place (${attempt}/${MAX_SESSION_CONTENTION_HOLD_RETRIES})${detail ? `: ${detail}` : ""}`;
-    executorLog.warn(`${task.id}: ${message}`);
-    await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-    // A contention hold is not a failure state: clear any stale park so the row never shows as failed
-    // while it is simply waiting its turn.
-    if (live.status != null || live.error != null) {
-      await this.store.updateTask(task.id, { status: null, error: null }, this.getRunContextFor(task.id));
-    }
-
-    const delayMs = SESSION_CONTENTION_HOLD_BACKOFF_MS === 0
-      ? 0
-      : Math.min(SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS, SESSION_CONTENTION_HOLD_BACKOFF_MS * 2 ** (attempt - 1));
-    const scheduleRetry = () => {
-      void (async () => {
-        try {
-          const resume = await this.store.getTask(task.id);
-          if (!resume || resume.deletedAt || resume.paused || resume.userPaused) {
-            this.clearSessionContentionHold(task.id);
-            return;
-          }
-          await this.execute(resume);
-        } catch (err) {
-          executorLog.error(`Failed session-contention retry for ${task.id}:`, err);
-        }
-      })();
-    };
-    setTimeout(scheduleRetry, delayMs).unref?.();
+    return holdForSessionContentionImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        getHoldAttempts: (taskId: string) => this.sessionContentionHoldAttempts.get(taskId) ?? 0,
+        setHoldAttempts: (taskId: string, attempt: number) => { this.sessionContentionHoldAttempts.set(taskId, attempt); },
+        clearHold: (taskId: string) => this.clearSessionContentionHold(taskId),
+        reexecute: (t: Task) => this.execute(t),
+      },
+      task,
+      live,
+      result,
+    );
   }
-
 
   private async routeUnusableWorktreeGraphFailureToRecovery(
     task: Task,
