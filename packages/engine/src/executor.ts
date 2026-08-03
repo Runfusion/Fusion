@@ -761,6 +761,8 @@ import { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl } from "./
 export { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkFree } from "./executor/await-abort-in-flight.js";
 import { abortAllInFlight as abortAllInFlightImpl } from "./executor/abort-all-in-flight.js";
 export { abortAllInFlight as abortAllInFlightFree } from "./executor/abort-all-in-flight.js";
+import { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineImpl } from "./executor/maybe-dispatch-workflow-work-engine.js";
+export { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineFree } from "./executor/maybe-dispatch-workflow-work-engine.js";
 
 
 
@@ -9285,84 +9287,7 @@ export class TaskExecutor {
   }
 
   private async maybeDispatchWorkflowWorkEngine(task: Task): Promise<boolean> {
-    let detail: TaskDetail;
-    let workflow: WorkflowIr;
-    try {
-      detail = await this.store.getTask(task.id);
-      workflow = await resolveWorkflowIrForTask(this.store, task.id);
-    } catch (error) {
-      executorLog.warn(`${task.id}: failed to resolve workflow work-engine bindings: ${error instanceof Error ? error.message : String(error)}`);
-      return false;
-    }
-    if (workflow.version !== "v2") return false;
-
-    const column = workflow.columns.find((candidate) => candidate.id === detail.column);
-    const extensionEntries = Object.entries(column?.extensions ?? {});
-    if (extensionEntries.length === 0) return false;
-
-    const registry = getWorkflowExtensionRegistry();
-    for (const [extensionId, metadata] of extensionEntries) {
-      const definition = registry.get(extensionId);
-      const extension = definition?.extension;
-      if (!definition || definition.degraded || extension?.kind !== "work-engine" || !extension.dispatch) continue;
-
-      let result: WorkflowWorkEngineDispatchResult;
-      try {
-        result = await extension.dispatch({
-          task: detail,
-          workflow,
-          columnId: detail.column,
-          metadata,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        executorLog.warn(`${task.id}: workflow work-engine ${extensionId} failed: ${message}`);
-        if (extension.fallback === "degradeToDefault") continue;
-        await this.store.logEntry(task.id, `Workflow work engine ${extensionId} failed`, message);
-        await this.store.updateTask(task.id, {
-          status: extension.fallback === "parkNeedsAttention" ? "queued" : "failed",
-          error: message,
-        });
-        return true;
-      }
-
-      if (result.kind === "not-claimed") continue;
-      if (result.kind === "degraded-to-default") {
-        executorLog.warn(`${task.id}: workflow work-engine ${extensionId} degraded to default: ${result.reason}`);
-        await this.store.logEntry(task.id, `Workflow work engine ${extensionId} degraded to default`, result.reason);
-        continue;
-      }
-      if (result.kind === "parked") {
-        await this.store.logEntry(task.id, result.message, result.reason);
-        await this.store.updateTask(task.id, { status: "queued", error: result.reason });
-        return true;
-      }
-
-      await this.store.logEntry(
-        task.id,
-        result.message ?? `Workflow work engine ${extensionId} claimed execution`,
-      );
-      try {
-        await this.store.recordRunAuditEvent?.({
-          taskId: task.id,
-          agentId: "workflow-work-engine",
-          runId: result.runId ?? generateSyntheticRunId("workflow-work-engine", task.id),
-          domain: "database",
-          mutationType: "workflow:work-engine:claimed",
-          target: task.id,
-          metadata: {
-            extensionId,
-            columnId: detail.column,
-            pluginId: definition.pluginId,
-          },
-        });
-      } catch (error) {
-        executorLog.warn(`${task.id}: failed to record workflow work-engine claim audit: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      return true;
-    }
-
-    return false;
+    return maybeDispatchWorkflowWorkEngineImpl({ store: this.store }, task);
   }
 
   private async evaluateTaskVerdictProviders(
