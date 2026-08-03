@@ -695,6 +695,9 @@ import { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompl
 export { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnFree } from "./executor/no-merge-complete-column.js";
 import { applyGraphRethinkReset as applyGraphRethinkResetImpl } from "./executor/graph-rethink-reset.js";
 export { applyGraphRethinkReset as applyGraphRethinkResetFree } from "./executor/graph-rethink-reset.js";
+import { disposeSubagentsForTask as disposeSubagentsForTaskImpl } from "./executor/dispose-subagents.js";
+export { disposeSubagentsForTask as disposeSubagentsForTaskFree } from "./executor/dispose-subagents.js";
+
 
 
 
@@ -2105,17 +2108,7 @@ export class TaskExecutor {
    * so subagents stop alongside the main session.
    */
   private disposeSubagentsForTask(taskId: string, reason: string): void {
-    const set = this.activeSubagentSessions.get(taskId);
-    if (!set || set.size === 0) return;
-    executorLog.log(`${taskId}: disposing ${set.size} subagent session(s) — ${reason}`);
-    for (const session of set) {
-      try {
-        session.dispose();
-      } catch (err) {
-        executorLog.warn(`${taskId}: failed to dispose subagent session: ${err}`);
-      }
-    }
-    this.activeSubagentSessions.delete(taskId);
+    disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason);
   }
 
   /*
