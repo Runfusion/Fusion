@@ -31,8 +31,16 @@ import {
   resolveReviewColumns,
 } from "../../core/src/workflows/workflow-lifecycle-traits.js";
 import { resolveWorkflowIrForTask } from "../../core/src/workflows/workflow-ir-resolver.js";
+/*
+ * FNXC:BundledPlugins 2026-08-03-09:40:
+ * FN-8762 todos plugin constructs AgentStore for create-task-from-item routes.
+ * Without this re-export, CLI bundled-plugin esbuild fails with "No matching export
+ * in plugin-sdk-core-runtime-shim.mjs for import AgentStore" (same class of failure
+ * as missing lifecycle trait re-exports). Source path, not package barrel.
+ */
+import { AgentStore } from "../../core/src/agents/agent-store.js";
 
-export { columnsWithFlag, resolveReviewColumns, resolveWorkflowIrForTask };
+export { columnsWithFlag, resolveReviewColumns, resolveWorkflowIrForTask, AgentStore };
 
 export const FUSION_RESTART_EXIT_CODE = 86;
 
