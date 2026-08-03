@@ -182,10 +182,8 @@ import type { PluginRunner } from "./plugins/plugin-runner.js";
 import { isContextLimitError } from "./errors/context-limit-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import {
-  isUsableWorktreeDirectory,
   makeAncestryBlastRadiusGuard,
   resetStepToBaseline,
-  runTaskStep,
   type RunTaskStepResult,
 } from "./execution/step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
@@ -777,6 +775,12 @@ import { transitionReviewAddressing as transitionReviewAddressingImpl } from "./
 export { transitionReviewAddressing as transitionReviewAddressingFree } from "./executor/transition-review-addressing.js";
 import { runGraphTaskStep as runGraphTaskStepImpl } from "./executor/run-graph-task-step.js";
 export { runGraphTaskStep as runGraphTaskStepFree } from "./executor/run-graph-task-step.js";
+import { getAuthoritativeAssignedAgent as getAuthoritativeAssignedAgentImpl } from "./executor/get-authoritative-assigned-agent.js";
+export { getAuthoritativeAssignedAgent as getAuthoritativeAssignedAgentFree } from "./executor/get-authoritative-assigned-agent.js";
+import { shouldDeferWorkflowStepCompletion as shouldDeferWorkflowStepCompletionImpl } from "./executor/should-defer-workflow-step-completion.js";
+export { shouldDeferWorkflowStepCompletion as shouldDeferWorkflowStepCompletionFree } from "./executor/should-defer-workflow-step-completion.js";
+import { runProjectedGraphTaskStep as runProjectedGraphTaskStepImpl } from "./executor/run-projected-graph-task-step.js";
+export { runProjectedGraphTaskStep as runProjectedGraphTaskStepFree } from "./executor/run-projected-graph-task-step.js";
 
 
 
@@ -1616,42 +1620,19 @@ export class TaskExecutor {
     taskId: string,
     context: string,
   ): Promise<boolean> {
-    let latestTask: Task | null = null;
-    try {
-      latestTask = await this.store.getTask(taskId);
-    } catch {
-      latestTask = null;
-    }
-
-    if (latestTask?.paused || this.pausedAborted.has(taskId)) {
-      this.clearCompletedTaskWatchdog(taskId);
-      executorLog.log(`${taskId}: completion handoff deferred — task paused (${context})`);
-      await this.store.logEntry(
-        taskId,
-        `Completion handoff deferred — task paused (${context})`,
-        undefined,
-        this.getRunContextFor(taskId),
-      ).catch(() => undefined);
-      return true;
-    }
-
-    /* FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: wip-lane liveness family): "still executing"
-       is the board's WIP lane. With the literal a renamed board deferred EVERY completion handoff — the
-       card was never in `in-progress`, so this read "no longer active" for a card that was actively
-       executing, and the handoff was dropped with a log line. */
-    if ((latestTask && latestTask.column !== (await this.resolveResumeLanes(taskId)).wip) || this.userCanceledTaskIds.has(taskId)) {
-      this.clearCompletedTaskWatchdog(taskId);
-      executorLog.log(`${taskId}: completion handoff deferred — task no longer active (${context})`);
-      await this.store.logEntry(
-        taskId,
-        `Completion handoff deferred — task no longer active (${context})`,
-        undefined,
-        this.getRunContextFor(taskId),
-      ).catch(() => undefined);
-      return true;
-    }
-
-    return this.shouldDeferCompletionForGlobalPause(taskId, context);
+    return shouldDeferWorkflowStepCompletionImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        pausedAborted: this.pausedAborted,
+        userCanceledTaskIds: this.userCanceledTaskIds,
+        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
+        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
+        shouldDeferCompletionForGlobalPause: (id, ctx) => this.shouldDeferCompletionForGlobalPause(id, ctx),
+      },
+      taskId,
+      context,
+    );
   }
 
   /** Child agent sessions keyed by agent ID. Used for termination. */
@@ -3661,43 +3642,16 @@ export class TaskExecutor {
   private async getAuthoritativeAssignedAgent(
     assignedAgentId: string | null | undefined,
   ): Promise<Agent | null> {
-    const normalizedId = assignedAgentId?.trim();
-    if (!normalizedId) return null;
-
-    const configuredAgent = await this.options.agentStore?.getAgent(normalizedId).catch(() => null) ?? null;
-    if (configuredAgent) return configuredAgent;
-
-    /*
-    FNXC:ModelResolution 2026-07-10-00:00:
-    Task execution sessions must honor the assigned permanent agent's runtimeConfig like chat sessions do. If the live executor was handed an agents-less worktree AgentStore, fall back to the authoritative project `.fusion` AgentStore instead of letting `resolveExecutorSessionModel` see an empty runtimeConfig and silently drift to the pi built-in model.
-    */
-    try {
-      /*
-      FNXC:PostgresOnlyDataAccess 2026-07-17-14:20:
-      The authoritative-agent fallback AgentStore MUST inherit the TaskStore's AsyncDataLayer so it runs in PostgreSQL backend mode. AgentStore does not derive `asyncLayer` from `taskStore`, so omitting it left this store in legacy-SQLite mode; in a PG deployment `init()`/`getAgent()` then hit the removed SQLite stub, the throw was swallowed by the catch below, and this method silently returned null — reintroducing the exact model-drift to the pi built-in that this fallback exists to prevent. Pass the layer (mirrors the canonical site in agent-tools.ts).
-      */
-      const authoritativeAgentLayer = this.store.getAsyncLayer();
-      /*
-      FNXC:PostgresOnlyDataAccess 2026-07-17-16:10:
-      Do NOT memoize a layer-less AgentStore. If the very first lookup runs before
-      the TaskStore's AsyncDataLayer is attached, a plain `??=` would cache a
-      legacy-SQLite-mode store forever, so every later call keeps failing through the
-      removed SQLite path even after the layer arrives. Rebuild when a layer is now
-      available but the cached store is not in backend mode.
-      */
-      if (!this.authoritativeAssignedAgentStore || (authoritativeAgentLayer && !this.authoritativeAssignedAgentStore.backendMode)) {
-        this.authoritativeAssignedAgentStore = new AgentStore({
-          rootDir: join(this.rootDir, ".fusion"),
-          taskStore: this.store,
-          ...(authoritativeAgentLayer ? { asyncLayer: authoritativeAgentLayer } : {}),
-        });
-      }
-      await this.authoritativeAssignedAgentStore.init();
-      return await this.authoritativeAssignedAgentStore.getAgent(normalizedId).catch(() => null);
-    } catch (err: unknown) {
-      executorLog.warn(`Failed to read assigned agent ${normalizedId} from authoritative project AgentStore: ${err instanceof Error ? err.message : String(err)}`);
-      return null;
-    }
+    return getAuthoritativeAssignedAgentImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        agentStore: this.options.agentStore,
+        getAuthoritativeAssignedAgentStore: () => this.authoritativeAssignedAgentStore,
+        setAuthoritativeAssignedAgentStore: (s) => { this.authoritativeAssignedAgentStore = s; },
+      },
+      assignedAgentId,
+    );
   }
 
   private async getAssignedAgentRuntimeConfig(
@@ -5103,43 +5057,18 @@ export class TaskExecutor {
     thinkingLevel?: ThinkingLevel,
     skillName?: string,
   ): Promise<RunTaskStepResult> {
-    const worktreePath = active.worktreePath || live.worktree;
-    const runStep = (idx: number) =>
-      this.runGraphTaskStep(
-        task,
-        idx,
-        active.instanceId,
-        governingNodeId,
-        thinkingLevel,
-        skillName,
-      );
-
-    /*
-     * FNXC:BaselineCwdGating 2026-07-21-19:21:
-     * FN-8464 requires graph step projection to defer until this candidate is a real directory.
-     * A stale, non-directory, or inaccessible truthy path must follow fresh-worktree ordering so
-     * runTaskStep never spawns baseline git with an unusable cwd; acquisition supplies baseCommitSha.
-     */
-    if (!worktreePath || !isUsableWorktreeDirectory(worktreePath)) {
-      const result = await runStep(stepIndex);
-      const refreshed = await this.store.getTask(task.id).catch(() => live);
-      return {
-        outcome: result.success ? "success" : "failure",
-        baselineSha: refreshed.baseCommitSha,
-        checkpointId: undefined,
-        exit: result.exit,
-      };
-    }
-
-    return runTaskStep(
+    return runProjectedGraphTaskStepImpl(
       {
         store: this.store,
-        worktreePath,
-        runStep,
+        runGraphTaskStep: (t, idx, inst, gov, think, skill) => this.runGraphTaskStep(t, idx, inst, gov, think, skill),
       },
-      { id: task.id, steps: live.steps },
+      task,
+      live,
       stepIndex,
-      { markDoneOnSuccess: active.deferDoneToReview !== true, projectionSource: "graph" },
+      active,
+      governingNodeId,
+      thinkingLevel,
+      skillName,
     );
   }
 
