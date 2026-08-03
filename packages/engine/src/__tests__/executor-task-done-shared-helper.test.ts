@@ -9,19 +9,28 @@ describe("FN-4946 shared task_done refusal helper invariant", () => {
     Wave18 peels evaluateTaskDoneRefusal into executor/task-done-refusal.ts; executor.ts
     re-exports it. The single-implementation invariant still holds: one export function
     declaration in the domain module, multiple call sites in the executor facade.
+
+    FNXC:CodeOrganization 2026-08-03-13:45:
+    Implicit completion path peels into completion-predicates.ts; count call sites across
+    facade + that peel so the ratchet still covers explicit and implicit routes.
     */
     const facade = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+    const implicitPeel = readFileSync(new URL("../executor/completion-predicates.ts", import.meta.url), "utf8");
     const helper = readFileSync(new URL("../executor/task-done-refusal.ts", import.meta.url), "utf8");
-    // Call sites only — skip re-export/import lines.
-    const callLines = facade.split("\n").filter((line) =>
+    const isCallSite = (line: string) =>
       /evaluateTaskDoneRefusal\s*\(/.test(line)
       && !line.includes("from \"./executor/task-done-refusal")
+      && !line.includes('from "./task-done-refusal')
       && !/^\s*(import|export)\b/.test(line.trim())
-      && !/evaluateTaskDoneRefusal,/.test(line),
-    );
+      && !/evaluateTaskDoneRefusal,/.test(line);
+    // Call sites only — skip re-export/import lines.
+    const callLines = [
+      ...facade.split("\n").filter(isCallSite),
+      ...implicitPeel.split("\n").filter(isCallSite),
+    ];
     const helperDecl = helper.match(/\bexport function evaluateTaskDoneRefusal\b/g) ?? [];
 
-    // Exact count: two facade call sites (explicit + implicit task_done paths). Lower bounds hide drift.
+    // Exact count: explicit (executor tool path) + implicit (completion-predicates).
     expect(callLines.length).toBe(2);
     expect(helperDecl).toHaveLength(1);
   });
