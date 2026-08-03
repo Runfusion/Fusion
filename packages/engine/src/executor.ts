@@ -83,7 +83,6 @@ import {
   isEphemeralAgent,
   isMergeRequestContractShadowEnabled,
   resolvePersistAgentThinkingLog,
-  resolveAgentMemoryInclusionMode,
   loadWorkspaceConfig,
   type WorkspaceConfig,
   type RunCommandResult,
@@ -198,7 +197,6 @@ import {
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree/worktree-acquisition.js";
 
 import {
-  resolveAgentInstructions,
   buildSystemPromptWithInstructions,
   buildPluginPromptSection,
 } from "./agents/agent-instructions.js";
@@ -744,6 +742,16 @@ import { buildActionGateContext as buildActionGateContextImpl } from "./executor
 export { buildActionGateContext as buildActionGateContextFree } from "./executor/build-action-gate-context.js";
 import { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextImpl } from "./executor/build-permanent-agent-gating-context.js";
 export { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextFree } from "./executor/build-permanent-agent-gating-context.js";
+import { resolveInstructionsForRole as resolveInstructionsForRoleImpl } from "./executor/resolve-instructions-for-role.js";
+export { resolveInstructionsForRole as resolveInstructionsForRoleFree } from "./executor/resolve-instructions-for-role.js";
+import {
+  signalTaskComplete as signalTaskCompleteImpl,
+  triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureImpl,
+} from "./executor/signal-task-complete.js";
+export {
+  signalTaskComplete as signalTaskCompleteFree,
+  triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureFree,
+} from "./executor/signal-task-complete.js";
 
 
 
@@ -3200,31 +3208,26 @@ export class TaskExecutor {
    * mirroring the existing in-session reflection-tool guard.
    */
   private signalTaskComplete(task: Task): void {
-    this.triggerPostTaskReflectionCapture(task);
-    this.options.onComplete?.(task);
+    return signalTaskCompleteImpl(
+      {
+        store: this.store,
+        capturedReflectionTaskIds: this.capturedReflectionTaskIds,
+        reflectionService: this.options.reflectionService,
+        onComplete: this.options.onComplete,
+      },
+      task,
+    );
   }
 
   private triggerPostTaskReflectionCapture(task: Task): void {
-    const reflectionService = this.options.reflectionService;
-    if (!reflectionService) return;
-
-    const assignedAgentId = task.assignedAgentId?.trim();
-    if (!assignedAgentId) return;
-
-    if (this.capturedReflectionTaskIds.has(task.id)) return;
-    this.capturedReflectionTaskIds.add(task.id);
-
-    void (async () => {
-      try {
-        const settings = await this.store.getSettings();
-        if (!settings.reflectionEnabled) return;
-        await reflectionService.captureTaskPerformance(assignedAgentId, task.id);
-      } catch (error) {
-        executorLog.warn(
-          `${task.id}: post-task performance capture failed (best-effort, non-blocking): ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    })();
+    return triggerPostTaskReflectionCaptureImpl(
+      {
+        store: this.store,
+        capturedReflectionTaskIds: this.capturedReflectionTaskIds,
+        reflectionService: this.options.reflectionService,
+      },
+      task,
+    );
   }
 
   private clearWorkflowRerunWatchdog(taskId: string): void {
@@ -4304,28 +4307,14 @@ export class TaskExecutor {
    * Returns an empty string if no instructions are found.
    */
   private async resolveInstructionsForRole(role: string, settings?: Settings): Promise<string> {
-    if (!this.options.agentStore) return "";
-    try {
-      const agents = await this.options.agentStore.listAgents({ role: role as AgentCapability });
-      for (const agent of agents) {
-        if (agent.instructionsText || agent.instructionsPath) {
-          try {
-            const ratingSummary = await this.options.agentStore.getRatingSummary(agent.id);
-            const mode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
-            return await resolveAgentInstructions(agent, this.rootDir, ratingSummary, mode);
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            executorLog.warn(`${agent.id}: failed to load rating summary for instruction resolution, falling back to default instructions: ${msg}`);
-            const mode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
-            return await resolveAgentInstructions(agent, this.rootDir, undefined, mode);
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`Failed to resolve instructions for role '${role}', continuing without custom instructions: ${msg}`);
-    }
-    return "";
+    return resolveInstructionsForRoleImpl(
+      {
+        rootDir: this.rootDir,
+        agentStore: this.options.agentStore,
+      },
+      role,
+      settings,
+    );
   }
 
   /**
