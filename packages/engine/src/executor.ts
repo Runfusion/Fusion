@@ -482,6 +482,27 @@ export {
 import { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 import { quoteShellArg } from "./executor/shell-quote.js";
+import {
+  isTaskAlreadyCompleteForNonContinuableSession,
+  evaluateImplicitCompletionRefusal,
+  skipBypassTaintUpdateForRefusal,
+} from "./executor/completion-predicates.js";
+export {
+  isTaskAlreadyCompleteForNonContinuableSession,
+  evaluateImplicitCompletionRefusal,
+  skipBypassTaintUpdateForRefusal,
+} from "./executor/completion-predicates.js";
+import {
+  isTransientResumeAfterRestartGraphFailure,
+  isBenignInReviewPauseAbort,
+} from "./executor/graph-resume-predicates.js";
+export {
+  isTransientResumeAfterRestartGraphFailure,
+  isBenignInReviewPauseAbort,
+} from "./executor/graph-resume-predicates.js";
+import { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
+export { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
+
 export { quoteShellArg } from "./executor/shell-quote.js";
 import { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
 export { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
@@ -499,7 +520,6 @@ export {
 } from "./executor/task-done-refusal.js";
 import {
   evaluateTaskDoneRefusal,
-  buildSkipBypassTaintRefusal,
 } from "./executor/task-done-refusal.js";
 
 
@@ -525,8 +545,6 @@ export {
 import {
   parseReviewLevelFromPrompt,
   evaluatePromptDerivedNoCommitEligibility,
-  extractPromptSection,
-  extractPromptListEntries,
 } from "./executor/prompt-derived-eligibility.js";
 
 
@@ -3785,21 +3803,6 @@ export class TaskExecutor {
     return await this.getCompletedTaskFinalizationDecision(taskId, taskDone) === "finalize";
   }
 
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2703 review — greptile P1):
-  The review lane arrives from the caller for the reason documented on `isBenignInReviewPauseAbort`: the
-  synchronous resolver returns the default workflow in PostgreSQL mode, so resolving it here would have
-  been a conversion that changes the census and not the behaviour.
-  */
-  private isTaskAlreadyCompleteForNonContinuableSession(task: Task, taskDone: boolean, reviewLane: string): boolean {
-    // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — the step-status "already complete" branch
-    // must not treat skip-bypass-tainted skips as completion; an accepted done / in-review
-    // column are honest completion signals and stay unaffected.
-    return taskDone
-      || task.column === reviewLane
-      || (isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
-  }
-
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
     if (!isNonContinuableSessionError(errorMessage)) {
       return false;
@@ -3807,7 +3810,7 @@ export class TaskExecutor {
 
     const liveTask = await this.store.getTask(task.id);
     const nonContinuableLanes = await this.resolveResumeLanes(task.id);
-    if (!liveTask || !this.isTaskAlreadyCompleteForNonContinuableSession(liveTask, taskDone, nonContinuableLanes.review)) {
+    if (!liveTask || !isTaskAlreadyCompleteForNonContinuableSession(liveTask, taskDone, nonContinuableLanes.review)) {
       return false;
     }
 
@@ -8849,21 +8852,6 @@ export class TaskExecutor {
     }
   }
 
-  private isTransientResumeAfterRestartGraphFailure(live: Task, result: WorkflowGraphTaskRunResult): boolean {
-    if ((result.reason ?? "").trim().length > 0) return false;
-
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (failedNode !== undefined && failedNode !== "execute") return false;
-
-    if (live.steps.some((step) => step.status === "done")) return false;
-
-    const failureState = live as Task & { lastError?: unknown; failureReason?: unknown };
-    if (failureState.lastError != null || failureState.failureReason != null) return false;
-
-    const latestAction = live.log.at(-1)?.action;
-    return latestAction === "Resumed after engine restart"
-      || latestAction === "Resuming execution after unpause";
-  }
 
   /*
   FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
@@ -9149,64 +9137,6 @@ export class TaskExecutor {
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
     if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
     if ((live.mergeRetries ?? 0) >= resolveMaxAutoMergeRetries(settings)) return false;
-    return true;
-  }
-
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2703 review — greptile P1, and it is the most
-  important finding in this sweep):
-
-  THE SYNCHRONOUS RESOLVER IS A NO-OP IN PRODUCTION. `resolvePlannerLanes` reads
-  `store.resolveTaskWorkflowIrSync`, whose selection reader is `getTaskWorkflowSelectionImpl` — and in
-  PostgreSQL mode that function returns `undefined` unconditionally ("Backend mode cannot synchronously
-  read PostgreSQL"). PostgreSQL is the shipped backend, so every sync-resolved conversion resolves the
-  DEFAULT workflow and answers with the legacy ids no matter what board the task is on.
-
-  That makes a sync conversion cosmetic: the census counts it as converted, `--strict` goes down by one,
-  and the guard behaves exactly as the literal did. Worse than leaving the literal, because the number
-  says the site is done.
-
-  THE FIX IS TO STOP BEING SYNCHRONOUS, not to keep the literal. Both of this file's sync classifiers
-  are called from async methods that have already awaited a store read, so the lane can be threaded in
-  from the caller's existing snapshot — no new I/O, no second resolution, and the two halves of the
-  decision provably read the same board.
-  */
-  private isBenignInReviewPauseAbort(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    userCanceled: boolean,
-    /** The caller's already-resolved review lane — see the note above on the sync resolver. */
-    reviewLane: string,
-  ): boolean {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-20-00:00:
-    FNXC:WorkflowLifecycle 2026-07-26-11:20:
-    KB-PROV: post-split the engine case arrives as `engine-abort` and an operator withdrawal as `hard-cancel`; this classifier still accepts BOTH (`isGenericAbortProvenance`) because the `userCanceled` guard below — not the label — is the load-bearing operator-intent discriminator FN-6796 designed. Narrowing to `engine-abort` would change behaviour for the operator path.
-
-    FN-6796: an engine restart/pause-resume abort reaches graph-failure handling as `hard-cancel`/`engine-abort` provenance even when no user canceled the task. A clean completed `in-review` row in that shape is already handed off for review and must not be stranded with the operator-action pause-abort marker; the discriminator is the in-memory `userCanceledTaskIds` set plus the resting column and clean row state, while global/user pause, merge-seam, terminal merge values, merge-confirmed partial landings, and pre-existing status/error still park exactly as before.
-    */
-    if (!pausedAborted) return false;
-    if (!isGenericAbortProvenance(abortProvenance)) return false;
-    if (userCanceled) return false;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2703 review — replaces my own earlier reasoning):
-    This comparison used the SYNC `resolvePlannerLanes`, which I justified as the right resolver for a
-    synchronous classifier. That justification was wrong in production: in PostgreSQL mode the sync
-    selection reader always returns undefined, so the sync resolver hands back the DEFAULT workflow's lanes
-    and the guard behaves exactly as the literal did. The lane now arrives from the caller's snapshot — see
-    the note on this method.
-    */
-    if (live.column !== reviewLane) return false;
-    if (live.userPaused === true) return false;
-    if (live.status != null || live.error != null) return false;
-    if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (isMergeGraphFailure(failedNode)) return false;
-    if (live.steps.length === 0) return false;
-    if (!live.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
     return true;
   }
 
@@ -10087,7 +10017,7 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (genuinePauseAbort && this.isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), failureLanes.review)) {
+      if (genuinePauseAbort && isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id), failureLanes.review)) {
         this.clearPausedAborted(task.id);
         this.activeWorktrees.delete(task.id);
         const inReviewBenign = "Workflow graph run ended during engine pause/resume while already in-review — benign, in-review state preserved";
@@ -10579,7 +10509,7 @@ export class TaskExecutor {
         }
         return;
       }
-      if (this.isTransientResumeAfterRestartGraphFailure(live, result)) {
+      if (isTransientResumeAfterRestartGraphFailure(live, result)) {
         const priorRetries = live.graphResumeRetryCount ?? 0;
         if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
           const nextRetries = priorRetries + 1;
@@ -13311,7 +13241,7 @@ export class TaskExecutor {
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
               // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
-              const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
+              const refusal = evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
               if (!refusal.ok) {
                 await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                 return;
@@ -13592,7 +13522,7 @@ export class TaskExecutor {
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
                   // Implicit and explicit paths share the same structural pending-review and bulk-step-completion guards.
-                  const refusal = this.evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
+                  const refusal = evaluateImplicitCompletionRefusal(implicitCheck, codeReviewVerdicts);
                   if (!refusal.ok) {
                     await this.handleImplicitTaskDoneRefusal(implicitCheck, refusal);
                     retrySession?.dispose();
@@ -15728,38 +15658,6 @@ export class TaskExecutor {
     return { blocked: false };
   }
 
-  /*
-  FNXC:Lifecycle 2026-07-16-21:40:
-  FN-8141 — an IMPLICIT completion (agent exits with every step done/skipped and no
-  explicit fn_task_done) is an AUTO-promotion, so it must honor the skip-bypass taint.
-  A synthesized taint refusal here re-parks the run through the existing refusal budget
-  rather than laundering skipped-after-refusal steps into review. The explicit
-  fn_task_done tool path is NOT routed here — that call remains the honest exit.
-  */
-  private evaluateImplicitCompletionRefusal(
-    task: Task,
-    codeReviewVerdicts: Map<number, ReviewVerdict>,
-  ): ReturnType<typeof evaluateTaskDoneRefusal> {
-    const refusal = evaluateTaskDoneRefusal(task, {}, codeReviewVerdicts);
-    if (!refusal.ok) return refusal;
-    const taint = evaluateSkipBypassTaint(task);
-    if (taint.blocked) return buildSkipBypassTaintRefusal(taint);
-    return { ok: true };
-  }
-
-  /*
-  FNXC:Lifecycle 2026-07-16-21:40:
-  FN-8141 — a `bulk-step-completion-without-review` refusal stamps the durable taint
-  marker so that later skips (in this or a requeued lifecycle) cannot auto-promote. The
-  marker is cleared only on an honest exit (accepted fn_task_done / operator retry).
-  */
-  private skipBypassTaintUpdateForRefusal(
-    refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
-  ): { bulkCompletionRefusalAt: string } | Record<string, never> {
-    if (refusal.refusalClass !== "bulk-step-completion-without-review") return {};
-    return { bulkCompletionRefusalAt: new Date().toISOString() };
-  }
-
   private async handleImplicitTaskDoneRefusal(
     task: Task,
     refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
@@ -15768,7 +15666,7 @@ export class TaskExecutor {
     await this.store.logEntry(task.id, refusal.message, undefined, this.getRunContextFor(task.id));
     executorLog.error(`${task.id}: fn_task_done refused (${refusal.refusalClass}) — ${refusal.reason} (implicit completion)`);
 
-    const taintUpdate = this.skipBypassTaintUpdateForRefusal(refusal);
+    const taintUpdate = skipBypassTaintUpdateForRefusal(refusal);
     const priorRequeues = task.taskDoneRetryCount ?? 0;
     const nextRequeueCount = priorRequeues + 1;
     if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -16078,7 +15976,7 @@ export class TaskExecutor {
 
           // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — stamp the skip-bypass taint marker so a
           // later skip-then-exit (in this or a requeued lifecycle) cannot auto-promote.
-          const taintUpdate = this.skipBypassTaintUpdateForRefusal(taskDoneRefusal);
+          const taintUpdate = skipBypassTaintUpdateForRefusal(taskDoneRefusal);
           const priorRequeues = task.taskDoneRetryCount ?? 0;
           const nextRequeueCount = priorRequeues + 1;
           if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
@@ -16763,7 +16661,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     const retryLabel = retry.max === undefined ? "unbounded" : String(retry.max);
     const remainingRetries = retry.max === undefined ? "unlimited" : String(Math.max(0, retry.max - retry.attempt));
     const failureSectionHeader = "## Workflow Step Failure";
-    const scopeGuard = this.buildWorkflowFailureScopeGuard(task, content);
+    const scopeGuard = buildWorkflowFailureScopeGuard(task, content);
     const failureSectionContent = `${failureSectionHeader}
 
 The following workflow step failed and requires implementation fixes:
@@ -16825,26 +16723,6 @@ ${scopeGuard}
     }
   }
 
-  private buildWorkflowFailureScopeGuard(task: Task, promptContent: string): string {
-    const promptScopeEntries = extractPromptListEntries(extractPromptSection(promptContent, "File Scope"));
-    const metadataScope = Array.isArray(task.sourceMetadata?.fileScope)
-      ? task.sourceMetadata.fileScope.filter((entry): entry is string => typeof entry === "string")
-      : [];
-    const declaredScope = Array.from(new Set([...promptScopeEntries, ...metadataScope].map((entry) => entry.trim()).filter(Boolean)));
-    /*
-     * FNXC:WorkflowRemediationScope 2026-06-29-13:56:
-     * Review remediation must not let one task silently implement unrelated behavior. If reviewer feedback points outside the declared File Scope, the executor should remove/split the unrelated work instead of expanding the task, while still allowing already-scoped fixes to proceed automatically.
-     */
-    if (declaredScope.length === 0) {
-      return "**Scope Guard:** Keep remediation limited to this task's stated mission and existing implementation surface. If the feedback requires unrelated behavior, remove or split that work instead of implementing it here.";
-    }
-    return [
-      "**Scope Guard:** Treat the declared File Scope as the remediation boundary. Fix only the scoped files unless PROMPT.md already authorizes a scope expansion. If the feedback requires unrelated behavior outside this scope, remove those unrelated changes or split them into a separate task instead of implementing them here.",
-      "",
-      "**Declared File Scope:**",
-      ...declaredScope.map((entry) => `- ${entry}`),
-    ].join("\n");
-  }
 
   private async captureBaseCommitSha(
     task: Task,
@@ -17216,16 +17094,6 @@ ${scopeGuard}
     } finally {
       this.unregisterConfiguredCommandController(task.id, scriptAbortController);
     }
-  }
-
-  /** Parse structured JSON verdict from workflow step output. */
-  private parseWorkflowStepOutput(rawOutput: string): {
-    output: string;
-    verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-    notes?: string;
-    malformed?: boolean;
-  } {
-    return parseWorkflowStepOutput(rawOutput);
   }
 
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
