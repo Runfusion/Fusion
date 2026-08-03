@@ -134,7 +134,6 @@ import {
 // filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
-import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
@@ -168,7 +167,6 @@ import {
   classifyMisroutedForeignCommit,
   isBranchConflictError,
   reanchorBranchToBase,
-  inspectBranchConflict,
   reportBranchAttribution,
 } from "./execution/branch-conflicts.js";
 import {
@@ -176,7 +174,6 @@ import {
   rehomeOrphanOntoIntegration,
 } from "./merge/merger-orphan-rehome.js";
 import { BranchAttributionError, filterFilesToOwnTaskCommits } from "./execution/branch-attribution.js";
-import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { AgentLogger } from "./agents/agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
@@ -221,12 +218,10 @@ import type { AgentReflectionService } from "./agents/agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import {
-  classifyMissingWorktreeSessionStartFailure,
   extractMissingWorktreePathFromSessionStartFailure,
-  isMissingWorktreeSessionStartFailure,
 } from "./healing/restart-recovery-coordinator.js";
 import { BranchWorktreeAutoRecoveryHandler } from "./auto-recovery-handlers/branch-worktree.js";
-import { autoRecoverWorktreeSessionStartFailure, COMPLETED_BLOCKED_PAUSE_REASON, MAX_WORKTREE_SESSION_RETRIES, PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
+import { COMPLETED_BLOCKED_PAUSE_REASON, PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
 import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/contamination.js";
 import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflows/workflow-step-tool-policy.js";
@@ -375,8 +370,6 @@ import {
   EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
   buildExecuteRequeueLoopHighWaterSignature,
   isInvalidAssistantContinuationErrorMessage,
-  isTransientMissingTaskJsonError,
-  TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN,
 } from "./executor/requeue-loop.js";
 
 const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
@@ -453,10 +446,6 @@ export {
   tokenUsageWithModelSnapshot,
   extractSessionTokenUsage,
 } from "./executor/token-usage-pure.js";
-import {
-  formatBranchConflictLifecycleLog,
-  formatBranchConflictAgentLog,
-} from "./executor/branch-conflict-format.js";
 export {
   formatBranchConflictLifecycleLog,
   formatBranchConflictAgentLog,
@@ -503,9 +492,6 @@ export {
   resolveDiffBaseRef,
   captureBaseCommitSha,
 } from "./executor/worktree-git-refs.js";
-import {
-  getWorktreeBranchMap,
-} from "./executor/worktree-registry-helpers.js";
 export {
   isRegisteredWorktree,
   assertWorktreePathNotNested,
@@ -617,6 +603,16 @@ export {
   rebaseNewWorktreeOntoRemote as rebaseNewWorktreeOntoRemoteFree,
   resolveWorktreeStartPoint as resolveWorktreeStartPointFree,
 } from "./executor/worktree-create-outer.js";
+import {
+  reclaimExistingWorktree as reclaimExistingWorktreeImpl,
+  handleBranchConflict as handleBranchConflictImpl,
+} from "./executor/worktree-branch-conflict-handle.js";
+export {
+  reclaimExistingWorktree as reclaimExistingWorktreeFree,
+  handleBranchConflict as handleBranchConflictFree,
+} from "./executor/worktree-branch-conflict-handle.js";
+import { recoverMissingWorktreeSessionStartFailure as recoverMissingWorktreeSessionStartFailureImpl } from "./executor/worktree-missing-session-recovery.js";
+export { recoverMissingWorktreeSessionStartFailure as recoverMissingWorktreeSessionStartFailureFree } from "./executor/worktree-missing-session-recovery.js";
 
 
 
@@ -17894,6 +17890,32 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
   }
 
+  /*
+  FNXC:CodeOrganization 2026-08-03-16:05:
+  Thin facades over peeled branch-conflict reclaim/handle + missing session-start recovery (U4 Slice B).
+  */
+  private branchConflictHandleDeps() {
+    return {
+      rootDir: this.rootDir,
+      store: this.store,
+      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      findActiveWorktreeOwner: (worktreePath: string, requestingTaskId: string) =>
+        this.findActiveWorktreeOwner(worktreePath, requestingTaskId),
+      normalizeReclaimableWorktreePath: (
+        sourcePath: string,
+        targetPath: string,
+        taskId: string,
+        settings: Partial<Settings>,
+      ) => this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
+      cleanupConflictingWorktree: (worktreePath: string, branch: string, taskId: string) =>
+        this.cleanupConflictingWorktree(worktreePath, branch, taskId),
+      getAutoRecoveryDispatcher: (audit: RunAuditor) => this.getAutoRecoveryDispatcher(audit),
+      createRunAuditor: (runContext: EngineRunContext | undefined) => createRunAuditor(this.store, runContext),
+      persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
+      onError: this.options.onError,
+    };
+  }
+
   private async reclaimExistingWorktree(
     task: Task,
     livePath: string,
@@ -17902,240 +17924,40 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     count: number,
     settings: Partial<Settings>,
   ): Promise<void> {
-    const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, this.rootDir);
-    const normalizedPath = await this.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
-    await this.store.updateTask(task.id, { worktree: normalizedPath, branch });
-    const latestTask = await this.store.getTask(task.id);
-    const baseRef = await resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
-    if (baseRef) {
-      await assertCleanBranchAtBase(this.rootDir, branch, baseRef, task.id);
-    }
-    const message = `[recovery] reclaimed existing worktree for ${task.id} at ${normalizedPath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
-    await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-    await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
+    return reclaimExistingWorktreeImpl(
+      this.branchConflictHandleDeps(),
+      task,
+      livePath,
+      branch,
+      tipSha,
+      count,
+      settings,
+    );
   }
 
   private async handleBranchConflict(task: Task, error: BranchConflictError): Promise<"retry" | "reclaimed" | "sticky"> {
-    // FN-4811: Before invoking inspection-based recovery (which may force-remove the
-    // conflicting worktree), verify the conflict isn't currently bound to a live session.
-    // If it is, refuse the whole recovery dance — a force-remove here would yank an active
-    // task's filesystem out from under it, producing FN-4781/FN-4804-style cascade failures.
-    const activeOwner = await this.findActiveWorktreeOwner(error.conflictingWorktreePath, task.id);
-    if (activeOwner !== null) {
-      const refusalMessage = `[FN-4811] Branch conflict on ${error.branchName} deferred: conflicting worktree ${error.conflictingWorktreePath} is actively owned by ${activeOwner}`;
-      executorLog.warn(refusalMessage);
-      await this.store.logEntry(task.id, refusalMessage, undefined, this.getRunContextFor(task.id));
-      return "sticky";
-    }
-    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
-
-    const integrationRef = task.mergeDetails?.mergeTargetBranch ?? task.baseBranch ?? task.executionStartBranch ?? await resolveIntegrationBranch(this.rootDir, undefined);
-    const inspection = await inspectBranchConflict({
-      repoDir: this.rootDir,
-      branchName: error.branchName,
-      conflictingWorktreePath: error.conflictingWorktreePath,
-      requestingTaskId: task.id,
-      ownerTaskId: task.id,
-      startPoint: error.startPoint,
-      integrationRef,
-    });
-
-    if (inspection.kind === "stale-resolved") {
-      await this.store.updateTask(task.id, { worktree: null, branch: null, baseCommitSha: null });
-      const message = `[recovery] ${task.id} stage-A: pruned stale admin entry for ${error.branchName}`;
-      await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-      await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
-      return "retry";
-    }
-
-    if (inspection.kind === "tip-already-merged") {
-      if (inspection.livePath) {
-        await this.cleanupConflictingWorktree(inspection.livePath, error.branchName, task.id);
-      }
-      try {
-        await execAsync("git worktree prune", {
-          cwd: this.rootDir,
-          timeout: 120_000,
-          maxBuffer: 10 * 1024 * 1024,
-        });
-      } catch {
-        // best-effort
-      }
-      try {
-        await execAsync(`git branch -D ${JSON.stringify(error.branchName)}`, {
-          cwd: this.rootDir,
-          timeout: 120_000,
-          maxBuffer: 10 * 1024 * 1024,
-        });
-      } catch {
-        // best-effort
-      }
-      await this.store.updateTask(task.id, { worktree: null, branch: null, baseCommitSha: null });
-      const message = `[recovery] ${task.id} stage-A: tip-already-merged cleanup for ${error.branchName} (${inspection.tipSha.slice(0, 12)} on ${inspection.integrationRef})`;
-      await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
-      await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "status", message, "executor");
-      return "retry";
-    }
-
-    if (inspection.kind === "reclaimable") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, inspection.taskAttributedCommitCount, settings);
-      return "reclaimed";
-    }
-
-    if (inspection.kind === "fully-subsumed") {
-      await this.reclaimExistingWorktree(task, inspection.livePath, error.branchName, inspection.tipSha, 0, settings);
-      return "reclaimed";
-    }
-
-    if (inspection.kind === "live-foreign") {
-      const cleanupSuccess = await this.cleanupConflictingWorktree(inspection.livePath, error.branchName, task.id);
-      if (cleanupSuccess) {
-        try {
-          await execAsync("git worktree prune", { cwd: this.rootDir });
-        } catch {
-          // best-effort
-        }
-        try {
-          const worktreeMap = await getWorktreeBranchMap(this.rootDir);
-          if (!worktreeMap.has(error.branchName)) {
-            await execAsync(`git branch -D "${error.branchName}"`, { cwd: this.rootDir });
-          }
-        } catch {
-          // best-effort
-        }
-        return "retry";
-      }
-    }
-
-    const conflictMessage = `Task branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}. ` +
-      `Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.`;
-    await this.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, this.getRunContextFor(task.id));
-    await this.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", formatBranchConflictAgentLog(task.id, error), "executor");
-    const autoRecoveryDispatcher = this.getAutoRecoveryDispatcher(createRunAuditor(this.store, this.getRunContextFor(task.id)));
-    const decision = await autoRecoveryDispatcher.dispatch({
-      class: "branch-conflict-unrecoverable",
-      taskId: task.id,
-      runId: this.getRunContextFor(task.id)?.runId,
-      pausedReason: "branch-conflict-unrecoverable",
-      evidence: {
-        branchName: error.branchName,
-        conflictingWorktreePath: error.conflictingWorktreePath,
-      },
-      underlyingError: error,
-    }, {
-      task,
-      retryCount: task.recoveryRetryCount ?? 0,
-      settings: (await this.store.getSettings()).autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 },
-    });
-
-    if (decision.action === "pause") {
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error: conflictMessage,
-        branch: error.branchName,
-        worktree: error.conflictingWorktreePath,
-        paused: true,
-        pausedReason: "branch-conflict-unrecoverable",
-      });
-      await this.persistTokenUsage(task.id);
-      executorLog.warn(`✗ ${task.id} branch conflict sticky failure: ${error.branchName} @ ${error.conflictingWorktreePath}`);
-      this.options.onError?.(task, error);
-      return "sticky";
-    }
-
-    return "retry";
+    return handleBranchConflictImpl(this.branchConflictHandleDeps(), task, error);
   }
 
-  /*
-  FNXC:MissingWorktreeRecovery 2026-07-16-18:35:
-  Returns the recovery outcome (not a bare boolean) so the FN-7996 graph-failure router can
-  distinguish "requeued for clean retry" (handled — stop failure processing) from
-  "escalate-exhausted" (fall through to the visible terminal park for human inspection).
-  Existing session-start callers treat any truthy outcome as handled, unchanged.
-  */
   private async recoverMissingWorktreeSessionStartFailure(
     task: Task,
     worktreePath: string,
     error: unknown,
     audit: RunAuditor,
   ): Promise<false | "requeue-todo" | "escalate-exhausted"> {
-    const errorText = error instanceof Error ? error.message : String(error);
-    const missingWorktreeFailure = isMissingWorktreeSessionStartFailure(errorText);
-    const missingTaskJsonFailure = isTransientMissingTaskJsonError(error, task);
-    if (!missingWorktreeFailure && !missingTaskJsonFailure) return false;
-
-    const classification = classifyMissingWorktreeSessionStartFailure(errorText);
-    const missingTaskJsonPath = errorText.match(TRANSIENT_WORKTREE_TASK_JSON_ENOENT_PATTERN)?.[1] ?? null;
-    const staleWorktreePath = extractMissingWorktreePathFromSessionStartFailure(errorText)
-      ?? (missingTaskJsonPath ? resolvePath(missingTaskJsonPath, "..", "..", "..") : null)
-      ?? worktreePath;
-
-    if (missingTaskJsonFailure) {
-      executorLog.log(`[transient-task-json-suppressed] taskId=${task.id} elapsedMs=0 reason=missing-task-json-under-worktree path=${missingTaskJsonPath ?? "unknown"}`);
-    }
-
-    await audit.git({
-      type: "worktree:incomplete-detected",
-      target: staleWorktreePath,
-      metadata: { classification, reason: errorText, source: "session-start", taskId: task.id },
-    });
-
-    if (isInsideWorktreesDir(this.rootDir, staleWorktreePath)) {
-      try {
-        await removeWorktree({
-          rootDir: this.rootDir,
-          worktreePath: staleWorktreePath,
-          settings: await this.store.getSettings(),
-          reason: RemovalReason.PoolPrune,
-          taskId: task.id,
-          audit,
-          expectedOwnerTaskId: task.id,
-          liveOwnerProbe: (path, ownerTaskId) => this.hasActiveWorktreeBinding(ownerTaskId, path),
-        });
-      } catch (removeErr) {
-        executorLog.warn(`${task.id}: failed to remove unusable session-start worktree ${staleWorktreePath}: ${formatError(removeErr)}`);
-      }
-    }
-
-    const recovery = await autoRecoverWorktreeSessionStartFailure(this.store, task, {
-      failure: error,
-      source: "executor-session-start",
-      auditor: audit,
-      rootDir: this.rootDir,
-    });
-    if (recovery.outcome !== "escalate-exhausted") {
-      this.markGraphExecuteSelfRequeued(task.id);
-    }
-
-    await audit.git({
-      type: "worktree:auto-recovered",
-      target: staleWorktreePath,
-      metadata: {
-        classification: recovery.classification,
-        action: recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo",
-        retries: recovery.retries,
-        maxRetries: MAX_WORKTREE_SESSION_RETRIES,
-        staleWorktree: staleWorktreePath,
-        taskId: task.id,
+    return recoverMissingWorktreeSessionStartFailureImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        hasActiveWorktreeBinding: (taskId: string, path: string) => this.hasActiveWorktreeBinding(taskId, path),
+        markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
       },
-    });
-
-    if (recovery.outcome === "escalate-exhausted") {
-      await this.store.logEntry(
-        task.id,
-        `Worktree session-start auto-recovery exhausted (${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES}); task left for human inspection`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-    } else {
-      await this.store.logEntry(
-        task.id,
-        `Worktree was ${classification} at session start; requeued to todo for clean retry (attempt ${recovery.retries}/${MAX_WORKTREE_SESSION_RETRIES})`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-    }
-    return recovery.outcome === "escalate-exhausted" ? "escalate-exhausted" : "requeue-todo";
+      task,
+      worktreePath,
+      error,
+      audit,
+    );
   }
 
   private async emitWorktreeReanchoredAudit(
