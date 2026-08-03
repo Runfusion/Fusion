@@ -119,7 +119,7 @@ Missions can also persist a `branchStrategy` used whenever triage is triggered w
 
 Supported modes:
 
-- `project-default` (or absent): shared mode; each triaged feature gets a distinct per-task working branch (for example `<shared-branch>/<feature-id>`) while the shared branch remains the mission group merge target
+- `project-default` (or absent): shared mode; triage creates and reuses the deterministic group integration branch `mission/<mission.id>` (for example `mission/M-3324`). Each feature gets a distinct per-task working branch while that branch remains the group merge target. Existing persisted default-branch groups are not rewritten; their members remain protected by the normal manual-release gate.
 - `auto-per-task`: sets `branchAssignment.mode = "per-task-derived"` (distinct per-task working branches with no shared mission group merge target)
 - `existing`: shared mode using `branchSelection.mode = "existing"` with `branchName` as the shared merge-target branch
 - `custom-new`: shared mode using `branchSelection.mode = "custom-new"` with `branchName` as the shared merge-target branch

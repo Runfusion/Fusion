@@ -3670,7 +3670,7 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
 });
 
 describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
-  const gate = (task: Partial<Task>, settings: { autoMerge: boolean }, branchGroup: { status: "open" | "finalized" | "abandoned" } | null = null): Promise<boolean> =>
+  const gate = (task: Partial<Task>, settings: { autoMerge: boolean; integrationBranch?: string }, branchGroup: { status: "open" | "finalized" | "abandoned"; branchName?: string } | null = null): Promise<boolean> =>
     (createEngine() as any).allowInReviewMergeProcessing(task, settings, { getBranchGroup: vi.fn(() => branchGroup) });
 
   it("lets an explicit per-task autoMerge:true through when the global setting is off", async () => {
@@ -3687,12 +3687,20 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     await expect(gate({ autoMerge: false }, { autoMerge: true })).resolves.toBe(true);
   });
 
-  it("still exempts live shared-branch-group member integration when the global setting is off", async () => {
+  it("still exempts live shared-branch-group member integration on an intermediate branch when the global setting is off", async () => {
     await expect(gate(
       { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
-      { autoMerge: false },
-      { status: "open" },
+      { autoMerge: false, integrationBranch: "main" },
+      { status: "open", branchName: "mission/M-3324" },
     )).resolves.toBe(true);
+  });
+
+  it("keeps live shared-branch-group member integration on the default branch behind the manual gate", async () => {
+    await expect(gate(
+      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
+      { autoMerge: false, integrationBranch: "main" },
+      { status: "open", branchName: "main" },
+    )).resolves.toBe(false);
   });
 
   it.each([

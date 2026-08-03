@@ -4380,7 +4380,7 @@ export class TaskExecutor {
   }
 
   private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
-    return isLiveSharedBranchGroupMemberImpl({ store: this.store }, live);
+    return isLiveSharedBranchGroupMemberImpl({ store: this.store, rootDir: this.rootDir }, live);
   }
 
   private async routeRetryableRemediationGraphFailureToPreMergeFix(

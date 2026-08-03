@@ -1,5 +1,55 @@
 # @runfusion/fusion
 
+## 0.75.0-beta.0
+
+### Minor Changes
+
+- 5b2b31d: summary: Add Todo Lists as an optional per-project first-party plugin.
+  category: feature
+  dev: Moves the Todo backend route and dashboard view from hardcoded host ownership into fusion-plugin-todos.
+
+### Patch Changes
+
+- 5d8d494: summary: Restore clean CLI packaging for the bundled Todo Lists plugin.
+  category: fix
+  dev: Re-exports AgentStore through the bundled plugin core runtime shim.
+- c8ff721: summary: Release manually approved or rejected plans so their tasks can continue.
+  category: fix
+  dev: Uses TaskStore null-clear semantics and persists approved plan fingerprints through field merges.
+- 4ff41a7: summary: Self-heal executor credential resolution so custom providers and renames match chat.
+  category: fix
+  dev: Stop synthesizing credentialInstanceId "default" into executor sessions; soft-fail unresolved instances to the legacy unscoped auth path (customProviders.apiKey); collapse-match renamed custom-provider auth slugs when unique.
+- 56819e2: summary: Restore plugin SDK declarations and Todo Lists packaging.
+  category: fix
+  dev: Full releases typecheck the SDK entry; the Todo bundle now receives AgentStore from the runtime shim.
+- fb0863f: summary: Let supported installations enable Voice Input after its model is ready.
+  category: fix
+  dev: Publishes sherpa-onnx-node as an optional runtime dependency and reports stable readiness codes.
+- d39acb5: summary: Make List task details adapt to available content width.
+  category: feature
+  dev: List uses measured usable width for split detail routing; popup preference still overrides it.
+- af66b38: summary: Add undo and redo controls to editable file editors.
+  category: feature
+  dev: Uses CodeMirror native history with controlled external-content baselines.
+- b269bff: summary: Add a mobile Planning Mode shortcut to review the evolving plan after five answers.
+  category: feature
+  dev: Review plan switches the existing mobile workspace tab without submitting the current response.
+- f1ed5ac: summary: Retain complete Planning Mode interview decisions in every created task.
+  category: fix
+  dev: Centralizes Planning Mode task handoff formatting across single, CLI, and multi-task creation.
+- 71ba437: summary: Schedule Planning Mode-created tasks promptly in selected workflow lanes.
+  category: fix
+  dev: Publish task creation lifecycle lanes after durable workflow selection; replayed proposal claims do not re-wake triage.
+- fef9692: summary: Align the floating Task Detail popup close control with its header edge.
+  category: fix
+  dev: Moves only Task Detail desktop resize targets outboard while retaining shared scrollbar clearance.
+- 7854323: summary: Allow Planning Mode to create another task from the same plan without requiring an edit.
+  category: fix
+  dev: Advances the durable planning creation epoch while preserving per-action idempotency.
+- 40453ac: summary: Restore locale parity for project escalation models and voice input states
+  category: fix
+  dev: Add the FN-8752 and FN-8753 settings keys to every supported secondary locale catalog.
+
 ## 0.74.0
 
 ### Minor Changes

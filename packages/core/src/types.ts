@@ -1518,3 +1518,12 @@ export {
   isCompletionSummaryNode,
   COMPLETION_SUMMARY_NODE_ID,
 } from "./workflows/builtin-completion-summary-node.js";
+
+/*
+FNXC:TaskDisplaySorting 2026-08-03-22:53:
+The dashboard's package-root core alias resolves to this browser-safe leaf. Re-export the canonical
+sorter here so Board, Lane, and ListView share core policy without importing a Node-heavy core barrel.
+The sorter and its transitive role/merge/priority helpers are browser-safe.
+*/
+export { sortTasksForDisplayColumn } from "./tasks/task-priority.js";
+export type { DoneColumnSortMode, DisplayColumnSortOptions } from "./tasks/task-priority.js";

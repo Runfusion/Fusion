@@ -1532,6 +1532,8 @@ export {
 export type {
   TaskPrioritySortable,
   TaskColumnSortable,
+  DoneColumnSortMode,
+  DisplayColumnSortOptions,
   BuildUnblockWeightMapOptions,
   PriorityFanoutComparatorContext,
 } from "./tasks/task-priority.js";

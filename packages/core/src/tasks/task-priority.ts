@@ -1,5 +1,5 @@
 import { isActiveMergeStatus } from "../merge/active-merge-status.js";
-import { isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
+import { isArchivedColumnRole, isCompleteColumnRole, isHoldColumnRole, isReviewColumnRole, type ColumnRoleTraitFlags } from "../column-roles.js";
 import { computeBlockerFanoutMap } from "./blocker-fanout.js";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES } from "../types.js";
 import type { ProjectSettings, Task, TaskPriority } from "../types.js";
@@ -50,15 +50,33 @@ export function compareTaskPriority(a: unknown, b: unknown): number {
   return getTaskPriorityRank(b) - getTaskPriorityRank(a);
 }
 
-export function compareTaskIdNumeric(a: string, b: string): number {
-  const aNum = Number.parseInt(a.slice(a.lastIndexOf("-") + 1), 10);
-  const bNum = Number.parseInt(b.slice(b.lastIndexOf("-") + 1), 10);
+function getTaskIdNumericToken(id: string): number | null {
+  const token = id.slice(id.lastIndexOf("-") + 1);
+  if (!/^\d+$/.test(token)) return null;
+  const parsed = Number.parseInt(token, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
-  if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) {
+export function compareTaskIdNumeric(a: string, b: string): number {
+  const aNum = getTaskIdNumericToken(a);
+  const bNum = getTaskIdNumericToken(b);
+
+  if (aNum !== null && bNum !== null && aNum !== bNum) {
     return aNum - bNum;
   }
 
   return a.localeCompare(b);
+}
+
+function compareTaskIdNumericDesc(a: string, b: string): number {
+  const aNum = getTaskIdNumericToken(a);
+  const bNum = getTaskIdNumericToken(b);
+
+  if (aNum !== null && bNum !== null && aNum !== bNum) {
+    return bNum - aNum;
+  }
+
+  return b.localeCompare(a);
 }
 
 /**
@@ -216,56 +234,61 @@ function isMergeActiveStatus(status: string | null | undefined): boolean {
   return isActiveMergeStatus(status);
 }
 
+export type DoneColumnSortMode = "completion-date-desc" | "task-id-desc";
+
+/** Resolved display policy for one workflow column. */
+export interface DisplayColumnSortOptions {
+  /** Resolved column traits; omitted only while retaining legacy-id compatibility. */
+  columnFlags?: ColumnRoleTraitFlags;
+  /** Complete-column ordering selected by the board operator. */
+  doneSortMode?: DoneColumnSortMode;
+}
+
+/*
+FNXC:TaskDisplaySorting 2026-08-03-22:53:
+Core owns the sole task-display sorter so Board, Lane, and ListView cannot drift behind
+same-named dashboard comparators. Resolved role flags select archived pass-through, hold FIFO,
+complete, and review behavior; omitted flags deliberately retain legacy-id defaults during
+workflow metadata gaps. Complete columns support both completion-date and descending task-id modes.
+*/
 /**
- * Column-aware default ordering shared by board and list surfaces.
+ * Return a sorted display copy for a workflow column without mutating its input.
+ * Archived columns preserve the server/page order; hold columns use priority then FIFO;
+ * complete columns use the selected Done mode; review columns float active merges first.
  */
 export function sortTasksForDisplayColumn<T extends TaskColumnSortable>(
   tasks: readonly T[],
   column: string,
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-31-02:00 (batch-core feed):
-  The column's RESOLVED trait flags. Omitted, core's role helpers fall back to the legacy ids, so an
-  unconverted caller is byte-identical — that degraded mode lives in `column-roles.ts` and is covered
-  by its own tests, which is why this takes flags rather than another bespoke set.
-
-  Each of the three branches is a different visible defect on a renamed board, and none of them
-  errors:
-    - the hold lane loses priority ordering, so urgent work stops floating to the top of the backlog;
-    - the complete lane loses recency ordering, so the most recently finished cards are not at the
-      top of Done;
-    - the review lane stops floating actively-merging cards, so the card the operator is waiting on
-      sits wherever priority puts it.
-  Wrong order is the least likely defect for anyone to file a bug about, which is how three of them
-  survived in one function.
-  */
-  columnFlags?: ColumnRoleTraitFlags,
+  displayColumnOptions: DisplayColumnSortOptions = {},
 ): T[] {
+  const { columnFlags, doneSortMode = "completion-date-desc" } = displayColumnOptions;
+
+  if (isArchivedColumnRole(columnFlags, column)) {
+    return [...tasks];
+  }
+
   if (isHoldColumnRole(columnFlags, column)) {
     return sortTasksByPriorityThenAgeAndId(tasks);
   }
 
   return [...tasks].sort((a, b) => {
     if (isCompleteColumnRole(columnFlags, column)) {
-      const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
-      if (timestampCmp !== 0) {
-        return timestampCmp;
+      if (doneSortMode === "task-id-desc") {
+        return compareTaskIdNumericDesc(a.id, b.id);
       }
+      const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
+      if (timestampCmp !== 0) return timestampCmp;
       return compareTaskIdNumeric(a.id, b.id);
     }
 
     if (isReviewColumnRole(columnFlags, column)) {
       const aIsMerging = isMergeActiveStatus(a.status);
       const bIsMerging = isMergeActiveStatus(b.status);
-      if (aIsMerging !== bIsMerging) {
-        return aIsMerging ? -1 : 1;
-      }
+      if (aIsMerging !== bIsMerging) return aIsMerging ? -1 : 1;
     }
 
     const priorityCmp = compareTaskPriority(a.priority, b.priority);
-    if (priorityCmp !== 0) {
-      return priorityCmp;
-    }
-
+    if (priorityCmp !== 0) return priorityCmp;
     return compareTaskIdNumeric(a.id, b.id);
   });
 }

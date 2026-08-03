@@ -2355,7 +2355,17 @@ export class AsyncMissionStore extends EventEmitter<MissionStoreEvents> {
           const settingsDefaultBranch =
             typeof settings.defaultBranch === "string" && settings.defaultBranch.trim().length > 0 ? settings.defaultBranch : "main";
           const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
-          sharedBranchBaseForMission = resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch;
+          /*
+          FNXC:BranchGroupAutoMergeGate 2026-08-03-23:17:
+          Runfusion/Fusion#3324: an absent or project-default mission strategy
+          must create one reusable intermediate branch, never a group that
+          points at the default branch and bypasses the operator merge hold.
+          Existing source-identity groups are deliberately reused unchanged for
+          legacy compatibility; runtime merge gating protects old main groups.
+          */
+          const usesProjectDefaultStrategy = !mission?.branchStrategy || mission.branchStrategy.mode === "project-default";
+          sharedBranchBaseForMission = resolvedBranch
+            ?? (usesProjectDefaultStrategy ? `mission/${missionId}` : resolvedBaseBranch ?? settingsDefaultBranch);
           const group = await this.taskStore.ensureBranchGroupForSource("mission", missionId, {
             branchName: sharedBranchBaseForMission,
             autoMerge: mission?.autoMerge ?? settingsAutoMerge,

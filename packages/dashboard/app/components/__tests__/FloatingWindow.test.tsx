@@ -161,12 +161,14 @@ describe("FloatingWindow", () => {
     expect(cssRuleContaining(floatingWindowCss, ".floating-window__resize-handle--ne", "right: 0;")).toContain("right: 0;");
     expect(cssRuleContaining(floatingWindowCss, ".floating-window__resize-handle--se", "right: 0;")).toContain("right: 0;");
 
-    // No shared caller may move a right handle back into the reserved scrollbar
-    // gutter, nor override the body gutter, AT DESKTOP WIDTHS. Mobile full-screen
-    // sheet overrides (inside @media) are legitimate and excluded from this scan.
+    /*
+    FNXC:TaskDetailLayout 2026-08-03-19:36:
+    FN-8766 is the sole desktop exception: its header-owned close control requires a symmetric
+    painted edge, so its gutter is removed only while its east resize targets move outboard.
+    Every unrelated consumer keeps the shared scrollbar-clearance geometry.
+    */
     const desktopAppCss = stripAtMediaBlocks(allAppCss);
     for (const callerClass of [
-      "floating-window--task-detail",
       "floating-window--automation",
       "floating-window--mission-interview",
       "floating-window--pr-create",
@@ -182,14 +184,20 @@ describe("FloatingWindow", () => {
       expect(bodyRules.some((rule) => /margin-inline-end\s*:/.test(rule)), callerClass).toBe(false);
     }
 
+    const desktopTaskBody = cssRuleContaining(
+      desktopAppCss,
+      ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__body",
+      "margin-inline-end",
+    );
+    expect(desktopTaskBody).toContain("margin-inline-end: 0;");
+    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--e", "right")).toContain("right: calc(var(--space-sm) * -1);");
+    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--ne", "right")).toContain("right: calc(var(--space-lg) * -1);");
+    expect(cssRuleContaining(desktopAppCss, ".floating-window--task-detail:not(.floating-window--tablet-viewport) .floating-window__resize-handle--se", "right")).toContain("right: calc(var(--space-lg) * -1);");
+
     /*
-    FNXC:MobileTaskPopups 2026-07-17-08:20:
-    Regression guard for the mobile task-detail left-shift fix: the full-screen
-    task-detail sheet hides all resize handles, so FN-8015's inherited
-    `margin-inline-end: var(--space-lg)` body gutter only added dead space on the
-    right and shifted the whole panel left. The mobile breakpoint must zero it so
-    `.detail-body`'s own padding defines both insets equally. This is the sole
-    legitimate body-gutter override and lives only inside the mobile @media block.
+    FNXC:MobileTaskPopups 2026-08-03-19:36:
+    The full-screen task-detail sheet hides every resize handle, so the inherited gutter must
+    remain zero and the desktop outboard-target host must resume clipping for sheet geometry.
     */
     const mobileTaskDetailBody = cssRuleContaining(
       allAppCss,
@@ -197,7 +205,7 @@ describe("FloatingWindow", () => {
       "margin-inline-end",
     );
     expect(mobileTaskDetailBody).toContain("margin-inline-end: 0;");
-    expect(cssRulesForClass(desktopAppCss, "floating-window--task-detail").some((rule) => rule.includes("floating-window__body"))).toBe(false);
+    expect(cssRuleContaining(allAppCss, ".floating-window--task-detail", "overflow: hidden !important;")).toContain("overflow: hidden !important;");
 
     /*
     FNXC:ModalTouchGeometry 2026-08-01-03:48:

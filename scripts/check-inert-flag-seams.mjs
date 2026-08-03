@@ -14,18 +14,15 @@ So the instrument measuring the program scores the broken version as a win. Meas
 check was written: five of nine conversions in one reviewed-and-green tranche were inert.
 
 WHAT IT CHECKS. Exported functions whose LAST parameter is optional and named like resolved lanes
-(`columnFlags`, `lifecycleColumns`, `reviewColumns`, ...). At least one call site must pass that many
+(`columnFlags`, `lifecycleColumns`, `reviewColumns`, `displayColumnOptions`, ...). At least one call site must pass that many
 arguments. Component props are covered separately by
 `packages/dashboard/app/__tests__/resolved-flags-seams-have-suppliers.test.ts`.
 
-LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Call sites are matched by FUNCTION NAME, not by resolved
-symbol, so two different functions sharing a name are conflated — `sortTasksForDisplayColumn` exists
-in both `core/task-priority.ts` and `dashboard/components/taskSorting.ts` with different signatures,
-and a naive reading of this scan sent me to "fix" callers of the wrong one (tsc caught it). Treat a
-report as a pointer to investigate, never as a diff to apply. Tests are excluded, so a function called only from tests
-reports zero callers — those are allow-listed below, not silently skipped. It proves a caller passes
-SOMETHING in that position, not that the value is correct or non-undefined. Cheap half of the
-question; it is the half that was silently wrong.
+LIMITS, STATED SO NOBODY OVER-TRUSTS IT. Relative imports and local shadows resolve to the declaring
+module, but unresolved calls remain a conservative name match; treat a report as a pointer to
+investigate, never as a diff to apply. Tests are tracked separately from production so test-only
+suppliers cannot clear a seam. It proves a caller passes SOMETHING in that position, not that the
+value is correct or non-undefined. Cheap half of the question; it is the half that was silently wrong.
 
 TO CLEAR A FAILURE: wire a supplier, or delete the parameter and leave the literal counted. Adding an
 allow-list entry is the last resort and needs the reason spelled out.
@@ -56,7 +53,7 @@ they had none.
 */
 const SCAN_ROOTS = [join(REPO, "packages"), join(REPO, "plugins")];
 const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__", "__mocks__", "e2e", ".gate-bundle", "coverage"]);
-const TRAILING_FLAG_PARAM = /([Cc]olumnFlags|[Ll]ifecycleColumns|[Rr]eviewColumns|[Tt]erminalColumns|[Pp]lannerLanes)$/;
+const TRAILING_FLAG_PARAM = /([Cc]olumnFlags|[Ll]ifecycleColumns|[Rr]eviewColumns|[Tt]erminalColumns|[Pp]lannerLanes|[Dd]isplayColumnOptions)$/;
 
 /*
 FNXC:LifecycleColumnCensus 2026-07-30-23:40:
@@ -91,7 +88,7 @@ export function effectiveArgCount(args) {
 }
 
 /** Unanchored twin used only to skip files fast; see the note at the call site. */
-const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lannerLanes)/;
+const PREFILTER = /(olumnFlags|ifecycleColumns|eviewColumns|erminalColumns|lannerLanes|isplayColumnOptions)/;
 
 /** Known-unsupplied seams, each with why it is tolerated. Shrink this list; never grow it casually. */
 const ALLOWED = new Map([
@@ -109,22 +106,6 @@ const ALLOWED = new Map([
       + "kept as a public predicate and exercised only by its own tests. Engine-owned; left alone.",
   ],
 
-  [
-    "sortTasksForDisplayColumn",
-    "PERMANENT, with evidence. core/task-priority.ts's copy has ZERO callers anywhere: the three "
-      + "dashboard call sites bind to a DIFFERENT function of the same name in "
-      + "app/components/taskSorting.ts, and only its own tests pass the flags. It is not reachable "
-      + "externally either — @fusion/core is private, @runfusion/fusion declares no `exports` map and "
-      + "re-exports nothing from core wholesale, and it is absent from plugin-sdk. So there is no "
-      + "production behaviour to be wrong, and nothing to wire a supplier from.\n"
-      + "Deliberately NOT 'fixed'. Deleting the parameter (this check's usual remedy) would trade a "
-      + "dormant-but-correct implementation for a dormant legacy-only one, and deleting the function "
-      + "would discard a well-documented ordering it is plausible someone wires later. Both are churn "
-      + "with no product effect. The honest resolution is a duplicate-vs-core consolidation with the "
-      + "dashboard twin, which is a refactor and needs an owner — not a seam fix.\n"
-      + "Was TEMPORARY pending #2783; that PR merged without it, so the pending-owner framing was a "
-      + "fiction and is removed rather than left to rot.",
-  ],
 
 ]);
 
@@ -144,13 +125,10 @@ const ALLOWED_OMISSIONS = new Map([
 /*
 TEST CALL SITES ARE COLLECTED, AND COUNTED SEPARATELY FROM PRODUCTION ONES.
 
-Excluding `__tests__` outright made a test-only export read as having NO callers, which is why two
-permanent allow-list entries existed. But naively including tests is worse than excluding them: a
-test that supplies the argument would clear a seam no production caller supplies — and that is not
-hypothetical, it is exactly core's `sortTasksForDisplayColumn`, whose only suppliers ARE its tests.
-
-So the two are tracked apart. "Supplied" means supplied by PRODUCTION. Test callers answer a
-different and also useful question: is this function reachable at all, or is the export dead?
+Excluding `__tests__` outright made a test-only export read as having NO callers. But naively
+including tests is worse: a test that supplies the argument would clear a seam no production caller
+supplies. So the two are tracked apart. "Supplied" means supplied by PRODUCTION. Test callers answer
+a different and also useful question: is this function reachable at all, or is the export dead?
 */
 const TEST_DIRS = new Set(["__tests__", "__mocks__", "e2e"]);
 const isTestFile = (file) => file.split("/").some((segment) => TEST_DIRS.has(segment))
@@ -196,14 +174,9 @@ for (const file of SCAN_ROOTS.flatMap((root) => [...walkAll(root)])) {
   const declares = PREFILTER.test(source);
 
   /*
-  LOCAL SHADOWS ARE NOT CALLS TO THE SEAM. Matching call sites by NAME conflates same-named functions
-  in different modules, and this repo has at least two such pairs: `sortTasksForDisplayColumn`
-  (core/task-priority + dashboard/taskSorting) and `resolveEffectiveExecutor`
-  (effective-model-resolution + a 2-arg private one inside ModelSelectorTab). Both produced false
-  reports that cost real investigation, and one nearly produced a wrong "fix" that tsc rejected.
-
-  It can also mask a REAL omission in the other direction: a locally-defined same-named function
-  called with more arguments raises the global max and makes an under-supplied seam look supplied.
+  LOCAL SHADOWS ARE NOT CALLS TO THE SEAM. A same-named local function can produce a false report or
+  mask a real omission by raising the global maximum argument count, so calls are attributed locally
+  before the generic matcher runs.
 
   So a file that declares its own function with that name has its calls attributed to the local one.
 
@@ -214,18 +187,10 @@ for (const file of SCAN_ROOTS.flatMap((root) => [...walkAll(root)])) {
   tests reads as having no callers, hence the two permanent ALLOWED entries).
   */
   /*
-  IMPORTED SHADOWS, RESOLVED. `Lane.tsx` imports `sortTasksForDisplayColumn` from `./taskSorting`,
-  not from core, so a name-only match attributed its calls to core's seam. That produced false
-  reports twice — once costing a "fix" tsc rejected, once sending two other batches a list they had
-  to audit. Recording the module each callee was imported FROM lets a call be matched to the seam's
-  actual declaring file.
-
-  It did not merely silence a false positive. Core's `sortTasksForDisplayColumn` really is unsupplied
-  — its third `columnFlags` argument is passed by its own tests and nowhere else — and the dashboard
-  function of the same name, called with more arguments from three components, was raising the max
-  and reporting the seam as satisfied. So the name collision was hiding a genuine offender behind a
-  row everyone had learned to read as noise, which is the worse half of this failure mode: a guard
-  that cries wolf trains its readers to skip exactly the line that matters.
+  IMPORTED SHADOWS, RESOLVED. Recording the module each callee was imported FROM lets a call be
+  matched to the seam's actual declaring file instead of a same-named export elsewhere. This avoids
+  both false reports and the worse failure: an unrelated call with more arguments masking an
+  under-supplied seam.
   */
   const { importedFrom, localAlias } = collectImportBindings(sf);
 
@@ -409,13 +374,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const unsupplied = best < arity;
     /*
     A seam with NO production caller is inert whether or not tests exercise it, so it is reported the
-    same way. I briefly split those cases by "is it re-exported from the package index", reasoning that
-    a public export could be called from outside — that was unsound, and it silently DOWNGRADED a real
-    offender (`sortTasksForDisplayColumn`, suppliers are its own tests) from failing to a footnote.
-    Neither function has production behaviour to be wrong; publication status does not change that.
-
-    Test call sites are still tracked, and that half matters: they must never CLEAR a seam. Counting
-    them as suppliers is what would have re-hidden `sortTasksForDisplayColumn` entirely.
+    same way. Publication status does not change that: this gate evaluates repository suppliers, not
+    speculative external consumers. Test call sites are still tracked, and they must never CLEAR a
+    seam.
     */
     const testNote = sites.length === 0 && testSites.length > 0 ? ` (${testSites.length} test call site(s))` : "";
     /*

@@ -1,5 +1,12 @@
 # @fusion-plugin-examples/acp-runtime
 
+## 0.1.33-beta.0
+
+### Patch Changes
+
+- @fusion/core@0.75.0-beta.0
+- @fusion/plugin-sdk@0.75.0-beta.0
+
 ## 0.1.32
 
 ### Patch Changes

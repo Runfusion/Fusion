@@ -47,6 +47,7 @@ import {
   clearMergeConfirmedTransientStatus,
 } from "@fusion/core";
 import { assemblePlannerOverseerRuntimeSnapshot } from "./overseer/planner-overseer-runtime-snapshot.js";
+import { resolveIntegrationBranch } from "./merge/integration-branch.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -2910,13 +2911,22 @@ export class ProjectEngine {
    * older low-priority task would start before a later urgent one.
    */
   private async allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): Promise<boolean> {
+    if (allowsAutoMergeProcessing(task, settings)) {
+      return true;
+    }
+
     const groupId = task.branchContext?.groupId?.trim();
     const branchGroup = groupId ? await store.getBranchGroup?.(groupId) : null;
+    if (!branchGroup || branchGroup.status !== "open" || !branchGroup.branchName.trim()) {
+      return false;
+    }
+
+    const projectDefaultBranch = await resolveIntegrationBranch(this.config.workingDirectory, settings as Settings);
     /*
     FNXC:AutoMergeHold 2026-07-09-16:53:
     FN-7750 / Runfusion#1980: shared-branch member integration may bypass the global `autoMerge:false` hold only while its group row is still open. Stale, finalized, abandoned, or missing groups must flow through the standalone manual-hold gate so no task provenance can solo auto-merge to main.
     */
-    return allowsAutoMergeProcessing(task, settings) || isLiveSharedBranchGroupMemberIntegration(task, branchGroup);
+    return isLiveSharedBranchGroupMemberIntegration(task, branchGroup, projectDefaultBranch);
   }
 
   private async emitLegacyAutoMergeStampAdvisory(store: TaskStore): Promise<void> {
@@ -3466,7 +3476,8 @@ export class ProjectEngine {
               FNXC:AutoMergeHold 2026-07-09-16:58:
               FN-7750: merge-confirmed fast-path rerouting to a branch-group integration branch is safe only for a live/open group. A missing or terminal group must leave the row on its stored standalone target instead of reviving a stale group route that could bypass the manual merge hold.
               */
-              const branchGroupForFastPath = isLiveSharedBranchGroupMemberIntegration(task, branchGroupForFastPathCandidate)
+              const fastPathDefaultBranch = await resolveIntegrationBranch(this.config.workingDirectory, settings);
+              const branchGroupForFastPath = isLiveSharedBranchGroupMemberIntegration(task, branchGroupForFastPathCandidate, fastPathDefaultBranch)
                 ? branchGroupForFastPathCandidate
                 : null;
               const routedFastPathTarget = branchGroupForFastPath?.branchName?.trim();

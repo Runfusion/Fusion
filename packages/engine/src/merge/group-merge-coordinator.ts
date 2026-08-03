@@ -547,6 +547,19 @@ export async function resolveBranchGroupMergeRouting(input: {
     return null;
   }
 
+  /*
+  FNXC:BranchGroupAutoMergeGate 2026-08-03-23:17:
+  Runfusion/Fusion#3324 permits the member-integration route only for a live
+  intermediate branch. A terminal group or a normalized default-branch target
+  must fall back to the normal task merge route, where the human release gate
+  applies; never label a direct default-branch landing as group integration.
+  */
+  const groupBranch = branchGroup.branchName.trim();
+  const defaultBranch = input.projectDefaultBranch.trim() || "main";
+  if (branchGroup.status !== "open" || !groupBranch || groupBranch === defaultBranch) {
+    return null;
+  }
+
   if (input.rootDir) {
     await ensureGroupBranchExists(input.rootDir, branchGroup.branchName, input.projectDefaultBranch);
   }

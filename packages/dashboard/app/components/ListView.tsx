@@ -4,12 +4,10 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, Archive } from "lucide-react";
-import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, PrInfo, ThinkingLevel } from "@fusion/core";
-import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn } from "@fusion/core";
+import { DEFAULT_COLUMN, THINKING_LEVELS, getErrorMessage, isColumn, sortTasksForDisplayColumn, type Task, type TaskDetail, type Column, type ColumnId, type TaskCreateInput, type MergeResult, type GithubIssueAction, type PrInfo, type ThinkingLevel } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/merge/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { isArchivedColumnRole, isCompleteColumnRole, isIntakeColumnRole, isPreImplementationColumnRole, isWipColumnRole } from "../utils/columnRoles";
-import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
 import { PrCreateModal } from "./PrCreateModal";
@@ -1215,18 +1213,9 @@ export function ListView({
     for (const column of listColumns) {
       const columnId = column.id;
       if (!sortField) {
-        /* FNXC:WorkflowResolvedColumns 2026-07-31-08:22: same conversion as Lane.tsx — the sort's four
-           role questions default to legacy ids, so a renamed board sorted every lane generically. */
-        const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
-        groups[columnId] = sortTasksForDisplayColumn(
-          groups[columnId],
-          columnId as Column,
-          undefined,
-          column.flags.archived === true,
-          column.flags.hold === true,
-          isDoneLikeColumn,
-          column.flags.mergeBlocker === true || column.flags.humanReview === true,
-        );
+        groups[columnId] = sortTasksForDisplayColumn(groups[columnId], columnId, {
+          columnFlags: column.flags,
+        });
         continue;
       }
 

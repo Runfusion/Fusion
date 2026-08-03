@@ -1,10 +1,10 @@
 import { execSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { type TaskStore } from "@fusion/core";
 import { createTaskStoreForTest, pgDescribe, type PgTestHarness } from "../../../core/src/__test-utils__/pg-test-harness.js";
 import {
@@ -15,8 +15,13 @@ import {
   resolveBranchGroupMergeRouting,
 } from "../merge/group-merge-coordinator.js";
 import { ProjectEngine } from "../project-engine.js";
+import { runAiMerge } from "../merge/merger-ai.js";
 
 const dirs: string[] = [];
+
+function git(repo: string, command: string): string {
+  return execSync(command, { cwd: repo, encoding: "utf8" }).trim();
+}
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "fusion-group-route-"));
@@ -1218,6 +1223,60 @@ describe("reconcileBranchGroupPr (Fix #3 engine primitive)", () => {
   });
 });
 
+/*
+FNXC:BranchGroupAutoMergeGate 2026-08-03-23:30:
+Runfusion/Fusion#3324 requires the post-Code-Review merge seam to leave a member targeting the
+project default branch under human release control. This fixture reaches ProjectEngine's interpreter
+merge request, then uses the production AI merger against real Git only for the distinct-branch
+control, proving the safety gate prevents a command from advancing main rather than merely relabeling it.
+*/
+function createPostReviewTask(groupId: string): Record<string, any> {
+  return {
+    id: "FN-3324",
+    title: "post-Code-Review member",
+    description: "Regression fixture for Runfusion/Fusion#3324",
+    column: "in-review",
+    status: null,
+    branch: "fusion/fn-3324",
+    baseBranch: "main",
+    dependencies: [],
+    steps: [{ name: "Code Review", status: "done" }],
+    log: [],
+    paused: false,
+    autoMerge: undefined,
+    mergeRetries: 0,
+    branchContext: { assignmentMode: "shared", groupId, source: "mission" },
+  };
+}
+
+function createPostReviewStore(task: Record<string, any>, branchGroup: Record<string, any> | null) {
+  return {
+    getTask: vi.fn(async () => task),
+    getSettings: vi.fn(async () => ({
+      autoMerge: false,
+      merger: { maxReviewPasses: 0 },
+      includeTaskIdInCommit: false,
+      mergeIntegrationWorktree: "cwd-main",
+      mergeStrategy: "direct",
+      directMergeCommitStrategy: "auto",
+    })),
+    getBranchGroup: vi.fn(() => branchGroup),
+    updateTask: vi.fn(async (_id: string, patch: Record<string, unknown>) => Object.assign(task, patch)),
+    moveTask: vi.fn(async (_id: string, column: string) => { task.column = column; return task; }),
+    logEntry: vi.fn(async () => undefined),
+    appendAgentLog: vi.fn(async () => undefined),
+    recordRunAuditEvent: vi.fn(async () => undefined),
+    emit: vi.fn(),
+  } as any;
+}
+
+function createInterpreterMergeEngine(repo: string, store: any): any {
+  const engine = Object.create(ProjectEngine.prototype) as any;
+  engine.config = { workingDirectory: repo };
+  engine.runtime = { getTaskStore: () => store };
+  return engine;
+}
+
 describe("resolveBranchGroupMergeRouting", () => {
   it("returns null for non-shared tasks", async () => {
     const routing = await resolveBranchGroupMergeRouting({
@@ -1253,6 +1312,61 @@ describe("resolveBranchGroupMergeRouting", () => {
     expect(routing?.mergeTarget.branch).toBe(branchGroup.branchName);
     expect(routing?.mergeTarget.source).toBe("branch-group-integration");
   });
+
+  it("does not route a default-branch group as ungated member integration", async () => {
+    const routing = await resolveBranchGroupMergeRouting({
+      task: { branchContext: { groupId: "BG-main", source: "mission", assignmentMode: "shared" } },
+      store: { getBranchGroup: () => ({ id: "BG-main", branchName: " main ", status: "open" }) } as any,
+      projectDefaultBranch: "main",
+    });
+
+    expect(routing).toBeNull();
+  });
+
+  it("keeps the post-Code-Review main collision manual while merging the dedicated-branch control", async () => {
+    const repo = makeRepo();
+    const mainBefore = git(repo, "git rev-parse main");
+    git(repo, "git checkout -q -b fusion/fn-3324");
+    writeFileSync(join(repo, "feature.txt"), "feature work\n");
+    git(repo, "git add feature.txt && git commit -q -m feature");
+    git(repo, "git checkout -q main");
+
+    const unsafeTask = createPostReviewTask("BG-main");
+    const unsafeStore = createPostReviewStore(unsafeTask, { id: "BG-main", status: "open", branchName: "main" });
+    const unsafeEngine = createInterpreterMergeEngine(repo, unsafeStore);
+    unsafeEngine.onMerge = vi.fn(async () => { throw new Error("main collision must not invoke the merger"); });
+
+    const held = await unsafeEngine.requestInterpreterMerge("FN-3324");
+
+    expect(held).toMatchObject({ merged: false, noOp: true, task: unsafeTask });
+    expect(unsafeEngine.onMerge).not.toHaveBeenCalled();
+    expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    expect(unsafeTask.mergeDetails).toBeUndefined();
+
+    git(repo, "git branch mission/M-3324 main");
+    const safeTask = createPostReviewTask("BG-dedicated");
+    const safeStore = createPostReviewStore(safeTask, { id: "BG-dedicated", status: "open", branchName: "mission/M-3324" });
+    const safeEngine = createInterpreterMergeEngine(repo, safeStore);
+    safeEngine.onMerge = vi.fn(() => runAiMerge(safeStore, repo, "FN-3324", { manual: true }, {
+      mergeAgent: async (cwd: string) => {
+        git(cwd, "git merge --squash fusion/fn-3324");
+        git(cwd, "git add -A && git commit -q -m 'squash dedicated member'");
+      },
+      reviewAgent: async () => "REVIEW_VERDICT: approve",
+    }));
+
+    const integrated = await safeEngine.requestInterpreterMerge("FN-3324");
+
+    expect(integrated.merged).toBe(true);
+    expect(safeEngine.onMerge).toHaveBeenCalledWith("FN-3324", expect.any(Object));
+    expect(git(repo, "git rev-parse main")).toBe(mainBefore);
+    expect(git(repo, "git show mission/M-3324:feature.txt")).toBe("feature work");
+    expect(safeTask.mergeDetails).toMatchObject({
+      mergeConfirmed: true,
+      mergeTargetBranch: "mission/M-3324",
+      mergeTargetSource: "branch-group-integration",
+    });
+  }, 30_000);
 
   it("creates the group branch when missing", async () => {
     const rootDir = makeRepo();

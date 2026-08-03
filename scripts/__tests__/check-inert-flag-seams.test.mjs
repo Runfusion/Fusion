@@ -101,8 +101,8 @@ test("a TEST call site is classified as relevant here — suppression happens la
   /*
   Worth pinning because it looks like an omission. `isTest` is deliberately NOT an exclusion: the
   caller splits production from test sites afterwards, so tests can be REPORTED ("3 test call sites")
-  without ever CLEARING a seam. Excluding them here would erase that signal — and counting them as
-  suppliers is exactly what re-hid `sortTasksForDisplayColumn`, whose only suppliers are its own tests.
+  without ever CLEARING a seam. Excluding them here would erase that signal; counting them as
+  suppliers would instead hide an inert production seam.
   */
   assert.equal(isRelevantCallSite(site({ isTest: true }), DECLARING), true);
 });

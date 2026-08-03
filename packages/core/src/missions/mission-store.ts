@@ -4231,7 +4231,16 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
               ? settings.defaultBranch
               : "main";
           const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
-          sharedBranchBaseForMission = resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch;
+          /*
+          FNXC:BranchGroupAutoMergeGate 2026-08-03-23:17:
+          Runfusion/Fusion#3324: absent/project-default mission strategies need
+          a deterministic intermediate branch so member integration cannot
+          bypass human release controls by targeting the project default.
+          Source-identity reuse intentionally preserves legacy persisted groups.
+          */
+          const usesProjectDefaultStrategy = !mission?.branchStrategy || mission.branchStrategy.mode === "project-default";
+          sharedBranchBaseForMission = resolvedBranch
+            ?? (usesProjectDefaultStrategy ? `mission/${missionId}` : resolvedBaseBranch ?? settingsDefaultBranch);
           const group = await this.taskStore.ensureBranchGroupForSource("mission", missionId, {
             branchName: sharedBranchBaseForMission,
             autoMerge: mission?.autoMerge ?? settingsAutoMerge,

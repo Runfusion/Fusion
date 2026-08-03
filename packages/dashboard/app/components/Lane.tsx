@@ -1,9 +1,8 @@
 import "./Lane.css";
 import { memo, useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { Task, TaskDetail, Column as ColumnType, ColumnId, TaskCreateInput, GithubIssueAction } from "@fusion/core";
+import { sortTasksForDisplayColumn, type Task, type TaskDetail, type Column as ColumnType, type ColumnId, type TaskCreateInput, type GithubIssueAction } from "@fusion/core";
 import { Column } from "./Column";
-import { sortTasksForDisplayColumn } from "./taskSorting";
 import type { ModelInfo, BoardWorkflowDefinition, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
@@ -104,27 +103,9 @@ function LaneComponent(props: LaneProps) {
       (grouped[task.column] ??= []).push(task);
     }
     for (const col of workflow.columns) {
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-31-08:20 (the two callers taskSorting.ts names as unconverted):
-      `sortTasksForDisplayColumn` defaults its four role questions to the LEGACY ids, and its own header
-      says the callers that do not resolve flags — Lane and ListView — keep today's behaviour. Today's
-      behaviour on a renamed board is: the hold lane loses its priority-then-FIFO queue order, the
-      complete lane loses completion-date sorting, and merging cards stop floating to the top of review.
-      Nothing fails; the cards are just in the wrong order.
-
-      Board.tsx already resolves exactly this from `column.flags`; mirrored here rather than answered a
-      second way. `doneSortMode` stays defaulted because this lane has no operator setting for it.
-      */
-      const isDoneLikeColumn = col.flags.complete === true && col.flags.archived !== true;
-      grouped[col.id] = sortTasksForDisplayColumn(
-        grouped[col.id] ?? [],
-        task_legacyKey(col.id),
-        undefined,
-        col.flags.archived === true,
-        col.flags.hold === true,
-        isDoneLikeColumn,
-        col.flags.mergeBlocker === true || col.flags.humanReview === true,
-      );
+      grouped[col.id] = sortTasksForDisplayColumn(grouped[col.id] ?? [], col.id, {
+        columnFlags: col.flags,
+      });
     }
     return grouped;
   }, [tasks, workflow.columns]);
@@ -246,13 +227,6 @@ function LaneComponent(props: LaneProps) {
       )}
     </section>
   );
-}
-
-/** Custom column ids are not in the legacy ColumnType enum; sortTasksForDisplayColumn
- *  only special-cases the legacy literals, so any unknown id falls through to the
- *  generic priority sort. Cast through unknown for the typed call. */
-function task_legacyKey(columnId: string): ColumnType {
-  return columnId as ColumnType;
 }
 
 export const Lane = memo(LaneComponent);

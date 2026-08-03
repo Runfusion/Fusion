@@ -36,7 +36,7 @@ function makeInReviewTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
-function makeExecutor(branchGroup: { status: "open" | "finalized" | "abandoned" } | null) {
+function makeExecutor(branchGroup: { status: "open" | "finalized" | "abandoned"; branchName: string } | null) {
   const store = createMockStore();
   store.getSettings.mockResolvedValue({
     maxConcurrent: 2,
@@ -72,7 +72,7 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
   });
 
   it("still routes live shared-group members through the local integration retry gate", async () => {
-    const { executor } = makeExecutor({ status: "open" });
+    const { executor } = makeExecutor({ status: "open", branchName: "mission/M-1980" });
     const task = makeInReviewTask();
 
     await expect((executor as any).isRetryableBenignMergePauseAbort(
@@ -81,5 +81,17 @@ describe("executor shared-branch autoMerge:false liveness gates", () => {
       "merge-seam",
       true,
     )).resolves.toBe(true);
+  });
+
+  it("holds an open shared group that would integrate directly into main", async () => {
+    const { executor } = makeExecutor({ status: "open", branchName: "main" });
+    const task = makeInReviewTask();
+
+    await expect((executor as any).isRetryableBenignMergePauseAbort(
+      task,
+      mergeAbortResult,
+      "merge-seam",
+      true,
+    )).resolves.toBe(false);
   });
 });

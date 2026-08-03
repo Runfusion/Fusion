@@ -202,9 +202,9 @@ describe("isSharedBranchGroupMemberIntegration", () => {
   });
 
   it("requires a live open group for auto-merge-off shared-member integration", () => {
-    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open" })).toBe(true);
-    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "finalized" })).toBe(false);
-    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "abandoned" })).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open", branchName: "mission/M-3324" }, "main")).toBe(true);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "finalized", branchName: "mission/M-3324" }, "main")).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "abandoned", branchName: "mission/M-3324" }, "main")).toBe(false);
     expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, null)).toBe(false);
     expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, undefined)).toBe(false);
   });
@@ -216,14 +216,20 @@ describe("isSharedBranchGroupMemberIntegration", () => {
         groupId: "BG-1",
         source: "planning",
       },
-    }, { status: "open" })).toBe(false);
+    }, { status: "open", branchName: "mission/M-3324" }, "main")).toBe(false);
     expect(isLiveSharedBranchGroupMemberIntegration({
       branchContext: {
         assignmentMode: "shared",
         groupId: "   ",
         source: "planning",
       },
-    }, { status: "open" })).toBe(false);
+    }, { status: "open", branchName: "mission/M-3324" }, "main")).toBe(false);
+  });
+
+  it("withholds the exemption for blank or default-branch group targets", () => {
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open", branchName: "  " }, "main")).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open", branchName: " main " }, "main")).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open", branchName: "release/main" }, "main")).toBe(true);
   });
 });
 

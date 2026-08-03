@@ -2,6 +2,35 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.75.0-beta.0
+
+### Highlights
+
+- Approved or rejected plans now release their tasks instead of stalling in Planning Mode
+- Planning Mode keeps every interview answer and can create repeat tasks from one plan
+- Todo Lists is now an optional per-project plugin, with CLI packaging restored
+- Executor sessions resolve custom-provider credentials the same way chat does
+- Undo/redo in editable file editors, plus a mobile shortcut to review an evolving plan
+
+### New
+
+- Todo Lists ships as an optional first-party plugin you enable per project, moving the backend route and dashboard view out of the host.
+- Editable file editors gain undo and redo controls, backed by the editor's own history and kept in sync with externally loaded content.
+- Mobile Planning Mode adds a shortcut to review the evolving plan after five answers; it switches to the workspace tab without submitting your in-progress response.
+- List task details now adapt to the available content width, routing to a split view when there's room — an explicit popup preference still wins.
+
+### Fixed
+
+- Plans you manually approve or reject now release their task so it can continue, and approved plan fingerprints survive field merges.
+- Tasks created from a Planning Mode interview retain the complete set of decisions, with one shared handoff format across single, CLI, and multi-task creation.
+- Planning Mode tasks are scheduled promptly in the workflow lane you selected; replayed proposal claims no longer re-wake triage.
+- You can create another task from the same plan without first editing it, while repeat actions stay idempotent.
+- Executor credential resolution self-heals: no more synthesized "default" credential instance, unresolved instances soft-fail to the legacy unscoped provider key, and renamed custom-provider slugs match when unambiguous.
+- Voice Input can be enabled on supported installations once its model is ready, with stable readiness codes reported.
+- The plugin SDK's type declarations and Todo Lists packaging are restored in full releases; the bundled Todo plugin gets its store from the runtime shim.
+- The floating Task Detail popup's close control lines up with the header edge; only desktop resize targets moved outboard, preserving scrollbar clearance.
+- Project escalation models and voice input states are translated again in every supported secondary locale.
+
 ## 0.74.0
 
 ### Highlights

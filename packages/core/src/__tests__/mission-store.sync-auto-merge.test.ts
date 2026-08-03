@@ -11,12 +11,14 @@ import { describe, expect, it } from "vitest";
 
 describe("MissionStore synchronous triage auto-merge contract", () => {
   it("stamps only false on the synchronous create branch after the duplicate guard", async () => {
-    const source = await readFile(fileURLToPath(new URL("../mission-store.ts", import.meta.url)), "utf8");
+    const source = await readFile(fileURLToPath(new URL("../missions/mission-store.ts", import.meta.url)), "utf8");
     const triageFeature = source.slice(source.indexOf("async triageFeature("), source.indexOf("async triageSlice("));
 
     expect(triageFeature).toContain('if (guard.action === "duplicate" && guard.existing)');
     expect(triageFeature).toContain("...(mission?.autoMerge === false ? { autoMerge: false } : {}),");
     expect(triageFeature.indexOf('if (guard.action === "duplicate" && guard.existing)'))
       .toBeLessThan(triageFeature.indexOf("...(mission?.autoMerge === false ? { autoMerge: false } : {}),"));
+    expect(triageFeature).toContain('usesProjectDefaultStrategy ? `mission/${missionId}`');
+    expect(triageFeature).toContain('ensureBranchGroupForSource("mission", missionId');
   });
 });

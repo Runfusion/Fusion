@@ -63,7 +63,10 @@ export function resolveEffectiveAutoMerge(
  * FNXC:PrAutoMergeGate 2026-06-28-00:33:
  * FN-7182: a dashboard-created open PR is a human handoff, so exclude it from all automatic merge processing and self-healing recovery until the human merges or closes the PR.
  * This mirrors the `autoMerge:false` in-review gate while preserving manual Merge PR/manual done paths and pipeline PRs without `manual: true`.
- * Shared-branch member integration still bypasses this function via `allowInReviewMergeProcessing(... ) || isLiveSharedBranchGroupMemberIntegration(task, group)`, so a manual PR on a live shared member can still be integrated to its group branch; group-to-default promotion remains gated separately.
+ * Shared-branch member integration still bypasses this function only through
+ * `isLiveSharedBranchGroupMemberIntegration(task, group, defaultBranch)`: its
+ * live group branch must be a distinct intermediate target. Group-to-default
+ * promotion remains gated separately.
  */
 export function allowsAutoMergeProcessing(
   task: Pick<Task, "autoMerge" | "prInfo" | "prInfos">,
@@ -96,12 +99,26 @@ export function isSharedBranchGroupMemberIntegration(
 /**
  * FNXC:AutoMergeHold 2026-07-09-16:42:
  * FN-7750 / Runfusion#1980: the `autoMerge:false` exemption for shared-branch members is valid only while the branch group is live. Missing, finalized, abandoned, or dissolved groups must degrade to the standalone manual-hold path so operator Merge & Close control is honored regardless of whether the task was API-, user-, or engine-created.
+ *
+ * FNXC:BranchGroupAutoMergeGate 2026-08-03-23:17:
+ * Runfusion/Fusion#3324 requires human release controls to apply whenever a
+ * shared-group member would land on the resolved default branch. Only a live,
+ * nonblank intermediate branch distinct from that default may bypass
+ * `autoMerge:false`; shape-only callers must keep using
+ * `isSharedBranchGroupMemberIntegration` so stale members remain excluded from
+ * solo finalization.
  */
 export function isLiveSharedBranchGroupMemberIntegration(
   task: Pick<Task, "branchContext">,
-  group: Pick<BranchGroup, "status"> | null | undefined,
+  group: Pick<BranchGroup, "status" | "branchName"> | null | undefined,
+  projectDefaultBranch?: string,
 ): boolean {
-  return isSharedBranchGroupMemberIntegration(task) && group != null && group.status === "open";
+  const groupBranch = group?.branchName?.trim();
+  const defaultBranch = projectDefaultBranch?.trim() || "main";
+  return isSharedBranchGroupMemberIntegration(task)
+    && group?.status === "open"
+    && Boolean(groupBranch)
+    && groupBranch !== defaultBranch;
 }
 
 export function resolveTaskMergeTarget(

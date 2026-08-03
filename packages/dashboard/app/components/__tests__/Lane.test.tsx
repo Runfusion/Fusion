@@ -208,11 +208,9 @@ describe("Lane", () => {
 });
 
 /*
-FNXC:WorkflowResolvedColumns 2026-07-31-08:30:
-Lane sorted every column with `sortTasksForDisplayColumn`'s LEGACY defaults, which taskSorting.ts's
-own header calls out: the callers that do not resolve flags keep today's behaviour. Today's behaviour
-on a renamed board is the wrong ORDER — the hold lane loses priority-then-FIFO, so a card an operator
-marked urgent no longer shows up next. Nothing throws; the queue is just wrong.
+FNXC:TaskDisplaySorting 2026-08-03-22:53:
+Lane supplies resolved workflow flags to core's canonical `sortTasksForDisplayColumn`. A renamed hold
+lane must retain priority-then-FIFO ordering; otherwise an operator's next task is silently wrong.
 
 The board below is the built-in vocabulary renamed and nothing else, which is why every case above
 still passes: `todo` satisfies the legacy default.

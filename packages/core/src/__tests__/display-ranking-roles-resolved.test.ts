@@ -54,7 +54,7 @@ describe("sortTasksForDisplayColumn resolves the column's role", () => {
       { id: "FN-2", priority: "urgent", ...at("2026-01-02T00:00:00Z") },
     ] as never[];
 
-    expect(sortTasksForDisplayColumn(tasks, "backlog", HOLD_FLAGS).map((t: { id: string }) => t.id))
+    expect(sortTasksForDisplayColumn(tasks, "backlog", { columnFlags: HOLD_FLAGS }).map((t: { id: string }) => t.id))
       .toEqual(["FN-2", "FN-1"]);
   });
 
@@ -65,7 +65,7 @@ describe("sortTasksForDisplayColumn resolves the column's role", () => {
     ] as never[];
 
     // Priority would put FN-OLD first; the complete lane orders by recency instead.
-    expect(sortTasksForDisplayColumn(tasks, "shipped", COMPLETE_FLAGS).map((t: { id: string }) => t.id))
+    expect(sortTasksForDisplayColumn(tasks, "shipped", { columnFlags: COMPLETE_FLAGS }).map((t: { id: string }) => t.id))
       .toEqual(["FN-NEW", "FN-OLD"]);
   });
 
@@ -76,7 +76,7 @@ describe("sortTasksForDisplayColumn resolves the column's role", () => {
     ] as never[];
 
     // Priority alone would rank FN-IDLE first; merge-active wins in the review lane.
-    expect(sortTasksForDisplayColumn(tasks, "signoff", REVIEW_FLAGS).map((t: { id: string }) => t.id))
+    expect(sortTasksForDisplayColumn(tasks, "signoff", { columnFlags: REVIEW_FLAGS }).map((t: { id: string }) => t.id))
       .toEqual(["FN-MERGING", "FN-IDLE"]);
   });
 

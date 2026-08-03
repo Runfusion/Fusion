@@ -24,6 +24,7 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
+import { FloatingWindow } from "../FloatingWindow";
 import {
   assertModalGeometryRecoveryAndSheetContracts,
   assertRenderedModalTouchGeometry,
@@ -854,6 +855,63 @@ describe("TaskDetailModal", () => {
         expect(declarations, `${selector} mobile right inset`).not.toMatch(/\bpadding-(?:inline-end|right)\s*:/);
         expect(declarations, `${selector} mobile asymmetric padding`).not.toMatch(/\bpadding\s*:/);
       }
+    });
+
+    it("keeps the floating task header symmetric without sacrificing its resize targets", () => {
+      const floatingCss = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
+      const desktopTaskSelector = ".floating-window--task-detail:not(.floating-window--tablet-viewport)";
+      const taskPopupBody = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__body`);
+      const sharedBody = getExactCssRuleBlock(floatingCss, ".floating-window__body");
+      const header = getExactCssRuleBlock(readDashboardStylesSource(), ".modal-header");
+      const eastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--e`);
+      const northEastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--ne`);
+      const southEastResize = getExactCssRuleBlock(floatingCss, `${desktopTaskSelector} .floating-window__resize-handle--se`);
+      const onRequestClose = vi.fn();
+
+      /*
+      FNXC:TaskDetailLayout 2026-08-03-19:36:
+      The shared body reserves desktop scrollbar clearance. Task Detail moves only its resize
+      hit areas outboard, so the embedded header retains matching tokenized edges.
+      */
+      expect(sharedBody).toContain("margin-inline-end: var(--space-lg);");
+      expect(taskPopupBody).toContain("margin-inline-end: 0;");
+      expect(header).toContain("padding: var(--modal-padding);");
+      expect(eastResize).toContain("right: calc(var(--space-sm) * -1);");
+      expect(northEastResize).toContain("right: calc(var(--space-lg) * -1);");
+      expect(southEastResize).toContain("right: calc(var(--space-lg) * -1);");
+
+      const { baseElement, unmount } = render(
+        <FloatingWindow
+          windowKey="task-detail-inset"
+          title="FN-8766"
+          onClose={onRequestClose}
+          hideHeader
+          dragHandleSelector=".task-detail-content--embedded > .modal-header"
+          className="floating-window--task-detail"
+          layer="task-detail"
+        >
+          <TaskDetailContent
+            task={makeTask({ id: "FN-8766", title: "A task title long enough to exercise header alignment" })}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+            embedded
+            onRequestClose={onRequestClose}
+          />
+        </FloatingWindow>,
+      );
+
+      const popup = baseElement.querySelector("[data-testid='floating-window-task-detail-inset']");
+      const close = screen.getByRole("button", { name: "Close" });
+      expect(popup).toHaveClass("floating-window--task-detail");
+      expect(popup?.querySelector(".task-detail-content--embedded > .modal-header")).toContainElement(close);
+      expect(close).toHaveClass("task-detail-floating-close");
+      expect(popup?.querySelectorAll(".floating-window__resize-handle")).toHaveLength(8);
+      fireEvent.click(close);
+      expect(onRequestClose).toHaveBeenCalledTimes(1);
+      unmount();
     });
 
     it("uses production FloatingWindow geometry for touch drag, eight-direction resize, recovery, and sheets", () => {
@@ -2137,21 +2195,22 @@ describe("TaskDetailModal", () => {
       expect(depLink.getAttribute("title")).toContain("FN-001");
     });
 
-    it("calls fetchTaskDetail and onOpenDetail when clicking a dependency", async () => {
+    it("calls fetchTaskDetail with project scope and opens the exact fetched dependency", async () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
-      const mockDetail: TaskDetail = {
-        ...makeTask({ id: "FN-001", description: "Dep 1" }),
-        prompt: "",
-        attachments: [],
-      };
-      mockFetch.mockResolvedValueOnce(mockDetail);
+      const projectId = "project-dependencies";
+      const task = makeTask({ dependencies: ["FN-001"] });
+      const mockDetail = makeTask({ id: "FN-001", description: "Dep 1" });
       const onOpenDetail = vi.fn();
 
+      // The modal fetches its own detail on mount; settle and clear that request before exercising the link.
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue(task);
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ dependencies: ["FN-001"] })}
+          projectId={projectId}
+          task={task}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2160,27 +2219,35 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
+      mockFetch.mockClear();
+      mockFetch.mockResolvedValue(mockDetail);
 
-      const depLink = container.querySelector(".detail-dep-link")!;
-      fireEvent.click(depLink);
+      fireEvent.click(container.querySelector(".detail-dep-link")!);
 
       await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith("FN-001", undefined);
-        expect(onOpenDetail).toHaveBeenCalledWith(mockDetail);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledWith("FN-001", projectId);
+        expect(onOpenDetail).toHaveBeenCalledExactlyOnceWith(mockDetail);
       });
     });
 
-    it("shows error toast when dependency fetch fails", async () => {
+    it("shows exactly one error toast and never navigates when dependency fetch fails", async () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
-      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
+      const projectId = "project-dependencies";
+      const task = makeTask({ dependencies: ["FN-001"] });
       const onOpenDetail = vi.fn();
       const addToast = vi.fn();
 
+      // Isolate the rejected link request from the modal's initial detail load.
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue(task);
       const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ dependencies: ["FN-001"] })}
+          projectId={projectId}
+          task={task}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2189,27 +2256,36 @@ describe("TaskDetailModal", () => {
           addToast={addToast}
         />,
       );
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
+      mockFetch.mockClear();
+      mockFetch.mockRejectedValueOnce(new Error("Task not found"));
 
-      const depLink = container.querySelector(".detail-dep-link")!;
-      fireEvent.click(depLink);
+      fireEvent.click(container.querySelector(".detail-dep-link")!);
 
       await waitFor(() => {
-        expect(addToast).toHaveBeenCalledWith("Failed to load dependency FN-001", "error");
+        expect(mockFetch).toHaveBeenCalledExactlyOnceWith("FN-001", projectId);
+        expect(addToast).toHaveBeenCalledExactlyOnceWith("Failed to load dependency FN-001", "error");
       });
       expect(onOpenDetail).not.toHaveBeenCalled();
     });
 
-    it("remove button click does not trigger dependency click", async () => {
-      const { updateTask } = await import("../../api");
+    it("activates upstream and blocking-dependent links with Enter and Space", async () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
-      mockFetch.mockRejectedValueOnce(new Error("Should not be called"));
+      const projectId = "project-dependencies";
+      const task = makeTask({ dependencies: ["FN-001"] });
+      const upstreamDetail = makeTask({ id: "FN-001", description: "Upstream dependency" });
+      const blockingDetail = makeTask({ id: "FN-100", description: "Blocking dependent" });
       const onOpenDetail = vi.fn();
 
-      render(
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue(task);
+      const { baseElement: container } = render(
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({ dependencies: ["FN-001"] })}
+          projectId={projectId}
+          task={task}
+          tasks={[task, makeTask({ id: "FN-100", dependencies: [task.id] })]}
           onOpenDetail={onOpenDetail}
           onClose={noop}
           onMoveTask={noopMove}
@@ -2218,16 +2294,52 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", projectId));
+      mockFetch.mockClear();
+      mockFetch.mockImplementation(async (id) => id === "FN-001" ? upstreamDetail : blockingDetail);
 
-      const removeButton = screen.getByTitle(/Remove dependency/);
-      fireEvent.click(removeButton);
+      const [upstreamLink, blockingLink] = Array.from(container.querySelectorAll<HTMLElement>(".detail-dep-link"));
+      fireEvent.keyDown(upstreamLink, { key: "Enter" });
+      fireEvent.keyDown(blockingLink, { key: " " });
 
-      // onOpenDetail should not be called when clicking remove
-      expect(onOpenDetail).not.toHaveBeenCalled();
-      // updateTask should be called to remove the dependency
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenNthCalledWith(1, "FN-001", projectId);
+        expect(mockFetch).toHaveBeenNthCalledWith(2, "FN-100", projectId);
+        expect(onOpenDetail).toHaveBeenNthCalledWith(1, upstreamDetail);
+        expect(onOpenDetail).toHaveBeenNthCalledWith(2, blockingDetail);
+      });
+    });
+
+    it("remove button click does not fetch or open a dependency", async () => {
+      const { updateTask, fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      const task = makeTask({ dependencies: ["FN-001"] });
+      const onOpenDetail = vi.fn();
+
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValue(task);
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={task}
+          onOpenDetail={onOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined));
+      mockFetch.mockClear();
+
+      fireEvent.click(screen.getByTitle(/Remove dependency/));
+
       await waitFor(() => {
         expect(updateTask).toHaveBeenCalledWith("FN-099", { dependencies: [] }, undefined);
       });
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(onOpenDetail).not.toHaveBeenCalled();
     });
   });
 

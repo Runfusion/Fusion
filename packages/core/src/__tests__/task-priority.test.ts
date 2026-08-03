@@ -175,6 +175,69 @@ describe("task-priority", () => {
 });
 
 /*
+FNXC:TaskDisplaySorting 2026-08-03-22:53:
+These cases are the shared contract formerly split between core-only and dashboard-only sorters.
+Every board surface now supplies this API with resolved flags, while missing workflow metadata falls
+back to legacy ids; preserving the input is required because archived server pagination owns its order.
+*/
+describe("sortTasksForDisplayColumn shared display contract", () => {
+  const task = (id: string, overrides: Partial<Task> = {}) => ({
+    id,
+    column: "building",
+    status: "idle",
+    priority: "normal" as TaskPriority,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  });
+  const ids = (tasks: readonly { id: string }[]) => tasks.map((entry) => entry.id);
+
+  it("returns a new empty array and preserves archived input order", () => {
+    const empty: Array<ReturnType<typeof task>> = [];
+    expect(sortTasksForDisplayColumn(empty, "archive", { columnFlags: { archived: true } })).toEqual([]);
+    expect(sortTasksForDisplayColumn(empty, "archive", { columnFlags: { archived: true } })).not.toBe(empty);
+
+    const archived = [task("FN-3", { priority: "low" }), task("FN-1", { priority: "urgent" })];
+    const snapshot = [...archived];
+    expect(ids(sortTasksForDisplayColumn(archived, "vault", { columnFlags: { archived: true } }))).toEqual(["FN-3", "FN-1"]);
+    expect(archived).toEqual(snapshot);
+  });
+
+  it("uses priority then FIFO for legacy and custom hold columns", () => {
+    const tasks = [
+      task("FN-2", { createdAt: "2026-06-02T00:00:00.000Z" }),
+      task("FN-9", { createdAt: "2026-06-01T00:00:00.000Z" }),
+      task("FN-1", { priority: "urgent", createdAt: "2026-06-03T00:00:00.000Z" }),
+    ];
+    expect(ids(sortTasksForDisplayColumn(tasks, "todo"))).toEqual(["FN-1", "FN-9", "FN-2"]);
+    expect(ids(sortTasksForDisplayColumn(tasks, "backlog", { columnFlags: { hold: true } }))).toEqual(["FN-1", "FN-9", "FN-2"]);
+  });
+
+  it("supports both complete-column modes with deterministic invalid-date and nonnumeric-id ties", () => {
+    const tasks = [
+      task("TASK-alpha", { createdAt: "not-a-date", updatedAt: undefined }),
+      task("FN-10", { columnMovedAt: "2026-06-03T00:00:00.000Z" }),
+      task("FN-2", { columnMovedAt: "2026-06-03T00:00:00.000Z" }),
+      task("TASK-charlie", { createdAt: "also-not-a-date", updatedAt: undefined }),
+    ];
+    const options = { columnFlags: { complete: true } };
+    expect(ids(sortTasksForDisplayColumn(tasks, "shipped", options))).toEqual(["FN-2", "FN-10", "TASK-alpha", "TASK-charlie"]);
+    expect(ids(sortTasksForDisplayColumn(tasks, "shipped", { ...options, doneSortMode: "task-id-desc" }))).toEqual(["TASK-charlie", "TASK-alpha", "FN-10", "FN-2"]);
+  });
+
+  it("floats active merges in review columns and otherwise uses priority then numeric id", () => {
+    const reviewTasks = [
+      task("FN-10", { priority: "urgent", status: "review-ready" }),
+      task("FN-11", { priority: "low", status: "merging-fix" }),
+    ];
+    expect(ids(sortTasksForDisplayColumn(reviewTasks, "signoff", { columnFlags: { mergeBlocker: true } }))).toEqual(["FN-11", "FN-10"]);
+
+    const ordinary = [task("FN-10", { priority: "normal" }), task("FN-2", { priority: "normal" })];
+    expect(ids(sortTasksForDisplayColumn(ordinary, "building", { columnFlags: {} }))).toEqual(["FN-2", "FN-10"]);
+  });
+});
+
+/*
 FNXC:WorkflowLifecycleColumns 2026-07-27-22:05 (Phase B / U6 — vocabulary conversion):
 RED-GREEN PROOF for `UNBLOCK_ACTIVE_COLUMNS` in `buildUnblockWeightMap`, written
 before the conversion. Same enumeration bug as blocker-fanout's ACTIVE_COLUMNS,
