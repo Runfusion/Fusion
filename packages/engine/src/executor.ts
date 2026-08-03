@@ -174,7 +174,7 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
-import { isNonPlanDefectPlanReviewFailure, isSessionContentionError, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
+import { isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import {
@@ -403,7 +403,6 @@ export {
   isAwaitingGraphFailureValue,
 } from "./executor/task-predicates.js";
 import {
-  graphFailureErrorTexts,
   graphFailureValue,
   extractUnusableWorktreeGraphFailure,
   isMergeGraphFailure,
@@ -676,9 +675,6 @@ import { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkfl
 export { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskFree } from "./executor/merge-confirmed-finalize.js";
 import {
   holdForSessionContention as holdForSessionContentionImpl,
-  MAX_SESSION_CONTENTION_HOLD_RETRIES,
-  SESSION_CONTENTION_HOLD_BACKOFF_MS,
-  SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS,
 } from "./executor/session-contention-hold.js";
 export {
   holdForSessionContention as holdForSessionContentionFree,
