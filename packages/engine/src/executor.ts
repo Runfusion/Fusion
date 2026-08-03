@@ -13,15 +13,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveEffectiveAgent, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, THINKING_LEVELS, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./execution/replan-target.js";
-import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, WorkflowWorkItem, TaskMoveLanes } from "@fusion/core";
-import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
+import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
-import { getActiveNotificationService } from "./util/notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflows/workflow-graph-branches.js";
 import type {
@@ -50,7 +49,6 @@ import type {
   WorkflowRuntimePrimitives,
 } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
-import { WorkflowCustomNodeExecutionService } from "./workflows/workflow-custom-node-execution.js";
 import {
   buildStepFailureMessage,
   emitProactiveStatus,
@@ -150,7 +148,7 @@ import {
   isRequiredArtifactReadFailedValue,
   requiredArtifactMissingValue,
   requiredArtifactReadFailedValue,
-  workflowEntryArtifacts,
+
 } from "./execution/required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import type { PluginRunner } from "./plugins/plugin-runner.js";
@@ -812,6 +810,8 @@ import { createAuthoritativeWorkflowPrimitivesFromExecutor as createAuthoritativ
 export { createAuthoritativeWorkflowPrimitivesFromExecutor as createAuthoritativeWorkflowPrimitivesFromExecutorFree } from "./executor/create-authoritative-workflow-primitives.js";
 import { createAuthoritativeWorkflowSeams as createAuthoritativeWorkflowSeamsImpl } from "./executor/create-authoritative-workflow-seams.js";
 export { createAuthoritativeWorkflowSeams as createAuthoritativeWorkflowSeamsFree } from "./executor/create-authoritative-workflow-seams.js";
+import { executeWorkflowGraph as executeWorkflowGraphImpl } from "./executor/execute-workflow-graph.js";
+export { executeWorkflowGraph as executeWorkflowGraphFree } from "./executor/execute-workflow-graph.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -3705,451 +3705,52 @@ export class TaskExecutor {
    * (completed or failed); false when the legacy pipeline should run.
    */
   private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
-    // Claim synchronously before any await so concurrent execute() calls for
-    // the same task cannot both enter graph routing (mirrors executingTaskLock).
-    // executeCore may already have claimed before its pre-graph awaits (FN-8471).
-    if (!opts?.alreadyClaimed) {
-      this.graphRouting.add(task.id);
-    }
-    let graphAbortController: AbortController | undefined;
-    /*
-    FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-    The hold/release sweep may have already tryAcquired a global slot for this card before moving it to in-progress. Claim that pre-held slot for the full graph run so utilization stays honest between workflow nodes and triage cannot overfill the cap while this task is still graph-owned.
-    */
-    const hadPreHeldExecutorSlot = takePreHeldExecutorSlot(task.id);
-    if (hadPreHeldExecutorSlot) {
-      this.outerConcurrencyClaims.add(task.id);
-    }
-    try {
-      let settings: Settings;
-      try {
-        settings = await this.store.getSettings();
-      } catch (err) {
-        await this.handleGraphFailure(task, {
-          disposition: "failed",
-          outcome: "failure",
-          reason: `settings-load-failed: ${err instanceof Error ? err.message : String(err)}`,
-          visitedNodeIds: [],
-        });
-        return;
-      }
-      /*
-      FNXC:WorkflowExecution 2026-06-22-18:00:
-      workflowGraphExecutor graduated from Experimental. Every task routes through the graph runner by default, and stale persisted experimentalFeatures.workflowGraphExecutor=false values are ignored so the product no longer has a user-facing or runtime graph-engine kill switch.
-      */
-      settings = { ...settings };
-      /*
-       * FNXC:ExecutorToolFailureRetry 2026-07-16-12:00:
-       * Capture a count cursor without reading the task log. Failure handling receives this
-       * execution-local boundary, so a stale task snapshot cannot accidentally qualify an old run.
-       *
-       * FNXC:ExecutorToolFailureRetry 2026-07-17-06:30:
-       * Minimal/test TaskStore adapters may omit getAgentLogCount (same optional pattern as
-       * project-engine). Treat a missing method as cursor 0 so graph entry does not throw
-       * "is not a function" and still records a durable detector boundary when updateTask exists.
-       */
-      if (resolveMaxConsecutiveToolFailureRetries(settings) > 0) {
-        const cursor = typeof this.store.getAgentLogCount === "function"
-          ? await this.store.getAgentLogCount(task.id).catch(() => 0)
-          : 0;
-        this.graphToolFailureRunCursors.set(task.id, cursor);
-        if (typeof this.store.updateTask === "function") {
-          await this.store.updateTask(task.id, { toolFailureDetectorLogCursor: cursor }, this.getRunContextFor(task.id));
-        }
-      }
-      let selection: { workflowId: string; stepIds: string[] } | undefined;
-      /*
-      FNXC:WorkflowExecution 2026-07-19-17:30 (U10b / R9):
-      The legacy fallback is DELETED. It used to return `false` here — handing the run to a
-      legacy execute path — when the store exposed neither workflow-selection reader. That
-      escape hatch is gone: graph ownership is now UNCONDITIONAL, which is what lets
-      `graphCompletion` be a required callback rather than an optional one and collapses the
-      three completion boundaries in `runImplementation` to plain returns.
-      A store that cannot resolve a workflow now ALWAYS fails closed, not only when the task
-      has enabled pre-merge steps. The old "no enabled steps means nothing to gate, so the
-      legacy path is safe" carve-out died with the path it protected: there is no second
-      executor left to fall back to, so returning `false` would silently run nothing.
-      */
-      if (
-        typeof this.store.getTaskWorkflowSelectionAsync !== "function"
-        && typeof this.store.getTaskWorkflowSelection !== "function"
-      ) {
-        /*
-        FNXC:FastOptionalSteps 2026-06-30-09:45:
-        Fast mode only clears optional workflow steps by default; explicit `enabledWorkflowSteps` remains operator intent. Minimal or older stores that cannot resolve the graph must fail closed, even in fast mode, rather than falling through and silently skipping the selected optional-group body.
-        */
-        await this.handleGraphFailure(task, {
-          disposition: "failed",
-          outcome: "failure",
-          reason:
-            "workflow-selection-api-unavailable: store lacks a workflow-selection reader so the workflow graph cannot run; "
-            + "the legacy execute fallback was removed (U10b) and the graph is the only executor. Failing closed rather than running nothing (KTD-5).",
-          visitedNodeIds: [],
-        });
-        return;
-      }
-      try {
-        selection = typeof this.store.getTaskWorkflowSelectionAsync === "function"
-          ? await this.store.getTaskWorkflowSelectionAsync(task.id)
-          : this.store.getTaskWorkflowSelection(task.id);
-      } catch (err) {
-        await this.handleGraphFailure(task, {
-          disposition: "failed",
-          outcome: "failure",
-          reason: `workflow-selection-failed: ${err instanceof Error ? err.message : String(err)}`,
-          visitedNodeIds: [],
-        });
-        return;
-      }
-      selection ??= { workflowId: "builtin:coding", stepIds: [] };
-
-      // Resolve the production run id ONCE, here, so it is the single source of
-      // truth shared by the runner AND the executor-side persistence deps
-      // (parse-steps pin probe, foreach instance-row flips, resume reconcile). The
-      // runner derives `${task.id}:${definition.id}`; we mirror that derivation
-      // from the resolved definition and thread it everywhere. Best-effort: if the
-      // definition cannot be resolved (older store), the runner falls back to its
-      // own derivation and the deps fall back to the legacy `:run` literal — the
-      // prior behavior — so this never strands a task.
-      let resolvedRunId: string | undefined;
-      try {
-        const definition = selection.workflowId === "builtin:coding"
-          ? { id: "builtin:coding" }
-          : await this.store.getWorkflowDefinition?.(selection.workflowId);
-        if (definition) resolvedRunId = `${task.id}:${definition.id}`;
-      } catch {
-        // Definition load failure — leave undefined; deps/runner use fallbacks.
-      }
-
-      // Column-agent binding (plan U3): the IR is NOT in scope inside
-      // runGraphCustomNode, so resolve it here (the seam wiring) where the
-      // selection is known, and thread a per-node binding lookup into the custom
-      // node callback. Resolve the IR ONCE per run (never an uncached per-node
-      // fetch — mirrors the hold-release.ts irCache posture); best-effort, so a
-      // resolution failure simply yields no bindings (R8 graceful degradation).
-      /*
-      FNXC:WorkflowColumns 2026-06-22-18:00:
-      Column-agent binding now participates in every graph run. The former workflowColumns kill switch was removed, so stale persisted false values cannot silently disable custom-node, seam, or watcher bindings.
-      */
-      let columnAgentIr: WorkflowIr | undefined;
-      try {
-        columnAgentIr = await resolveWorkflowIrForTask(this.store, task.id);
-      } catch {
-        columnAgentIr = undefined;
-      }
-      if (columnAgentIr) {
-        const missingEntryArtifacts: string[] = [];
-        for (const artifact of workflowEntryArtifacts(columnAgentIr)) {
-          let content: string | undefined;
-          try {
-            content = await this.readTaskArtifact(task.id, artifact.key);
-          } catch (error) {
-            const failureValue = requiredArtifactReadFailedValue(artifact.key);
-            await this.handleGraphFailure(task, {
-              disposition: "failed",
-              outcome: "failure",
-              reason: `workflow-required-artifact-read-failed:${artifact.key}:${error instanceof Error ? error.message : String(error)}`,
-              visitedNodeIds: ["workflow-entry-artifact"],
-              context: { "node:workflow-entry-artifact:value": failureValue },
-            });
-            return;
-          }
-          if (typeof content !== "string" || !content.trim()) missingEntryArtifacts.push(artifact.key);
-        }
-        if (missingEntryArtifacts.length > 0) {
-          const liveTask = await this.store.getTask(task.id).catch(() => task);
-          await this.recoverMissingRequiredArtifacts(liveTask, missingEntryArtifacts, { source: "graph-entry" });
-          return;
-        }
-      }
-      const resolveBindingForNode = (nodeId: string): WorkflowColumnAgent | undefined =>
-        columnAgentIr ? resolveColumnAgentBinding(columnAgentIr, nodeId) : undefined;
-      // Column-agent seam wiring (U4): expose the same per-run resolver to the
-      // execute / step-execute seams (which key off a governing node id stamped
-      // into context), so the coding/step session runs as the column agent under
-      // the SAME binding lookup the custom-node seam uses (KTD-2 single resolver).
-      this.graphColumnAgentResolver.set(task.id, resolveBindingForNode);
-
-      // (U3) Genuinely-unattended run signal. This is an EXPLICIT opt-in, not an
-      // inferred heuristic: a run is unattended only when an entrypoint that
-      // knows no human will ever answer (LFG / pipeline / disable-model-invocation)
-      // marks it so. No such marker reaches this executor path today (verified —
-      // KTD-3), so this resolves to false (board run) for every current run, and
-      // the safe default is preserved: absence of the explicit flag ALWAYS yields
-      // no FUSION_HEADLESS, so a board task can only ever park (a human can answer
-      // via the await-input card button), never silently skip approval. When such
-      // an entrypoint is added, it sets `unattended` here.
-      // No entrypoint sets this today, so clear any stale entry; a board run never
-      // sets FUSION_HEADLESS. When an LFG/pipeline/disable-model-invocation
-      // entrypoint is added, call `this.graphUnattendedRuns.add(task.id)` here and
-      // the finally below clears it.
-      this.graphUnattendedRuns.delete(task.id);
-
-      graphAbortController = new AbortController();
-      this.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);
-      const customNodeExecution = new WorkflowCustomNodeExecutionService({
-        execute: (node, nodeTask, nodeSettings, columnBinding, context) =>
-          this.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context),
-        resolveColumnBinding: resolveBindingForNode,
-      });
-      const runner = new WorkflowGraphTaskRunner({
-        localNodeId: this.options.getLocalNodeId?.(),
-        store: {
-          ...this.store,
-          /*
-          FNXC:WorkflowSelection 2026-07-14-17:06:
-          Graph execution must reuse the asynchronously resolved selection. A PostgreSQL TaskStore cannot provide that selection through the synchronous compatibility method, and substituting builtin:coding here would silently execute the wrong graph.
-          */
-          getTaskWorkflowSelection: () => selection,
-          getTaskWorkflowSelectionAsync: async () => selection,
-          getWorkflowDefinition: async (id: string) =>
-            (await this.store.getWorkflowDefinition?.(id))
-              ?? (id === "builtin:coding" ? getBuiltinWorkflow("builtin:coding") : undefined),
-          getTask: (taskId: string) => this.store.getTask(taskId),
-        },
-        runId: resolvedRunId,
-        primitives: this.createAuthoritativeWorkflowPrimitives(settings),
-        seams: this.createAuthoritativeWorkflowSeams(settings),
-        prepareNodeExecution: (node, nodeTask, requirement) =>
-          this.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
-        runCustomNode: customNodeExecution.runner(settings),
-        publishTaskProjection: async (taskId, patch) => {
-          await this.store.updateTaskAtomic(taskId, (liveTask) => {
-            const update: Parameters<TaskStore["updateTask"]>[1] = {};
-            if (patch.modifiedFiles) {
-              const merged = [...new Set([...(liveTask.modifiedFiles ?? []), ...patch.modifiedFiles])].sort();
-              if (merged.length > 0) update.modifiedFiles = merged;
-            }
-            if (patch.mergeDetails) {
-              update.mergeDetails = { ...(liveTask.mergeDetails ?? {}), ...patch.mergeDetails };
-            }
-            if (patch.summary !== undefined) update.summary = patch.summary;
-            return update;
-          });
-        },
-        onEvent: (event) => executorLog.debug(`[workflow-graph] ${event.type} ${event.taskId}: ${event.detail}`),
-        signal: graphAbortController.signal,
-        // Wire SQLite-backed per-branch persistence in production (#1407): the
-        // executor writes each branch's currentNodeId/status to
-        // workflow_run_branches so fan-out crash-resume and the U9 badges have
-        // real data, and prunes stale runs (#1412). Adapter degrades to no-op
-        // when the store predates these methods (additive guard).
-        branchPersistence: this.buildBranchPersistence(),
-        // Step-inversion (KTD-6, U3/U4): per-instance run-state persistence.
-        stepInstancePersistence: this.buildStepInstancePersistence(),
-        // Step-inversion (KTD-4, U5): RETHINK reset-on-rework — when the foreach
-        // sub-walk traverses a rework edge triggered by `outcome:rethink`, reset
-        // the active instance's step to its persisted per-step baseline (git reset
-        // + session rewind + step→pending) before re-entering step-execute.
-        onReworkReset: (active) => this.applyGraphRethinkReset(task.id, active),
-        // Step-inversion (KTD-12, U12): parse-steps node handler deps — artifact
-        // read (through task-documents with PROMPT.md fallback), step-list write
-        // (graph-source projection), pin-protection probe, and audit.
-        parseStepsDeps: this.buildParseStepsDeps(resolvedRunId),
-        // Step-inversion (KTD-15, U14): code node runner — esbuild compile +
-        // child-process execution with the harness contract.
-        runCode: this.buildCodeNodeRunner(),
-        notifyDispatch: (event, payload) => getActiveNotificationService()?.dispatch(event, payload),
-        // PR-entity nodes (U3): pr-create/pr-respond/pr-merge handler deps —
-        // engine-owned store + CLI-injected GitHub callbacks. Absent → fail closed.
-        prNodes: this.options.prNodes,
-        // Step-inversion (KTD-11, U10): worktree isolation + ordered integration +
-        // parallel scheduling. Per-instance worktrees branched off the task's main
-        // branch tip; integration rebases each branch in step order; the projection
-        // flips done-iff-integrated. Shared isolation never invokes these.
-        ...this.buildForeachWorktreeDeps(task, resolvedRunId),
-        // FIX 4 (context gap): task-level log sink so an integration-conflict
-        // rework writes a visible "reworking on updated base (files: ...)" entry
-        // the re-running agent can read. Best-effort; logging failures swallowed.
-        logTaskEntry: (summary: string, detail?: string) => {
-          void this.store
-            .logEntry(task.id, summary, detail, this.getRunContextFor(task.id))
-            .catch(() => {});
-        },
-        /*
-        FNXC:WorkflowStepResults 2026-06-25-12:00:
-        Plan U2 (KTD-1/KTD-2): persistence adapter for an ENABLED optional-group
-        node's outcome. The graph records each enabled group's WorkflowStepResult
-        into the EXISTING `task.workflowStepResults` field keyed by `node.id` so the
-        unified progress bar (getUnifiedTaskProgress) reflects graph-run steps —
-        NO new table/type/store method. Upsert by `workflowStepId === node.id`
-        (replace-if-present else append) through the existing
-        `store.updateTask({workflowStepResults})` path. Fail-soft: degrade to a
-        no-op when the store lacks updateTask, and swallow read/write errors (the
-        executor wrapper also swallows) so result recording never affects the run.
-        */
-        recordWorkflowStepResult: async (taskId: string, result: CoreWorkflowStepResult) => {
-          if (typeof this.store.updateTask !== "function") return;
-          try {
-            const live = await this.store.getTask(taskId);
-            /*
-            FNXC:WorkflowStepResults 2026-07-09-00:25:
-            FN-7727: route through the shared, pure upsert helper instead of a
-            bare `existing[idx] = result` replace-in-place — a self-healing
-            recovery re-run of this same node (e.g. code-review sent back for
-            fix) must preserve the prior `status:"failed"` entry's history in
-            `priorAttempts` rather than silently overwriting it.
-            */
-            const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
-            await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));
-          } catch {
-            // Result recording is additive visibility — never affect the run.
-          }
-        },
-        requestPreMergeOptionalStepFix: (taskId, info) => this.requestPreMergeOptionalStepFix(taskId, task, info),
-        // U5c (U1 KTD-1/2/3/12): wire the production lifecycle-move hooks so the
-        // graph interpreter owns the card's column moves (was reverted in U5a
-        // pending U6/U7 trait re-key; safe now). Absent → the graph performs no
-        // lifecycle moves (pre-cutover byte-identical); present → the controller
-        // moves the card on each node-column boundary with all move-safety.
-        columnBoundaryHooks: this.buildColumnBoundaryHooks(task, resolvedRunId),
-      });
-      let result: WorkflowGraphTaskRunResult;
-      let continuation: WorkflowWorkItem | undefined;
-      try {
-        const loadedDetail = await this.store.getTask(task.id);
-        /*
-        FNXC:WorkflowExecution 2026-06-23-11:36:
-        Graph dispatch must preserve the row identity that entered execute(). Minimal test stores and stale adapters can return an unrelated fallback task from getTask(); trusting that row would run the workflow under the wrong task id and bypass executor invariants. Use the refreshed row only when it matches the dispatch task.
-        */
-        const detail: TaskDetail = loadedDetail?.id === task.id
-          ? loadedDetail
-          : { ...task, prompt: task.prompt ?? task.description ?? "" };
-        const workItems = await this.store.listWorkflowWorkItemsForTask?.(task.id, { kinds: ["task"] }) ?? [];
-        for (let index = workItems.length - 1; index >= 0; index -= 1) {
-          const candidate = workItems[index];
-          if (ACTIVE_WORKFLOW_WORK_ITEM_STATES.includes(candidate.state)) {
-            continuation = candidate;
-            break;
-          }
-        }
-        if (continuation && continuation.state !== "running") {
-          continuation = await this.store.transitionWorkflowWorkItem(continuation.id, "running", {
-            leaseOwner: `executor:${task.id}`,
-            leaseExpiresAt: null,
-            lastError: null,
-          });
-        }
-        result = await runner.run(detail, settings, continuation?.nodeId);
-      } catch (err) {
-        if (continuation) {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: "workflow-continuation-dispatch-failed",
-          }).catch(() => undefined);
-        }
-        executorLog.error(
-          `[workflow-graph] ${task.id} interpreter threw — parking task as workflow failure: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        await this.handleGraphFailure(task, {
-          disposition: "failed",
-          outcome: "failure",
-          reason: `interpreter-error: ${err instanceof Error ? err.message : String(err)}`,
-          visitedNodeIds: [],
-        });
-        return;
-      }
-      if (result.disposition === "fell-back") {
-        executorLog.warn(`[workflow-graph] ${task.id} could not resolve workflow — parking task instead of legacy fallback: ${result.reason}`);
-        await this.handleGraphFailure(task, {
-          ...result,
-          disposition: "failed",
-          outcome: "failure",
-          reason: result.reason ?? "workflow-resolution-failed",
-        });
-        return;
-      }
-      if (result.disposition === "suspended") {
-        return;
-      }
-      if (result.disposition === "failed") {
-        if (continuation) {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "failed", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: "workflow-continuation-failed",
-          });
-        }
-        await this.handleGraphFailure(task, result);
-      } else if (result.disposition === "completed") {
-        if (continuation) {
-          await this.store.transitionWorkflowWorkItem(continuation.id, "succeeded", {
-            leaseOwner: null,
-            leaseExpiresAt: null,
-            lastError: null,
-          });
-        }
-        const live = await this.store.getTask(task.id).catch(() => task);
-        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== await resolveCompleteColumnFor(this.store, task.id)) {
-          await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
-        }
-        await this.advanceNoMergeWorkflowToCompleteColumn(live as TaskDetail);
-        if ((live.graphResumeRetryCount ?? 0) !== 0 || (live.consecutiveToolFailureRetryCount ?? 0) !== 0) {
-          await this.store.updateTask(task.id, { graphResumeRetryCount: 0, consecutiveToolFailureRetryCount: 0, executorEscalationAttempted: false, toolFailureDetectorLogCursor: null, toolFailureRetryExhaustedAuditEmitted: false }, this.getRunContextFor(task.id));
-        }
-      }
-      return;
-    } finally {
-      // FNXC:WorkflowGraph 2026-06-20-23:35:
-      // Terminate child agents spawned by this graph run's coding-mode skill steps.
-      // U8 registered fn_spawn_agent for coding-mode steps, but the graph path
-      // returns from execute() at the graphOwned early-return — BEFORE execute()'s
-      // outer finally that calls terminateAllChildren. Without this, graph-step
-      // children orphan their sessions/worktrees, and their ids accumulate in the
-      // per-parent spawn budget (spawnedAgents[taskId]), starving later steps'
-      // fan-out (e.g. ce-code-review's reviewer panel). Mirror the non-graph
-      // cleanup; run it before the per-run graph bookkeeping below.
-      try {
-        await this.terminateAllChildren(task.id);
-      } catch (err) {
-        executorLog.warn(`terminateAllChildren failed for graph task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      if (hadPreHeldExecutorSlot) {
-        this.outerConcurrencyClaims.delete(task.id);
-        /*
-        FNXC:GlobalConcurrencyControls 2026-07-19-17:40 (U10b):
-        Always release. The `transferPreHeldToLegacy` branch — which re-registered the reserved
-        global slot for a legacy execute path to pick up — died with that path: the graph can no
-        longer decline ownership, so there is no second executor to hand the slot to. Holding the
-        registration with nothing left to claim it would permanently reduce global capacity.
-        */
-        this.options.semaphore?.release();
-      }
-      if (graphAbortController && this.activeWorkflowGraphAbortControllers.get(task.id) === graphAbortController) {
-        this.activeWorkflowGraphAbortControllers.delete(task.id);
-      }
-      this.graphRouting.delete(task.id);
-      this.graphToolFailureRunCursors.delete(task.id);
-      // Clear per-run step-inversion pins (KTD-8: pinned only for the run's life).
-      this.graphStepSessionPinned.delete(task.id);
-      this.graphStepRunOnce.delete(task.id);
-      // Clear per-run column-agent seam wiring (U4): the resolver and any dangling
-      // governing-node-id are scoped to this run only.
-      this.graphColumnAgentResolver.delete(task.id);
-      this.graphUnattendedRuns.delete(task.id);
-      this.graphSeamGoverningNodeId.delete(task.id);
-      this.graphSeamThinkingLevel.delete(task.id);
-      this.graphSeamSkillName.delete(task.id);
-      this.graphExecuteSelfRequeued.delete(task.id);
-      // Per-instance keys: clear every instance slot owned by this task.
-      const ctxPrefix = `${task.id}:`;
-      for (const key of this.graphStepActiveContext.keys()) {
-        if (key.startsWith(ctxPrefix)) this.graphStepActiveContext.delete(key);
-      }
-      for (const key of this.graphRethinkNarrations.keys()) {
-        if (key.startsWith(ctxPrefix)) this.graphRethinkNarrations.delete(key);
-      }
-    }
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor state/methods into free-function deps bag */
+    return executeWorkflowGraphImpl(
+      {
+        store: this.store,
+        options: this.options as { prNodes?: unknown; [k: string]: unknown },
+        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        graphColumnAgentResolver: this.graphColumnAgentResolver,
+        graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
+        graphRethinkNarrations: this.graphRethinkNarrations,
+        graphRouting: this.graphRouting,
+        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
+        graphSeamSkillName: this.graphSeamSkillName,
+        graphSeamThinkingLevel: this.graphSeamThinkingLevel,
+        graphStepActiveContext: this.graphStepActiveContext,
+        graphStepRunOnce: this.graphStepRunOnce,
+        graphStepSessionPinned: this.graphStepSessionPinned,
+        graphToolFailureRunCursors: this.graphToolFailureRunCursors,
+        graphUnattendedRuns: this.graphUnattendedRuns,
+        outerConcurrencyClaims: this.outerConcurrencyClaims,
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        advanceNoMergeWorkflowToCompleteColumn: (...args: unknown[]) => (this as any).advanceNoMergeWorkflowToCompleteColumn(...args),
+        applyGraphRethinkReset: (...args: unknown[]) => (this as any).applyGraphRethinkReset(...args),
+        buildBranchPersistence: (...args: unknown[]) => (this as any).buildBranchPersistence(...args),
+        buildCodeNodeRunner: (...args: unknown[]) => (this as any).buildCodeNodeRunner(...args),
+        buildColumnBoundaryHooks: (...args: unknown[]) => (this as any).buildColumnBoundaryHooks(...args),
+        buildForeachWorktreeDeps: (...args: unknown[]) => (this as any).buildForeachWorktreeDeps(...args),
+        buildParseStepsDeps: (...args: unknown[]) => (this as any).buildParseStepsDeps(...args),
+        buildStepInstancePersistence: (...args: unknown[]) => (this as any).buildStepInstancePersistence(...args),
+        createAuthoritativeWorkflowPrimitives: (...args: unknown[]) => (this as any).createAuthoritativeWorkflowPrimitives(...args),
+        createAuthoritativeWorkflowSeams: (...args: unknown[]) => (this as any).createAuthoritativeWorkflowSeams(...args),
+        finalizeMergeConfirmedWorkflowGraphTask: (...args: unknown[]) => (this as any).finalizeMergeConfirmedWorkflowGraphTask(...args),
+        handleGraphFailure: (...args: unknown[]) => (this as any).handleGraphFailure(...args),
+        prepareGraphNodeExecution: (...args: unknown[]) => (this as any).prepareGraphNodeExecution(...args),
+        readTaskArtifact: (...args: unknown[]) => (this as any).readTaskArtifact(...args),
+        recoverMissingRequiredArtifacts: (...args: unknown[]) => (this as any).recoverMissingRequiredArtifacts(...args),
+        requestPreMergeOptionalStepFix: (...args: unknown[]) => (this as any).requestPreMergeOptionalStepFix(...args),
+        runGraphCustomNode: (...args: unknown[]) => (this as any).runGraphCustomNode(...args),
+        terminateAllChildren: (...args: unknown[]) => (this as any).terminateAllChildren(...args),
+      },
+      task,
+      opts,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-  /**
-   * Build the store-backed WorkflowBranchPersistence wired into production
-   * fan-out runs (#1407/#1412). Returns undefined when the store predates the
-   * persistence methods (older embedded DBs) so the runner stays fully
-   * in-memory — purely additive. Each adapter method is itself guarded so a
-   * mixed/partial store never throws into the run.
-   */
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
     // FNXC:PostgresOnlyDataAccess 2026-07-16-12:40: the store methods are now
     // async (PostgreSQL routing); the persistence interfaces already accept
