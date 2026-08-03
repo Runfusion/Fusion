@@ -13,9 +13,14 @@ describe("FN-4946 shared task_done refusal helper invariant", () => {
     FNXC:CodeOrganization 2026-08-03-13:45:
     Implicit completion path peels into completion-predicates.ts; count call sites across
     facade + that peel so the ratchet still covers explicit and implicit routes.
+
+    FNXC:CodeOrganization 2026-08-03-13:10:
+    Explicit fn_task_done path peels into create-task-done-tool.ts; include that call site
+    so the ratchet still counts both routes after the U4 tool peel.
     */
     const facade = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
     const implicitPeel = readFileSync(new URL("../executor/completion-predicates.ts", import.meta.url), "utf8");
+    const explicitPeel = readFileSync(new URL("../executor/create-task-done-tool.ts", import.meta.url), "utf8");
     const helper = readFileSync(new URL("../executor/task-done-refusal.ts", import.meta.url), "utf8");
     const isCallSite = (line: string) =>
       /evaluateTaskDoneRefusal\s*\(/.test(line)
@@ -27,10 +32,11 @@ describe("FN-4946 shared task_done refusal helper invariant", () => {
     const callLines = [
       ...facade.split("\n").filter(isCallSite),
       ...implicitPeel.split("\n").filter(isCallSite),
+      ...explicitPeel.split("\n").filter(isCallSite),
     ];
     const helperDecl = helper.match(/\bexport function evaluateTaskDoneRefusal\b/g) ?? [];
 
-    // Exact count: explicit (executor tool path) + implicit (completion-predicates).
+    // Exact count: explicit (create-task-done-tool) + implicit (completion-predicates).
     expect(callLines.length).toBe(2);
     expect(helperDecl).toHaveLength(1);
   });

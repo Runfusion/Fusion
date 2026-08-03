@@ -14,14 +14,9 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
-  BLOCKED_THRASH_LIMIT,
-  buildExternalBlockMetadataPatch,
-  classifyBlockedExit,
-  countBlockedThrashHits,
   isDurableBlockedTask,
-  partitionBlockedByRefs,
 } from "./execution-block-classifier.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
@@ -91,7 +86,6 @@ import {
   type VerificationResult,
 } from "./execution/verification-utils.js";
 import { resolveWorktreesDir } from "./worktree/worktree-paths.js";
-import { Type } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
@@ -415,7 +409,6 @@ export {
 export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 import {
   evaluateImplicitCompletionRefusal,
-  skipBypassTaintUpdateForRefusal,
 } from "./executor/completion-predicates.js";
 export {
   isTaskAlreadyCompleteForNonContinuableSession,
@@ -797,6 +790,8 @@ import { createTaskUpdateTool as createTaskUpdateToolImpl } from "./executor/cre
 export { createTaskUpdateTool as createTaskUpdateToolFree } from "./executor/create-task-update-tool.js";
 import { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./executor/attempt-executor-verification-fix.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./executor/attempt-executor-verification-fix.js";
+import { createTaskDoneTool as createTaskDoneToolImpl } from "./executor/create-task-done-tool.js";
+export { createTaskDoneTool as createTaskDoneToolFree } from "./executor/create-task-done-tool.js";
 
 
 
@@ -12154,460 +12149,25 @@ export class TaskExecutor {
     onDone: () => void,
     audit?: RunAuditor,
   ): ToolDefinition {
-    const store = this.store;
-    return {
-      name: "fn_task_done",
-      label: "Mark Task Done",
-      description:
-        "End the task. With outcome=\"completed\" (default): signal that all steps are complete, tests pass, and " +
-        "documentation is updated — call as the final action after finishing all work; automatically marks all " +
-        "remaining steps as done; optionally provide a summary of what was changed/fixed. " +
-        "With outcome=\"blocked\": honestly park the task when the work genuinely cannot proceed (upstream API break, " +
-        "missing dependency task, unresolvable external blocker). Blocked is NOT a completion claim — it does not " +
-        "trip the review/completion gates, does not auto-complete or auto-skip steps, and preserves your worktree/" +
-        "branch/step progress so the task can be requeued once the blocker clears. Prefer blocked over marking steps " +
-        "skipped when the task cannot be finished.",
-      parameters: Type.Object({
-        summary: Type.Optional(Type.String({
-          description: "Optional summary of what was changed/fixed and what was verified (2-4 sentences). Used when outcome=\"completed\".",
-        })),
-        /*
-        FNXC:Lifecycle 2026-07-16-10:20:
-        FN-8141 laundered a genuinely-impossible task into `done`: fn_task_done only expressed success, the bulk-completion
-        gate refused it, the requeue budget re-ran the doomed task 5 times, and the only remaining affordance (skip every
-        step) made `isTaskComplete()` return true so self-healing + the AI merger finalized an empty diff as done. The
-        `blocked` outcome is the sanctioned honest exit: it parks the task `failed` (error `BLOCKED: <reason>`) without any
-        completion claim, so laundering is never the cheapest path.
-        */
-        outcome: Type.Optional(Type.Union(
-          [Type.Literal("completed"), Type.Literal("blocked")],
-          { description: "\"completed\" (default) finishes the task; \"blocked\" honestly parks it as failed because the work cannot proceed. Use \"blocked\" instead of skipping steps + completing when you are stuck." },
-        )),
-        blockedBy: Type.Optional(Type.Array(Type.String(), {
-          description: "When outcome=\"blocked\": Fusion task IDs (e.g. [\"FN-8145\"]) that must complete before this task can proceed. Task IDs become real dependency edges. Open GitHub PRs are not valid blockers.",
-        })),
-        reason: Type.Optional(Type.String({
-          description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
-        })),
-      }),
-      execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
-        /*
-        FNXC:Lifecycle 2026-07-16-10:20:
-        FN-8141 — the blocked exit runs BEFORE every completion gate (completion blocker, verdict providers, worktree
-        invariants, bulk-completion refusal). Blocked is not a completion claim, so none of those gates apply; parking
-        `failed` with a `BLOCKED:` error + real dependency edges is the whole action. Steps keep their true statuses
-        (no auto-done, no auto-skip) so a laundered "all steps skipped ⇒ complete" state can never form.
-        */
-        if (params.outcome === "blocked") {
-          const reason = params.reason?.trim();
-          if (!reason) {
-            const message = "fn_task_done(outcome=\"blocked\") requires a non-empty `reason` describing what is blocking the work. Provide `reason` (and optional `blockedBy` task IDs) and call again.";
-            return {
-              content: [{ type: "text" as const, text: message }],
-              details: { error: message },
-            };
-          }
-
-          const blockedTask = await store.getTask(taskId);
-          const rawBlockedBy = Array.from(
-            new Set((params.blockedBy ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
-          );
-          /*
-          FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
-          Blocked exits classify on Fusion task dependencies ONLY. The FN-8700 file-claim/open-PR
-          classification is removed: open PRs are never blockers, legacy pr:N refs are discarded,
-          and reason prose never makes a block durable. Task deps → durable failed park (requeues
-          when deps complete); no deps → plan defect → needs-replan (FN-8634).
-          */
-          const classification = classifyBlockedExit(reason, rawBlockedBy);
-          const { taskIds: blockedByIds } = partitionBlockedByRefs(rawBlockedBy);
-          const thrashCount = countBlockedThrashHits(
-            blockedTask.log,
-            classification.thrashSignature,
-          ) + 1;
-          const thrashExhausted = !classification.allowAutoReplan && thrashCount >= BLOCKED_THRASH_LIMIT;
-
-          const parkError = thrashExhausted
-            ? `BLOCKED: ${reason} [thrash-exhausted after ${thrashCount} identical durable blocks]`
-            : `BLOCKED: ${reason}`;
-          // Record blockedBy TASK ids as real dependency edges (union with existing).
-          const mergedDependencies = blockedByIds.length > 0
-            ? Array.from(new Set([...(blockedTask.dependencies ?? []), ...blockedByIds]))
-            : undefined;
-          /*
-          FNXC:HonestBlockedExit 2026-08-01-01:40 (operator: FN-8634 "shouldn't show a failed badge"):
-          When `blockedBy` is EMPTY, park needs-replan (auto-replan) — nothing external to wait for.
-          Task-dependency blocks park failed so the scheduler leaves the card alone until deps complete.
-          */
-          const autoReplanPark = classification.allowAutoReplan && blockedByIds.length === 0 && !thrashExhausted;
-          const metaPatch = !autoReplanPark
-            ? buildExternalBlockMetadataPatch(classification, thrashCount)
-            : undefined;
-          if (autoReplanPark) {
-            const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
-            await store.logEntry(
-              taskId,
-              `${parkError} — no blocking dependencies recorded; parking for automatic replan in ${replanColumn} (steps preserved)`,
-              undefined,
-              this.getRunContextFor(taskId),
-            );
-            this.workflowLifecycleMovesInFlight.add(taskId);
-            try {
-              await moveTaskToReplanColumn(this.store, { id: taskId, column: blockedTask.column }, replanColumn);
-            } finally {
-              this.workflowLifecycleMovesInFlight.delete(taskId);
-            }
-            await store.updateTask(taskId, {
-              status: "needs-replan",
-              error: null,
-              paused: false,
-              pausedByAgentId: null,
-            }, this.getRunContextFor(taskId));
-          } else {
-            await store.updateTask(taskId, {
-              status: "failed",
-              error: parkError,
-              paused: false,
-              pausedByAgentId: null,
-              ...(mergedDependencies ? { dependencies: mergedDependencies } : {}),
-              ...(metaPatch ? { sourceMetadataPatch: metaPatch } : {}),
-            }, this.getRunContextFor(taskId));
-
-            await store.logEntry(
-              taskId,
-              thrashExhausted
-                ? `${parkError} — durable external block thrash-exhausted (signature=${classification.thrashSignature}); parked failed, no auto-requeue`
-                : `${parkError} — recorded dependencies: ${blockedByIds.join(", ")} — parked failed (honest blocked exit; steps preserved)`,
-              undefined,
-              this.getRunContextFor(taskId),
-            );
-          }
-          await this.store.recordRunAuditEvent?.({
-            taskId,
-            agentId: "executor",
-            runId: generateSyntheticRunId("execution-blocked", taskId),
-            domain: "database",
-            mutationType: "task:execution-blocked-parked",
-            target: taskId,
-            metadata: {
-              taskId,
-              blockedBy: blockedByIds,
-              hasReason: true,
-              parkedAs: autoReplanPark ? "auto-replan" : "failed",
-              blockedClass: classification.class,
-              thrashCount,
-              thrashExhausted,
-            },
-          });
-          await this.persistTokenUsage(taskId);
-          executorLog.log(
-            `⛔ ${taskId} ${
-              autoReplanPark
-                ? "parked for automatic replan via blocked exit (plan defect, no dependencies)"
-                : thrashExhausted
-                  ? `parked failed via blocked thrash-exhaustion (class=${classification.class})`
-                  : `parked failed via durable blocked exit (class=${classification.class}; blockedBy tasks: ${blockedByIds.join(", ") || "none"})`
-            }`,
-          );
-
-          return {
-            content: [{
-              type: "text" as const,
-              text: autoReplanPark
-                ? "Task parked as blocked with no blocking task dependencies — queued for automatic replan so the plan can resolve the conflict. Steps left in their true statuses; no completion recorded."
-                : thrashExhausted
-                  ? "Task parked as blocked (failed) after repeated identical durable blocks — no further automatic retries. Resolve the blocking tasks or replan manually."
-                  : `Task parked as blocked (failed). Recorded ${blockedByIds.length} blocking task dependency(ies); it will requeue once they complete. Steps left in their true statuses; no completion recorded.`,
-            }],
-            details: {},
-          };
-        }
-
-        const task = await store.getTask(taskId);
-        const completionBlocker = await this.getTaskCompletionBlocker(task);
-        if (completionBlocker) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `Cannot mark task done yet — ${completionBlocker}. Resolve the blocker before calling fn_task_done().`,
-            }],
-            details: {},
-          };
-        }
-
-        const providerVerdict = await this.evaluateTaskVerdictProviders(task, {
-          summary: params.summary,
-          source: "fn_task_done",
-        });
-        if (!providerVerdict.ok) {
-          await store.logEntry(taskId, providerVerdict.message, undefined, this.getRunContextFor(task.id));
-          executorLog.error(`${taskId}: ${providerVerdict.message}`);
-          return {
-            content: [{ type: "text" as const, text: providerVerdict.message }],
-            details: {
-              error: providerVerdict.message,
-            },
-          };
-        }
-
-        const noOpMarker = parseNoOpCompletionMarker(params.summary);
-        const invariantCheck = await this.verifyWorktreeInvariants(task, worktreePath, true, {
-          noOpCompletion: Boolean(noOpMarker),
-          noOpCompletionReason: noOpMarker
-            ? `verified ${noOpMarker.kind} completion sentinel${noOpMarker.canonicalId ? ` (${noOpMarker.canonicalId})` : ""}`
-            : undefined,
-        });
-        if (!invariantCheck.ok) {
-          const refusalMessage = `fn_task_done refused: ${invariantCheck.reason} — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`;
-          await store.logEntry(taskId, refusalMessage, undefined, this.getRunContextFor(task.id));
-          executorLog.error(`${taskId}: fn_task_done refused (${invariantCheck.reason}) — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`);
-
-          const priorRequeues = task.taskDoneRetryCount ?? 0;
-          const nextRequeueCount = priorRequeues + 1;
-          if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
-            await store.updateTask(taskId, {
-              status: "queued",
-              error: null,
-              taskDoneRetryCount: nextRequeueCount,
-              paused: false,
-              pausedByAgentId: null,
-              worktree: null,
-              branch: null,
-              sessionFile: null,
-            });
-            await store.logEntry(
-              taskId,
-              `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
-              undefined,
-              this.getRunContextFor(task.id),
-            );
-            await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
-            executorLog.log(`✗ ${taskId} failed invariant check — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
-          } else {
-            await store.updateTask(taskId, {
-              status: "failed",
-              error: refusalMessage,
-              paused: false,
-              pausedByAgentId: null,
-              worktree: null,
-              branch: null,
-              sessionFile: null,
-            });
-            await store.logEntry(taskId, `${refusalMessage} — invariant-check retry budget exhausted`, undefined, this.getRunContextFor(task.id));
-            await this.persistTokenUsage(taskId);
-            executorLog.log(`✗ ${taskId} failed invariant check`);
-          }
-
-          return {
-            content: [{ type: "text" as const, text: refusalMessage }],
-            details: {
-              error: refusalMessage,
-            },
-          };
-        }
-
-        const taskDoneRefusal = evaluateTaskDoneRefusal(task, params, codeReviewVerdicts);
-        if (!taskDoneRefusal.ok) {
-          const refusalMessage = taskDoneRefusal.message;
-          await store.logEntry(taskId, refusalMessage, undefined, this.getRunContextFor(task.id));
-          executorLog.error(`${taskId}: fn_task_done refused (${taskDoneRefusal.refusalClass}) — ${taskDoneRefusal.reason}`);
-
-          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — stamp the skip-bypass taint marker so a
-          // later skip-then-exit (in this or a requeued lifecycle) cannot auto-promote.
-          const taintUpdate = skipBypassTaintUpdateForRefusal(taskDoneRefusal);
-          const priorRequeues = task.taskDoneRetryCount ?? 0;
-          const nextRequeueCount = priorRequeues + 1;
-          if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
-            await store.updateTask(taskId, {
-              status: "queued",
-              error: null,
-              taskDoneRetryCount: nextRequeueCount,
-              ...taintUpdate,
-              paused: false,
-              pausedByAgentId: null,
-              worktree: null,
-              branch: null,
-              sessionFile: null,
-            });
-            await store.logEntry(
-              taskId,
-              `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
-              undefined,
-              this.getRunContextFor(task.id),
-            );
-            await store.moveTask(taskId, await resolveReboundColumnFor(store, taskId), { preserveProgress: true });
-            executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass}) — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
-          } else {
-            await store.updateTask(taskId, {
-              status: "failed",
-              error: refusalMessage,
-              ...taintUpdate,
-              paused: false,
-              pausedByAgentId: null,
-              worktree: null,
-              branch: null,
-              sessionFile: null,
-            });
-            await store.logEntry(taskId, `${refusalMessage} — fn_task_done refusal retry budget exhausted`, undefined, this.getRunContextFor(task.id));
-            await this.persistTokenUsage(taskId);
-            executorLog.log(`✗ ${taskId} fn_task_done refusal (${taskDoneRefusal.refusalClass})`);
-          }
-
-          return {
-            content: [{ type: "text" as const, text: refusalMessage }],
-            details: {
-              error: refusalMessage,
-              refusalClass: taskDoneRefusal.refusalClass,
-            },
-          };
-        }
-
-        // Merge per-task effective workflow settings (U3, KTD-3) so the
-        // planOnlyScopeLeakEnforcement read in evaluateTaskDoneScopeLeak picks up
-        // workflow values. Behavior-inert by default.
-        const settings = await mergeEffectiveSettings(store, task, await store.getSettings());
-        const scopeLeakCheck = await this.evaluateTaskDoneScopeLeak(task, worktreePath, promptContent, settings, audit)
-          .catch((error: unknown) => {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            executorLog.warn(`${taskId}: scope-leak guard failed open: ${errorMessage}`);
-            return { blocked: false } as const;
-          });
-        if (scopeLeakCheck.blocked) {
-          await store.logEntry(taskId, `[scope-leak] blocked fn_task_done: ${scopeLeakCheck.message}`, undefined, this.getRunContextFor(task.id));
-          return {
-            content: [{ type: "text" as const, text: scopeLeakCheck.message }],
-            details: {
-              error: scopeLeakCheck.message,
-            },
-          };
-        }
-
-        if (noOpMarker) {
-          const runContext = this.getRunContextFor(taskId);
-          await store.updateTask(taskId, { noCommitsExpected: true });
-          await store.logEntry(
-            taskId,
-            `Verified ${noOpMarker.kind} completion sentinel accepted; no commits expected for terminal handoff`,
-            JSON.stringify({
-              kind: noOpMarker.kind,
-              reason: noOpMarker.reason,
-              canonicalId: noOpMarker.canonicalId,
-              summary: params.summary,
-              runId: runContext?.runId,
-              agentId: runContext?.agentId,
-            }),
-            runContext,
-          );
-          const recordActivity = (store as typeof store & {
-            recordActivity?: (entry: {
-              type: "task:updated";
-              taskId: string;
-              taskTitle?: string;
-              details: string;
-              metadata?: Record<string, unknown>;
-            }) => Promise<unknown>;
-          }).recordActivity;
-          if (recordActivity) {
-            await recordActivity.call(store, {
-              type: "task:updated",
-              taskId,
-              taskTitle: task.title,
-              details: `Task marked as verified ${noOpMarker.kind}; no commits expected`,
-              metadata: {
-                taskId,
-                kind: noOpMarker.kind,
-                reason: noOpMarker.reason,
-                canonicalId: noOpMarker.canonicalId,
-                summary: params.summary,
-                runId: runContext?.runId,
-                agentId: runContext?.agentId,
-              },
-            }).catch((error: unknown) => {
-              executorLog.warn(`${taskId}: failed to record no-op completion activity: ${error instanceof Error ? error.message : String(error)}`);
-            });
-          }
-        }
-
-        onDone();
-
-        // Mark all pending/in-progress steps as done
-        for (let i = 0; i < task.steps.length; i++) {
-          if (task.steps[i].status !== "done" && task.steps[i].status !== "skipped") {
-            await store.updateStep(taskId, i, "done");
-          }
-        }
-        // FN-4106: preserve the original completion summary on workflow-step reruns.
-        const newSummary = params.summary?.trim();
-        if (newSummary) {
-          const currentTask = await store.getTask(taskId);
-          const existingSummary = currentTask.summary?.trim();
-          const hasRunWorkflowSteps = (currentTask.workflowStepResults?.length ?? 0) > 0;
-          const rerunSuffix = `---\nRerun after workflow step revision:\n${newSummary}`;
-
-          if (existingSummary && hasRunWorkflowSteps && !existingSummary.endsWith(rerunSuffix)) {
-            await store.updateTask(taskId, {
-              summary: `${currentTask.summary}\n\n${rerunSuffix}`,
-            });
-            await store.logEntry(taskId, "fn_task_done summary appended to existing summary (workflow-step rerun)", undefined, this.getRunContextFor(taskId));
-          } else if (!existingSummary || !hasRunWorkflowSteps) {
-            await store.updateTask(taskId, { summary: params.summary });
-          }
-        }
-        const hardPauseActive = Boolean(settings.globalPause);
-        // Task-level pause prevents new work from starting, not completion of
-        // in-flight work. Always clear it on explicit agent completion so the
-        // board cannot strand a completed task in a paused state.
-        await store.updateTask(taskId, {
-          paused: false,
-          pausedByAgentId: null,
-          status: null,
-          // FNXC:Lifecycle 2026-07-16-21:40: FN-8141 — an ACCEPTED explicit fn_task_done is the
-          // honest completion signal (covers the PREMISE STALE skip-then-done flow); clear any
-          // skip-bypass taint so a subsequent auto-promotion path is not blocked.
-          bulkCompletionRefusalAt: null,
-        });
-        await store.logEntry(taskId, "Task marked done by agent", undefined, this.getRunContextFor(taskId));
-
-        const latestTask = await store.getTask(taskId);
-        let latestColumn = latestTask.column;
-        if (latestColumn === await resolveReboundColumnFor(store, taskId)) {
-          await store.logEntry(
-            taskId,
-            hardPauseActive
-              ? "fn_task_done called while task was in todo during pause — promoting to in-progress for deferred completion handoff"
-              : "fn_task_done called while task was in todo — promoting to in-progress before completion handoff",
-            undefined,
-            this.getRunContextFor(taskId),
-          );
-          /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION, and `latestColumn` must be set from the SAME resolved value or the check below it compares against a lane the card is not in. */
-          const wipTarget = await resolveWipTargetForTask(store, taskId);
-          await store.moveTask(taskId, wipTarget);
-          latestColumn = wipTarget;
-        }
-
-        /*
-        FNXC:WorkflowResolvedColumns 2026-07-31-09:20 (fleet: executor lifecycle roles):
-        The completed-task watchdog arms when the card is in its IMPLEMENTATION lane. Naming
-        `in-progress` literally meant a renamed wip column never armed it — a watchdog that
-        silently never fires, on exactly the boards this program converted. The branch directly
-        above already resolves that lane through `resolveWipTargetForTask`; this asks the same
-        question of the same resolver rather than of an id.
-        */
-        if (latestColumn === await resolveWipTargetForTask(store, taskId) && !hardPauseActive) {
-          this.scheduleCompletedTaskWatchdog(taskId, "fn_task_done");
-        }
-
-        const successMessage = hardPauseActive
-          ? "Task marked complete. Completion handoff deferred until pause is cleared."
-          : params.summary
-          ? "Task marked complete with summary. All steps done. Moving to in-review."
-          : "Task marked complete. All steps done. Moving to in-review.";
-        return {
-          content: [{ type: "text" as const, text: successMessage }],
-          details: {},
-        };
+    return createTaskDoneToolImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        getTaskCompletionBlocker: (task) => this.getTaskCompletionBlocker(task),
+        evaluateTaskVerdictProviders: (task, opts) => this.evaluateTaskVerdictProviders(task, opts),
+        verifyWorktreeInvariants: (task, wt, strict, opts) => this.verifyWorktreeInvariants(task, wt, strict, opts),
+        evaluateTaskDoneScopeLeak: (task, wt, prompt, settings, a) => this.evaluateTaskDoneScopeLeak(task, wt, prompt, settings, a),
+        scheduleCompletedTaskWatchdog: (id, source) => this.scheduleCompletedTaskWatchdog(id, source),
       },
-    };
+      taskId,
+      worktreePath,
+      promptContent,
+      codeReviewVerdicts,
+      onDone,
+      audit,
+    );
   }
 
   /**
