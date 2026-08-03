@@ -14,10 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
-import {
-  isDurableBlockedTask,
-} from "./execution-block-classifier.js";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -792,6 +789,14 @@ import { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } 
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./executor/attempt-executor-verification-fix.js";
 import { createTaskDoneTool as createTaskDoneToolImpl } from "./executor/create-task-done-tool.js";
 export { createTaskDoneTool as createTaskDoneToolFree } from "./executor/create-task-done-tool.js";
+import { resetLostWorkStepProgress as resetLostWorkStepProgressImpl } from "./executor/reset-lost-work-step-progress.js";
+export { resetLostWorkStepProgress as resetLostWorkStepProgressFree } from "./executor/reset-lost-work-step-progress.js";
+import { resolveResumeLanes as resolveResumeLanesImpl } from "./executor/resolve-resume-lanes.js";
+export { resolveResumeLanes as resolveResumeLanesFree } from "./executor/resolve-resume-lanes.js";
+import { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFlightNodeImpl } from "./executor/is-reentrant-paused-aborted-in-flight-node.js";
+export { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFlightNodeFree } from "./executor/is-reentrant-paused-aborted-in-flight-node.js";
+import { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeImpl } from "./executor/route-graph-failure-to-execution-resume.js";
+export { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeFree } from "./executor/route-graph-failure-to-execution-resume.js";
 
 
 
@@ -1074,13 +1079,11 @@ export {
   resolveTerminalColumnsFor,
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
-  declaresAnyLifecycleRole,
 } from "./executor/lifecycle-columns.js";
 import {
   resolveTerminalColumnsFor,
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
-  declaresAnyLifecycleRole,
 } from "./executor/lifecycle-columns.js";
 
 
@@ -6848,54 +6851,19 @@ export class TaskExecutor {
     userCanceled: boolean,
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-28-18:32:
-    FN-7214 makes engine-internal pause aborts re-entrant only when the workflow graph reports a typed in-flight node interruption. User pauses, active global pauses, merge/finalize aborts, genuine node failures, autoMerge:false review rows, and exhausted retry budgets must continue through the existing protected failure paths.
-
-    FNXC:WorkflowLifecycle 2026-06-28-21:39:
-    A global engine pause aborts active workflow graph controllers with `global-pause` provenance; after the global pause is lifted, the typed interrupted-node marker is sufficient to re-enter that node. Only active global-pause settings and explicit task/user pauses remain terminal so resume never runs behind an operator-controlled pause.
-    */
-    if (!pausedAborted) return false;
-    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
-    if (userCanceled) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if (live.status != null || live.error != null) return false;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: executor.ts — the split-snapshot defect):
-    THE LANES ARE RESOLVED HERE, AT THE TOP, because this method already resolved them — at the very END,
-    for its return value — while every eligibility check below compared against the default lineage's
-    literals. On a renamed board the four `in-review` gates all read false, so a card in review skipped the
-    global-pause recheck, the `autoMerge === false` refusal, the shared-branch-member arbitration and the
-    merge-confirmed refusal — and then the final line, which DOES resolve lanes, answered "re-entrant".
-    FN-7214's comment above says an auto-merge-off review row must stay terminal.
-    */
-    const resumeLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
-    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
-    if (result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
-    if (!result.interruptedNodeId) return false;
-    if (live.column === resumeLanes.review && result.interruptedNodeId === "plan") return false;
-    if (isMergeGraphFailure(result.interruptedNodeId)) return false;
-    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
-    if ((live.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
-    let settings: Settings | undefined;
-    if (abortProvenance === "global-pause" || live.column === resumeLanes.review) {
-      try {
-        settings = await this.store.getSettings();
-      } catch {
-        return false;
-      }
-      if (settings.globalPause === true) return false;
-    }
-    if (live.column === resumeLanes.review) {
-      if (live.autoMerge === false) return false;
-      if (!settings) return false;
-      const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
-      if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
-      if (live.mergeDetails?.mergeConfirmed === true) return false;
-    }
-    return live.column === resumeLanes.hold
-      || live.column === resumeLanes.review
-      || live.column === resumeLanes.wip;
+    return isReentrantPausedAbortedInFlightNodeImpl(
+      {
+        store: this.store,
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+      },
+      live,
+      result,
+      abortProvenance,
+      pausedAborted,
+      userCanceled,
+      resumeLanesMemo,
+    );
   }
 
   /*
@@ -6925,53 +6893,7 @@ export class TaskExecutor {
     taskId: string,
     memo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<{ hold: string; wip: string; review: string; wipDeclared: boolean }> {
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2640 review, greptile P2):
-    ONE RESOLUTION PER RECOVERY, and the reason is correctness as much as I/O. Eligibility and
-    re-entry ran this separately, so a workflow edit landing between the two calls would have the
-    two halves of one decision reading DIFFERENT lane sets — the eligibility check admits a card in
-    review, the re-entry then resolves a board where that column is not the review lane. The memo is
-    caller-owned and per-recovery, which is the same shape as the IR caches elsewhere in the engine:
-    one snapshot for one decision, never a process-lifetime cache that has to guess when a
-    mid-flight workflow edit invalidates it.
-    */
-    if (memo?.lanes) return memo.lanes;
-    try {
-      const lifecycle = resolveLifecycleColumns(await resolveWorkflowIrForTask(this.store, taskId));
-      const lanes = {
-        hold: lifecycle?.hold ?? "todo",
-        wip: lifecycle?.wip ?? "in-progress",
-        review: lifecycle?.review ?? "in-review",
-        /*
-        FNXC:WorkflowLifecycleColumns 2026-07-30-15:30 (PR #2760 review — greptile P1):
-        Whether the resolved IR actually DECLARES an implementation lane, which the `?? "in-progress"`
-        default above destroys. Callers that must not act without a real implementation lane read this
-        instead of comparing against the default.
-
-        THREE states, not two, and conflating the last two is a regression:
-          a. wip declared                        -> true
-          b. lifecycle lanes declared, wip NOT   -> FALSE; the workflow genuinely has no implementation
-                                                   lane, so there is nowhere to resume TO
-          c. NO lifecycle lane declared at all   -> true; this is a v1 workflow upgraded in place. Its
-                                                   synthesized columns carry `traits: []`, so
-                                                   `resolveLifecycleColumns` returns `{}` — measured, not
-                                                   assumed — and treating that as "no wip lane" would
-                                                   terminalize every legacy custom workflow's
-                                                   graph-failure recovery instead of resuming it.
-
-        The discriminator is whether the IR expresses lifecycle intent AT ALL. An untraited legacy board
-        expresses none, so the legacy trio is the honest answer and today's behaviour is preserved.
-        */
-        wipDeclared: lifecycle?.wip !== undefined || !declaresAnyLifecycleRole(lifecycle),
-      };
-      if (memo) memo.lanes = lanes;
-      return lanes;
-    } catch {
-      // IR unavailable: we cannot know, so keep the legacy board's assumption and today's behaviour.
-      const lanes = { hold: "todo", wip: "in-progress", review: "in-review", wipDeclared: true };
-      if (memo) memo.lanes = lanes;
-      return lanes;
-    }
+    return resolveResumeLanesImpl({ store: this.store }, taskId, memo);
   }
 
   private async reenterPausedAbortedWorkflowNode(
@@ -8201,99 +8123,19 @@ export class TaskExecutor {
     /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-     * FNXC:WorkflowLifecycle 2026-06-29-11:08:
-     * A workflow graph failure is not a completion handoff. FN-7228/FN-7229 showed
-     * restart-time parse failures and incomplete steps being parked in `in-review`
-     * with errors, which blocks the engine from resuming the correct unfinished
-     * step. Keep executable work in the executable queue: clear graph failure
-     * markers and move review-column rows with unfinished work back to `todo`
-     * preserving step progress. Generic graph failures that remain in-progress
-     * are left failed in-place by the caller; they must never be handed to review.
-     */
-    if (live.deletedAt) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
-    /*
-    FNXC:HonestBlockedExit 2026-08-02-23:59:
-    Durable external (task-dependency) BLOCKED parks must NOT bounce to todo for execution
-    resume — the scheduler requeues them when the blocking tasks complete. PR/file-claim
-    parks and the session-log BLOCKED promotion are removed (operator decision, FN-8728):
-    open PRs are never blockers, so only metadata-classed task-dependency parks are honored.
-    */
-    if (isDurableBlockedTask(live)) {
-      executorLog.log(
-        `${live.id}: graph failure resume skipped — durable BLOCKED park honored (task-dependency block)`,
-      );
-      return false;
-    }
-    /*
-     * FNXC:WorkflowCompletion 2026-07-01-16:26:
-     * Backstop for issue #1863. The advisory completion-summary node must never
-     * drive the in-review→todo resume loop: it has no failure edge, so a failure
-     * here would bounce the task back to execution every run and never stick.
-     * The graph executor now degrades summary-node failures to success, so this
-     * should be unreachable — but if a summary failure ever reaches this router,
-     * let the caller park the task `failed` (a visible terminal state) instead of
-     * looping it forever.
-     */
-    if (failedNode === COMPLETION_SUMMARY_NODE_ID) return false;
-    const incompleteSteps = hasNonTerminalWorkflowSteps(live);
-    const implementationIncompleteMergeFailure = isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
-    if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
-    const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: executor.ts — the REVERSE half-conversion):
-    THE DESTINATION WAS ALREADY RESOLVED HERE AND THE GATE WAS NOT. `resolveReboundColumnFor` below picks
-    the board's rebound column (U7), but this gate compared against three default-lineage literals — so on
-    a renamed board the router refused before ever reaching the resolved move. That is the mirror image of
-    the dangerous half-conversion: instead of admitting a card and sending it nowhere, it refuses a card
-    whose recovery was fully implemented, and nothing is logged as wrong. Same one-decision-two-boards
-    defect, opposite direction, and the silent one.
-    */
-    const resumeRouterLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-14:20:
-    A workflow that declares NO implementation lane has nowhere to resume TO, so this router must not
-    claim the card — the graph failure has to reach the terminalize branch and be visible.
-
-    Without this, a card resting in such a workflow's HOLD lane with incomplete steps matched the
-    second arm above (`incompleteSteps && live.column === lanes.hold`), the router rehomed it and
-    returned true, and the failure was swallowed: `status` and `error` both stayed null. The operator
-    saw a card that had silently stopped. That is the exact shape the sibling branch below already
-    guards with `wipColumn !== undefined` before claiming a card "already advanced"; this is the same
-    fail-closed rule on the opposite path, which was failing OPEN.
-    */
-    if (!resumeRouterLanes.wipDeclared) return false;
-    if (live.column !== resumeRouterLanes.review
-      && !(incompleteSteps && live.column === resumeRouterLanes.hold)
-      && !(prematureMergeWithIncompleteSteps && live.column === resumeRouterLanes.wip)) return false;
-
-    const message = incompleteSteps
-      ? `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete steps — moved back to todo for execution resume`
-      : `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} before a clean review handoff — moved back to todo for workflow retry`;
-    executorLog.warn(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    await this.store.updateTask(live.id, {
-      status: null,
-      error: null,
-    }, this.getRunContextFor(live.id));
-    const reboundColumn = await resolveReboundColumnFor(this.store, live.id);
-    if (live.column !== reboundColumn) {
-      await this.store.moveTask(live.id, reboundColumn, {
-        preserveProgress: true,
-        moveSource: "engine",
-        recoveryRehome: true,
-      });
-    }
-    // FNXC:ReviewLeniency 2026-07-02-02:10: clear prior terminal failure results
-    // (incl. optional gate nodes like code-review) AFTER the task is in `todo`
-    // (non-mergeable) so the resumed run re-evaluates gates from a clean slate
-    // without dropping the in-review merge blocker mid-flight. (in-review→todo
-    // moveTask already clears all results; this covers the already-`todo` path.)
-    await this.clearTerminalStepFailuresForRetry(live.id);
-    await this.persistTokenUsage(live.id);
-    return true;
+    return routeGraphFailureToExecutionResumeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        clearTerminalStepFailuresForRetry: (id) => this.clearTerminalStepFailuresForRetry(id),
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+      failedNode,
+      failureValue,
+      resumeLanesMemo,
+    );
   }
 
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): Promise<boolean> {
@@ -13645,47 +13487,9 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   }
 
   private async resetLostWorkStepProgress(task: Task, completedStepCount: number, reason: string): Promise<void> {
-    executorLog.warn(
-      `${task.id} ${reason} — resetting ${completedStepCount} step(s) to pending`,
-    );
-
-    for (let i = 0; i < task.steps.length; i++) {
-      if (task.steps[i].status === "done" || task.steps[i].status === "in-progress") {
-        await this.store.updateStep(task.id, i, "pending");
-      }
-    }
-
-    const refreshedTask = await this.store.getTask(task.id);
-    const prevCurrentStep = refreshedTask.currentStep;
-    if (refreshedTask.steps.length > 0) {
-      const firstPendingStep = refreshedTask.steps.findIndex((s) => s.status === "pending");
-      const newCurrentStep = firstPendingStep >= 0 ? firstPendingStep : 0;
-      if (newCurrentStep !== prevCurrentStep) {
-        await this.store.updateTask(task.id, { currentStep: newCurrentStep });
-        executorLog.log(
-          `${task.id}: reset currentStep to ${newCurrentStep} after lost-work reset (was ${prevCurrentStep})`,
-        );
-        await this.store.logEntry(
-          task.id,
-          `Reset currentStep to ${newCurrentStep} after lost-work step reset (was ${prevCurrentStep})`,
-        );
-      }
-    }
-
-    await this.store.logEntry(
-      task.id,
-      `Reset ${completedStepCount} step(s) to pending — ${reason} (uncommitted work lost with worktree)`,
-    );
+    return resetLostWorkStepProgressImpl({ store: this.store }, task, completedStepCount, reason);
   }
 
-  /**
-   * Mark a task as stuck-aborted so the executor's error handling
-   * knows not to treat the disposed session as a genuine failure.
-   * Called by the stuck task detector's onStuck callback.
-   *
-   * @param shouldRequeue — true to move the task back to "todo" for retry,
-   *   false if the stuck kill budget is exhausted (task already marked failed).
-   */
   markStuckAborted(taskId: string, shouldRequeue: boolean = true): void {
     return markStuckAbortedImpl(
       {
