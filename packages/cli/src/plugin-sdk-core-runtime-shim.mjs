@@ -3,14 +3,20 @@ import { spawn } from "node:child_process";
 /*
  * FNXC:BundledPlugins 2026-07-15-13:40:
  * Clean CI typechecks the CLI before @fusion/core emits dist, but published
- * bundled plugins need both postgresSchema runtime values and Quality's
- * process-group supervisor. Keep this alias implementation in untyped MJS so
- * tsc stays inside the CLI root while esbuild follows the core source schema
- * and bundles every runtime export without a private @fusion/core dependency.
+ * bundled plugins import selected core runtime values through this alias
+ * (currently postgresSchema, AgentStore, and Quality's process supervisor).
+ * Keep this implementation in untyped MJS so tsc stays inside the CLI root
+ * while esbuild follows core source and bundles each required runtime export
+ * without a private @fusion/core dependency.
  */
 import * as postgresSchema from "../../core/src/postgres/schema/index.js";
+import { AgentStore } from "../../core/src/agents/agent-store.js";
 
-export { postgresSchema };
+/*
+ * FNXC:BundledPlugins 2026-08-03-17:18:
+ * The bundled Todo plugin lists project agents through AgentStore. Re-export the source implementation from the runtime shim so clean CLI packaging does not leave a private @fusion/core runtime import unresolved.
+ */
+export { AgentStore, postgresSchema };
 
 /*
  * FNXC:BundledPlugins 2026-07-31-09:55:

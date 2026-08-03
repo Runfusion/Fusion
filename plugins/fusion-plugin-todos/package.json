@@ -30,6 +30,7 @@
     "react-i18next": "^15.7.4"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
     "@types/node": "^25.5.2",
     "@types/react": "^19.0.0",
     "typescript": "^5.7.0",

@@ -17,6 +17,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
 import {
+  advancePlanningSessionTaskCreationEpoch,
   claimPlanningSessionTaskCreation,
   finalizePlanningSessionTaskCreation,
   getAiSession,
@@ -142,5 +143,57 @@ pgTest("planning session claim lifecycle (multi-task epochs)", () => {
 
     const finalized = await finalizePlanningSessionTaskCreation(db, sessionId, "live-token", "FN-4", 2);
     expect(payloadOf(finalized).createdTaskId).toBe("FN-4");
+  });
+
+  it("advances the epoch after the linked task is soft-deleted so recreation gets a fresh proposal key", async () => {
+    const db = h.layer().db;
+    const store = h.store();
+    const sessionId = "planning-soft-deleted-task";
+    const firstProposalKey = `planning-session:${sessionId}`;
+    const firstTask = await store.createTask({
+      title: "First planned task",
+      description: "The task that will be soft-deleted.",
+      proposalClaimId: firstProposalKey,
+    });
+    await upsertAiSession(db, planningRow(sessionId, {
+      createClaimStatus: "created",
+      createdTaskId: firstTask.id,
+    }));
+
+    await store.deleteTask(firstTask.id);
+    expect((await store.listTasks({ includeArchived: true })).some((task) => task.id === firstTask.id)).toBe(false);
+    await expect(store.createTask({
+      title: "Colliding replacement",
+      description: "The soft-deleted row must retain its unique proposal key.",
+      proposalClaimId: firstProposalKey,
+    })).rejects.toThrow();
+
+    const advanced = await advancePlanningSessionTaskCreationEpoch(
+      db,
+      sessionId,
+      firstTask.id,
+      0,
+    );
+    expect(payloadOf(advanced)).toMatchObject({
+      createClaimStatus: "none",
+      taskCreationEpoch: 1,
+      createdTaskIds: [firstTask.id],
+    });
+    expect(payloadOf(advanced).createdTaskId).toBeUndefined();
+
+    /*
+    FNXC:PlanningMultiTask 2026-08-03-18:32:
+    Retried requests carry the old task id and epoch. The epoch CAS must advance only once.
+    */
+    expect(await advancePlanningSessionTaskCreationEpoch(db, sessionId, firstTask.id, 0)).toBeNull();
+    expect(payloadOf(await getAiSession(db, sessionId)).taskCreationEpoch).toBe(1);
+
+    const replacement = await store.createTask({
+      title: "Replacement planned task",
+      description: "A fresh task from the same planning session.",
+      proposalClaimId: `planning-session:${sessionId}#1`,
+    });
+    expect(replacement.id).not.toBe(firstTask.id);
+    expect(replacement.proposalClaimId).toBe(`planning-session:${sessionId}#1`);
   });
 });

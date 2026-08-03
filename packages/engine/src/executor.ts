@@ -10590,9 +10590,20 @@ export class TaskExecutor {
           overrideColumnGovernsInitialSession ? undefined : activeAgentInstanceRef?.instanceId ?? detail.credentialInstanceId,
         );
         const { provider: executorProvider, modelId: executorModelId } = executorSessionModel;
+        /*
+        FNXC:ProviderAuth 2026-08-03-17:35:
+        Keep a synthetic "default" ref only for credential-rotation bookkeeping (startingInstanceId).
+        Never force that synthetic id into createResolvedAgentSession: chat omits unset instance ids
+        and custom providers authenticate via customProviders.apiKey. Passing "default" required an
+        auth.json default instance and failed step-execute while chat with the same model worked.
+        After a usage-limit rotation, agentDispatchedRotation is true and the offered instance is real.
+        */
         activeAgentInstanceRef ??= executorProvider
           ? { providerId: executorProvider, instanceId: executorSessionModel.credentialInstanceId ?? DEFAULT_PROVIDER_INSTANCE_ID }
           : undefined;
+        const sessionCredentialInstanceId = agentDispatchedRotation
+          ? activeAgentInstanceRef?.instanceId
+          : executorSessionModel.credentialInstanceId;
         const { provider: executorFallbackProvider, modelId: executorFallbackModelId } = resolveExecutorFallbackModel(settings);
         const executorSessionThinkingSource = this.graphSeamThinkingLevel.get(task.id) ?? detail.thinkingLevel;
         const executorThinkingLevel = resolveExecutorThinkingLevel(executorSessionThinkingSource, settings);
@@ -10693,7 +10704,7 @@ export class TaskExecutor {
             onToolEnd: agentLogger.onToolEnd,
             defaultProvider: executorProvider,
             defaultModelId: executorModelId,
-            ...(activeAgentInstanceRef ? { credentialInstanceId: activeAgentInstanceRef.instanceId } : {}),
+            ...(sessionCredentialInstanceId ? { credentialInstanceId: sessionCredentialInstanceId } : {}),
             fallbackProvider: executorFallbackProvider,
             fallbackModelId: executorFallbackModelId,
             fallbackThinkingLevel: executorFallbackThinkingLevel,

@@ -251,11 +251,48 @@ export type CredentialInstanceResolution = {
   ref: ProviderInstanceRef;
   requestedInstanceId: string;
   missing: boolean;
+  /**
+   * True when the resolved provider id differs from the requested one after
+   * rename/slug self-heal (ids/outcomes only — never credential material).
+   */
+  renamedProvider?: boolean;
 };
+
+/*
+FNXC:ProviderAuth 2026-08-03-17:35:
+Custom-provider renames change the registry slug (e.g. "Umans API" → umans-api vs umansapi)
+while auth.json may still hold the previous bare key. Collapse alphanumerics so punctuation-
+only slug drift still resolves when exactly one auth provider collapses to the same id.
+Prefix matching is intentionally NOT used — openai vs openai-codex would cross-wire accounts.
+*/
+function collapseProviderIdForRenameMatch(providerId: string): string {
+  return providerId.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function findRenamedProviderDefaultInstance(
+  authStorage: FusionAuthStorage,
+  providerId: string,
+): ProviderInstanceRef | undefined {
+  if (!providerId || !isValidProviderId(providerId)) return undefined;
+  const requestedCollapsed = collapseProviderIdForRenameMatch(providerId);
+  if (!requestedCollapsed) return undefined;
+  const candidates = authStorage.list().filter((candidateId) => {
+    if (candidateId === providerId) return false;
+    return collapseProviderIdForRenameMatch(candidateId) === requestedCollapsed;
+  });
+  if (candidates.length !== 1) return undefined;
+  return authStorage.getDefaultInstance(candidates[0]!);
+}
 
 /*
 FNXC:ProviderAuth 2026-08-01-08:10:
 A selected instance is resolved once before runtime dispatch and its concrete ref is passed forward. Re-resolving downstream could select a different default after audit, silently running work on an account the operator did not choose.
+
+FNXC:ProviderAuth 2026-08-03-17:35:
+When the requested provider has no default instance, attempt rename self-heal before
+throwing. Executor lanes previously synthesized credentialInstanceId "default" for
+rotation bookkeeping; without a heal, custom providers authenticated only via
+customProviders.apiKey (chat parity) or renamed auth keys died at session create.
 */
 export function resolveCredentialInstanceRef(
   authStorage: FusionAuthStorage,
@@ -267,8 +304,14 @@ export function resolveCredentialInstanceRef(
     return { ref: requested, requestedInstanceId, missing: false };
   }
   const ref = authStorage.getDefaultInstance(providerId);
-  if (!ref) throw new CredentialInstanceResolutionError(providerId, requestedInstanceId);
-  return { ref, requestedInstanceId, missing: true };
+  if (ref) {
+    return { ref, requestedInstanceId, missing: true };
+  }
+  const renamed = findRenamedProviderDefaultInstance(authStorage, providerId);
+  if (renamed) {
+    return { ref: renamed, requestedInstanceId, missing: true, renamedProvider: true };
+  }
+  throw new CredentialInstanceResolutionError(providerId, requestedInstanceId);
 }
 
 /*

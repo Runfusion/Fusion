@@ -1,7 +1,23 @@
 /* global process, URL, console */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+
+export function assertPluginSdkDeclarationExists(packageRoot) {
+  const declarationPath = join(packageRoot, "dist", "plugin-sdk", "index.d.ts");
+  let declarationSize = 0;
+  try {
+    declarationSize = statSync(declarationPath).size;
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (declarationSize === 0) {
+    throw new Error(
+      `Refusing to pack @runfusion/fusion: missing or empty dist/plugin-sdk/index.d.ts. Run the full package build first.`,
+    );
+  }
+}
 
 export function applyPrepackTransform(pkg) {
   const devDependencies = { ...(pkg.devDependencies || {}) };
@@ -42,28 +58,29 @@ function run() {
   const backupPath = new URL("../package.json.pack-backup", import.meta.url);
 
   if (mode === "prepack") {
-  if (existsSync(backupPath)) {
-    unlinkSync(backupPath);
-  }
+    if (existsSync(backupPath)) {
+      unlinkSync(backupPath);
+    }
+    assertPluginSdkDeclarationExists(dirname(fileURLToPath(packageJsonPath)));
 
-  const original = readFileSync(packageJsonPath, "utf8");
-  writeFileSync(backupPath, original, "utf8");
+    const original = readFileSync(packageJsonPath, "utf8");
+    writeFileSync(backupPath, original, "utf8");
 
-  const pkg = JSON.parse(original);
-  const transformed = applyPrepackTransform(pkg);
-  writeFileSync(packageJsonPath, `${JSON.stringify(transformed, null, 2)}\n`, "utf8");
-  process.exit(0);
-  }
-
-  if (mode === "postpack") {
-  if (!existsSync(backupPath)) {
+    const pkg = JSON.parse(original);
+    const transformed = applyPrepackTransform(pkg);
+    writeFileSync(packageJsonPath, `${JSON.stringify(transformed, null, 2)}\n`, "utf8");
     process.exit(0);
   }
 
-  const backup = readFileSync(backupPath, "utf8");
-  writeFileSync(packageJsonPath, backup, "utf8");
-  unlinkSync(backupPath);
-  process.exit(0);
+  if (mode === "postpack") {
+    if (!existsSync(backupPath)) {
+      process.exit(0);
+    }
+
+    const backup = readFileSync(backupPath, "utf8");
+    writeFileSync(packageJsonPath, backup, "utf8");
+    unlinkSync(backupPath);
+    process.exit(0);
   }
 
   console.error("Usage: node ./scripts/prepare-publish-manifest.mjs <prepack|postpack>");

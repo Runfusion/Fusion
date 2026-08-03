@@ -75,9 +75,22 @@ Seven tests failed in `plugin-runner.test.ts`, but only this one identity surviv
 
 The failure is unrelated to the mobile question footer: it exercises the completed-plan Proceed handoff, while FN-8757 changes only the active-question footer. The file retains substantial coverage, so this first sighting is recorded rather than quarantined; a second sighting requires the normal file-level quarantine.
 
+## 5. Planning Mode mobile plan-tab selection
+
+- **File:** `packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx`
+- **Exact test:** `PlanningModeModal sequential flow > uses full-view Questions and Plan preview tabs on mobile`
+- **Observed tree/SHA:** `main` at `4ff41a723c` with the Planning Mode task-creation fix uncommitted.
+- **Observed frequency:** first observation in a targeted three-file dashboard run.
+
+| run | result |
+|---|---|
+| targeted three-file dashboard run | **1 failed** / 198 passed; React reported an update outside `act(...)`, and the Plan tab still had `aria-selected="false"` immediately after `fireEvent.click` |
+
+The failure exercises the pre-existing mobile tab transition, while the task-creation fix changes the completed-plan Proceed handoff. The file retains substantial coverage, so this first sighting is recorded rather than quarantined; a second sighting requires the normal file-level quarantine.
+
 ## Common shape and unverified suspicion
 
-All three are PostgreSQL-backed or PostgreSQL-suite-adjacent, pass in isolation, and appear only under full-suite parallelism. This points at shared database state between test files rather than any of the three tests. It is **unverified and uninvestigated**, not a diagnosis; do not infer a root-cause fix from this record.
+The first three entries are PostgreSQL-backed or PostgreSQL-suite-adjacent, pass in isolation, and appear only under full-suite parallelism. This points at shared database state between those test files rather than any one test. It is **unverified and uninvestigated**, not a diagnosis; do not infer a root-cause fix from this record. The Planning Mode entries are separate frontend timing observations.
 
 ## Policy and escalation
 

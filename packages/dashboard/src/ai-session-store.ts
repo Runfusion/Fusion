@@ -19,6 +19,7 @@ import {
   finalizePlanningSessionTaskCreation,
   reconcilePlanningSessionTaskCreation,
   releasePlanningSessionTaskCreation,
+  advancePlanningSessionTaskCreationEpoch,
   listActiveAiSessions,
   listAllAiSessions,
   listRecoverableAiSessions,
@@ -178,6 +179,12 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
   async releasePlanningTaskCreation(sessionId: string, ownerToken: string): Promise<AiSessionRow | null> {
     const row = await releasePlanningSessionTaskCreation(this.dbAsync, sessionId, ownerToken) as AiSessionRow | null;
+    if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    return row;
+  }
+
+  async advancePlanningTaskCreationEpoch(sessionId: string, taskId: string, expectedTaskCreationEpoch: number): Promise<AiSessionRow | null> {
+    const row = await advancePlanningSessionTaskCreationEpoch(this.dbAsync, sessionId, taskId, expectedTaskCreationEpoch) as AiSessionRow | null;
     if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
     return row;
   }

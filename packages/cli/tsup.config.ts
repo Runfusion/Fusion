@@ -168,7 +168,7 @@ function writeSanitizedCopiedManifest(srcPkgPath: string, destPkgPath: string) {
   writeFileSync(destPkgPath, JSON.stringify(destPkg, null, 2));
 }
 
-async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false, external = [] }: BundlePluginEntryOptions) {
+export async function bundlePluginEntry({ pluginId, srcDir, destDir, withMcpAsset = false, external = [] }: BundlePluginEntryOptions) {
   if (existsSync(destDir)) {
     rmSync(destDir, { recursive: true, force: true });
   }

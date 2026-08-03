@@ -57,7 +57,18 @@ vi.mock("../../api", async (importOriginal) => {
     fetchAgents: vi.fn(() => Promise.resolve([])),
     fetchTaskDetail: vi.fn((id: string) => Promise.resolve({ id, title: `Task ${id}` })),
     fetchUnreadCount: vi.fn(() => Promise.resolve({ unreadCount: 0 })),
-    fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
+    // FNXC:TodoNavigation 2026-08-03-17:18: Todo Lists is plugin-owned; keep this fixture production-shaped so the overflow destination uses the runtime manifest contribution.
+    fetchPluginDashboardViews: vi.fn(() => Promise.resolve([{
+      pluginId: "fusion-plugin-todos",
+      view: {
+        viewId: "todos",
+        label: "Todos",
+        componentPath: "./dashboard-view",
+        icon: "CheckSquare",
+        placement: "overflow",
+        order: 70,
+      },
+    }])),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -554,16 +565,16 @@ describe("Navigation history integration", () => {
 
     const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
     fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
-    fireEvent.click(screen.getByTestId("view-overflow-todos"));
+    fireEvent.click(await screen.findByTestId("view-overflow-plugin-fusion-plugin-todos-todos"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("todo-view")).toBeTruthy();
+      expect(screen.getByTestId("todo-view-root")).toBeTruthy();
     });
     expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
 
     dispatchPopState({ navIndex: 0 });
     await waitFor(() => {
-      expect(screen.queryByTestId("todo-view")).toBeNull();
+      expect(screen.queryByTestId("todo-view-root")).toBeNull();
       expect(screen.getByTestId("board-view")).toBeTruthy();
     });
   });

@@ -482,6 +482,7 @@ function runReleaseSmoke() {
         name: "fusion-smoke-test",
         version: "0.0.0",
         private: true,
+        type: "module",
         overrides: { "@runfusion/fusion": `file:${fusionTarballPath}` },
       },
       null,
@@ -517,6 +518,49 @@ function runReleaseSmoke() {
     cleanupSmoke(smokeDir);
     fail(
       `Packed bin failed to start (exit ${invoke.status}):\n--- stdout ---\n${invoke.stdout}\n--- stderr ---\n${invoke.stderr}`,
+    );
+  }
+
+  // Issue #3320: a fast local release build emitted the plugin-sdk runtime but
+  // omitted the declaration targeted by exports["./plugin-sdk"]. Exercise the
+  // published boundary with TypeScript so a missing declaration entrypoint
+  // blocks release instead of shipping an unusable SDK contract.
+  const consumerPath = join(installDir, "plugin-sdk-consumer.ts");
+  const consumerTsconfigPath = join(installDir, "plugin-sdk-consumer.tsconfig.json");
+  writeFileSync(
+    consumerPath,
+    'import { definePlugin } from "@runfusion/fusion/plugin-sdk";\nvoid definePlugin;\n',
+  );
+  writeFileSync(
+    consumerTsconfigPath,
+    JSON.stringify(
+      {
+        compilerOptions: {
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          noEmit: true,
+          // The public contract here is subpath resolution. Existing SDK
+          // declarations can reference optional database types, so checking
+          // their internals would conflate that separate compatibility issue
+          // with a missing declaration entrypoint.
+          skipLibCheck: true,
+          strict: true,
+        },
+        files: [consumerPath],
+      },
+      null,
+      2,
+    ),
+  );
+  const typecheck = spawnSync(
+    "pnpm",
+    ["exec", "tsc", "--project", consumerTsconfigPath],
+    { cwd: repoRoot, stdio: "pipe", encoding: "utf8", timeout: 120_000 },
+  );
+  if (typecheck.status !== 0) {
+    cleanupSmoke(smokeDir);
+    fail(
+      `Packed plugin SDK failed consumer typecheck${typecheck.error ? `: ${typecheck.error.message}` : ""}${typecheck.signal ? ` (signal ${typecheck.signal})` : ""}:\n--- stdout ---\n${typecheck.stdout}\n--- stderr ---\n${typecheck.stderr}`,
     );
   }
 
@@ -1055,7 +1099,7 @@ if (changelogAfterDistill !== changelogBeforeDistill) {
 // --- Build ----------------------------------------------------------------
 
 info("Building all packages…");
-run("pnpm build");
+run("pnpm build:full");
 
 // --- Commit ---------------------------------------------------------------
 
@@ -1188,4 +1232,3 @@ console.log(color(36, `─── Draft post for X (${CHANNEL}, copy-paste) ─�
 console.log(releaseTweet);
 console.log(color(90, `(${releaseTweet.length}/280 chars; source: ${distillSource})`));
 console.log(color(36, "──────────────────────────────────────────────"));
-

@@ -1016,6 +1016,73 @@ describe("createResolvedAgentSession", () => {
     const passedTools = createSessionMock.mock.calls[0][0].customTools;
     expect(passedTools[0]).toBe(rawTool);
   });
+
+  /*
+  FNXC:ProviderAuth 2026-08-03-17:35:
+  Executor used to synthesize credentialInstanceId "default" and hard-fail when auth.json
+  had no default instance for a custom provider. Chat omits the field and works via
+  customProviders.apiKey. Session create must self-heal: continue without a scoped ref.
+  */
+  it("self-heals missing credential instances instead of failing the session", async () => {
+    const createSessionMock = vi.fn().mockResolvedValue({
+      session: { prompt: vi.fn() },
+      sessionFile: "session.json",
+    });
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "Default PI Runtime",
+        createSession: createSessionMock,
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "umansapi/model"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+
+    const emptyAuth = {
+      reload() {},
+      get: () => undefined,
+      getAll: () => ({}),
+      list: () => [],
+      has: () => false,
+      hasAuth: () => false,
+      listInstances: () => [],
+      getInstance: () => undefined,
+      setInstance: async () => {},
+      removeInstance: async () => {},
+      getDefaultInstance: () => undefined,
+      setDefaultInstance: async () => {},
+      set: async () => {},
+      remove: async () => {},
+      logout: async () => {},
+      getApiKey: async () => undefined,
+      getOAuthProviders: () => [],
+      login: async () => {},
+      modify: async () => undefined,
+      setModelRuntime: () => {},
+    };
+
+    const { createResolvedAgentSession } = await import("../agents/agent-session-helpers.js");
+    await expect(createResolvedAgentSession({
+      sessionPurpose: "executor",
+      cwd: "/tmp/project",
+      systemPrompt: "system",
+      defaultProvider: "umansapi",
+      defaultModelId: "model",
+      credentialInstanceId: "default",
+      authStorage: emptyAuth as any,
+    })).resolves.toMatchObject({ runtimeId: "pi" });
+
+    expect(createSessionMock).toHaveBeenCalledWith(expect.not.objectContaining({
+      credentialInstanceId: expect.anything(),
+      resolvedCredentialInstance: expect.anything(),
+    }));
+    // Unscoped legacy path: neither scoped field is set.
+    const passed = createSessionMock.mock.calls[0][0];
+    expect(passed.credentialInstanceId).toBeUndefined();
+    expect(passed.resolvedCredentialInstance).toBeUndefined();
+  });
 });
 
 describe("resolveMergerSessionModel", () => {

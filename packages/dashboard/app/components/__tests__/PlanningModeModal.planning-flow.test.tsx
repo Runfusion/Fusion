@@ -792,6 +792,43 @@ describe("PlanningModeModal sequential flow", () => {
     expect(screen.getByTestId("planning-linked-task-note")).toHaveTextContent(mockTasks[0].id);
     expect(screen.getByRole("button", { name: "View task" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Proceed with plan" })).toBeInTheDocument();
+
+    mockCreateTaskFromPlanning.mockResolvedValueOnce({ id: "FN-002" });
+    fireEvent.click(screen.getByRole("button", { name: "Proceed with plan" }));
+    await waitFor(() => expect(mockCreateTaskFromPlanning).toHaveBeenCalledTimes(2));
+    expect(mockCreateTaskFromPlanning.mock.calls[1]?.[3]).toEqual(expect.objectContaining({
+      previousTaskId: mockTasks[0].id,
+    }));
+    expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-002");
+  });
+
+  /*
+  FNXC:PlanningMultiTask 2026-08-03-18:32:
+  A failed response may arrive after the server advanced the creation epoch. Manual Retry must
+  retain the same previous-task token so the server reconciles that action instead of advancing again.
+  */
+  it("retries a failed explicit create with the same previous-task token", async () => {
+    mockFetchAiSession.mockResolvedValue({
+      ...base,
+      status: "complete",
+      currentQuestion: null,
+      result: JSON.stringify(mockSummary),
+      inputPayload: JSON.stringify({ validated: true, createdTaskId: mockTasks[0].id }),
+    });
+    mockCreateTaskFromPlanning
+      .mockRejectedValueOnce(new Error("Response lost after create"))
+      .mockResolvedValueOnce({ id: "FN-RECONCILED" });
+
+    render(<PlanningModeModal isOpen onClose={vi.fn()} onTaskCreated={vi.fn()} onTasksCreated={vi.fn()} onViewTask={vi.fn()} tasks={mockTasks} projectId="project-1" resumeSessionId="session-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Proceed with plan" }));
+    expect(await screen.findByTestId("planning-create-retry")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry create" }));
+
+    await waitFor(() => expect(mockCreateTaskFromPlanning).toHaveBeenCalledTimes(2));
+    expect(mockCreateTaskFromPlanning.mock.calls[0]?.[3]).toEqual(expect.objectContaining({ previousTaskId: mockTasks[0].id }));
+    expect(mockCreateTaskFromPlanning.mock.calls[1]?.[3]).toEqual(expect.objectContaining({ previousTaskId: mockTasks[0].id }));
+    expect(await screen.findByTestId("planning-task-created")).toHaveTextContent("FN-RECONCILED");
   });
 
   it("clears the linked-task banner when switching to a session without a created task", async () => {

@@ -2590,6 +2590,7 @@ export {
   finalizePlanningSessionTaskCreation,
   reconcilePlanningSessionTaskCreation,
   releasePlanningSessionTaskCreation,
+  advancePlanningSessionTaskCreationEpoch,
   listActiveAiSessions,
   listAllAiSessions,
   listRecoverableAiSessions,

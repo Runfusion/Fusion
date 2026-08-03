@@ -334,8 +334,9 @@ describe("planning question regeneration instead of no-active-question errors", 
     expect(afterDeletion.alreadyCreated).toBe(false);
     expect(afterDeletion.task.id).not.toBe(second.task.id);
     expect(createTask).toHaveBeenCalledTimes(3);
-    // The replacement task reuses the current epoch's claim key (its unique-index row died with the deleted task).
-    expect(createTask.mock.calls[2][0].proposalClaimId).toBe(`planning-session:${sessionId}#1`);
+    // FNXC:PlanningMultiTask 2026-08-03-18:32: Production deletion is soft: the tombstone retains the epoch-1 unique claim key, so
+    // deleted-link recovery must advance before inserting the replacement.
+    expect(createTask.mock.calls[2][0].proposalClaimId).toBe(`planning-session:${sessionId}#2`);
   });
 
   /*

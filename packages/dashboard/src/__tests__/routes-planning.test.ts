@@ -3041,6 +3041,97 @@ describe("Planning Mode Routes", () => {
         expect(res.body.alreadyCreated).toBe(false);
         expect(res.body.task.id).toBe("FN-REBORN");
         expect(store.createTask).toHaveBeenCalledTimes(1);
+        expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        }));
+        expect(JSON.parse((await mockStore.get(sessionId))!.inputPayload)).toMatchObject({
+          createClaimStatus: "created",
+          createdTaskId: "FN-REBORN",
+          taskCreationEpoch: 1,
+          createdTaskIds: ["FN-GONE"],
+        });
+      });
+
+      it("creates another task from an unchanged plan when the request identifies the previous task", async () => {
+        const sessionId = "planning-create-another-unchanged";
+        const previousTaskId = "FN-PREVIOUS";
+        const mockStore = new MockAiSessionStore();
+        await mockStore.upsert(buildPlanningRow({
+          id: sessionId,
+          status: "complete",
+          inputPayload: JSON.stringify({
+            initialPlan: "Build a thing",
+            validated: true,
+            createdTaskId: previousTaskId,
+            createClaimStatus: "created",
+          }),
+          result: JSON.stringify({
+            title: "Reusable plan",
+            description: "Create more than one task without editing the plan",
+            suggestedSize: "M",
+            suggestedDependencies: [],
+            keyDeliverables: ["Implementation"],
+          }),
+        }));
+        setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
+
+        const nextTask = {
+          id: "FN-NEXT",
+          description: "Another task",
+          column: "triage",
+          dependencies: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        };
+        let created = false;
+        (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async () => [
+          { id: previousTaskId, proposalClaimId: `planning-session:${sessionId}` },
+          ...(created ? [nextTask] : []),
+        ]);
+        (store.createTask as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+          created = true;
+          return nextTask;
+        });
+
+        const appWithAiSessionStore = express();
+        appWithAiSessionStore.use(express.json());
+        appWithAiSessionStore.use("/api", createApiRoutes(store, { aiSessionStore: mockStore as any }));
+        const res = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, previousTaskId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status, JSON.stringify(res.body)).toBe(201);
+        expect(res.body.task.id).toBe("FN-NEXT");
+        expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+          proposalClaimId: `planning-session:${sessionId}#1`,
+        }));
+
+        /*
+        FNXC:PlanningMultiTask 2026-08-03-18:32:
+        A transport retry repeats the old linked-task token. It must reconcile epoch 1's
+        canonical task instead of treating the retry as a third explicit create action.
+        */
+        const replay = await REQUEST(
+          appWithAiSessionStore,
+          "POST",
+          "/api/planning/create-task",
+          JSON.stringify({ sessionId, previousTaskId }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(replay.status).toBe(200);
+        expect(replay.body.alreadyCreated).toBe(true);
+        expect(replay.body.task.id).toBe("FN-NEXT");
+        expect(store.createTask).toHaveBeenCalledTimes(1);
+        expect(JSON.parse((await mockStore.get(sessionId))!.inputPayload)).toMatchObject({
+          createdTaskId: "FN-NEXT",
+          taskCreationEpoch: 1,
+        });
       });
 
       it("keeps failing closed when the linked task is still listed but unreadable", async () => {

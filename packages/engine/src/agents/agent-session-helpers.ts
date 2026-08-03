@@ -881,16 +881,39 @@ export async function createResolvedAgentSession(
       const storage = injectedAuthStorage ?? createFusionAuthStorage();
       credentialResolution = resolveCredentialInstanceRef(storage, runtimeOptionsRaw.defaultProvider ?? "", requestedCredentialInstanceId);
     } catch (error) {
-      if ((error as Error).name === "CredentialInstanceResolutionError") throw error;
-      sessionLog.warn(`[${sessionPurpose}] credential instance resolution unavailable; using provider default`);
+      /*
+      FNXC:ProviderAuth 2026-08-03-17:35:
+      CredentialInstanceResolutionError used to hard-fail the lane. Chat never passes a
+      credentialInstanceId and succeeds via customProviders.apiKey registration; executor
+      previously synthesized "default" and died when auth.json had no bare/default instance
+      for that provider (custom providers, renames). Self-heal: drop the scoped selection and
+      continue on the legacy unscoped path so the session matches chat. Still warn for audit.
+      Other resolution errors remain soft as before.
+      */
+      if ((error as Error).name === "CredentialInstanceResolutionError") {
+        sessionLog.warn(
+          `[${sessionPurpose}] credential instance "${requestedCredentialInstanceId}" for provider "${runtimeOptionsRaw.defaultProvider ?? ""}" unresolved; continuing with legacy provider auth (custom provider apiKey / unscoped default)`,
+        );
+      } else {
+        sessionLog.warn(`[${sessionPurpose}] credential instance resolution unavailable; using provider default`);
+      }
     }
   }
 
   /*
   FNXC:ProviderAuth 2026-08-01-08:10:
   A dangling named instance must be auditable: silent substitution spends the wrong account quota under an identity the operator did not select.
+
+  FNXC:ProviderAuth 2026-08-03-17:35:
+  renamedProvider is the auth-key slug self-heal (custom provider rename left credentials under the previous registry key).
   */
-  if (credentialResolution?.missing) sessionLog.warn(`[${sessionPurpose}] requested credential instance is missing; using provider default`);
+  if (credentialResolution?.missing) {
+    sessionLog.warn(
+      credentialResolution.renamedProvider
+        ? `[${sessionPurpose}] requested credential instance is missing; self-healed via renamed provider default "${credentialResolution.ref.providerId}/${credentialResolution.ref.instanceId}"`
+        : `[${sessionPurpose}] requested credential instance is missing; using provider default`,
+    );
+  }
 
   const skillNamesFromSelection = extractSkillNamesFromSelection(runtimeOptionsRaw.skillSelection);
   const mergedSkillNames = runtimeOptionsRaw.skills && runtimeOptionsRaw.skills.length > 0

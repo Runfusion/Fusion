@@ -283,8 +283,8 @@ function resolveCompletePlanningResume(
 
   FNXC:PlanningMultiTask 2026-07-24-00:20:
   Sessions whose task already exists resume to plan review too, carrying the linked task for
-  the banner. Proceed without editing idempotently returns that task; editing rotates the
-  server-side creation epoch so the next Proceed creates a fresh task from the evolved plan.
+  the banner. Each explicit Proceed advances the server-side creation epoch, while transport
+  retries for that action retain the old linked-task token and reconcile its canonical task.
   */
   return { kind: "plan_review", summary, ...(createdTaskId ? { linkedTaskId: createdTaskId } : {}) };
 }
@@ -500,7 +500,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [_activePlanPrompt, setActivePlanPrompt] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
-  // FNXC:PlanningMultiTask 2026-07-24-00:20: latest task created from this plan, shown as a plan-review banner; editing the plan rotates the server-side creation epoch so Proceed can create another.
+  // FNXC:PlanningMultiTask 2026-08-03-18:32: Latest task created from this plan. Passing its id with the next explicit Proceed action
+  // advances the server-side creation epoch, whether or not the plan was edited.
   const [linkedTaskId, setLinkedTaskId] = useState<string | null>(null);
   // FNXC:PlanningMultiTask 2026-07-24-01:40: the just-created Task object, so the banner's View task works immediately after creation without waiting for the tasks prop to refresh (review finding).
   const [linkedTask, setLinkedTask] = useState<Task | null>(null);
@@ -3211,6 +3212,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     try {
       const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(sessionId, summary, projectId, {
         ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
       }));
       clearPlanningActiveSession(projectId);
       setLinkedTaskId(task.id);
@@ -3222,7 +3224,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       validateCreateInFlightRef.current = false;
     }
-  }, [projectId, t, workflowId, workspaceQuestion]);
+  }, [linkedTaskId, projectId, t, workflowId, workspaceQuestion]);
 
   const handleMobileKeyboardActionPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     /*
@@ -3256,7 +3258,10 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     validateCreateInFlightRef.current = true;
     setView({ type: "creating_task", session: view.session, summary: view.summary });
     try {
-      const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(view.session.sessionId, view.summary, projectId, { ...(workflowId !== undefined ? { workflowId } : {}) }));
+      const task = await createTaskAfterActiveClaim(() => createTaskFromPlanning(view.session.sessionId, view.summary, projectId, {
+        ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
+      }));
       clearPlanningActiveSession(projectId);
       setLinkedTaskId(task.id);
       setLinkedTask(task);
@@ -3266,7 +3271,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       validateCreateInFlightRef.current = false;
     }
-  }, [projectId, t, view, workflowId]);
+  }, [linkedTaskId, projectId, t, view, workflowId]);
 
   const handleCreateTask = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -3290,6 +3295,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         Planning Mode saves must carry the workflow lane that opened the modal so created tasks do not land on the main board before appearing on the selected sub-board.
         */
         ...(workflowId !== undefined ? { workflowId } : {}),
+        ...(linkedTaskId ? { previousTaskId: linkedTaskId } : {}),
       });
       onTaskCreated(task);
       // Single-task creation should preserve completed planning history, so
@@ -3303,7 +3309,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     } finally {
       setIsCreatingTask(false);
     }
-  }, [baseBranch, branchMode, branchName, editedSummary, view, projectId, workflowId, onTaskCreated, handleClose]);
+  }, [baseBranch, branchMode, branchName, editedSummary, view, projectId, workflowId, linkedTaskId, onTaskCreated, handleClose]);
 
   const handleStartBreakdown = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -4175,15 +4181,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               {/*
               FNXC:PlanningMultiTask 2026-07-24-00:20:
               A plan that already produced a task stays a live work surface. The banner links the
-              latest created task; continuing to edit rotates the server-side creation epoch, so
-              Proceed creates a fresh task from the evolved plan (unedited Proceed replays return
-              the same task).
+              latest created task; the next explicit Proceed action advances the server-side
+              creation epoch so the plan can create another task without requiring an edit.
               */}
               {linkedTaskId && (
                 <div className="planning-linked-task-note" data-testid="planning-linked-task-note" role="status">
                   <CheckCircle size={16} />
                   <span>
-                    {t("planning.linkedTaskNote", "Task {{taskId}} was created from this plan. Keep refining to create another.", { taskId: linkedTaskId })}
+                    {t("planning.linkedTaskNote", "Task {{taskId}} was created from this plan. Proceed again to create another.", { taskId: linkedTaskId })}
                   </span>
                   {/* FNXC:PlanningMultiTask 2026-07-24-01:40: resolve the just-created Task object first so View task is enabled immediately after creation, before the tasks prop refreshes (mirrors the task_created view's view.task ?? tasks.find pattern). */}
                   <button
@@ -4228,8 +4233,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 {/*
                 FNXC:PlanningMultiTask 2026-07-24-00:20:
                 Task creation is not the end of the plan. Continue planning returns to the plan
-                review workspace where the plan stays readable and editable; edits rotate the
-                creation epoch so Proceed can create another task from the evolved plan.
+                review workspace where the plan stays readable and editable; the next Proceed
+                action creates another task, even when the plan is unchanged.
                 */}
                 {view.sessionId && runningSummary && (
                   <button

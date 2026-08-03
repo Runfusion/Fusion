@@ -289,6 +289,8 @@ export function createTaskFromPlanning(
       baseBranch?: string;
     };
     workflowId?: string | null;
+    /** FNXC:PlanningMultiTask 2026-08-03-18:32: Latest task visible when the operator intentionally requests another task from this plan. */
+    previousTaskId?: string;
   },
 ): Promise<Task> {
   return api<{ task: Task; alreadyCreated: boolean }>(withProjectId("/planning/create-task", projectId), {
@@ -299,6 +301,7 @@ export function createTaskFromPlanning(
       ...(options?.baseBranch !== undefined ? { baseBranch: options.baseBranch } : {}),
       ...(options?.branchSelection ? { branchSelection: options.branchSelection } : {}),
       ...(options?.workflowId !== undefined ? { workflowId: options.workflowId } : {}),
+      ...(options?.previousTaskId ? { previousTaskId: options.previousTaskId } : {}),
     }),
   }).then((response) => response.task);
 }
@@ -504,4 +507,3 @@ export function connectPlanningStream(
 
   return connection;
 }
-

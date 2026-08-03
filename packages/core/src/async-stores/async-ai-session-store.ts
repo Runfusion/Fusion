@@ -418,6 +418,49 @@ export async function releasePlanningSessionTaskCreation(
   return rows[0] ? rowToSession(rows[0]) : null;
 }
 
+/**
+ * FNXC:PlanningMultiTask 2026-08-03-18:32:
+ * Move a planning session past the claim owned by its latest created task.
+ *
+ * The linked task id acts as the idempotency token for the operator's next create action.
+ * This compare-and-set advances exactly once and clears only linkage fields while preserving
+ * concurrent planning payload. It also handles soft-deleted tasks, whose rows intentionally
+ * retain their proposalClaimId and therefore require a fresh epoch.
+ */
+export async function advancePlanningSessionTaskCreationEpoch(
+  handle: QueryHandle,
+  sessionId: string,
+  previousTaskId: string,
+  expectedTaskCreationEpoch: number,
+): Promise<AiSessionRow | null> {
+  const inputPayload = schema.project.aiSessions.inputPayload;
+  const nextEpoch = expectedTaskCreationEpoch + 1;
+  const rows = await handle.update(schema.project.aiSessions)
+    .set({
+      inputPayload: sql`(
+        (${inputPayload} - 'createdTaskId' - 'claimOwnerToken' - 'claimStartedAt')
+        || jsonb_build_object(
+          'createClaimStatus', 'none',
+          'taskCreationEpoch', ${nextEpoch}::int,
+          'createdTaskIds', CASE
+            WHEN coalesce(${inputPayload}->'createdTaskIds', '[]'::jsonb) @> jsonb_build_array(${previousTaskId}::text)
+              THEN coalesce(${inputPayload}->'createdTaskIds', '[]'::jsonb)
+            ELSE coalesce(${inputPayload}->'createdTaskIds', '[]'::jsonb) || jsonb_build_array(${previousTaskId}::text)
+          END
+        )
+      )`,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(and(
+      eq(schema.project.aiSessions.id, sessionId),
+      eq(schema.project.aiSessions.type, "planning"),
+      sql`${inputPayload}->>'createdTaskId' = ${previousTaskId}`,
+      ...epochGuard(expectedTaskCreationEpoch),
+    ))
+    .returning();
+  return rows[0] ? rowToSession(rows[0]) : null;
+}
+
 export async function updateAiSessionTitle(
   handle: QueryHandle,
   id: string,

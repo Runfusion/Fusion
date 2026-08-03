@@ -1171,13 +1171,14 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     let claimedOwnerToken: string | undefined;
     let claimedSessionId: string | undefined;
     try {
-      const { sessionId, summary: summaryInput, branch, baseBranch, branchSelection, workflowId } = req.body as {
+      const { sessionId, summary: summaryInput, branch, baseBranch, branchSelection, workflowId, previousTaskId } = req.body as {
         sessionId?: unknown;
         summary?: unknown;
         branch?: unknown;
         baseBranch?: unknown;
         branchSelection?: unknown;
         workflowId?: unknown;
+        previousTaskId?: unknown;
       };
 
       if (!sessionId || typeof sessionId !== "string") {
@@ -1187,6 +1188,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       if (workflowId !== undefined && workflowId !== null && typeof workflowId !== "string") {
         throw badRequest("workflowId must be a string or null");
       }
+      if (previousTaskId !== undefined && (typeof previousTaskId !== "string" || !previousTaskId.trim())) {
+        throw badRequest("previousTaskId must be a non-empty string");
+      }
+      const normalizedPreviousTaskId = typeof previousTaskId === "string" ? previousTaskId.trim() : undefined;
 
       const summaryOverride = parsePlanningSummaryOverride(summaryInput);
 
@@ -1200,6 +1205,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         finalizePlanningTaskCreation,
         reconcilePlanningTaskCreation,
         releasePlanningTaskCreation,
+        advancePlanningTaskCreationEpoch,
         validateSession,
         planningProposalClaimId,
         formatPlanningTaskHandoff,
@@ -1302,28 +1308,44 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       }
 
       /*
+      FNXC:PlanningMultiTask 2026-08-03-18:32:
+      An explicit create action from a plan that already produced a task starts a new creation
+      epoch even when the plan was not edited. The previous task id is the idempotency token:
+      the first request advances while retries carrying the same old id observe the already-
+      advanced/current epoch and reconcile its one canonical task.
+      */
+      if (normalizedPreviousTaskId && session?.createdTaskId === normalizedPreviousTaskId) {
+        const priorEpoch = session.taskCreationEpoch ?? 0;
+        const advanced = await advancePlanningTaskCreationEpoch(
+          sessionId,
+          normalizedPreviousTaskId,
+          priorEpoch,
+        );
+        session = advanced ?? await getDurablePlanningSession(sessionId) ?? session;
+      }
+
+      /*
       FNXC:PlanningMode 2026-07-20-15:45:
       FN-8442: the task table's partial unique proposalClaimId index, not this process's claim
       state, is the multi-process and crash-after-insert authority. A session linkage is a
       durable cache reconciled from that key; a missing linked task fails closed rather than
       silently forking.
 
-      FNXC:PlanningMultiTask 2026-07-24-00:20:
-      The key is now per creation EPOCH (`planning-session:{id}` for epoch 0, `…#N` after the
-      plan is edited past a created task), so one plan can produce multiple tasks while
-      Proceed replays inside an epoch still dedupe to that epoch's task.
+      The key is per creation epoch (`planning-session:{id}` for epoch 0, `…#N` afterward).
+      An explicit action carrying the latest task id advances the epoch; retries carrying the
+      prior id observe the already-advanced epoch and dedupe to its canonical task.
       */
-      const claimEpoch = session?.taskCreationEpoch ?? 0;
-      const proposalClaimId = planningProposalClaimId(sessionId, claimEpoch);
+      let claimEpoch = session?.taskCreationEpoch ?? 0;
+      const currentProposalClaimId = () => planningProposalClaimId(sessionId, claimEpoch);
       const findCreatedTask = async () =>
-        (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === proposalClaimId);
+        (await scopedStore.listTasks({ includeArchived: true })).find((candidate) => candidate.proposalClaimId === currentProposalClaimId());
       /*
       FNXC:PlanningMode 2026-07-23-12:10 (updated FNXC:PlanningMultiTask 2026-07-24-01:40):
       The claim model allows exactly one task per creation EPOCH — a session can produce
-      multiple tasks across epochs (rotation happens when the plan is edited past a created
-      task). After each creation the session must stop advertising awaiting_input in the
-      session list/banner, so terminalize here through validateSession (the sole terminal
-      transition) on every path that ends with a created task, including alreadyCreated
+      multiple tasks across epochs (rotation happens on a new explicit create action or when
+      the plan is edited past a created task). After each creation the session must stop
+      advertising awaiting_input in the session list/banner, so terminalize here through
+      validateSession (the sole terminal transition) on every path that ends with a created task, including alreadyCreated
       reconciliation; a later edit reopens it. Best-effort: a failure to terminalize must not
       fail the task creation itself. Deploy assumption: the dashboard serves a single code
       version per DB at a time — a pre-epoch binary handling a rotated session would derive
@@ -1360,17 +1382,15 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         const allTasks = await scopedStore.listTasks({ includeArchived: true }).catch(() => null);
         const stillListed = allTasks === null || allTasks.some((task) => task.id === candidate.createdTaskId);
         if (stillListed) throw conflict("PLANNING_CREATED_TASK_MISSING");
-        await runPlanningCreateSideEffect(
-          "Planning create-task stale linkage clear failed",
-          () => updatePlanningCreateClaim(sessionId, { createClaimStatus: "none", createdTaskId: undefined, claimOwnerToken: undefined, claimStartedAt: undefined }),
-          { sessionId, staleTaskId: candidate.createdTaskId },
+        const staleTaskId = candidate.createdTaskId;
+        const advanced = await advancePlanningTaskCreationEpoch(
+          sessionId,
+          staleTaskId,
+          claimEpoch,
         );
-        if (session) {
-          session.createdTaskId = undefined;
-          session.createClaimStatus = "none";
-          session.claimOwnerToken = undefined;
-          session.claimStartedAt = undefined;
-        }
+        if (!advanced) throw conflict("Planning task creation state changed; retry creation");
+        session = advanced;
+        claimEpoch = advanced.taskCreationEpoch ?? claimEpoch + 1;
         return false;
       };
 
@@ -1453,7 +1473,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         Planning Mode creates tasks from the board context, so an active workflow lane must be materialized at create time when the client supplies it.
         */
         ...(workflowId !== undefined ? { workflowId: workflowId as string | null } : {}),
-        proposalClaimId,
+        proposalClaimId: currentProposalClaimId(),
       });
 
       // Update task with suggested size if provided.
