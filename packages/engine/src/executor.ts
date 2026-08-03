@@ -6902,90 +6902,27 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    const nodeId = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
-    const priorRetries = live.graphResumeRetryCount ?? 0;
-    if (priorRetries >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
-    const nextRetries = priorRetries + 1;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-16:05: resolved ONCE for the whole re-entry —
-    `preservedInReview`, the audit `mode` label, the resume-safety recheck, and the branch that
-    picks execute() vs executeWorkflowGraph() must all agree on which column is which. They were
-    four independent literal comparisons, so on a renamed board `preservedInReview` was false for
-    a card in review AND the recheck rejected it, and the re-entry silently never happened.
-    */
-    const reentryLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
-    const preservedInReview = live.column === reentryLanes.review;
-    this.clearPausedAborted(live.id);
-    this.activeWorktrees.delete(live.id);
-    const message = `Workflow graph node '${nodeId}' was interrupted by engine pause/resume — re-entering workflow graph (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
-    executorLog.log(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    await this.store.logEntry(live.id, `Auto-recovered: re-entering paused-aborted workflow graph node '${nodeId}' — failure notification suppressed`, undefined, this.getRunContextFor(live.id));
-    await this.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, this.getRunContextFor(live.id));
-    try {
-      await this.store.recordRunAuditEvent?.({
-        taskId: live.id,
-        agentId: "executor",
-        runId: generateSyntheticRunId("workflow-node-reentry", live.id),
-        domain: "database",
-        mutationType: "task:reenter-paused-aborted-workflow-node",
-        target: live.id,
-        metadata: {
-          nodeId,
-          fromColumn: live.column,
-          attempt: nextRetries,
-          maxAttempts: MAX_TRANSIENT_GRAPH_RESUME_RETRIES,
-          abortProvenance: abortProvenance ?? "unknown",
-          preservedInReview,
-          mode: preservedInReview ? "preserved-in-review" : live.column === reentryLanes.hold ? "reexecuted-from-todo" : "reentered-graph",
-        },
-      });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record paused-node graph re-entry audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    await this.persistTokenUsage(live.id);
-
-    const scheduleRetry = () => {
-      void (async () => {
-        try {
-          const resumeTask = await this.store.getTask(live.id);
-          if (
-            resumeTask.deletedAt
-            || resumeTask.paused
-            || resumeTask.userPaused
-            || resumeTask.status != null
-            || resumeTask.error != null
-            || (preservedInReview
-              ? resumeTask.column !== reentryLanes.review
-              : resumeTask.column !== reentryLanes.hold && resumeTask.column !== reentryLanes.wip)
-            || this.activeSessions.has(live.id)
-            || this.activeStepExecutors.has(live.id)
-            || this.activeWorkflowStepSessions.has(live.id)
-            || this.activeWorkflowGraphAbortControllers.has(live.id)
-            || TaskExecutor.processWideGraphRouting.has(live.id)
-          ) {
-            executorLog.debug(`${live.id}: skipping paused-node graph re-entry — task is no longer in a safe resume state`);
-            return;
-          }
-          if (preservedInReview) {
-            await this.executeWorkflowGraph(resumeTask);
-          } else if (resumeTask.column === reentryLanes.hold) {
-            await this.execute(resumeTask);
-          } else {
-            await this.executeWorkflowGraph(resumeTask);
-          }
-        } catch (err) {
-          executorLog.error(`Failed paused-node graph re-entry for ${live.id}:`, err);
-        }
-      })();
-    };
-    if (TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS > 0) {
-      const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
-      handle.unref?.();
-    } else {
-      setTimeout(scheduleRetry, 0).unref?.();
-    }
-    return true;
+    return reenterPausedAbortedWorkflowNodeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        activeWorktrees: this.activeWorktrees,
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
+        execute: (t) => this.execute(t),
+      },
+      live,
+      result,
+      abortProvenance,
+      resumeLanesMemo,
+    );
   }
 
   private async routeGraphMergeFailureToRetry(
