@@ -137,12 +137,8 @@ import {
 // CLI Agent Executor (U7): task ↔ CLI session orchestration seam.
 import {
   CliTaskSession,
-  launchCliTaskSession,
-  killLiveTaskSessions,
-  type CliTaskOutcome,
-  } from "./cli-agent/task-session.js";
+} from "./cli-agent/task-session.js";
 import type { CliSessionManager } from "./cli-agent/session-manager.js";
-import { CliConcurrencyLimitError } from "./cli-agent/session-manager.js";
 import type { TelemetryHub } from "./cli-agent/telemetry-hub.js";
 import type { CliAdapterRegistry } from "./cli-agent/adapter.js";
 import type { CliSessionStore } from "@fusion/core";
@@ -429,7 +425,6 @@ export {
   extractOwnSettings,
   buildAgentPersona,
 } from "./executor/agent-binding-pure.js";
-import { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 import {
   evaluateImplicitCompletionRefusal,
@@ -765,6 +760,14 @@ import { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineImpl 
 export { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineFree } from "./executor/maybe-dispatch-workflow-work-engine.js";
 import { executeCore as executeCoreImpl } from "./executor/execute-core.js";
 export { executeCore as executeCoreFree } from "./executor/execute-core.js";
+import {
+  runCliAgentNode as runCliAgentNodeImpl,
+  reapCliTaskSessionForHandoff as reapCliTaskSessionForHandoffImpl,
+} from "./executor/run-cli-agent-node.js";
+export {
+  runCliAgentNode as runCliAgentNodeFree,
+  reapCliTaskSessionForHandoff as reapCliTaskSessionForHandoffFree,
+} from "./executor/run-cli-agent-node.js";
 
 
 
@@ -7195,102 +7198,18 @@ export class TaskExecutor {
     live: TaskDetail,
     cfg: Record<string, unknown>,
   ): Promise<WorkflowNodeResult> {
-    const runtime = this.options.cliAgentRuntime;
-    if (!runtime) {
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}' uses the cli-agent executor but no CLI agent runtime is wired`,
-        undefined,
-        this.getRunContextFor(live.id),
-      );
-      return { outcome: "failure", value: "cli-agent-runtime-unavailable" };
-    }
-    if (!live.worktree) {
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}' (cli-agent) is write-capable but no task worktree exists yet — place it after the execute seam`,
-        undefined,
-        this.getRunContextFor(live.id),
-      );
-      return { outcome: "failure", value: "no-worktree-for-write-node" };
-    }
-    const config = resolveCliExecutorConfig(cfg);
-    if (!config) {
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}' (cli-agent) is missing 'cliAdapterId'`,
-        undefined,
-        this.getRunContextFor(live.id),
-      );
-      return { outcome: "failure", value: "cli-agent-adapter-missing" };
-    }
-
-    const prompt = typeof cfg.prompt === "string" ? cfg.prompt : (live.prompt ?? "");
-
-    // Re-entry: kill any prior LIVE session for this task (RETHINK/replan context
-    // reset) before launching fresh.
-    killLiveTaskSessions(live.id, runtime.manager, runtime.store);
-
-    let session: CliTaskSession;
-    try {
-      session = await launchCliTaskSession({
-        taskId: live.id,
-        projectId: runtime.projectId,
-        worktreePath: live.worktree,
-        prompt,
-        config,
-        manager: runtime.manager,
-        hub: runtime.hub,
-        registry: runtime.registry,
-        hookEndpointUrl: runtime.hookEndpointUrl,
-        hookDirRoot: runtime.hookDirRoot,
-        log: (msg) => executorLog.log(`[cli-agent] ${msg}`),
-      });
-    } catch (err) {
-      if (err instanceof CliConcurrencyLimitError) {
-        await this.store.logEntry(
-          live.id,
-          `cli-agent session for node '${node.id}' rejected at PTY pool ceiling (${err.active}/${err.ceiling}) — queued`,
-          undefined,
-          this.getRunContextFor(live.id),
-        );
-        // A typed, surfaced state — NOT a silent stall. The graph failure handler
-        // parks the task; a later sweep / capacity opening re-runs it.
-        return { outcome: "failure", value: "cli-agent-at-capacity" };
-      }
-      throw err;
-    }
-
-    this.activeCliTaskSessions.set(live.id, session);
-    let outcome: CliTaskOutcome;
-    try {
-      outcome = await session.result();
-    } finally {
-      // Detach the live-session handle. Reaping (success) / killing (cancel) is
-      // handled per-outcome below or by the abort path.
-      if (this.activeCliTaskSessions.get(live.id) === session) {
-        this.activeCliTaskSessions.delete(live.id);
-      }
-    }
-
-    switch (outcome.kind) {
-      case "success":
-        // Reap the PTY at the execute→in-review handoff (autoMerge:false tasks
-        // don't hold slots): graceful kill, record terminationReason "completed".
-        await this.reapCliTaskSessionForHandoff(session, live.id);
-        return { outcome: "success", value: "cli-agent-done" };
-      case "killed":
-        // Hard cancel already moved the task + killed the PTY via the abort path;
-        // just unwind the graph walk.
-        return { outcome: "failure", value: "cli-agent-killed" };
-      case "auth-failed":
-        return { outcome: "failure", value: "cli-agent-auth-failed" };
-      case "user-exited":
-        return { outcome: "failure", value: "cli-agent-user-exited" };
-      case "needs-attention":
-      default:
-        return { outcome: "failure", value: "cli-agent-needs-attention" };
-    }
+    return runCliAgentNodeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        activeCliTaskSessions: this.activeCliTaskSessions,
+        cliAgentRuntime: this.options.cliAgentRuntime,
+        reapCliTaskSessionForHandoff: (session, id) => this.reapCliTaskSessionForHandoff(session, id),
+      },
+      node,
+      live,
+      cfg,
+    );
   }
 
   /**
@@ -7299,11 +7218,7 @@ export class TaskExecutor {
    * pipeline advancement that the positive done already authorized.
    */
   private async reapCliTaskSessionForHandoff(session: CliTaskSession, taskId: string): Promise<void> {
-    try {
-      await session.reap();
-    } catch (err) {
-      executorLog.warn(`${taskId}: failed to reap cli-agent session at handoff: ${err}`);
-    }
+    return reapCliTaskSessionForHandoffImpl(session, taskId);
   }
 
 
