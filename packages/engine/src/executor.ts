@@ -797,6 +797,8 @@ import { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFligh
 export { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFlightNodeFree } from "./executor/is-reentrant-paused-aborted-in-flight-node.js";
 import { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeImpl } from "./executor/route-graph-failure-to-execution-resume.js";
 export { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeFree } from "./executor/route-graph-failure-to-execution-resume.js";
+import { reenterPausedAbortedWorkflowNode as reenterPausedAbortedWorkflowNodeImpl } from "./executor/reenter-paused-aborted-workflow-node.js";
+export { reenterPausedAbortedWorkflowNode as reenterPausedAbortedWorkflowNodeFree } from "./executor/reenter-paused-aborted-workflow-node.js";
 
 
 
