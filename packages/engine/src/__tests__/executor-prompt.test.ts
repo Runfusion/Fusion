@@ -315,11 +315,16 @@ describe("buildExecutionPrompt", () => {
     FNXC:CodeOrganization 2026-08-03-08:00:
     EXECUTOR_SYSTEM_PROMPT lives in executor/system-prompt.ts (U4 pure peels); commit-template
     examples may still sit in buildExecutionPrompt in executor.ts. Read both surfaces.
+
+    FNXC:CodeOrganization 2026-08-03-12:45:
+    buildExecutionPrompt peeled to executor/execution-prompt.ts; include that surface so wording
+    ratchet still covers the implementation, not only the facade re-export.
     */
     const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
     const systemPromptSource = readFileSync(new URL("../executor/system-prompt.ts", import.meta.url), "utf8");
+    const executionPromptSource = readFileSync(new URL("../executor/execution-prompt.ts", import.meta.url), "utf8");
     const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
-    const combined = `${systemPromptSource}\n${executorSource}`;
+    const combined = `${systemPromptSource}\n${executionPromptSource}\n${executorSource}`;
 
     expect(combined).toContain("Always include a short, specific summary after the em dash (5–10 words)");
     expect(combined).toContain("Do NOT commit just \\`complete Step N\\`");
