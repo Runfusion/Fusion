@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -300,10 +300,6 @@ import {
 
 
 
-import {
-  optionalStepRevisionKey,
-  countOptionalStepRevisionAttempts,
-} from "./executor/optional-step-revision.js";
 
 
 
@@ -815,6 +811,14 @@ import { blockOuterDispatchWhenEphemeralDisabled as blockOuterDispatchWhenEpheme
 export { blockOuterDispatchWhenEphemeralDisabled as blockOuterDispatchWhenEphemeralDisabledFree } from "./executor/block-outer-dispatch-when-ephemeral-disabled.js";
 import { routeUnusableWorktreeGraphFailureToRecovery as routeUnusableWorktreeGraphFailureToRecoveryImpl } from "./executor/route-unusable-worktree-graph-failure-to-recovery.js";
 export { routeUnusableWorktreeGraphFailureToRecovery as routeUnusableWorktreeGraphFailureToRecoveryFree } from "./executor/route-unusable-worktree-graph-failure-to-recovery.js";
+import { hasLiveTaskSessionSurface as hasLiveTaskSessionSurfaceImpl } from "./executor/has-live-task-session-surface.js";
+export { hasLiveTaskSessionSurface as hasLiveTaskSessionSurfaceFree } from "./executor/has-live-task-session-surface.js";
+import { isRemediationGraphNode as isRemediationGraphNodeImpl, isPreMergeRemediationGraphNode as isPreMergeRemediationGraphNodeImpl } from "./executor/remediation-graph-node.js";
+export { isRemediationGraphNode as isRemediationGraphNodeFree, isPreMergeRemediationGraphNode as isPreMergeRemediationGraphNodeFree } from "./executor/remediation-graph-node.js";
+import { resolveFailedPreMergeWorkflowStepBudget as resolveFailedPreMergeWorkflowStepBudgetImpl } from "./executor/resolve-failed-pre-merge-workflow-step-budget.js";
+export { resolveFailedPreMergeWorkflowStepBudget as resolveFailedPreMergeWorkflowStepBudgetFree } from "./executor/resolve-failed-pre-merge-workflow-step-budget.js";
+import { hasTrailingConsecutiveToolFailures as hasTrailingConsecutiveToolFailuresImpl } from "./executor/has-trailing-consecutive-tool-failures.js";
+export { hasTrailingConsecutiveToolFailures as hasTrailingConsecutiveToolFailuresFree } from "./executor/has-trailing-consecutive-tool-failures.js";
 
 
 
@@ -6459,11 +6463,14 @@ export class TaskExecutor {
   A live agent session surface for a task proves the work is still executing, independent of the persisted column/pause/status row that handleGraphFailure re-fetches. This mirrors clearPhantomExecutorBinding's `hasLiveSessionSurface` (FN-6736) but deliberately EXCLUDES `this.executing` and graph-routing membership: those are still set for the graph run that is currently ending (graphRouting is cleared in executeWorkflowGraph's finally, AFTER handleGraphFailure returns), so including them would report every ending run as "still executing" and suppress all failures. Only a registered coding/step/CLI session surface means a SEPARATE, live agent is working the task.
   */
   private hasLiveTaskSessionSurface(taskId: string): boolean {
-    return (
-      this.activeSessions.has(taskId)
-      || this.activeStepExecutors.has(taskId)
-      || this.activeWorkflowStepSessions.has(taskId)
-      || this.activeCliTaskSessions.has(taskId)
+    return hasLiveTaskSessionSurfaceImpl(
+      {
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        activeCliTaskSessions: this.activeCliTaskSessions,
+      },
+      taskId,
     );
   }
 
@@ -6472,21 +6479,7 @@ export class TaskExecutor {
   A `pre-merge-remediation` / `plan-replan` node (e.g. `code-review-remediation`) is a FIRE-AND-FORGET async scheduler, not a terminal work node: its job is to hand off an implementation fix (sendTaskBackForFix re-dispatches the coding session) and stop traversal. These nodes carry only a `success` rework edge back to their gate and NO `failure` out-edge, so when their schedule call cannot re-arm (missing rehydrated failureContext after a restart → `missing-remediation-context`, `remediation-not-scheduled`, or an exhausted rework budget) the failure bubbles out as the terminal graph outcome and handleGraphFailure would stamp `status:"failed"` — even while a previously-scheduled fix/reviewer session is still live. Classify these nodes so that terminal sink can preserve a still-executing task instead of flagging a spurious failure. Detection prefers the resolved IR `workflowAction` (covers custom workflows), with a node-id fallback for the built-in ids when the IR cannot be resolved.
   */
   private async isRemediationGraphNode(taskId: string, failedNode: string | undefined): Promise<boolean> {
-    if (!failedNode) return false;
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, taskId);
-      const node = ir?.nodes?.find((n) => n.id === failedNode);
-      const action = node?.config?.workflowAction;
-      if (action === "pre-merge-remediation" || action === "plan-replan") return true;
-      if (node) return false;
-    } catch {
-      // Best-effort IR resolution; fall through to the built-in id fallback.
-    }
-    return (
-      failedNode === "code-review-remediation"
-      || failedNode === "browser-verification-remediation"
-      || failedNode === "plan-replan"
-    );
+    return isRemediationGraphNodeImpl({ store: this.store }, taskId, failedNode);
   }
 
   /*
@@ -6494,51 +6487,14 @@ export class TaskExecutor {
   Retryable parked-remediation recovery is only for pre-merge optional-step remediation nodes. Plan Review `plan-replan` failures must stay on the existing replan/triage path instead of delegating to `recoverFailedPreMergeWorkflowStep`, which reopens implementation work.
   */
   private async isPreMergeRemediationGraphNode(taskId: string, failedNode: string | undefined): Promise<boolean> {
-    if (!failedNode) return false;
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, taskId);
-      const node = ir?.nodes?.find((n) => n.id === failedNode);
-      const action = node?.config?.workflowAction;
-      if (action === "pre-merge-remediation") return true;
-      if (node) return false;
-    } catch {
-      // Best-effort IR resolution; fall through to the built-in id fallback.
-    }
-    return failedNode === "code-review-remediation" || failedNode === "browser-verification-remediation";
+    return isPreMergeRemediationGraphNodeImpl({ store: this.store }, taskId, failedNode);
   }
-
 
   private async resolveFailedPreMergeWorkflowStepBudget(
     task: Task,
     target: CoreWorkflowStepResult,
   ): Promise<{ unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }> {
-    const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
-    const fallback = settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES;
-    let rawMaxRevisions: unknown;
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, task.id);
-      if (ir.version === "v2") {
-        const node = ir.nodes.find((candidate) => candidate.id === target.workflowStepId && candidate.kind === "optional-group");
-        rawMaxRevisions = node?.config?.maxRevisions;
-      }
-    } catch {
-      rawMaxRevisions = undefined;
-    }
-    const maxRevisions = resolveOptionalReviewRevisionBudget({
-      optionalGroupId: target.workflowStepId ?? "",
-      workflowSettings: settings as Record<string, unknown>,
-      nodeMaxRevisions: rawMaxRevisions,
-      fallbackMaxRevisions: fallback,
-    });
-    const budget = resolveOptionalStepRevisionBudget(maxRevisions, fallback);
-    const key = optionalStepRevisionKey(target.workflowStepId, target.workflowStepName);
-    return {
-      ...budget,
-      key,
-      stepName: target.workflowStepName,
-      attempts: countOptionalStepRevisionAttempts(task, key, target.workflowStepName),
-      label: budget.unbounded ? "unbounded" : String(budget.max),
-    };
+    return resolveFailedPreMergeWorkflowStepBudgetImpl({ store: this.store }, task, target);
   }
 
   private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
@@ -6796,29 +6752,7 @@ export class TaskExecutor {
   }
 
   private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): Promise<boolean> {
-    if (cursor == null) return false;
-    /*
-    FNXC:ExecutorToolFailureRetry 2026-07-17-06:30:
-    Optional log APIs on minimal/test stores: missing getAgentLogCount/getAgentLogs cannot
-    prove a trailing failure streak, so return false rather than throw mid-failure handling.
-    */
-    if (typeof this.store.getAgentLogCount !== "function" || typeof this.store.getAgentLogs !== "function") {
-      return false;
-    }
-    const currentCount = await this.store.getAgentLogCount(taskId).catch(() => cursor);
-    if (currentCount <= cursor) return false;
-    const entries = await this.store.getAgentLogs(taskId, { limit: currentCount - cursor }).catch(() => []);
-    let failures = 0;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const type = entries[index]!.type;
-      if (type === "tool_result") return false;
-      if (type === "tool_error") {
-        failures += 1;
-        if (failures >= threshold) return true;
-      }
-      // Invocation markers and non-completion entries intentionally do not reset the run.
-    }
-    return false;
+    return hasTrailingConsecutiveToolFailuresImpl({ store: this.store }, taskId, cursor, threshold);
   }
 
   /** Terminal failure of a graph run: record the error and park the task in
