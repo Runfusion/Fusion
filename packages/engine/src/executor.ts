@@ -15,7 +15,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -692,6 +692,9 @@ import { recoverApprovedStepsOnResume as recoverApprovedStepsOnResumeImpl } from
 export { recoverApprovedStepsOnResume as recoverApprovedStepsOnResumeFree } from "./executor/recover-approved-steps-on-resume.js";
 import { tryBootstrapMisbindingRecovery as tryBootstrapMisbindingRecoveryImpl } from "./executor/bootstrap-misbinding-recovery.js";
 export { tryBootstrapMisbindingRecovery as tryBootstrapMisbindingRecoveryFree } from "./executor/bootstrap-misbinding-recovery.js";
+import { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnImpl } from "./executor/no-merge-complete-column.js";
+export { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnFree } from "./executor/no-merge-complete-column.js";
+
 
 
 
@@ -5742,56 +5745,7 @@ export class TaskExecutor {
      error — nothing about the move depends on one.
   */
   private async advanceNoMergeWorkflowToCompleteColumn(task: TaskDetail): Promise<void> {
-    let ir: WorkflowIr;
-    try {
-      ir = await resolveWorkflowIrForTask(this.store, task.id);
-    } catch {
-      // IR resolution is best-effort here: a card that already finished its graph
-      // must never be failed by a bookkeeping lookup.
-      return;
-    }
-    // Merge-bearing workflow → the merge path owns the complete column. Return
-    // before reading anything else so this branch is provably inert for them.
-    if (resolveMergeOrchestrationColumn(ir) !== undefined) return;
-
-    const completeColumn = resolveCompleteColumn(ir);
-    if (!completeColumn || completeColumn === task.column) return;
-
-    try {
-      /*
-       * The normal move path first. A no-merge workflow's last real node sits in
-       * the column immediately before the complete column, but the graph's own
-       * column adjacency is derived from node placement — and NOTHING is placed
-       * in the complete column (that is the whole gap), so `resolveAllowedColumns`
-       * cannot see the edge and the shared validator rejects it. `bypassGuards`
-       * is therefore required for adjacency alone; every other guard the flag
-       * relaxes (merge-blocker in particular) is vacuous here because this branch
-       * only runs for a workflow with no merge region at all.
-       */
-      await this.store.moveTask(task.id, completeColumn, {
-        moveSource: "engine",
-        workflowMoveSource: "workflow-graph",
-        bypassGuards: true,
-        preserveProgress: true,
-        workflowMoveMetadata: { fromColumn: task.column, reason: "no-merge-workflow-completed" },
-      });
-    } catch (err) {
-      executorLog.warn(
-        `[workflow-graph] ${task.id} completed a no-merge workflow but could not advance to '${completeColumn}': ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return;
-    }
-
-    // ids/outcomes-only metadata — no prose, no node/run internals.
-    await this.store.recordRunAuditEvent?.({
-      taskId: task.id,
-      agentId: "executor",
-      runId: generateSyntheticRunId("workflow-no-merge-completion", task.id),
-      domain: "database",
-      mutationType: "task:workflow-complete-column-advanced",
-      target: task.id,
-      metadata: { taskId: task.id, fromColumn: task.column, toColumn: completeColumn, reason: "no-merge-workflow-completed" },
-    });
+    return advanceNoMergeWorkflowToCompleteColumnImpl(this.store, task);
   }
 
   /*
