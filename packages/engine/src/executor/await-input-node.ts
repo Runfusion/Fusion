@@ -86,3 +86,23 @@ export async function runAwaitInputNode(
   // untouched, so the task sits awaiting input until the user responds.
   return { outcome: "failure", value: "awaiting-user-input" };
 }
+
+/**
+ * FNXC:CodeOrganization 2026-08-03-19:55:
+ * pauseForCliApproval peeled with await-input-node (U4). Dashboard approve + unpause resumes.
+ */
+export async function pauseForCliApproval(
+  deps: AwaitInputNodeDeps,
+  node: WorkflowIrNode,
+  live: TaskDetail,
+  command: string,
+): Promise<AwaitInputNodeResult> {
+  const marker = `workflow-cli-approval:${node.id}`;
+  await deps.store.logEntry(live.id, `Workflow paused for CLI command approval: ${command}`, undefined, deps.getRunContextFor(live.id));
+  await deps.store.updateTask(
+    live.id,
+    { status: "awaiting-cli-approval", paused: true, pausedReason: `${marker}: ${command}` },
+    deps.getRunContextFor(live.id),
+  );
+  return { outcome: "failure", value: "awaiting-cli-approval" };
+}

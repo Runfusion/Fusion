@@ -682,8 +682,14 @@ export {
   SESSION_CONTENTION_HOLD_BACKOFF_MS,
   SESSION_CONTENTION_HOLD_MAX_BACKOFF_MS,
 } from "./executor/session-contention-hold.js";
-import { runAwaitInputNode as runAwaitInputNodeImpl } from "./executor/await-input-node.js";
-export { runAwaitInputNode as runAwaitInputNodeFree } from "./executor/await-input-node.js";
+import {
+  runAwaitInputNode as runAwaitInputNodeImpl,
+  pauseForCliApproval as pauseForCliApprovalImpl,
+} from "./executor/await-input-node.js";
+export {
+  runAwaitInputNode as runAwaitInputNodeFree,
+  pauseForCliApproval as pauseForCliApprovalFree,
+} from "./executor/await-input-node.js";
 
 
 
@@ -7659,18 +7665,16 @@ export class TaskExecutor {
     );
   }
 
-  /** Pause the task for explicit user approval of a raw CLI command. The user
-   *  approves via the dashboard, which records the command and unpauses; on the
-   *  next run isWorkflowCliCommandApproved returns true and the node executes. */
   private async pauseForCliApproval(node: WorkflowIrNode, live: TaskDetail, command: string): Promise<WorkflowNodeResult> {
-    const marker = `workflow-cli-approval:${node.id}`;
-    await this.store.logEntry(live.id, `Workflow paused for CLI command approval: ${command}`, undefined, this.getRunContextFor(live.id));
-    await this.store.updateTask(
-      live.id,
-      { status: "awaiting-cli-approval", paused: true, pausedReason: `${marker}: ${command}` },
-      this.getRunContextFor(live.id),
+    return pauseForCliApprovalImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      },
+      node,
+      live,
+      command,
     );
-    return { outcome: "failure", value: "awaiting-cli-approval" };
   }
 
   /** Run an arbitrary (approved) CLI command in the task worktree, supervised. */
