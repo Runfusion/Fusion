@@ -102,7 +102,6 @@ import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSes
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 import { accumulateSessionTokenUsage, captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
-import { enforceTaskTokenBudgetForPersist } from "./concurrency/token-budget-enforcer.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -168,7 +167,7 @@ import {
 } from "./merge/merger-orphan-rehome.js";
 
 import { AgentLogger } from "./agents/agent-logger.js";
-import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
+import { executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
 import { isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
@@ -330,7 +329,6 @@ const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediat
 import { getResumeOrphanDelayMs } from "./executor/resume-orphan-delay.js";
 
 
-const tokenCacheMetricsLog = createLogger("token-cache-metrics");
 
 import {
   optionalStepRevisionKey,
@@ -421,9 +419,9 @@ export {
   graphRunReportedPendingReview,
 } from "./executor/graph-failure-pure.js";
 import {
-  accumulateTokenUsage,
-  tokenUsageWithModelSnapshot,
-  extractSessionTokenUsage,
+  accumulateTokenUsage as accumulateTokenUsageImpl,
+  tokenUsageWithModelSnapshot as tokenUsageWithModelSnapshotImpl,
+  extractSessionTokenUsage as extractSessionTokenUsageImpl,
 } from "./executor/token-usage-pure.js";
 export {
   accumulateTokenUsage,
@@ -714,6 +712,24 @@ import { performWorkflowRerunBounce as performWorkflowRerunBounceImpl } from "./
 export { performWorkflowRerunBounce as performWorkflowRerunBounceFree } from "./executor/workflow-rerun-bounce.js";
 import { dispatchUnpauseResume as dispatchUnpauseResumeImpl } from "./executor/unpause-resume.js";
 export { dispatchUnpauseResume as dispatchUnpauseResumeFree } from "./executor/unpause-resume.js";
+import {
+  persistTaskTokenUsage as persistTaskTokenUsageImpl,
+  captureExecutorTokenUsageBaseline as captureExecutorTokenUsageBaselineImpl,
+  persistTokenUsage as persistTokenUsageImpl,
+} from "./executor/persist-token-usage.js";
+export {
+  persistTaskTokenUsage as persistTaskTokenUsageFree,
+  captureExecutorTokenUsageBaseline as captureExecutorTokenUsageBaselineFree,
+  persistTokenUsage as persistTokenUsageFree,
+} from "./executor/persist-token-usage.js";
+import { resetMergeStateIfNeeded as resetMergeStateIfNeededImpl } from "./executor/reset-merge-state.js";
+export { resetMergeStateIfNeeded as resetMergeStateIfNeededFree } from "./executor/reset-merge-state.js";
+import { recoverFailedPreMergeWorkflowStep as recoverFailedPreMergeWorkflowStepImpl } from "./executor/recover-failed-pre-merge-step.js";
+export { recoverFailedPreMergeWorkflowStep as recoverFailedPreMergeWorkflowStepFree } from "./executor/recover-failed-pre-merge-step.js";
+import { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryImpl } from "./executor/reconcile-steps-from-git-history.js";
+export { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryFree } from "./executor/reconcile-steps-from-git-history.js";
+import { clearPhantomExecutorBinding as clearPhantomExecutorBindingImpl } from "./executor/clear-phantom-executor-binding.js";
+export { clearPhantomExecutorBinding as clearPhantomExecutorBindingFree } from "./executor/clear-phantom-executor-binding.js";
 
 
 
@@ -2008,77 +2024,25 @@ export class TaskExecutor {
   }
 
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
-    /*
-    FNXC:NodeWorktreeIsolation 2026-07-29-02:10 (FN-6756 — planner worktrees reaped from under live planners):
-    THE REGISTRY IS PART OF THE LIVENESS SIGNAL, not just something this method
-    tears down.
-
-    This is documented as "the last line of defense against pulling a worktree out
-    from under a running agent" (see `reapLeakedConcurrencySlots`). It was blind to
-    an entire class of agent. The four sets below are all TaskExecutor-owned; a
-    triage PLANNING session is owned by `TriageProcessor` and lives in ITS OWN
-    `activeSessions` map, so a live planner matched none of them.
-
-    The consequence was not theoretical — it is FN-8600 recurring through a second
-    door. Under plan-in-place a card is specified while it sits in `todo`/`triage`,
-    both of which `reapLeakedConcurrencySlots` treats as reapable, and planning
-    routinely outlives that sweep's 60s grace. Every earlier gate passes for a
-    planner (not in the executor's `executing` set, reapable column, past grace), so
-    this method decided alone — and returned true, releasing the slot and then
-    UNREGISTERING the planner's own registry paths below. It destroyed the very
-    evidence that proves the planner alive.
-
-    FN-8600 fixed the self-owned-branch reclaim sweep by registering planning paths
-    here (`triage.ts` acquireActiveSessionPath, and see the "planning" kind note in
-    active-session-registry.ts). That fix landed at ONE surface. This is the second,
-    which is what the AGENTS.md Surface Enumeration rule exists to prevent.
-
-    Deliberately keyed on ANY registered path for the task, not on kind: the point
-    is that a registered session surface of any kind means someone is working in
-    that worktree. A leaked entry now blocks THIS sweep rather than a live planner
-    losing its worktree — the strictly safer failure, and the one the "last line of
-    defense" wording already promises. The registry is process-local and in-memory,
-    so a leak cannot outlive the process; stale entries have their own reconciler
-    (`reconcileStaleSelfOwned`) and the reclaim-aware `acquireActiveSessionPath`.
-
-    NOT fixed by raising the grace period: a longer timeout only makes this rarer
-    and harder to reproduce. The liveness gate is the bug.
-    */
-    if (this.hasLiveSessionSurface(taskId)) {
-      executorLog.warn(`${taskId}: refusing to clear phantom executor binding because a live session surface is still registered`);
-      return false;
-    }
-
-    // FNXC:Workspace 2026-06-21-12:00: KTD2 — collect every worktree path the task holds (a workspace task holds N) before clearing the binding, so the registry sweep below unregisters all of them, not just one.
-    const heldWorktreePaths = this.getActiveWorktreePaths(taskId);
-    this.activeWorktrees.delete(taskId);
-    this.executing.delete(taskId);
-    this.recoveringCompleted.delete(taskId);
-    this.resumingUnpaused.delete(taskId);
-    this.approvalSuspended.delete(taskId);
-    this.approvalResumeAfterUnwind.delete(taskId);
-    TaskExecutor.processWideGraphRouting.delete(taskId);
-    executingTaskLock.release(taskId);
-    this.effectiveColumnAgentByTask.delete(taskId);
-
-    if (options.preserveWorktrees) {
-      executorLog.warn(`${taskId}: cleared phantom executor binding for self-healing re-dispatch (worktree session-registry entries preserved)`);
-      return true;
-    }
-
-    const registeredPaths = new Set(activeSessionRegistry.pathsForTask(taskId));
-    for (const path of heldWorktreePaths) {
-      registeredPaths.add(path);
-    }
-    for (const path of registeredPaths) {
-      activeSessionRegistry.unregisterPath(path);
-    }
-
-    executorLog.warn(`${taskId}: cleared phantom executor binding for self-healing re-dispatch`);
-    return true;
+    return clearPhantomExecutorBindingImpl(
+      {
+        hasLiveSessionSurface: (id) => this.hasLiveSessionSurface(id),
+        getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
+        activeWorktrees: this.activeWorktrees,
+        executing: this.executing,
+        recoveringCompleted: this.recoveringCompleted,
+        resumingUnpaused: this.resumingUnpaused,
+        approvalSuspended: this.approvalSuspended,
+        approvalResumeAfterUnwind: this.approvalResumeAfterUnwind,
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        effectiveColumnAgentByTask: this.effectiveColumnAgentByTask,
+      },
+      taskId,
+      options,
+    );
   }
 
-  isEphemeralDeletionPending(agentId: string): boolean {
+    isEphemeralDeletionPending(agentId: string): boolean {
     return this.pendingEphemeralDeletions.has(agentId);
   }
 
@@ -3340,53 +3304,17 @@ export class TaskExecutor {
   }
 
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): Promise<Task> {
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (executor):
-    Merge state is reset when a card leaves a lane where a merge could have been recorded — the REVIEW
-    and COMPLETE roles, not the two ids. On a renamed board neither comparison matched, so a card
-    re-entering execution carried STALE mergeDetails from its previous pass.
-
-    `review` is not a trait: the role is carried by mergeOrchestration/mergeBlocker/humanReview, the same
-    five-flag set the dependency gates in this file use. Unioned with the legacy pair because
-    `resolveWorkflowIrForTask` degrades to the BUILT-IN IR rather than throwing.
-    */
-    const mergeBearingColumns = new Set<string>(["in-review", "done"]);
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, task.id);
-      if (ir) {
-        for (const flag of ["complete", "mergeOrchestration", "mergeBlocker", "humanReview"] as const) {
-          for (const id of columnsWithFlag(ir, flag)) mergeBearingColumns.add(id);
-        }
-      }
-    } catch { /* degraded: legacy pair only */ }
-    if (!mergeBearingColumns.has(from)) {
-      return task;
-    }
-
-    const hasMergeEvidence = Boolean(task.mergeDetails)
-      || (task.mergeRetries ?? 0) > 0
-      || (task.verificationFailureCount ?? 0) > 0
-      || task.status === "merging"
-      || task.status === "merging-pr"
-      || task.status === "merging-fix";
-
-    if (!hasMergeEvidence) {
-      return task;
-    }
-
-    return this.cleanupMergeStateForReverification(
-      task,
-      `Task returned to in-progress from ${from} column — resetting verification steps and merge state for re-verification`,
+    return resetMergeStateIfNeededImpl(
       {
-        // Keep deterministic merge-verification bounce budget across remediation
-        // cycles. Status may be cleared by intermediate paths, so the counter is
-        // the canonical signal once a bounce has started.
-        preserveVerificationFailureCount: (task.verificationFailureCount ?? 0) > 0,
+        store: this.store,
+        cleanupMergeStateForReverification: (t, msg, opts) => this.cleanupMergeStateForReverification(t, msg, opts),
       },
+      task,
+      from,
     );
   }
 
-  private async cleanupMergeStateForReverification(
+    private async cleanupMergeStateForReverification(
     task: Task,
     logMessage: string,
     options?: { preserveVerificationFailureCount?: boolean },
@@ -3649,9 +3577,14 @@ export class TaskExecutor {
    * writes use this seam to retain the required persist-time budget enforcement.
    */
   private async persistTaskTokenUsage(taskId: string, tokenUsage: TaskTokenUsage): Promise<void> {
-    const runContext = this.getRunContextFor(taskId);
-    await this.store.updateTask(taskId, { tokenUsage }, runContext);
-    await enforceTaskTokenBudgetForPersist(this.store, taskId, runContext);
+    return persistTaskTokenUsageImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
+      taskId,
+      tokenUsage,
+    );
   }
 
   /*
@@ -3659,64 +3592,44 @@ export class TaskExecutor {
    * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
    */
   private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
-    this.tokenUsageBaselines.set(taskId, (await extractSessionTokenUsage(session)) ?? {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      cacheWriteTokens: 0,
-      totalTokens: 0,
-    });
+    return captureExecutorTokenUsageBaselineImpl(
+      { tokenUsageBaselines: this.tokenUsageBaselines },
+      taskId,
+      session,
+    );
   }
 
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
-    const activeSession = session ?? this.activeSessions.get(taskId)?.session;
-    const currentUsage = await extractSessionTokenUsage(activeSession);
-    if (!currentUsage) return;
-
-    const baseline = this.tokenUsageBaselines.get(taskId);
-    this.tokenUsageBaselines.set(taskId, currentUsage);
-
-    const delta = baseline
-      ? {
-          inputTokens: Math.max(0, currentUsage.inputTokens - baseline.inputTokens),
-          outputTokens: Math.max(0, currentUsage.outputTokens - baseline.outputTokens),
-          cachedTokens: Math.max(0, currentUsage.cachedTokens - baseline.cachedTokens),
-          cacheWriteTokens: Math.max(0, currentUsage.cacheWriteTokens - baseline.cacheWriteTokens),
-          totalTokens: Math.max(0, currentUsage.totalTokens - baseline.totalTokens),
-        }
-      : currentUsage;
-
-    if (
-      delta.inputTokens === 0
-      && delta.outputTokens === 0
-      && delta.cachedTokens === 0
-      && delta.cacheWriteTokens === 0
-      && delta.totalTokens === 0
-    ) {
-      return;
-    }
-
-    const task = await this.store.getTask(taskId);
-    const merged = accumulateTokenUsage(task.tokenUsage, delta);
-    if (!merged) return;
-    const tokenUsage = tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage, delta);
-
-    /*
-    FNXC:EngineDiagnostics 2026-08-01-18:11:
-    Executor token-cache metrics mirror session-token-usage: debug-only telemetry
-    (FUSION_DEBUG=token-cache-metrics), not default TUI noise.
-    */
-    tokenCacheMetricsLog.debug(JSON.stringify({
+    return persistTokenUsageImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        tokenUsageBaselines: this.tokenUsageBaselines,
+        getActiveSession: (id) => this.activeSessions.get(id)?.session,
+      },
       taskId,
-      agentId: task.assignedAgentId ?? undefined,
-      role: "executor",
-      inputTokens: tokenUsage.inputTokens,
-      cachedTokens: tokenUsage.cachedTokens,
-      cacheWriteTokens: tokenUsage.cacheWriteTokens,
-      hitRatio: tokenUsage.inputTokens + tokenUsage.cachedTokens > 0 ? tokenUsage.cachedTokens / (tokenUsage.inputTokens + tokenUsage.cachedTokens) : 0,
-    }));
+      session,
+    );
+  }
 
-    await this.persistTaskTokenUsage(taskId, tokenUsage);
+  // FNXC:CodeOrganization 2026-08-03-09:25:
+  // Thin prototype facades for pure token helpers so Object.create(TaskExecutor.prototype) tests and any instance-method call sites keep working after the free-function peel.
+  private accumulateTokenUsage(
+    ...args: Parameters<typeof accumulateTokenUsageImpl>
+  ): ReturnType<typeof accumulateTokenUsageImpl> {
+    return accumulateTokenUsageImpl(...args);
+  }
+
+  private tokenUsageWithModelSnapshot(
+    ...args: Parameters<typeof tokenUsageWithModelSnapshotImpl>
+  ): ReturnType<typeof tokenUsageWithModelSnapshotImpl> {
+    return tokenUsageWithModelSnapshotImpl(...args);
+  }
+
+  private async extractSessionTokenUsage(
+    ...args: Parameters<typeof extractSessionTokenUsageImpl>
+  ): ReturnType<typeof extractSessionTokenUsageImpl> {
+    return extractSessionTokenUsageImpl(...args);
   }
 
   /**
@@ -4340,66 +4253,16 @@ export class TaskExecutor {
    *          step exists (caller should skip).
    */
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> {
-    try {
-      /*
-      FNXC:WorkflowPostMerge 2026-06-26-14:00:
-      U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
-      `workflow_steps` table read. The graph executor (workflow-graph-executor.ts) maps a
-      group outcome to status by gate semantics: a GATE REVISE / hard failure records
-      `status: "failed"` (blocking), while an ADVISORY REVISE records `status:
-      "advisory_failure"` (non-blocking). So a pre-merge result with `status === "failed"`
-      IS by construction a blocking gate failure — the prior `getWorkflowStep(id).gateMode`
-      lookup was redundant (and after the table drop it returned undefined for graph node
-      ids anyway). Recovery revives the task from the latest blocking pre-merge failure.
-      */
-      const failed = (task.workflowStepResults ?? [])
-        .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
-        .sort((a, b) => {
-          const aTs = Date.parse(a.completedAt || a.startedAt || "");
-          const bTs = Date.parse(b.completedAt || b.startedAt || "");
-          return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
-        });
-
-      const target = failed[0];
-      if (!target) {
-        executorLog.warn(`${task.id}: no failed pre-merge workflow step to recover from`);
-        return false;
-      }
-
-      const feedback = target.output?.trim() || "(no feedback captured)";
-      const stepName = target.workflowStepName || target.workflowStepId || "Unknown";
-      const budget = await this.resolveFailedPreMergeWorkflowStepBudget(task, target);
-      /*
-       * FNXC:WorkflowRevisionBudget 2026-07-22-18:30:
-       * Failed-step recovery is also a remediation entry point, not merely a
-       * retry-label formatter. Enforce the same finite Code Review budget here
-       * as live and restart-local graph remediation: an unset policy remains
-       * unlimited, while zero or an exhausted explicit cap cannot silently send
-       * work back for another fix. Progress-loop termination stays owned by the
-       * graph executor's signature guard rather than this budget check.
-       */
-      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-      if (!budget.unbounded && budget.attempts >= budget.max) return false;
-
-      await this.sendTaskBackForFix(
-        task,
-        task.worktree ?? "",
-        feedback,
-        stepName,
-        `Auto-revived from in-review: pre-merge workflow step "${stepName}" had failed`,
-        true,
-        false,
-        { attempt: budget.attempts + 1, max: budget.unbounded ? undefined : budget.max },
-      );
-      return true;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.error(`Failed to recover failed pre-merge workflow step for ${task.id}: ${errorMessage}`);
-      return false;
-    }
+    return recoverFailedPreMergeWorkflowStepImpl(
+      {
+        resolveFailedPreMergeWorkflowStepBudget: (t, target) => this.resolveFailedPreMergeWorkflowStepBudget(t, target),
+        sendTaskBackForFix: (...args) => this.sendTaskBackForFix(...args),
+      },
+      task,
+    );
   }
 
-  /**
+    /**
    * Returns true when execute() should be deferred because the agent bound to
    * this task has an active heartbeat run and allowParallelExecution=false.
    *
@@ -11346,10 +11209,10 @@ export class TaskExecutor {
             }
 
             const previousStepTokenUsage = accumulatedStepTokenUsage;
-            accumulatedStepTokenUsage = accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+            accumulatedStepTokenUsage = accumulateTokenUsageImpl(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
               // FNXC:TokenAnalytics 2026-06-19-15:55: Step-scoped token writes now carry the producing session model so workflow-step sessions contribute their exact deltas to per-model analytics instead of relying on the last central session snapshot.
-              accumulatedStepTokenUsage = tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
+              accumulatedStepTokenUsage = tokenUsageWithModelSnapshotImpl(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
             tokenUsageRecordedSteps.add(stepIndex);
             if (!accumulatedStepTokenUsage) {
@@ -11399,9 +11262,9 @@ export class TaskExecutor {
               continue;
             }
             const previousStepTokenUsage = accumulatedStepTokenUsage;
-            accumulatedStepTokenUsage = accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+            accumulatedStepTokenUsage = accumulateTokenUsageImpl(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
-              accumulatedStepTokenUsage = tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
+              accumulatedStepTokenUsage = tokenUsageWithModelSnapshotImpl(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
           }
 
@@ -16498,113 +16361,19 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
    * Called after the worktree is acquired and before the agent session starts.
    */
   private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): Promise<void> {
-    const baseCommitSha = detail.baseCommitSha;
-    if (!baseCommitSha) return;
-
-    // Step-inversion read-through (KTD-12, U12): for graph-owned tasks, resolve
-    // which artifact/parser governs the step list from the workflow's parse-steps
-    // declaration so reconcile knows the step source. The `complete step N`
-    // commit convention is parser-agnostic (every parser yields the same step
-    // ordering the agent commits against), so the git-history reconcile below is
-    // unchanged — this read-through records the governing source for diagnostics
-    // and is the seam a future parser-specific reconcile would consult. Legacy
-    // tasks (no parse-steps node) resolve to undefined and are untouched.
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, taskId);
-      const stepSource = this.resolveTaskStepSource(ir);
-      if (stepSource) {
-        // FNXC:EngineDiagnostics 2026-08-03-05:54: parse-steps source read-through is diagnostic only.
-        executorLog.debug(`${taskId}: reconcile step source governed by parse-steps(artifact=${stepSource.artifact}, parser=${stepSource.parser})`);
-      }
-    } catch {
-      // Read-through is diagnostic only; never block reconcile on it.
-    }
-
-    const pendingOrInProgressSteps = detail.steps.filter(
-      (s, i) => (s.status === "pending" || s.status === "in-progress") && i > 0,
+    return reconcileStepsFromGitHistoryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        resolveTaskStepSource: (ir) => this.resolveTaskStepSource(ir),
+      },
+      taskId,
+      detail,
+      worktreePath,
     );
-    if (pendingOrInProgressSteps.length === 0) return;
-
-    let logOutput: string;
-    try {
-      const { stdout } = await execAsync(
-        `git log "${baseCommitSha}..HEAD" --format=%ct%x09%s`,
-        { cwd: worktreePath },
-      );
-      logOutput = stdout;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: reconcileStepsFromGitHistory — git log failed: ${msg}`);
-      return;
-    }
-
-    if (!logOutput.trim()) return;
-
-    const latestPendingByStep = new Map<number, number>();
-    for (const entry of detail.log ?? []) {
-      const action = entry.action ?? "";
-      const match = action.match(/^Step (\d+) \(.+\) → pending$/);
-      if (!match) continue;
-      const stepIndex = Number.parseInt(match[1], 10);
-      const pendingAt = Date.parse(entry.timestamp);
-      if (!Number.isInteger(stepIndex) || !Number.isFinite(pendingAt)) continue;
-      latestPendingByStep.set(stepIndex, Math.max(latestPendingByStep.get(stepIndex) ?? -1, pendingAt));
-    }
-
-    /*
-    FNXC:WorkflowResume 2026-06-30-08:02:
-    Browser Verification and Code Review REVISE intentionally reopen the trailing implementation/verification suffix. FN-7273 showed git-history resume then found older `complete Step 5` commits from the previous attempt, tried to mark Step 5 done while Step 3 was active, and logged a false reconciliation after TaskStore rejected the out-of-order write. A reopened step may only be reconciled from a commit whose author time is newer than the latest `→ pending` transition for that step, and success is logged only after the store confirms the step is terminal.
-    */
-    // Match: feat(FN-2978): complete Step 3  /  chore(fn-2978)!: Complete step 3
-    const stepCommitRegex = /^(?:feat|chore|fix)\([Ff][Nn]-\d+\)(?:!)?:\s*complete\s+step\s+(\d+)/i;
-    const reconciledStepIndices = new Set<number>();
-
-    for (const line of logOutput.split("\n")) {
-      const [commitSecondsRaw, ...messageParts] = line.split("\t");
-      const commitMs = Number.parseInt(commitSecondsRaw ?? "", 10) * 1000;
-      const message = messageParts.join("\t").trim();
-      const match = message.match(stepCommitRegex);
-      if (!match) continue;
-      const stepIndex = parseInt(match[1], 10);
-      if (Number.isNaN(stepIndex) || stepIndex < 0 || stepIndex >= detail.steps.length) continue;
-      const latestPendingAt = latestPendingByStep.get(stepIndex);
-      if (latestPendingAt !== undefined && (!Number.isFinite(commitMs) || commitMs <= latestPendingAt)) continue;
-      const step = detail.steps[stepIndex];
-      if (step.status === "pending" || step.status === "in-progress") {
-        reconciledStepIndices.add(stepIndex);
-      }
-    }
-
-    for (const stepIndex of reconciledStepIndices) {
-      const updated = await this.store.updateStep(taskId, stepIndex, "done");
-      const updatedStepStatus = updated.steps?.[stepIndex]?.status;
-      if (updatedStepStatus !== "done" && updatedStepStatus !== "skipped") {
-        executorLog.warn(
-          `${taskId}: skipped git-history reconciliation log for Step ${stepIndex}; store kept status ${updatedStepStatus ?? "missing"}`,
-        );
-        continue;
-      }
-      await this.store.logEntry(
-        taskId,
-        `Reconciled Step ${stepIndex} as done from git history (resume)`,
-        undefined,
-        this.getRunContextFor(taskId),
-      );
-      executorLog.log(`${taskId}: reconciled Step ${stepIndex} as done from git history`);
-    }
-
-    if (reconciledStepIndices.size > 0) {
-      // Refresh task and update currentStep to the lowest pending index
-      const updated = await this.store.getTask(taskId);
-      const lowestPending = updated.steps.findIndex((s) => s.status === "pending" || s.status === "in-progress");
-      if (lowestPending >= 0 && lowestPending !== updated.currentStep) {
-        await this.store.updateTask(taskId, { currentStep: lowestPending });
-        executorLog.log(`${taskId}: set currentStep to ${lowestPending} after step reconciliation`);
-      }
-    }
   }
 
-  /**
+    /**
    * Check whether the task's branch has any unique commits compared to main.
    * If the branch has no unique commits and the task has steps marked done,
    * those steps represent lost uncommitted work — reset them to "pending"
