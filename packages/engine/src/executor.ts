@@ -8,13 +8,12 @@ const execFileAsync = promisify(execFile);
 
 import { delimiter, join, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveEffectiveAgent, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveEffectiveAgent, AgentStore, resolveExecutorFallbackModel } from "@fusion/core";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
-import { moveTaskToReplanColumn, resolvePlannerLanes, resolveReplanTargetColumn } from "./execution/replan-target.js";
+import { moveTaskToReplanColumn, resolvePlannerLanes } from "./execution/replan-target.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
@@ -33,13 +32,7 @@ import {
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflows/workflow-node-handlers.js";
-import {
-  MERGE_REGION_KINDS,
-  PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
-  WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
-
-
-} from "./workflows/workflow-graph-executor.js";
+import { MERGE_REGION_KINDS } from "./workflows/workflow-graph-executor.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
 import type {
   PreparedWorktree,
@@ -68,21 +61,11 @@ import {
 } from "./execution/verification-utils.js";
 import { resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
-import { accumulateSessionTokenUsage, captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
-import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
-import {
-  createResolvedAgentSession,
-  extractRuntimeHint,
-  resolveExecutorSessionModel,
-  resolveValidatorSessionModel,
-  resolveExecutorThinkingLevel,
-  resolveExecutorFallbackThinkingLevel,
-  resolveValidatorThinkingLevel,
-  resolveValidatorFallbackThinkingLevel,
-} from "./agents/agent-session-helpers.js";
+import { captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
+import { resolveEphemeralTaskCreationPolicy } from "@fusion/core";
+import { createResolvedAgentSession, extractRuntimeHint, resolveExecutorSessionModel, resolveExecutorThinkingLevel, resolveExecutorFallbackThinkingLevel } from "./agents/agent-session-helpers.js";
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
-import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agents/agent-user-comments.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   PRIORITY_EXECUTE,
@@ -136,17 +119,7 @@ import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./e
 import { isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
-import {
-  detectExternalIntegrationEvidenceGaps,
-  formatExternalIntegrationEvidenceDiagnostic,
-} from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
-import {
-  isRequiredArtifactReadFailedValue,
-  requiredArtifactMissingValue,
-  requiredArtifactReadFailedValue,
-
-} from "./execution/required-workflow-artifacts.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import type { PluginRunner } from "./plugins/plugin-runner.js";
 import { isContextLimitError } from "./errors/context-limit-detector.js";
@@ -157,10 +130,7 @@ import {
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree/worktree-acquisition.js";
 
-import {
-  buildSystemPromptWithInstructions,
-  buildPluginPromptSection,
-} from "./agents/agent-instructions.js";
+import { buildPluginPromptSection } from "./agents/agent-instructions.js";
 import { buildPromptLayers, collapsePromptLayers } from "./execution/prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import type { AgentReflectionService } from "./agents/agent-reflection.js";
@@ -169,8 +139,6 @@ import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import {
 
 } from "./healing/restart-recovery-coordinator.js";
-import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
-import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflows/workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
 import { resolveDedicatedPlannerColumnsForTask } from "./planner-lane-resolution.js";
 import {
@@ -215,7 +183,6 @@ import {
   createAcquireRepoWorktreeTool,
 } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
-import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
 import {
   getEnabledPluginTools,
   isResearchToolSurfaceEnabled,
@@ -266,12 +233,6 @@ export {
   formatAgentBrowserAvailabilityLog,
 } from "./executor/browser-probe.js";
 export type { AgentBrowserAvailabilityProbeResult } from "./executor/browser-probe.js";
-import {
-  probeAgentBrowserAvailability,
-  augmentSessionSkillsForBrowserStep,
-  formatAgentBrowserAvailabilityLog,
-} from "./executor/browser-probe.js";
-import type { AgentBrowserExec } from "./executor/browser-probe.js";
 
 import {
   mergeAdditionalSkillPaths,
@@ -295,15 +256,8 @@ export {
   buildExecuteRequeueLoopSignature,
   isTransientMissingTaskJsonError,
 } from "./executor/requeue-loop.js";
-import {
-  MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
-  EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
-  buildExecuteRequeueLoopHighWaterSignature,
-  isInvalidAssistantContinuationErrorMessage,
-} from "./executor/requeue-loop.js";
+import { isInvalidAssistantContinuationErrorMessage } from "./executor/requeue-loop.js";
 
-const MAX_TRANSIENT_GRAPH_RESUME_RETRIES = 2;
-const TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS = process.env.VITEST || process.env.NODE_ENV === "test" ? 0 : 1_000;
 /*
 FNXC:SessionContention 2026-07-25-21:30:
 The contention ladder is deliberately long and slow compared with the provider-failure budget (2 fast
@@ -318,14 +272,7 @@ const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
 export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
 import { detectPendingReviewBlock } from "./executor/pending-review-block.js";
-import {
-  isTaskWorkComplete,
-  createSeenSteeringIds,
-  createConfiguredCommandAbortError,
-  graphActiveContextKey,
-  isTerminalMergeGraphFailureValue,
-  isAwaitingGraphFailureValue,
-} from "./executor/task-predicates.js";
+import { isTaskWorkComplete, createSeenSteeringIds, createConfiguredCommandAbortError, graphActiveContextKey } from "./executor/task-predicates.js";
 export {
   isTaskWorkComplete,
   isNoProgressNoTaskDoneFailure,
@@ -336,14 +283,6 @@ export {
   isTerminalMergeGraphFailureValue,
   isAwaitingGraphFailureValue,
 } from "./executor/task-predicates.js";
-import {
-  graphFailureValue,
-  isMergeGraphFailure,
-
-  isSessionContentionGraphFailure,
-  isWorktreeBaseRefreshGraphFailure,
-  graphRunReportedPendingReview,
-} from "./executor/graph-failure-pure.js";
 export {
   graphFailureErrorTexts,
   recordedNodeValue,
@@ -387,21 +326,12 @@ export {
   evaluateImplicitCompletionRefusal,
   skipBypassTaintUpdateForRefusal,
 } from "./executor/completion-predicates.js";
-import {
-  isTransientResumeAfterRestartGraphFailure,
-  isBenignInReviewPauseAbort,
-} from "./executor/graph-resume-predicates.js";
 export {
   isTransientResumeAfterRestartGraphFailure,
   isBenignInReviewPauseAbort,
 } from "./executor/graph-resume-predicates.js";
 export { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
-import {
-  preExecutionWorktreeHasWork,
-  resolveContaminationBaseRef,
-  resolveDiffBaseRef,
-  captureBaseCommitSha,
-} from "./executor/worktree-git-refs.js";
+import { preExecutionWorktreeHasWork, resolveContaminationBaseRef, captureBaseCommitSha } from "./executor/worktree-git-refs.js";
 export {
   preExecutionWorktreeHasWork,
   resolveContaminationBaseRef,
@@ -813,6 +743,8 @@ import { runGraphCustomNode as runGraphCustomNodeImpl } from "./executor/run-gra
 export { runGraphCustomNode as runGraphCustomNodeFree } from "./executor/run-graph-custom-node.js";
 import { handleGraphFailure as handleGraphFailureImpl } from "./executor/handle-graph-failure.js";
 export { handleGraphFailure as handleGraphFailureFree } from "./executor/handle-graph-failure.js";
+import { executeWorkflowStep as executeWorkflowStepImpl, type ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
+export { executeWorkflowStep as executeWorkflowStepFree } from "./executor/execute-workflow-step.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -926,9 +858,6 @@ export {
   parseAwaitInputSentinel,
   parseAwaitInputQuestionToolCall,
 } from "./executor/await-input-parse.js";
-import {
-  parseAwaitInputQuestionToolCall,
-} from "./executor/await-input-parse.js";
 
 
 /**
@@ -955,9 +884,6 @@ export {
 export type {
   WorkflowStepOutcome,
   WorkflowStepResult,
-} from "./executor/workflow-step-verdict.js";
-import {
-  parseWorkflowStepOutput,
 } from "./executor/workflow-step-verdict.js";
 import type {
   WorkflowStepOutcome,
@@ -1098,11 +1024,7 @@ export {
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
 } from "./executor/lifecycle-columns.js";
-import {
-  resolveTerminalColumnsFor,
-  resolveCompleteColumnFor,
-  resolveReboundColumnFor,
-} from "./executor/lifecycle-columns.js";
+import { resolveTerminalColumnsFor, resolveReboundColumnFor } from "./executor/lifecycle-columns.js";
 
 
 /*
@@ -9217,739 +9139,36 @@ export class TaskExecutor {
     taskEnv?: NodeJS.ProcessEnv,
     stepOptions?: { unattended?: boolean },
   ): Promise<WorkflowStepOutcome> {
-    let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
-    // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
-    // assumptions and proceed instead of parking on a question. Explicit opt-in
-    // only (default false = board run); see runGraphCustomNode / KTD-3.
-    const unattended = stepOptions?.unattended === true;
-    const isPlanReviewStep = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
-    const workflowStepMetadata = workflowStep as WorkflowStep & {
-      optionalGroupId?: string;
-      reviewCanFixInline?: boolean;
-      requireExternalIntegrationEvidence?: boolean;
-    };
-    const optionalGroupId = workflowStepMetadata.optionalGroupId;
-    const isReviewTypeWorkflowStep =
-      isPlanReviewStep
-      || workflowStepMetadata.reviewCanFixInline === true
-      || /(?:^|\b)(?:review|verification)(?:\b|$)/i.test(workflowStep.name)
-      || optionalGroupId === "plan-review"
-      || optionalGroupId === "code-review"
-      || optionalGroupId === "browser-verification";
-    const reviewerInlineFixesEnabled = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
-    const allowReviewerInlineFixes = reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
-    const allowPlanReviewPromptWrite = allowReviewerInlineFixes && isPlanReviewStep;
-    if (allowReviewerInlineFixes && !isPlanReviewStep) {
-      /*
-       * FNXC:WorkflowReviewers 2026-07-01-12:36:
-       * Review-type workflow nodes can now repair their own findings when the workflow setting `reviewerInlineFixes` is on. Use coding tools for implementation review sessions so Code Review, Browser Verification, and custom review/verification gates do not have to bounce through executor remediation for issues they can safely fix inline. Plan Review stays on a narrow PROMPT.md writer because it runs before implementation.
-       */
-      toolMode = "coding";
-    }
-    const requireExternalIntegrationEvidence =
-      workflowStepMetadata.requireExternalIntegrationEvidence === true;
-
-    /*
-     * FNXC:WorkflowReviewSpecInjection 2026-07-18-18:15:
-     * FN-7561 established that review agents cannot reliably locate the project-root PROMPT.md from a task worktree. Load it once through the store and embed it for every review-type node. FN-8288 extends that invariant beyond Plan Review: approved planning revisions are authoritative, the original task description is historical, and a failed artifact read must stay visible instead of silently restoring superseded scope.
-     */
-    let workflowReviewSpecArtifact: string | undefined;
-    if (isReviewTypeWorkflowStep) {
-      try {
-        workflowReviewSpecArtifact = await this.readTaskArtifact(task.id, "PROMPT.md");
-      } catch (error) {
-        const diagnostic = `PROMPT.md could not be read because task storage failed; ${workflowStep.name} must retry without replanning. ${error instanceof Error ? error.message : String(error)}`;
-        await this.store.logEntry(task.id, `[pre-merge] ${workflowStep.name} artifact read failed: ${diagnostic}`);
-        return {
-          success: false,
-          error: diagnostic,
-          output: diagnostic,
-          failureValue: requiredArtifactReadFailedValue("PROMPT.md"),
-        };
-      }
-    }
-    const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
-    const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
-
-    /*
-    FNXC:PlanReview 2026-07-21-16:30:
-    Review steps must never approve or execute against an unavailable contract. Confirmed missing or whitespace-only PROMPT.md fails closed before reviewer creation; typed recovery routes ownership back to planning without spending the review-revision budget.
-    */
-    if (isReviewTypeWorkflowStep && !workflowReviewSpecText.trim()) {
-      const diagnostic = `PROMPT.md could not be loaded; ${workflowStep.name} cannot approve without the authoritative task contract.`;
-      await this.store.logEntry(
-        task.id,
-        `[pre-merge] ${workflowStep.name} refused to run without PROMPT.md: ${diagnostic}`,
-      );
-      return {
-        success: false,
-        revisionRequested: true,
-        output: `REVISE: ${diagnostic}`,
-        verdict: "REVISE",
-        notes: diagnostic,
-        failureValue: requiredArtifactMissingValue(["PROMPT.md"]),
-      };
-    }
-
-    if (isPlanReviewStep && requireExternalIntegrationEvidence) {
-      /*
-       * FNXC:PlanValidation 2026-06-30-09:03:
-       * Coding (per-step review) intentionally keeps external-integration evidence as a Plan Review gate. Enforce it here, not in triage, so only workflows that set `requireExternalIntegrationEvidence` block and failures route through the graph's normal plan-replan loop.
-       */
-      const evidenceGaps = detectExternalIntegrationEvidenceGaps({
-        promptContent: planReviewSpecText,
-      });
-      if (evidenceGaps.length > 0) {
-        const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
-        const output = `REVISE: ${diagnostic}`;
-        await this.store.logEntry(
-          task.id,
-          `[pre-merge] Plan Review deterministic external-integration evidence check requested revision: ${diagnostic}`,
-        );
-        return {
-          success: false,
-          revisionRequested: true,
-          output,
-          verdict: "REVISE",
-          notes: diagnostic,
-        };
-      }
-    }
-
-    // Compute the diff scope so the workflow step agent reviews only what THIS
-    // task changed — not unrelated files it might wander into. Without this,
-    // open-ended review prompts (e.g. "verify visual polish") have been
-    // observed to spend the entire timeout budget reading pre-existing files
-    // that match the task description's keywords. See FN-3327 post-mortem.
-    const scopedFiles = await this.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, undefined, "workflow-step-handler");
-    let diffShortstat: string | undefined;
-    try {
-      const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
-      if (baseRef) {
-        const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
-          cwd: worktreePath,
-          encoding: "utf-8",
-        });
-        diffShortstat = stdout.trim() || undefined;
-      }
-    } catch {
-      // best-effort — fall through with no shortstat
-    }
-
-    const MAX_SCOPE_FILES = 100;
-    const scopeFileBlock = scopedFiles.length === 0
-      ? "(no modified files detected for this task — review the worktree directly, but do NOT browse unrelated files)"
-      : scopedFiles.length > MAX_SCOPE_FILES
-        ? `${scopedFiles.slice(0, MAX_SCOPE_FILES).map((f) => `- ${f}`).join("\n")}\n- ... (${scopedFiles.length - MAX_SCOPE_FILES} more files truncated)`
-        : scopedFiles.map((f) => `- ${f}`).join("\n");
-
-    /*
-     * FNXC:PlanReviewScope 2026-06-29-00:57:
-     * Plan Review validates the planned PROMPT.md before execution. It must not
-     * inherit the generic workflow-step diff scope, because dirty worktrees or
-     * unrelated local commits can make a plan-only gate reject implementation
-     * state and loop back to triage after the planner already approved the spec.
-     */
-    const approvedContractBlock = isReviewTypeWorkflowStep && !isPlanReviewStep
-      ? `
-
-Approved Task Contract:
-- PROMPT.md is the authoritative current contract for this review. It includes any approved planning revisions and scope decisions.
-- The Task Description is historical input only. Do not enforce superseded requirements from the original Task Description when they conflict with PROMPT.md.
-- Do not request behavior that PROMPT.md explicitly defers, excludes, or forbids. Review the implementation against the approved contract reproduced below.
-- Scope exclusions do not waive security, correctness, or data-integrity defects in the approved implementation.
-
---- BEGIN APPROVED PROMPT.md ---
-${workflowReviewSpecText}
---- END APPROVED PROMPT.md ---`
-      : "";
-    const scopeBlock = isPlanReviewStep
-      ? `Plan Review Scope:
-- Review the task plan artifact (PROMPT.md), reproduced verbatim below, and task metadata only.
-- The plan is embedded in this prompt — do NOT go looking for a PROMPT.md file in the worktree; it lives at the project root (\`.fusion/tasks/${task.id}/PROMPT.md\`), outside this worktree, so review the embedded copy.
-- Do NOT judge current implementation diffs, uncommitted worktree changes, or unrelated repository changes.
-- If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
-
---- BEGIN PROMPT.md ---
-${planReviewSpecText}
---- END PROMPT.md ---`
-      : `Diff Scope (files changed by THIS task vs base):
-${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
-
-CRITICAL SCOPING RULES — read before doing anything else:
-- Review ONLY the files listed above. Do NOT analyze unmodified files or unrelated parts of the codebase.
-- If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
-- Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.${approvedContractBlock}`;
-
-    const latestTaskForUserComments = await this.store.getTask(task.id).catch(() => task);
-    const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
-    const workflowStepUserCommentSection = buildUserCommentsPromptSection(workflowStepUserComments);
-
-    /*
-     * FNXC:AgentSteering 2026-06-30-14:08:
-     * Prompt/custom workflow-step reviewers, including Browser Verification agents, do not call reviewStep. They still gate quality, so their system prompt must carry the same canonical uncapped user comments plus legacy steering selected from a fresh task snapshot.
-     */
-
-    // (KTD-6) Verdict-contract reconciliation. The trailing-verdict JSON is the
-    // gate-parsing contract — it only matters for steps that gate merge. A skill
-    // step that isn't a gate (e.g. ce-plan / ce-work / ce-compound) produces
-    // skill-native output (and may emit a ===FUSION_AWAIT_INPUT=== sentinel and
-    // stop), so forcing a verdict would contradict the U2 preamble. Require the
-    // verdict only for gate steps (and skill-less prompt steps, which keep the
-    // legacy reviewer contract); relax it for non-gate skill steps. The executor
-    // runs parseAwaitInputSentinel on output regardless, so the await-input
-    // sentinel always takes priority when present.
-    const isSkillStep = typeof workflowStep.skillName === "string" && workflowStep.skillName.trim().length > 0;
-    const isSummaryProjectionStep = (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget === "task";
-    const requireVerdict = !isSummaryProjectionStep && (workflowStep.gateMode === "gate" || !isSkillStep);
-    const verdictBlock = requireVerdict
-      ? `
-
-## Feedback Format
-
-When your review is complete, your final line MUST be a single JSON object (no markdown fences):
-
-{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
-
-Rules:
-- Output exactly one trailing JSON object and stop.
-- verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
-- notes should be concise and actionable. Use an empty string when there are no notes.
-- For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
-
-Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`
-      : `
-
-## Output Format
-
-Follow the skill's own output conventions. You are NOT required to end with a
-verdict JSON object — this step does not gate merge. If you need to ask the user
-a question, emit a single ===FUSION_AWAIT_INPUT=== block and stop (see the
-workflow-step conventions in your instructions).`;
-
-    const inlineFixBlock = allowReviewerInlineFixes
-      ? `
-
-## Same-Session Fix Policy
-
-This review-type node may fix issues it finds before returning a final verdict.
-- If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
-- Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
-- Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
-- Code Review and Browser Verification may fix implementation issues inside the assigned task worktree and should mention the fix in notes.`
-      : "";
-
-    const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
-
-Task Context:
-- Task ID: ${task.id}
-- Task Description: ${task.description}
-- Worktree: ${worktreePath}
-
-${scopeBlock}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}
-
-Your role:
-- Execute this workflow step exactly as scoped.
-- Prioritize high-impact correctness/risk findings over stylistic nits.
-- Keep feedback actionable and directly tied to evidence in files/outputs.
-
-Your Instructions:
-${workflowStep.prompt}
-
-You have access to the file system to review changes.${inlineFixBlock}${verdictBlock}`;
-
-    const agentLogger = new AgentLogger({
-      store: this.store,
-      taskId: task.id,
-      agent: "reviewer",
-      persistAgentToolOutput: settings.persistAgentToolOutput,
-      // Review-in-executor sessions are task-scoped ephemeral workers.
-      persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
-      onAgentText: (taskId, delta) => {
-        this.options.onAgentText?.(taskId, delta);
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into free-function deps bag */
+    return executeWorkflowStepImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        options: this.options as ExecuteWorkflowStepDeps["options"],
+        activePlanningWorkflowSessions: this.activePlanningWorkflowSessions,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        captureModifiedFiles: (...args: unknown[]) => (this as any).captureModifiedFiles(...args),
+        createSpawnAgentTool: (...args: unknown[]) => (this as any).createSpawnAgentTool(...args),
+        createTaskPromptWriteTool: (...args: unknown[]) => (this as any).createTaskPromptWriteTool(...args),
+        deleteActiveWorkflowStepSession: (...args: unknown[]) => (this as any).deleteActiveWorkflowStepSession(...args),
+        getAssignedAgentRuntimeConfig: (...args: unknown[]) => (this as any).getAssignedAgentRuntimeConfig(...args),
+        getAuthoritativeAssignedAgent: (...args: unknown[]) => (this as any).getAuthoritativeAssignedAgent(...args),
+        readTaskArtifact: (...args: unknown[]) => (this as any).readTaskArtifact(...args),
+        resolveInstructionsForRole: (...args: unknown[]) => (this as any).resolveInstructionsForRole(...args),
+        resolveMcpServers: (...args: unknown[]) => (this as any).resolveMcpServers(...args),
+        setActiveWorkflowStepSession: (...args: unknown[]) => (this as any).setActiveWorkflowStepSession(...args),
       },
-      onAgentTool: (taskId, toolName, detail) => {
-        this.options.onAgentTool?.(taskId, toolName, detail);
-      },
-    });
-
-    // Determine primary model and an explicit fallback. Review-type workflow
-    // steps use the validator lane; ordinary workflow prompts use the executor
-    // lane. A complete per-step override remains authoritative for either lane.
-    // FNXC:ModelResolution 2026-06-25-12:00: FN-7039 requires ordinary workflow
-    // steps to inherit project execution-lane model settings before defaults.
-    // Review gates are independent validation surfaces and must not silently use
-    // the same implementation model merely because they execute in this method.
-    const assignedRuntimeConfig = await this.getAssignedAgentRuntimeConfig(task.assignedAgentId);
-    const laneModel = isReviewTypeWorkflowStep
-      ? resolveValidatorSessionModel(
-          task.validatorModelProvider,
-          task.validatorModelId,
-          settings,
-          assignedRuntimeConfig,
-          task.validatorCredentialInstanceId,
-        )
-      : resolveExecutorSessionModel(
-          task.modelProvider,
-          task.modelId,
-          settings,
-          assignedRuntimeConfig,
-          task.credentialInstanceId,
-        );
-    const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
-    const primaryProvider = useOverride ? workflowStep.modelProvider : laneModel.provider;
-    const primaryModelId = useOverride ? workflowStep.modelId : laneModel.modelId;
-    // FNXC:ProviderAuth 2026-08-01-08:39: A workflow-step model override has no paired instance selection, so only the resolved primary task lane may carry its requested credential instance. Fallback attempts must retain their provider-default behavior rather than inheriting a primary-provider identity.
-    const primaryCredentialInstanceId = useOverride ? undefined : laneModel.credentialInstanceId;
-
-    const workflowFallback = isReviewTypeWorkflowStep
-      ? resolveValidatorFallbackModel(settings)
-      : resolveExecutorFallbackModel(settings);
-    const fallback = workflowFallback.provider && workflowFallback.modelId
-      && (workflowFallback.provider !== primaryProvider || workflowFallback.modelId !== primaryModelId)
-      ? workflowFallback
-      : undefined;
-    const fallbackSettingsHint = isReviewTypeWorkflowStep
-      ? "settings.validatorFallbackProvider/validatorFallbackModelId or fallbackProvider/fallbackModelId"
-      : "settings.executionFallbackProvider/executionFallbackModelId or fallbackProvider/fallbackModelId";
-    const fallbackLaneLabel = isReviewTypeWorkflowStep ? "validator" : "executor";
-
-    const timeoutMs = Math.max(60_000, settings.workflowStepTimeoutMs ?? 900_000);
-
-    const runOnce = async (
-      provider: string | undefined,
-      modelId: string | undefined,
-      attemptLabel: string,
-    ): Promise<WorkflowStepOutcome> => {
-      const stepInstructions = await this.resolveInstructionsForRole("executor", settings);
-      const stepSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, stepInstructions);
-
-      // Build skill selection context for workflow step session
-      const skillContext = await buildSessionSkillContext({
-        agentStore: this.options.agentStore!,
-        task,
-        sessionPurpose: "executor",
-        projectRootDir: this.rootDir,
-        pluginRunner: this.options.pluginRunner,
-      });
-
-      const workflowAgent = await this.getAuthoritativeAssignedAgent(task.assignedAgentId);
-      const workflowRuntimeHint = extractRuntimeHint(workflowAgent?.runtimeConfig);
-      // Signal to skills running in this step (e.g. compound-engineering ce-plan /
-      // ce-work) that they are inside a Fusion autonomous workflow step, NOT an
-      // interactive Claude Code session. There is no synchronous blocking-question
-      // tool here, so a skill must surface user questions via the await-input
-      // convention (which the dashboard / task card renders) instead of calling
-      // AskUserQuestion into the void. Scoped to the step session — the main
-      // executor session deliberately does not carry it.
-      // (U3) FUSION_HEADLESS=1 marks a genuinely-unattended run (LFG/pipeline) so
-      // skills record assumptions and proceed instead of parking. Set ONLY when
-      // the explicit `unattended` flag is true; absent on a board run.
-      const stepEnv: NodeJS.ProcessEnv = {
-        ...(taskEnv ?? process.env),
-        FUSION_WORKFLOW_STEP: "1",
-      };
-      // FNXC:WorkflowSteps 2026-06-21-06:30:
-      // Default-safe invariant (KTD-3): a board run must NEVER be headless. Since
-      // stepEnv spreads taskEnv/process.env, an inherited FUSION_HEADLESS (e.g. an
-      // outer pipeline exported it) would otherwise leak in and silently skip user
-      // questions. Set it ONLY on an explicit opt-in; strip any inherited value
-      // otherwise so absence of the flag always yields a board run.
-      if (unattended) {
-        stepEnv.FUSION_HEADLESS = "1";
-      } else {
-        delete stepEnv.FUSION_HEADLESS;
-      }
-
-      // (U1) Load the step's named skill into THIS session. The interactive fix
-      // proved the resolver works when fed BOTH a requested name AND a discovery
-      // path (compound-engineering-skill-resolution.test.ts). Here we mirror it:
-      // merge the step's skillName (both namespaced `compound-engineering:ce-work`
-      // and bare `ce-work` — the resolver matches bare names case-insensitively)
-      // into the resolved requestedSkillNames, and pass the CE install root (from
-      // the injected FUSION_CE_SKILLS_DIR env) as additionalSkillPaths so the
-      // loader can actually discover the bundled SKILL.md. Without both halves the
-      // named skill was only prompt text pointing at a skill the session never had.
-      let effectiveSkillSelection = skillContext.skillSelectionContext;
-      const ceSkillsDir = typeof stepEnv.FUSION_CE_SKILLS_DIR === "string" && stepEnv.FUSION_CE_SKILLS_DIR.trim()
-        ? stepEnv.FUSION_CE_SKILLS_DIR.trim()
-        : undefined;
-      if (workflowStep.skillName && workflowStep.skillName.trim()) {
-        const namespaced = workflowStep.skillName.trim();
-        const bare = namespaced.includes(":") ? namespaced.slice(namespaced.lastIndexOf(":") + 1) : namespaced;
-        const existing = effectiveSkillSelection?.requestedSkillNames ?? [];
-        const mergedNames = [...new Set([...existing, namespaced, bare])];
-        effectiveSkillSelection = {
-          projectRootDir: effectiveSkillSelection?.projectRootDir ?? this.rootDir,
-          ...(effectiveSkillSelection?.sessionPurpose ? { sessionPurpose: effectiveSkillSelection.sessionPurpose } : { sessionPurpose: "executor" }),
-          requestedSkillNames: mergedNames,
-        };
-      }
-      const additionalSkillPaths = mergeAdditionalSkillPaths(skillContext.additionalSkillPaths, ceSkillsDir ? [ceSkillsDir] : undefined);
-      // FNXC:WorkflowSteps 2026-07-30-21:40:
-      // FN-8461 / GitHub #2388: workflow steps resolve skills from enabled-plugin
-      // body directories and the optional CE install root. Warn only after merging
-      // those sources when THIS named skill remains undiscoverable: a non-empty path
-      // array for another skill is not viable, while an actual plugin body makes CE
-      // env absence expected rather than misleading operator-facing noise.
-      if (
-        workflowStep.skillName?.trim()
-        && !isWorkflowStepSkillDiscoverable(workflowStep.skillName.trim(), additionalSkillPaths, ceSkillsDir)
-      ) {
-        await this.store.logEntry(
-          task.id,
-          `[skill-load] Workflow step '${workflowStep.name}' requests skill '${workflowStep.skillName}' but it cannot be discovered from configured plugin body directories or FUSION_CE_SKILLS_DIR; the step runs with role-fallback skills only.`,
-        );
-      }
-      const logBrowserVerificationActivity = async (message: string) => {
-        await this.store.logEntry(task.id, message);
-        await this.store.appendAgentLog(task.id, message, "status", undefined, "reviewer");
-      };
-      if (workflowStep.requiresBrowser === true) {
-        effectiveSkillSelection = augmentSessionSkillsForBrowserStep(effectiveSkillSelection, this.rootDir);
-        await logBrowserVerificationActivity(`[browser-verification] starting browser verification for task ${task.id} using step '${workflowStep.name}'`);
-        const browserProbe = await probeAgentBrowserAvailability(execAsync as AgentBrowserExec, {
-          cwd: worktreePath,
-          env: stepEnv,
-          timeoutMs: 5_000,
-        });
-        await logBrowserVerificationActivity(formatAgentBrowserAvailabilityLog(browserProbe));
-      }
-
-      // (U8b) Coding-mode skill steps fan out to ce-<persona> subagents via
-      // fn_spawn_agent (read the persona def, pass its body as systemPromptOverride).
-      // That tool is registered only in the main executor session — never here —
-      // so coding mode granted write/edit but NOT spawn. Register it for
-      // coding-mode steps now; readonly steps keep no spawn (filterCustomToolsForReadonly
-      // strips it). The spawn tool inherits the injected env so children also see
-      // FUSION_CE_AGENTS_DIR.
-      //
-      // (U9 / KTD-4, Risk-1) ACCEPTED WRITE-CAPABILITY POSTURE: coding mode also
-      // exposes write/edit. The CE plan/code-review steps run coding ONLY to gain
-      // spawn (they are not supposed to mutate the tree), but the tool policy is
-      // binary today — coding is the only mode that carries fn_spawn_agent. There
-      // is NO engine guard preventing those steps from writing; the only protection
-      // is skill discipline plus the U6 no-diff detection assertion. The proper fix
-      // (a dedicated readonly-plus-spawn tool mode) is deferred; this is a
-      // knowingly-accepted gap, not a closed one — re-evaluate before enabling the
-      // CE workflow for genuinely-unattended (FUSION_HEADLESS) LFG/pipeline runs.
-      const planReviewPromptTools: ToolDefinition[] = allowPlanReviewPromptWrite
-        ? [this.createTaskPromptWriteTool(task.id)]
-        : [];
-      const codingCustomTools: ToolDefinition[] = toolMode === "coding"
-        ? [this.createSpawnAgentTool(task.id, worktreePath, settings, stepEnv)]
-        : [];
-      const workflowCustomTools = [...planReviewPromptTools, ...codingCustomTools];
-      const readonlyCustomTools = toolMode === "readonly"
-        ? filterCustomToolsForReadonly(workflowCustomTools, {
-            allowTool: (tool) => allowPlanReviewPromptWrite && tool.name === "fn_task_prompt_write",
-          })
-        : { allowed: workflowCustomTools, denied: [] as string[] };
-      if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
-        await this.store.logEntry(
-          task.id,
-          `[readonly-violation] Workflow step '${workflowStep.name}' dropped denied custom tools: ${readonlyCustomTools.denied.join(", ")}`,
-        );
-      }
-
-      /*
-       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then the task override for their selected model lane, then settings defaults/lane fallbacks.
-       *
-       * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
-       * The step's own `fallback` attempt already swaps to a distinct model (validator fallback OR global fallback pair) — it must honor THAT model's fallback thinking level, not silently reuse the primary lane's thinking level. Route by which candidate `fallback.label` actually matched instead of only special-casing `validatorFallback`.
-       */
-      const workflowStepThinkingSource = workflowStep.thinkingLevel
-        ?? (isReviewTypeWorkflowStep ? task.validatorThinkingLevel ?? task.thinkingLevel : task.thinkingLevel);
-      const workflowStepThinkingLevel = attemptLabel === "fallback"
-        ? isReviewTypeWorkflowStep
-          ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
-          : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings)
-        : isReviewTypeWorkflowStep
-          ? resolveValidatorThinkingLevel(workflowStepThinkingSource, settings)
-          : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
-      const workflowStepFallbackThinkingLevel = isReviewTypeWorkflowStep
-        ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
-        : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
-      const { session } = await createResolvedAgentSession({
-        sessionPurpose: "executor",
-        runtimeHint: workflowRuntimeHint,
-        pluginRunner: this.options.pluginRunner,
-        cwd: worktreePath,
-        systemPrompt: stepSystemPrompt,
-        tools: toolMode,
-        defaultProvider: provider,
-        defaultModelId: modelId,
-        ...(attemptLabel !== "fallback" && primaryCredentialInstanceId
-          ? { credentialInstanceId: primaryCredentialInstanceId }
-          : {}),
-        fallbackProvider: workflowFallback.provider,
-        fallbackModelId: workflowFallback.modelId,
-        fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
-        defaultThinkingLevel: workflowStepThinkingLevel,
-        runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
-        settings,
-        taskEnv: stepEnv,
-        mcpServers: await this.resolveMcpServers(undefined),
-        // FNXC:SessionRouting 2026-06-24-11:20:
-        // #1675: propagate task id so workflow-step requests carry the same
-        // X-Session-Id/X-Session-Affinity as the primary session.
-        taskId: task.id,
-        // FNXC:PluginSkills 2026-07-12-00:00: Workflow-step sessions union plugin skill body dirs with CE's FUSION_CE_SKILLS_DIR so neither plugin-package nor compound-engineering skills are overwritten.
-        // Skill selection: assigned-agent / role-fallback skills, plus the step's own named skill (U1) made discoverable via additionalSkillPaths.
-        ...(effectiveSkillSelection ? { skillSelection: effectiveSkillSelection } : {}),
-        ...(additionalSkillPaths ? { additionalSkillPaths } : {}),
-        ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
-      });
-
-      const workflowModelDetails = formatModelMarkerDetails(
-        describeModel(session),
-        workflowStepThinkingLevel,
-        [
-          useOverride && attemptLabel === "primary" ? "workflow step override" : "",
-          attemptLabel === "fallback" ? "fallback after timeout" : "",
-        ],
-      );
-      executorLog.debug(`${task.id}: workflow step '${workflowStep.name}' using model ${workflowModelDetails}`);
-      await this.store.logEntry(
-        task.id,
-        `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
-      );
-      this.setActiveWorkflowStepSession(task.id, session, worktreePath, createSeenSteeringIds(task));
-      // FNXC:TaskTiming 2026-07-30-21:40: graph-owned Plan Review is the only
-      // post-spec planning lane. Start before prompting and finalize in finally before any replan handoff.
-      const ownsPlanningSegment = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
-      if (ownsPlanningSegment) {
-        this.activePlanningWorkflowSessions.add(task.id);
-        const planningStart = startPlanningSegment(task);
-        try {
-          if (planningStart.planningStartedAt) await this.store.updateTask(task.id, planningStart);
-        } catch (error) {
-          this.activePlanningWorkflowSessions.delete(task.id);
-          throw error;
-        }
-      }
-
-      let output = "";
-      const deltaNormalizer = createStreamingDeltaNormalizer();
-      let detectedQuestion: string | null = null;
-      let resolveQuestion: ((value: "await-input") => void) | undefined;
-      const questionPromise = new Promise<"await-input">((resolve) => {
-        resolveQuestion = resolve;
-      });
-      session.subscribe((event) => {
-        if (event.type === "message_update") {
-          const msgEvent = event.assistantMessageEvent;
-          if (msgEvent.type === "text_delta") {
-            // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-            // including tool-call cross-message boundaries (see streaming-delta.ts).
-            const delta = deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "text");
-            output += delta;
-            agentLogger.onText(delta);
-          } else if (msgEvent.type === "thinking_delta") {
-            // Repair dropped sentence-boundary spaces at the shared engine delta chokepoint,
-            // including tool-call cross-message boundaries (see streaming-delta.ts).
-            const delta = deltaNormalizer.normalize(msgEvent.partial, msgEvent.contentIndex, msgEvent.delta, "thinking");
-            agentLogger.onThinking(delta);
-          }
-        }
-        if (event.type === "tool_execution_start") {
-          agentLogger.onToolStart(event.toolName, event.args as Record<string, unknown> | undefined);
-          if (!unattended && detectedQuestion === null) {
-            const question = parseAwaitInputQuestionToolCall(
-              event.toolName,
-              event.args as Record<string, unknown> | undefined,
-            );
-            if (question) {
-              detectedQuestion = question;
-              resolveQuestion?.("await-input");
-            }
-          }
-        }
-        if (event.type === "tool_execution_end") {
-          agentLogger.onToolEnd(event.toolName, event.isError, event.result);
-        }
-      });
-
-      let timedOut = false;
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<"timeout">((resolveTimeout) => {
-        timeoutHandle = setTimeout(() => {
-          timedOut = true;
-          resolveTimeout("timeout");
-        }, timeoutMs);
-      });
-
-      try {
-        const promptPromise = promptWithFallback(
-          session,
-          `Execute the workflow step "${workflowStep.name}" for task ${task.id}.\n\n` +
-          `Review the work done in this worktree and evaluate it against the criteria in your instructions.`,
-        );
-
-        const outcome = await Promise.race([
-          promptPromise.then(() => "completed" as const),
-          timeoutPromise,
-          questionPromise,
-        ]);
-
-        if (outcome === "await-input" && detectedQuestion) {
-          try { session.dispose(); } catch { /* best-effort */ }
-          await agentLogger.flush();
-          return {
-            success: true,
-            output: `===FUSION_AWAIT_INPUT===\n${detectedQuestion}\n===END_FUSION_AWAIT_INPUT===`,
-          };
-        }
-
-        if (outcome === "timeout") {
-          executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' (${attemptLabel}) timed out after ${timeoutMs}ms — disposing session`);
-          await this.store.logEntry(
-            task.id,
-            `Workflow step '${workflowStep.name}' ${attemptLabel === "primary" ? "primary" : "fallback"} model timed out after ${Math.round(timeoutMs / 1000)}s — aborting session`,
-          );
-          if (workflowStep.requiresBrowser === true) {
-            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: timed out`);
-          }
-          // FNXC:TaskCost 2026-07-30-21:40: Plan Review tokens are task cost;
-          // snapshot before timeout disposal just like normal completion.
-          await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
-          try { session.dispose(); } catch { /* best-effort */ }
-          await agentLogger.flush();
-          return { success: false, error: `workflow step timed out after ${timeoutMs}ms`, timedOut: true };
-        }
-
-        // Completed within the timeout — let any post-completion errors surface.
-        checkSessionError(session);
-        await accumulateSessionTokenUsage(this.store, task.id, session, {
-            agentId: task.assignedAgentId ?? undefined,
-            role: "executor",
-          });
-        session.dispose();
-        await agentLogger.flush();
-
-        const parsed = requireVerdict ? parseWorkflowStepOutput(output) : parseWorkflowStepOutput(output, { requireVerdict: false });
-        if (parsed.verdict) {
-          const revisionRequested = parsed.verdict === "REVISE";
-          if (workflowStep.requiresBrowser === true) {
-            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: verdict ${parsed.verdict}`);
-          }
-          return {
-            success: !revisionRequested,
-            revisionRequested,
-            output: parsed.output,
-            verdict: parsed.verdict,
-            notes: parsed.notes,
-          };
-        }
-
-        if (parsed.malformed) {
-          // FNXC:ReviewLeniency 2026-07-02-00:30: malformed output (after the
-          // fallback-model retry) is recorded as a NON-BLOCKING advisory, not a
-          // hard gate block — see runGraphCustomNode's outcome mapping.
-          await this.store.logEntry(
-            task.id,
-            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output (no parseable verdict) — recorded as non-blocking advisory`,
-          );
-          if (workflowStep.requiresBrowser === true) {
-            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: malformed output`);
-          }
-          return {
-            success: false,
-            output: parsed.output,
-            error: "malformed output — no verdict extracted",
-            notes: undefined,
-            malformed: true,
-          };
-        }
-
-        if (workflowStep.requiresBrowser === true) {
-          await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: completed`);
-        }
-        return { success: true, output: parsed.output };
-      } catch (err: unknown) {
-        await agentLogger.flush();
-        // Persist the delta before error disposal so graph-owned planning reviews
-        // cannot disappear from operator cost totals.
-        await accumulateSessionTokenUsage(this.store, task.id, session, { agentId: task.assignedAgentId ?? undefined, role: "executor" });
-        try { session.dispose(); } catch { /* best-effort */ }
-        if ((err instanceof ReadonlyViolationError) || ((err as { code?: string } | null)?.code === "READONLY_VIOLATION")) {
-          const violation = err as ReadonlyViolationError;
-          const deniedTool = violation.toolName || "unknown";
-          await this.store.logEntry(
-            task.id,
-            `[readonly-violation] Workflow step '${workflowStep.name}' attempted denied tool '${deniedTool}'`,
-          );
-          if (workflowStep.requiresBrowser === true) {
-            await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: readonly violation`);
-          }
-          return { success: false, error: `[readonly-violation] ${violation.message}` };
-        }
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        if (workflowStep.requiresBrowser === true) {
-          await logBrowserVerificationActivity(`[browser-verification] finished browser verification for task ${task.id}: failed — ${errorMessage}`);
-        }
-        return { success: false, error: errorMessage };
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        if (ownsPlanningSegment) {
-          try {
-            const livePlanningTask = await this.store.getTask(task.id);
-            if (livePlanningTask) {
-              const planningEnd = finalizePlanningSegment(livePlanningTask);
-              if (planningEnd.planningStartedAt === null) await this.store.updateTask(task.id, planningEnd);
-            }
-          } finally {
-            // Finalize before releasing Plan Review ownership so triage can only
-            // begin a subsequent, non-overlapping planning segment.
-            this.activePlanningWorkflowSessions.delete(task.id);
-          }
-        }
-        const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
-        if (activeWorkflowStepSession === session) {
-          this.deleteActiveWorkflowStepSession(task.id, worktreePath);
-        }
-        // Suppress unused-variable warning; `timedOut` documents intent.
-        void timedOut;
-      }
-    };
-
-    const primaryOutcome = await runOnce(primaryProvider, primaryModelId, "primary");
-    /*
-    FNXC:ReviewLeniency 2026-07-02-00:30:
-    Retry the fallback model on a MALFORMED (unparseable-verdict) primary response, not only on a timeout. A single fumbled response — reasoning with no trailing verdict — should get one more attempt on the fallback model before the gate result is recorded, mirroring the reviewer path's UNAVAILABLE retry. If no fallback is configured the malformed primary is returned as-is (and is treated as a non-blocking advisory downstream, see runGraphCustomNode).
-    */
-    const primaryMalformed = (primaryOutcome as { malformed?: boolean }).malformed === true;
-    if (!primaryOutcome.timedOut && !primaryMalformed) return primaryOutcome;
-
-    if (!fallback) {
-      /*
-       * FNXC:ReviewLeniency 2026-07-05-17:24:
-       * FN-7561: when NO fallback model is configured, a MALFORMED primary (unparseable verdict — a single fumbled response) still deserves one retry so a transient formatting fumble does not feed the plan-review replan loop. Self-retry once on the SAME primary model. Timeouts are NOT self-retried — they would likely just time out again and burn another full budget. If the self-retry is still malformed it is returned as a non-blocking advisory downstream.
-       */
-      if (primaryMalformed && !primaryOutcome.timedOut) {
-        executorLog.log(`${task.id}: workflow step '${workflowStep.name}' produced malformed output and no fallback is configured — retrying once on the primary model`);
-        const retryOutcome = await runOnce(primaryProvider, primaryModelId, "primary-retry");
-        const retryMalformed = (retryOutcome as { malformed?: boolean }).malformed === true;
-        if (!retryMalformed) return retryOutcome;
-        await this.store.logEntry(
-          task.id,
-          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set ${fallbackSettingsHint})`,
-        );
-        return retryOutcome;
-      }
-      const reason = primaryOutcome.timedOut ? "timed out" : "produced malformed output";
-      executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' ${reason} and no fallback model is configured`);
-      await this.store.logEntry(
-        task.id,
-        `Workflow step '${workflowStep.name}' ${reason} — no fallback model configured (set ${fallbackSettingsHint})`,
-      );
-      return primaryOutcome;
-    }
-
-    executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with ${fallbackLaneLabel} fallback ${fallback.provider}/${fallback.modelId} after primary ${primaryOutcome.timedOut ? "timeout" : "malformed output"}`);
-    return runOnce(fallback.provider, fallback.modelId, "fallback");
+      task,
+      workflowStep,
+      worktreePath,
+      settings,
+      taskEnv,
+      stepOptions,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
+
 
   private MAX_WORKTREE_RETRIES = 3;
   private WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
