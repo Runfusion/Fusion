@@ -10,7 +10,7 @@ import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type S
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { resolveWorkflowIrForTask, resolveEffectiveAgent, AgentStore } from "@fusion/core";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
-import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
+import type { GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
 import type { WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
@@ -724,6 +724,24 @@ export { updateStepGraph as updateStepGraphFree } from "./executor/update-step-g
 export { buildColumnBoundaryHooks as buildColumnBoundaryHooksFree } from "./executor/build-column-boundary-hooks.js";
 export { trackTaskDisposal as trackTaskDisposalFree } from "./executor/track-task-disposal.js";
 export { registerConfiguredCommandController as registerConfiguredCommandControllerFree, unregisterConfiguredCommandController as unregisterConfiguredCommandControllerFree } from "./executor/configured-command-controllers.js";
+import { safeLogEntry as safeLogEntryImpl } from "./executor/safe-log-entry.js";
+import {
+  awaitFeatureVideoBounded as awaitFeatureVideoBoundedImpl,
+  generateCompletionFeatureVideo as generateCompletionFeatureVideoImpl,
+} from "./executor/completion-feature-video.js";
+import {
+  type TaskLivenessDeps,
+  getExecutingTaskIds as getExecutingTaskIdsImpl,
+  hasActivePlanningWorkflowSession as hasActivePlanningWorkflowSessionImpl,
+  isTaskActive as isTaskActiveImpl,
+} from "./executor/task-liveness.js";
+import { clearCompletedTaskWatchdog as clearCompletedTaskWatchdogImpl } from "./executor/clear-completed-task-watchdog.js";
+import { terminateAllChildren as terminateAllChildrenImpl } from "./executor/terminate-all-children.js";
+export { safeLogEntry as safeLogEntryFree } from "./executor/safe-log-entry.js";
+export { awaitFeatureVideoBounded as awaitFeatureVideoBoundedFree, generateCompletionFeatureVideo as generateCompletionFeatureVideoFree } from "./executor/completion-feature-video.js";
+export { getExecutingTaskIds as getExecutingTaskIdsFree, hasActivePlanningWorkflowSession as hasActivePlanningWorkflowSessionFree, isTaskActive as isTaskActiveFree } from "./executor/task-liveness.js";
+export { clearCompletedTaskWatchdog as clearCompletedTaskWatchdogFree } from "./executor/clear-completed-task-watchdog.js";
+export { terminateAllChildren as terminateAllChildrenFree } from "./executor/terminate-all-children.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -1148,14 +1166,14 @@ export class TaskExecutor {
   Breadcrumb task-log writes on the abort/pause/finalize paths are best-effort diagnostics and must NEVER break control flow. FN-7335 wired store.logEntry() straight into the SYNCHRONOUS markPausedAborted() as `void this.store.logEntry(...).catch(...)`; when store.logEntry is absent/throws synchronously (undefined method, store closed mid-abort, corrupted pager) the call throws a TypeError BEFORE the promise exists, so the trailing .catch() never runs and the exception unwinds out of markPausedAborted — aborting hard-cancel/pause and stranding the in-review handoff. Route every breadcrumb write through safeLogEntry() so both synchronous throws and async rejections are swallowed into a warn.
   */
   private safeLogEntry(taskId: string, message: string): void {
-    try {
-      const result = this.store.logEntry(taskId, message, undefined, this.getRunContextFor(taskId));
-      void Promise.resolve(result).catch((error) => {
-        executorLog.warn(`${taskId}: failed to write task-log breadcrumb: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    } catch (error) {
-      executorLog.warn(`${taskId}: failed to write task-log breadcrumb: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    safeLogEntryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
+      taskId,
+      message,
+    );
   }
 
   private markPausedAborted(
@@ -1444,26 +1462,12 @@ export class TaskExecutor {
   review transition so browser, scenario, and artifact failures never delay or fail it.
   */
   private async generateCompletionFeatureVideo(task: Task): Promise<void> {
-    try {
-      const [settings, detail] = await Promise.all([this.store.getSettings(), this.store.getTask(task.id)]);
-      const generator = this.options.reviewArtifactGenerator ?? generateFeatureVideo;
-      const result = await this.awaitFeatureVideoBounded(generator({ store: this.store, task: detail ?? task, settings }));
-      executorLog.log(`${task.id}: feature-video ${result.status}${"reason" in result ? ` (${result.reason})` : ""}`);
-    } catch (error) {
-      executorLog.warn(`${task.id}: feature-video capture ignored: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reviewArtifactGenerator is optional TaskExecutorOptions field
+    return generateCompletionFeatureVideoImpl({ store: this.store, options: this.options as any }, task);
   }
 
   private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        result,
-        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("feature-video timeout")), 20_000); }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
+    return awaitFeatureVideoBoundedImpl(result);
   }
 
   private getModelRegistry(): Promise<ModelRegistry> {
@@ -1515,16 +1519,17 @@ export class TaskExecutor {
   }
 
   /** Returns the set of task IDs currently being executed. */
+
+  private taskLivenessDeps(): TaskLivenessDeps {
+    return {
+      executing: this.executing, recoveringCompleted: this.recoveringCompleted, resumingUnpaused: this.resumingUnpaused,
+      activeSessions: this.activeSessions, activePlanningWorkflowSessions: this.activePlanningWorkflowSessions,
+      activeWorkflowStepSessions: this.activeWorkflowStepSessions, processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+    };
+  }
+
   getExecutingTaskIds(): Set<string> {
-    // Graph-routed tasks count as executing for their WHOLE interpreter run —
-    // between seams the inner execute() has released this.executing, but the
-    // graph still owns the lifecycle; self-healing/recovery must not touch it.
-    return new Set([
-      ...this.executing,
-      ...this.recoveringCompleted,
-      ...this.resumingUnpaused,
-      ...TaskExecutor.processWideGraphRouting,
-    ]);
+    return getExecutingTaskIdsImpl(this.taskLivenessDeps());
   }
 
   /**
@@ -1535,16 +1540,11 @@ export class TaskExecutor {
    * implementation and non-planning workflow sessions.
    */
   hasActivePlanningWorkflowSession(taskId: string): boolean {
-    return this.activePlanningWorkflowSessions.has(taskId) && this.activeWorkflowStepSessions.has(taskId);
+    return hasActivePlanningWorkflowSessionImpl(this.taskLivenessDeps(), taskId);
   }
 
   isTaskActive(taskId: string): boolean {
-    return (
-      this.executing.has(taskId)
-      || this.activeSessions.has(taskId)
-      || this.recoveringCompleted.has(taskId)
-      || TaskExecutor.processWideGraphRouting.has(taskId)
-    );
+    return isTaskActiveImpl(this.taskLivenessDeps(), taskId);
   }
 
   /*
@@ -2716,10 +2716,7 @@ export class TaskExecutor {
   }
 
   private clearCompletedTaskWatchdog(taskId: string): void {
-    const handle = this.completedTaskWatchdogs.get(taskId);
-    if (!handle) return;
-    clearTimeout(handle);
-    this.completedTaskWatchdogs.delete(taskId);
+    clearCompletedTaskWatchdogImpl(this.completedTaskWatchdogs, taskId);
   }
 
   /**
@@ -6009,15 +6006,13 @@ export class TaskExecutor {
    * Called from the finally block of agentWork when the parent session ends.
    */
   private async terminateAllChildren(parentTaskId: string): Promise<void> {
-    const childIds = this.spawnedAgents.get(parentTaskId);
-    if (!childIds || childIds.size === 0) return;
-
-    executorLog.log(`Terminating ${childIds.size} child agents for parent ${parentTaskId}`);
-    // Detach the parent generation before any agent-store await. A replacement
-    // execution may register a new set for the same task ID while cleanup is
-    // still settling; the old generation must never delete that new set.
-    this.spawnedAgents.delete(parentTaskId);
-    await Promise.all([...childIds].map((childId) => this.terminateChildAgent(childId)));
+    return terminateAllChildrenImpl(
+      {
+        spawnedAgents: this.spawnedAgents,
+        terminateChildAgent: (id) => this.terminateChildAgent(id),
+      },
+      parentTaskId,
+    );
   }
 
   /**
