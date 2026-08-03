@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { delimiter, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { delimiter, join, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
@@ -157,9 +157,6 @@ import { CliConcurrencyLimitError } from "./cli-agent/session-manager.js";
 import type { TelemetryHub } from "./cli-agent/telemetry-hub.js";
 import type { CliAdapterRegistry } from "./cli-agent/adapter.js";
 import type { CliSessionStore } from "@fusion/core";
-import {
-  StaleWorktreeIndexLockError,
-} from "./worktree/worktree-stale-lock.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
@@ -474,7 +471,6 @@ export {
 } from "./executor/agent-binding-pure.js";
 import { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
 export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
-import { quoteShellArg } from "./executor/shell-quote.js";
 import {
   isTaskAlreadyCompleteForNonContinuableSession,
   evaluateImplicitCompletionRefusal,
@@ -564,7 +560,6 @@ import {
 
 
 export { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
-import { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
 import {
   hasActiveWorktreeBinding,
   shouldGenerateNewWorktreeName,
@@ -610,6 +605,19 @@ export {
 } from "./executor/worktree-create-conflict.js";
 import { cleanupConflictingWorktree as cleanupConflictingWorktreeImpl } from "./executor/worktree-cleanup-conflicting.js";
 export { cleanupConflictingWorktree as cleanupConflictingWorktreeFree } from "./executor/worktree-cleanup-conflicting.js";
+import {
+  createWorktree as createWorktreeImpl,
+  squashImportDepIntoWorktree as squashImportDepIntoWorktreeImpl,
+  rebaseNewWorktreeOntoRemote as rebaseNewWorktreeOntoRemoteImpl,
+  resolveWorktreeStartPoint as resolveWorktreeStartPointImpl,
+} from "./executor/worktree-create-outer.js";
+export {
+  createWorktree as createWorktreeFree,
+  squashImportDepIntoWorktree as squashImportDepIntoWorktreeFree,
+  rebaseNewWorktreeOntoRemote as rebaseNewWorktreeOntoRemoteFree,
+  resolveWorktreeStartPoint as resolveWorktreeStartPointFree,
+} from "./executor/worktree-create-outer.js";
+
 
 
 
@@ -18039,322 +18047,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   }
 
   /*
-  FNXC:Worktrees 2026-07-19-15:47:
-  Branch-needing task work must be created with `git worktree add` in an isolated checkout. Per the
-  AGENTS.md “Prefer main For Direct Work; Use Worktrees For Branches” standing rule, this.rootDir is
-  never switched with `git checkout` or `git switch` to select a task branch; see the primary-checkout
-  invariant regression test for the executable guard.
-  */
-  private async createWorktree(
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    allowSiblingBranchRename = false,
-  ): Promise<{ path: string; branch: string }> {
-    // Track the worktree path we're attempting to use (may change during recovery)
-    const currentPath = path;
-    let resolvedStartPoint: string | undefined;
-    if (startPoint) {
-      const resolved = await this.resolveWorktreeStartPoint(startPoint, taskId);
-      if (resolved === null) {
-        // Stored baseBranch no longer exists (e.g., upstream dep merged and branch
-        // deleted while this task sat queued/stuck). Clear it on the task so any
-        // subsequent retry branches from the default base, and proceed from HEAD.
-        await this.store.updateTask(taskId, { executionStartBranch: null });
-      } else {
-        resolvedStartPoint = resolved;
-      }
-    }
-
-    // When the task declares a non-main base (a sibling task's branch), the
-    // legacy behavior was to fork the worktree from that branch's tip,
-    // inheriting all of its commits. That caused content leakage when the
-    // dep was later squash-merged to main: the dep's raw commits became
-    // orphans whose content already existed in main, blocking the
-    // dependent's own merge with phantom conflicts.
-    //
-    // Prevention: instead of forking from the dep's tip, fork from `main`
-    // (or the configured remote/main if rebase-from-remote is enabled) and
-    // then `git merge --squash` the dep's content into a single import
-    // commit. The dependent branch then carries main's history + 1 commit
-    // for the dep's content; if the dep is later squash-merged to main, the
-    // patch-id on that import commit will match main's squash and Layer 2
-    // recovery (or a clean rebase) handles it.
-    //
-    // Fall-soft: any failure in this path falls back to the legacy behavior
-    // so we don't break worktree creation for setups where the squash flow
-    // can't run (no main branch resolvable, network down, etc.).
-    const squashImport = resolvedStartPoint
-      ? await this.planSquashImportFromDep(taskId, resolvedStartPoint, startPoint)
-      : null;
-    const initialStartPoint = squashImport ? squashImport.mainBase : resolvedStartPoint;
-    const settings = await this.store.getSettings();
-
-    for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
-      try {
-        const result = await this.tryCreateWorktree(
-          branch,
-          currentPath,
-          taskId,
-          initialStartPoint,
-          attempt,
-          0,
-          allowSiblingBranchRename,
-          settings,
-        );
-        // Squash-import dep content into the freshly created worktree so the
-        // branch contains main's history + 1 import commit instead of the
-        // dep's raw commits.
-        if (squashImport) {
-          await this.squashImportDepIntoWorktree(
-            result.path,
-            taskId,
-            squashImport.depTip,
-            squashImport.label,
-          ).catch((importErr: unknown) => {
-            executorLog.warn(
-              `Squash-import of ${squashImport.label} into ${result.branch} failed for ${taskId} (continuing without): ${importErr instanceof Error ? importErr.message : String(importErr)}`,
-            );
-          });
-        }
-        // Mirror the merge-time rebase behavior: when worktreeRebaseBeforeMerge
-        // is enabled, fetch the remote and rebase the just-created task branch
-        // onto the latest <remote>/<defaultBranch>. This makes the worktree
-        // start from origin/main + local main both, so divergence only matters
-        // if the user actively skips this setting. Best-effort: failures here
-        // don't abort task setup.
-        await this.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId).catch((err: unknown) => {
-          executorLog.warn(
-            `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-        return result;
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const isLastAttempt = attempt === this.MAX_WORKTREE_RETRIES - 1;
-        const isBranchConflict = isBranchConflictError(error);
-        const isTerminalWorktreeError = error instanceof NonRetryableWorktreeError || error instanceof StaleWorktreeIndexLockError || isBranchConflict;
-
-        if (isLastAttempt || isTerminalWorktreeError) {
-          await this.store.logEntry(
-            taskId,
-            `Worktree creation failed after ${this.MAX_WORKTREE_RETRIES} attempts`,
-            errorMessage,
-          );
-          if (isBranchConflict) {
-            throw error;
-          }
-          throw new Error(
-            `Failed to create worktree after ${this.MAX_WORKTREE_RETRIES} attempts: ${errorMessage}`,
-          );
-        }
-
-        // Wait before retry (exponential backoff)
-        const delay = this.WORKTREE_RETRY_DELAYS[attempt] || 1000;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-
-    // Should never reach here, but TypeScript needs a return
-    throw new Error("Unexpected exit from worktree creation retry loop");
-  }
-
-  /**
-   * Squash-merge the dep's content into a worktree that's already branched
-   * off main. Produces one commit on the worktree branch carrying the dep's
-   * content, instead of inheriting the dep's individual commits. Best-effort:
-   * any failure (conflict, hooks, IO) leaves the worktree at main and the
-   * caller proceeds — the dependent task will then need to import the dep's
-   * content itself, but the worktree itself is still usable.
-   */
-  private async squashImportDepIntoWorktree(
-    worktreePath: string,
-    taskId: string,
-    depTip: string,
-    label: string,
-  ): Promise<void> {
-    // No-op when dep is already represented in the worktree's history.
-    try {
-      await execAsync(
-        `git merge-base --is-ancestor ${quoteShellArg(depTip)} HEAD`,
-        { cwd: worktreePath },
-      );
-      return;
-    } catch {
-      // Not an ancestor — proceed.
-    }
-
-    // Try a squash-merge. `--no-commit` is implied by `--squash`; the merge
-    // either stages the dep's diff or fails (conflicts / unrelated histories).
-    try {
-      await execAsync(
-        `git merge --squash --allow-unrelated-histories ${quoteShellArg(depTip)}`,
-        { cwd: worktreePath },
-      );
-    } catch (err) {
-      // Reset any partial state so the worktree stays usable, then rethrow
-      // so the caller can decide whether to log/fall-through.
-      await execAsync("git reset --hard HEAD", { cwd: worktreePath }).catch(
-        () => undefined,
-      );
-      throw err;
-    }
-
-    // If no diff was staged the dep is content-equivalent to main; nothing
-    // to commit.
-    try {
-      await execAsync("git diff --cached --quiet", { cwd: worktreePath });
-      return; // exit 0 → no staged changes, nothing to commit
-    } catch {
-      // exit non-zero → staged changes exist, proceed to commit.
-    }
-
-    // Always non-empty (subject + body via two -m args). Drop
-    // --allow-empty-message: we never want git to silently accept an empty
-    // message — a missing message here would make the commit hard to
-    // attribute / explain in `git log` and break downstream consumers that
-    // parse merge metadata from commit messages.
-    const subject = `chore(${taskId}): import dependency content from ${label}`;
-    const body =
-      `Squash-imported the working tree of ${label} as a single commit so this ` +
-      `branch carries the dep's content without inheriting its individual commits. ` +
-      `If the dep is later squash-merged to main, this commit's patch-id should ` +
-      `match the merge and rebase cleanly.`;
-    try {
-      await execAsync(
-        `git commit -m ${quoteShellArg(subject)} -m ${quoteShellArg(body)}`,
-        { cwd: worktreePath },
-      );
-    } catch (commitErr) {
-      await execAsync("git reset --hard HEAD", { cwd: worktreePath }).catch(
-        () => undefined,
-      );
-      throw commitErr;
-    }
-
-    await this.store.logEntry(
-      taskId,
-      `Squash-imported dependency content from ${label} into worktree (single import commit instead of inheriting raw commits)`,
-    );
-  }
-
-  /**
-   * After creating a fresh task worktree, fetch the configured remote and
-   * rebase the task branch onto `<remote>/<defaultBranch>`. The result is a
-   * branch that contains origin's tip plus any local main commits, so the
-   * eventual merge has fewer surprises and the executor sees the freshest
-   * code its peers/CI may have published.
-   *
-   * No-op when `worktreeRebaseBeforeMerge` is disabled, no remote is
-   * configured/resolvable, or the rebase produces conflicts (we abort and
-   * leave the worktree as-is so the executor can still run).
-   */
-  private async rebaseNewWorktreeOntoRemote(
-    worktreePath: string,
-    branch: string,
-    taskId: string,
-  ): Promise<void> {
-    let settings;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return;
-    }
-    if (settings.worktreeRebaseBeforeMerge === false) return;
-
-    let remote = settings.worktreeRebaseRemote?.trim() || "";
-    if (!remote) {
-      try {
-        const { stdout } = await execAsync("git remote", { cwd: this.rootDir });
-        const remotes = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
-        if (remotes.includes("origin")) remote = "origin";
-        else if (remotes.length === 1) remote = remotes[0];
-      } catch {
-        // No remote resolvable — nothing to rebase against.
-      }
-    }
-    if (!remote) return;
-
-    let defaultBranch = "";
-    try {
-      const { stdout } = await execAsync(`git rev-parse --abbrev-ref ${remote}/HEAD`, { cwd: this.rootDir });
-      defaultBranch = stdout.trim().replace(new RegExp(`^${remote}/`), "");
-    } catch {
-      // origin/HEAD not set — fall back to current branch in rootDir.
-    }
-    if (!defaultBranch) {
-      try {
-        const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: this.rootDir });
-        defaultBranch = stdout.trim();
-      } catch {
-        return;
-      }
-    }
-    if (!defaultBranch || defaultBranch === "HEAD") return;
-
-    const remoteRef = `${remote}/${defaultBranch}`;
-
-    try {
-      await execAsync(`git fetch ${quoteShellArg(remote)} ${quoteShellArg(defaultBranch)}`, { cwd: this.rootDir });
-    } catch (err) {
-      executorLog.warn(
-        `Worktree rebase: fetch ${remote} ${defaultBranch} failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return;
-    }
-
-    try {
-      await execAsync(`git rebase ${quoteShellArg(remoteRef)}`, { cwd: worktreePath });
-      await this.store.logEntry(
-        taskId,
-        `Rebased new worktree branch ${branch} onto ${remoteRef}`,
-      );
-    } catch (rebaseErr) {
-      const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
-      executorLog.warn(
-        `Worktree rebase: rebase onto ${remoteRef} failed for ${taskId} — aborting and leaving local base intact: ${msg}`,
-      );
-      try {
-        await execAsync("git rebase --abort", { cwd: worktreePath });
-      } catch {
-        // best-effort
-      }
-      await this.store.logEntry(
-        taskId,
-        `Could not rebase new worktree onto ${remoteRef} — kept local base. The merge-time rebase will retry with conflict resolution.`,
-      );
-    }
-  }
-
-  /**
-   * Resolve a stored baseBranch to a concrete commit SHA.
-   *
-   * Returns `null` (not throw) when the ref cannot be resolved — typically
-   * because the upstream dep's branch was merged and deleted while this task
-   * sat queued/stuck. Callers should treat null as "fall back to default base"
-   * rather than fail the task permanently.
-   */
-  private async resolveWorktreeStartPoint(startPoint: string, taskId: string): Promise<string | null> {
-    const command = isAbsolute(startPoint) && existsSync(startPoint)
-      ? `git -C "${startPoint}" rev-parse --verify HEAD^{commit}`
-      : `git rev-parse --verify "${startPoint}^{commit}"`;
-
-    try {
-      const { stdout } = await execAsync(command, { cwd: this.rootDir });
-      return stdout.trim() || startPoint;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.store.logEntry(
-        taskId,
-        `Worktree base ref "${startPoint}" is missing — falling back to default base`,
-        errorMessage,
-      );
-      return null;
-    }
-  }
-
-  /*
   FNXC:MissingWorktreeRecovery 2026-07-16-18:35:
   Returns the recovery outcome (not a bare boolean) so the FN-7996 graph-failure router can
   distinguish "requeued for clean retry" (handled — stop failure processing) from
@@ -18682,6 +18374,64 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       taskId,
     );
   }
+
+  /*
+  FNXC:CodeOrganization 2026-08-03-15:20:
+  Thin facades over outer worktree create path (createWorktree loop, squash import,
+  post-create remote rebase, start-point resolution). U4 Slice B.
+  */
+  private async resolveWorktreeStartPoint(startPoint: string, taskId: string): Promise<string | null> {
+    return resolveWorktreeStartPointImpl(this.rootDir, this.store, startPoint, taskId);
+  }
+
+  private async squashImportDepIntoWorktree(
+    worktreePath: string,
+    taskId: string,
+    depTip: string,
+    label: string,
+  ): Promise<void> {
+    return squashImportDepIntoWorktreeImpl(this.store, worktreePath, taskId, depTip, label);
+  }
+
+  private async rebaseNewWorktreeOntoRemote(
+    worktreePath: string,
+    branch: string,
+    taskId: string,
+  ): Promise<void> {
+    return rebaseNewWorktreeOntoRemoteImpl(this.rootDir, this.store, worktreePath, branch, taskId);
+  }
+
+  private async createWorktree(
+    branch: string,
+    path: string,
+    taskId: string,
+    startPoint?: string,
+    allowSiblingBranchRename = false,
+  ): Promise<{ path: string; branch: string }> {
+    return createWorktreeImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        maxWorktreeRetries: this.MAX_WORKTREE_RETRIES,
+        worktreeRetryDelaysMs: this.WORKTREE_RETRY_DELAYS,
+        resolveWorktreeStartPoint: (sp, tid) => this.resolveWorktreeStartPoint(sp, tid),
+        planSquashImportFromDep: (tid, tip, orig) => this.planSquashImportFromDep(tid, tip, orig),
+        tryCreateWorktree: (
+          b, p, tid, start, attempt, recoveryDepth, allowSibling, settings,
+        ) => this.tryCreateWorktree(
+          b, p, tid, start, attempt, recoveryDepth, allowSibling ?? false, settings ?? {},
+        ),
+        squashImportDepIntoWorktree: (wp, tid, tip, label) => this.squashImportDepIntoWorktree(wp, tid, tip, label),
+        rebaseNewWorktreeOntoRemote: (wp, b, tid) => this.rebaseNewWorktreeOntoRemote(wp, b, tid),
+      },
+      branch,
+      path,
+      taskId,
+      startPoint,
+      allowSiblingBranchRename,
+    );
+  }
+
 
 
 
