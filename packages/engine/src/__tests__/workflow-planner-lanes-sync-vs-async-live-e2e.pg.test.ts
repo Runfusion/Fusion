@@ -59,7 +59,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
-import { resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "../replan-target.js";
+import { resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
 import { MERGED_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("planner lanes: the sync twin against the async twin, on a live store", () => {

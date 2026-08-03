@@ -62,7 +62,7 @@ const ALLOWED_CALL_SITES: ReadonlyMap<string, string> = new Map([
     "Task creation runs before any selection exists, so the default IR is the correct answer here.",
   ],
   [
-    "packages/engine/src/replan-target.ts",
+    "packages/engine/src/execution/replan-target.ts",
     "`resolvePlannerLanes`, a synchronous planner-lane read. FOUND BY THIS RATCHET, not by the grep "
       + "that seeded the list — it calls through an optional-property cast "
       + "(`(store as { resolveTaskWorkflowIrSync?: ... }).resolveTaskWorkflowIrSync?.(id)`), which no "
@@ -77,7 +77,7 @@ const ALLOWED_CALL_SITES: ReadonlyMap<string, string> = new Map([
 const EXCLUDED = [
   "packages/core/src/store.ts",
   "packages/core/src/task-store/workflow-definitions.ts",
-  "packages/core/src/workflow-ir-resolver.ts",
+  "packages/core/src/workflows/workflow-ir-resolver.ts",
 ];
 
 const REPO_ROOT = resolve(__dirname, "../../../..");

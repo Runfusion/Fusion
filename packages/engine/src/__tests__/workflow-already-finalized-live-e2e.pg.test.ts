@@ -40,7 +40,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { runAiMerge } from "../merger-ai.js";
+import { runAiMerge } from "../merge/merger-ai.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
 
 /** Never read on the path under test — the short-circuit precedes all git work. */

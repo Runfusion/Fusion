@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowWorkItem } from "@fusion/core";
 
-import { projectAdmissionCoordinator } from "../concurrency.js";
+import { projectAdmissionCoordinator } from "../concurrency/concurrency.js";
 import {
   admitPlanningContinuation,
   createPlanningContinuationDispatcher,

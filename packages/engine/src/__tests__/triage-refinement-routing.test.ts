@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
-import { projectAdmissionCoordinator } from "../concurrency.js";
+import { projectAdmissionCoordinator } from "../concurrency/concurrency.js";
 
 function withStoreEvents<T extends Record<string, unknown>>(store: T): T & { on: () => void; off: () => void } {
   return {

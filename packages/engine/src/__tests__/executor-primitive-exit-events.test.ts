@@ -21,7 +21,7 @@ import {
 } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
-import { createDefaultNodeHandlers } from "../workflow-node-handlers.js";
+import { createDefaultNodeHandlers } from "../workflows/workflow-node-handlers.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
 
 const TASK = { id: "FN-PRIM-EXIT", column: "in-progress", steps: [], paused: false } as unknown as TaskDetail;

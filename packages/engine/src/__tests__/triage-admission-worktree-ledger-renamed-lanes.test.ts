@@ -21,7 +21,7 @@ satisfied by an unrelated early return.
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
-import { projectAdmissionCoordinator } from "../concurrency.js";
+import { projectAdmissionCoordinator } from "../concurrency/concurrency.js";
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");

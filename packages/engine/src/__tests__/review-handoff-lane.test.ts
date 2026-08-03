@@ -19,7 +19,7 @@ REVERT PROOF, measured: restore `column: "in-review"` in the seam and the rename
 */
 import { describe, expect, it, vi } from "vitest";
 
-import { createDefaultNodeHandlers } from "../workflow-node-handlers.js";
+import { createDefaultNodeHandlers } from "../workflows/workflow-node-handlers.js";
 
 /** Minimal harness: only `transitionTask` is exercised, so the rest of the primitives stay absent. */
 function harness() {

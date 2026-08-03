@@ -32,7 +32,7 @@ import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
-import { WorktreeBaseRefreshError } from "../worktree-acquisition.js";
+import { WorktreeBaseRefreshError } from "../worktree/worktree-acquisition.js";
 import {
   createMockStore,
   mockedCreateFnAgent,

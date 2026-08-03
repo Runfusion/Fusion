@@ -26,7 +26,7 @@ Written against the literal implementation and observed FAILING first.
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
 
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "../execution/replan-target.js";
 
 function task(over: Partial<Task> = {}): Task {
   return {

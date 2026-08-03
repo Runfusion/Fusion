@@ -12,7 +12,7 @@ agent-native `fn_task_promote` tool (same two outcomes through the tool surface)
 */
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowIr } from "@fusion/core";
-import { promoteHeldTask, releaseHeldTaskByEvent } from "../hold-release.js";
+import { promoteHeldTask, releaseHeldTaskByEvent } from "../execution/hold-release.js";
 import { createTaskPromoteTool } from "../agent-tools.js";
 
 function workflow(): WorkflowIr {

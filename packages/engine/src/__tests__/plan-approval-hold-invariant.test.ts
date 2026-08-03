@@ -68,7 +68,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr, WorkflowWorkItem } from "@fusion/core";
 import { AWAITING_APPROVAL_PAUSE_REASON, PLAN_REVIEW_GROUP_ID } from "@fusion/core";
 
-import { runHoldReleaseSweep, resetHoldReleaseInstrumentation } from "../hold-release.js";
+import { runHoldReleaseSweep, resetHoldReleaseInstrumentation } from "../execution/hold-release.js";
 import {
   evaluateStrandedHoldContinuation,
   seedPreReleasePlanReviewContinuation,

@@ -28,7 +28,7 @@ REVERT PROOF, measured: restore the three literal comparisons and the renamed-bo
 */
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types.js";
-import { getTaskCompletionBlocker, getTaskMergeBlocker } from "../task-merge.js";
+import { getTaskCompletionBlocker, getTaskMergeBlocker } from "../merge/task-merge.js";
 
 /** A board whose review lane is `signoff`, complete is `shipped`, archived is `vault`. */
 const RENAMED = {

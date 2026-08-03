@@ -21,8 +21,8 @@ vi.mock("../merge-dependency-sync.js", async (importOriginal) => {
 });
 
 import { installWorktreeDependencies } from "../merge-dependency-sync.js";
-import { landOneRepo } from "../merger-ai.js";
-import { createRunAuditor, generateSyntheticRunId } from "../run-audit.js";
+import { landOneRepo } from "../merge/merger-ai.js";
+import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 
 // ---------------------------------------------------------------------------
 // Git helpers

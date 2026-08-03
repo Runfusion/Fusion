@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_OUTPUT_MAX_CHARS, buildToolOutputTruncationMarker } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { wrapCustomToolsForPluginRuntime } from "../agent-session-helpers.js";
+import { wrapCustomToolsForPluginRuntime } from "../agents/agent-session-helpers.js";
 import { wrapToolsWithOutputBudget } from "../pi.js";
 
 function toolWithResult(result: unknown, name = "fn_budget_test"): ToolDefinition {

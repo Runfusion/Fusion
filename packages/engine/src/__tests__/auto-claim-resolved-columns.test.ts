@@ -24,7 +24,7 @@ board degrades to today's behavior instead of silently emptying.
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { resolveFreshAutoClaimCandidates } from "../auto-claim-snapshot.js";
+import { resolveFreshAutoClaimCandidates } from "../scheduling/auto-claim-snapshot.js";
 
 const DEFAULT_NAMES = { hold: "todo", complete: "done" };
 const RENAMED = { hold: "drafting", complete: "shipped" };

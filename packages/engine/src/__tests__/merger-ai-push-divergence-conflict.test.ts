@@ -10,7 +10,7 @@ import { execFileSync, execSync } from "node:child_process";
 
 const createResolvedAgentSessionMock = vi.hoisted(() => vi.fn());
 vi.mock("../agent-session-helpers.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../agent-session-helpers.js")>();
+  const actual = await importOriginal<typeof import("../agents/agent-session-helpers.js")>();
   return {
     ...actual,
     createResolvedAgentSession: createResolvedAgentSessionMock,
@@ -26,7 +26,7 @@ vi.mock("../pi.js", async (importOriginal) => {
   };
 });
 
-import { pushAfterMergeToRemote, runAiMerge } from "../merger-ai.js";
+import { pushAfterMergeToRemote, runAiMerge } from "../merge/merger-ai.js";
 
 const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const;
 const tracked = new Set<string>();

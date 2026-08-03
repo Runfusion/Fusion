@@ -30,7 +30,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { persistedTopLevelAgentSlotsFromStore } from "../concurrency.js";
+import { persistedTopLevelAgentSlotsFromStore } from "../concurrency/concurrency.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live agent-count E2E: what the cap is actually compared against", () => {

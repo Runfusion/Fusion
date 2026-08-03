@@ -14,7 +14,7 @@ import type { Task, TaskDetail, WorkflowIr } from "@fusion/core";
 import "./executor-test-helpers.js";
 import { TaskExecutor } from "../executor.js";
 import { createMockStore, resetExecutorMocks } from "./executor-test-helpers.js";
-import { UsageLimitPauser } from "../usage-limit-detector.js";
+import { UsageLimitPauser } from "../errors/usage-limit-detector.js";
 
 const WF = "custom:planning-only";
 

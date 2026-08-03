@@ -51,7 +51,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
-import { runHoldReleaseSweep } from "../hold-release.js";
+import { runHoldReleaseSweep } from "../execution/hold-release.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 

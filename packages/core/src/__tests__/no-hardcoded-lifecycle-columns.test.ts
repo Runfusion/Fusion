@@ -399,7 +399,7 @@ cannot "finish the job" by removing them:
    bucketing arbitrary column NAMES for display. Resolving it to traits would change what the funnel
    shows and would drop the synonym coverage that makes it work on boards Fusion has never seen.
 
-2. `core/live-agent-count.ts` — the no-flags arm. Documented in that file and in earlier revisions of
+2. `core/agents/live-agent-count.ts` — the no-flags arm. Documented in that file and in earlier revisions of
    this one: it is REACHABLE (a remote store is deliberately given an empty flag map, and a card in a
    column its workflow no longer declares has no flags at all), and deleting the literal would make
    such a card match NO arm, so the footer's queued total would silently under-report a stranded card.
@@ -424,7 +424,7 @@ describe("the reachable floor: sites that must stay", () => {
   });
 
   it("keeps live-agent-count's no-flags arm", () => {
-    const liveAgentCount = readFileSync(join(REPO_ROOT, "packages/core/src/live-agent-count.ts"), "utf-8");
+    const liveAgentCount = readFileSync(join(REPO_ROOT, "packages/core/src/agents/live-agent-count.ts"), "utf-8");
     // Reachable via an empty remote flag map and via a card in an undeclared column; removing it
     // makes such a card match no arm at all and the queued total under-reports it.
     expect(liveAgentCount).toContain("columnIsIntakeOrHold");

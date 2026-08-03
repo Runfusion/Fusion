@@ -30,7 +30,7 @@ additive, not load-bearing, for a renamed workflow.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { runHoldReleaseSweep, resetHoldReleaseInstrumentation } from "../hold-release.js";
+import { runHoldReleaseSweep, resetHoldReleaseInstrumentation } from "../execution/hold-release.js";
 import { schedulerLog } from "../logger.js";
 
 const WF = "custom:wf";

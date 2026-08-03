@@ -1087,7 +1087,7 @@ import { generateWorktreeName } from "../worktree/worktree-names.js";
 import { execSync } from "node:child_process";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { createLogger } from "../logger.js";
-import { promptWithAutoRetry, resolveExecutorSessionModel } from "../agent-session-helpers.js";
+import { promptWithAutoRetry, resolveExecutorSessionModel } from "../agents/agent-session-helpers.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedResolveExecutorSessionModel = vi.mocked(resolveExecutorSessionModel);

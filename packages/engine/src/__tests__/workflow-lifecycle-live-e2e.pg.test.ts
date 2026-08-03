@@ -51,7 +51,7 @@ import {
 
 import { WorkflowGraphTaskRunner, type WorkflowColumnBoundaryHooks } from "../workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "../workflow-column-boundary-hooks.js";
-import { runHoldReleaseSweep } from "../hold-release.js";
+import { runHoldReleaseSweep } from "../execution/hold-release.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, MERGED_VOCAB, MERGED_RENAMED_VOCAB, HOLD_STALENESS_MS, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 import { seedPlannedSpec } from "./_planned-spec-fixture.js";
 import { SelfHealingManager } from "../self-healing.js";

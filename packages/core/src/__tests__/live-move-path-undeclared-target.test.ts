@@ -37,7 +37,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../__test-utils__/pg-test-harness.js";
-import { resolveWorkflowIrForTask } from "../workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask } from "../workflows/workflow-ir-resolver.js";
 import { workflowHasColumn } from "../workflow-transitions.js";
 
 pgDescribe("live move path — which targets it accepts after the Planning merge", () => {

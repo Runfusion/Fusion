@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR, type TaskDetail, type WorkflowIrNode } from "@fusion/core";
 
-import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflow-node-handlers.js";
-import type { WorkflowNodeExecutionContext } from "../workflow-graph-executor.js";
+import { createDefaultNodeHandlers, createNoopLegacySeams } from "../workflows/workflow-node-handlers.js";
+import type { WorkflowNodeExecutionContext } from "../workflows/workflow-graph-executor.js";
 
 /*
 FNXC:WorkflowOwnedMerge 2026-07-28-09:40:

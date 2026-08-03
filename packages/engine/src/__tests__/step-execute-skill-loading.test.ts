@@ -13,7 +13,7 @@ import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_SKILL_NAME_CONTEXT_KEY,
   type WorkflowLegacySeams,
-} from "../workflow-node-handlers.js";
+} from "../workflows/workflow-node-handlers.js";
 
 const task = { id: "FN-8490", title: "Skill seam", steps: [] } as any;
 const active = { foreachNodeId: "foreach", stepIndex: 0, instanceId: "foreach#0" };

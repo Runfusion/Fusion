@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "../replan-target.js";
+import { resolvePlannerLanes, resolvePlannerLanesForTaskAsync } from "../execution/replan-target.js";
 import type { TaskStore, WorkflowIr } from "@fusion/core";
 
 /*

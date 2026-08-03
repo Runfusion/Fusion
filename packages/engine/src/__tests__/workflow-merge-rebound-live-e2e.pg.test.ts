@@ -28,7 +28,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { resolveFinalizeReboundColumn } from "../merger-ai.js";
+import { resolveFinalizeReboundColumn } from "../merge/merger-ai.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live merge-rebound E2E: where the LIVE merge path puts a card back", () => {

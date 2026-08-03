@@ -31,7 +31,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { resolveLifecycleColumns } from "../../workflow-lifecycle-traits.js";
+import { resolveLifecycleColumns } from "../../workflows/workflow-lifecycle-traits.js";
 
 pgDescribe("resolveTaskWorkflowIrSync ignores a task's real workflow (PostgreSQL)", () => {
   const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
@@ -101,7 +101,7 @@ pgDescribe("resolveTaskWorkflowIrSync ignores a task's real workflow (PostgreSQL
     const task = await store.createTask({ title: "probe", description: "t", column: "todo" });
     await store.writeTaskWorkflowSelection(task.id, workflowId, []);
 
-    const { resolveTaskLifecycleColumns } = await import("../../workflow-lifecycle-traits.js");
+    const { resolveTaskLifecycleColumns } = await import("../../workflows/workflow-lifecycle-traits.js");
     const asyncLifecycle = await resolveTaskLifecycleColumns(store as never, task.id);
 
     expect(asyncLifecycle?.hold).toBe("drafting");

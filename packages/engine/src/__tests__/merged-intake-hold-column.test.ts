@@ -32,7 +32,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBootstrapPrompt } from "@fusion/core";
 
-import { runHoldReleaseSweep, resetHoldReleaseInstrumentation, isUnplannedForExecution } from "../hold-release.js";
+import { runHoldReleaseSweep, resetHoldReleaseInstrumentation, isUnplannedForExecution } from "../execution/hold-release.js";
 import { schedulerLog } from "../logger.js";
 
 const WF = "custom:wf";

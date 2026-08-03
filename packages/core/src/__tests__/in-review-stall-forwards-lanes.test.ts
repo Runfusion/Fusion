@@ -19,7 +19,7 @@ comment records for `moves.ts`, and #2963/#2964 fixed for the merge paths.
 */
 import { describe, expect, it } from "vitest";
 import { getInReviewStallReason } from "../in-review-stall.js";
-import { getTaskMergeBlocker } from "../task-merge.js";
+import { getTaskMergeBlocker } from "../merge/task-merge.js";
 import type { Task } from "../types.js";
 
 /** A healthy card sitting in a renamed review lane: nothing wrong with it. */

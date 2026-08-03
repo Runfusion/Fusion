@@ -24,7 +24,7 @@ Written against the literal implementation and observed FAILING first.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Agent, AgentHeartbeatRun, WorkflowIr } from "@fusion/core";
 import { HeartbeatMonitor } from "../agent-heartbeat.js";
-import * as worktreeAcquisition from "../worktree-acquisition.js";
+import * as worktreeAcquisition from "../worktree/worktree-acquisition.js";
 import * as piModule from "../pi.js";
 
 const WF = "custom:wf";

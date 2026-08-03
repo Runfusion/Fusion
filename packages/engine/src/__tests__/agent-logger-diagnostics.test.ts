@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentLogger } from "../agent-logger.js";
+import { AgentLogger } from "../agents/agent-logger.js";
 
 vi.mock("../logger.js", () => ({
   createLogger: () => ({ log: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),

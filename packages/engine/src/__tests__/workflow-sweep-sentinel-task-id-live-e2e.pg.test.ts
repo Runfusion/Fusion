@@ -46,7 +46,7 @@ import {
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
 import { TriageProcessor } from "../triage.js";
-import { resolvePlannerLanes } from "../replan-target.js";
+import { resolvePlannerLanes } from "../execution/replan-target.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("startup sweep lane vocabulary, resolved from a sentinel task id", () => {

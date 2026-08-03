@@ -16,7 +16,7 @@ These pin the three answers a caller needs to distinguish, and that the existing
 behaviour is untouched.
 */
 import { describe, expect, it, vi } from "vitest";
-import { resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance } from "../workflow-ir-resolver.js";
+import { resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance } from "../workflows/workflow-ir-resolver.js";
 
 const WF = "custom:wf";
 const customIr = {

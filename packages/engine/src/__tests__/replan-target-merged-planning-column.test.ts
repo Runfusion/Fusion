@@ -24,7 +24,7 @@ That asymmetry is the whole fix, and these tests pin both halves.
 */
 import { describe, expect, it } from "vitest";
 
-import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "../replan-target.js";
+import { hasAdvancedPastPlanning, isTaskStillInPlanningStage } from "../execution/replan-target.js";
 
 const ARRIVED = "2026-07-29T12:00:00.000Z";
 const BEFORE_ARRIVAL = "2026-07-29T11:00:00.000Z";

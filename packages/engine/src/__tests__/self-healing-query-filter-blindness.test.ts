@@ -80,14 +80,14 @@ vi.mock("../branch-conflicts.js", async (importOriginal) => {
 });
 
 vi.mock("../run-audit.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../run-audit.js")>();
+  const actual = await importOriginal<typeof import("../util/run-audit.js")>();
   return {
     ...actual,
     createRunAuditor: vi.fn(() => ({ database: vi.fn(async () => undefined), git: vi.fn(), filesystem: vi.fn(), sandbox: vi.fn() })),
   };
 });
 
-import { createRunAuditor } from "../run-audit.js";
+import { createRunAuditor } from "../util/run-audit.js";
 import { SelfHealingManager } from "../self-healing.js";
 import { executingTaskLock } from "../active-session-registry.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";

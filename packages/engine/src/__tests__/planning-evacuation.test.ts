@@ -16,7 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Task, TaskStore } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
-import { hasAdvancedPastPlanning } from "../replan-target.js";
+import { hasAdvancedPastPlanning } from "../execution/replan-target.js";
 import { SelfHealingManager } from "../self-healing.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

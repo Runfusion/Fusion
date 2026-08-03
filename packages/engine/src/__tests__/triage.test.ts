@@ -15,7 +15,7 @@ import {
   hasPreHeldExecutorSlot,
   projectAdmissionCoordinator,
   registerPreHeldExecutorSlot,
-} from "../concurrency.js";
+} from "../concurrency/concurrency.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile, rm, mkdtemp } from "node:fs/promises";

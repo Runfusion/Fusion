@@ -13,13 +13,13 @@ vi.mock("@fusion/core", async (importOriginal) => ({
   resolveWorkflowIrForTask: resolveWorkflowIrForTaskMock,
 }));
 vi.mock("../run-audit.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../run-audit.js")>()),
+  ...(await importOriginal<typeof import("../util/run-audit.js")>()),
   createRunAuditor: vi.fn(() => ({ database: recordRunAuditEventMock })),
 }));
 
 import { SelfHealingManager } from "../self-healing.js";
 import { InProcessRuntime } from "../runtimes/in-process-runtime.js";
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import { evaluateStrandedHoldContinuation } from "../plan-review-continuation.js";
 
 const workflow: WorkflowIr = {

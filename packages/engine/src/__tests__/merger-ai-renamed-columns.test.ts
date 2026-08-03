@@ -39,7 +39,7 @@ reported in the PR rather than papered over.
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { runAiMerge, resolveFinalizeReboundColumn } from "../merger-ai.js";
+import { runAiMerge, resolveFinalizeReboundColumn } from "../merge/merger-ai.js";
 
 const WF = "custom:wf";
 

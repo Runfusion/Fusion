@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveWorktreeCapacityLimit } from "../workflow-capacity.js";
+import { resolveWorktreeCapacityLimit } from "../workflows/workflow-capacity.js";
 import { DEFAULT_SETTINGS } from "../settings-schema.js";
 
 /*

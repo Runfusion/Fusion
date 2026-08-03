@@ -6,7 +6,7 @@ import {
   parseWorkflowIr,
   type WorkflowIr,
 } from "@fusion/core";
-import { resolveColumnResumeNode, WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { resolveColumnResumeNode, WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
 import type { WorkflowRuntimePrimitives } from "../runtime-primitives.js";
 import type { TaskDetail, TaskStep } from "@fusion/core";
 

@@ -5,7 +5,7 @@ import {
   takePreHeldExecutorSlot,
   dropPreHeldExecutorSlot,
   clearPreHeldExecutorSlotsForTests,
-} from "../concurrency.js";
+} from "../concurrency/concurrency.js";
 
 /*
 FNXC:CapacityModel 2026-07-29-17:10 (PR #2574 review — greptile P1):
