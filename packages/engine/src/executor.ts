@@ -98,7 +98,7 @@ import {
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./execution/verification-utils.js";
-import { canonicalFusionBranchName, canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
+import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -135,7 +135,6 @@ import {
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
 import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
-import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
 import {
   ActiveSessionPathHeldByForeignTaskError,
@@ -334,8 +333,6 @@ import {
 
 
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
-
-import { getNoCommitEligibilityReason } from "./executor/no-commit-eligibility.js";
 
 import { getResumeOrphanDelayMs } from "./executor/resume-orphan-delay.js";
 
@@ -541,7 +538,6 @@ export {
 } from "./executor/prompt-derived-eligibility.js";
 import {
   parseReviewLevelFromPrompt,
-  evaluatePromptDerivedNoCommitEligibility,
 } from "./executor/prompt-derived-eligibility.js";
 
 
@@ -613,6 +609,15 @@ export {
 } from "./executor/worktree-branch-conflict-handle.js";
 import { recoverMissingWorktreeSessionStartFailure as recoverMissingWorktreeSessionStartFailureImpl } from "./executor/worktree-missing-session-recovery.js";
 export { recoverMissingWorktreeSessionStartFailure as recoverMissingWorktreeSessionStartFailureFree } from "./executor/worktree-missing-session-recovery.js";
+import {
+  verifyWorktreeInvariants as verifyWorktreeInvariantsImpl,
+  emitWorktreeReanchoredAudit as emitWorktreeReanchoredAuditImpl,
+} from "./executor/worktree-verify-invariants.js";
+export {
+  verifyWorktreeInvariants as verifyWorktreeInvariantsFree,
+  emitWorktreeReanchoredAudit as emitWorktreeReanchoredAuditFree,
+} from "./executor/worktree-verify-invariants.js";
+
 
 
 
@@ -15202,357 +15207,39 @@ export class TaskExecutor {
     });
   }
 
+  /*
+  FNXC:CodeOrganization 2026-08-03-16:20:
+  Thin facades over peeled verifyWorktreeInvariants / emitWorktreeReanchoredAudit (U4 Slice B).
+  */
+  private worktreeInvariantDeps() {
+    return {
+      rootDir: this.rootDir,
+      store: this.store,
+      workspaceConfig: this.workspaceConfig,
+      getActiveWorktreePaths: (taskId: string) => this.getActiveWorktreePaths(taskId),
+      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      emitWorktreeReanchoredAudit: (
+        taskId: string,
+        fromPath: string,
+        toPath: string,
+        source: "verify-worktree-invariants" | "executor-liveness-gate",
+      ) => this.emitWorktreeReanchoredAudit(taskId, fromPath, toPath, source),
+    };
+  }
+
   private async verifyWorktreeInvariants(
     task: Task,
     worktreePathOverride?: string,
     allowReanchor = true,
     options?: { noOpCompletion?: boolean; noOpCompletionReason?: string },
   ): Promise<{ ok: true } | { ok: false; reason: "wrong_toplevel" | "wrong_branch" | "no_commits"; observed: string; expected: string; repo?: string }> {
-    const settings = await this.store.getSettings();
-    // FNXC:Workspace 2026-06-21-23:30: KTD2 — un-stubbed per-repo worktree-invariant verification.
-    // Phase A returned a flat {ok:true} stub here (no root worktree to verify against the non-git root). Phase B iterates every `task.workspaceWorktrees` entry, asserting (a) the sub-repo worktree's git toplevel matches the recorded repo.worktreePath and (b) its HEAD is on the recorded `fusion/<id>` branch (repo.branch). The result union is PRESERVED EXACTLY — `{ok:true} | {ok:false; reason:'wrong_toplevel'|'wrong_branch'|'no_commits'; observed; expected}` — because the :10889 consumer switches on `reason` to drive requeue/handoff (:10894-10936). We ADD an optional `repo` field to the failure shape (purely additive; the consumer only reads reason/observed/expected) and return the FIRST failing repo. A zero-acquire workspace task (empty map) verifies vacuously → {ok:true}, matching Phase A so fn_task_done does not requeue it.
-    if (this.workspaceConfig) {
-      const workspaceWorktrees = task.workspaceWorktrees ?? {};
-      // FNXC:Workspace 2026-06-22-00:00: KTD2 — resolve the SAME task-wide no-commit eligibility the singular path
-      // uses (getNoCommitEligibilityReason / no-op-completion sentinel / prompt-derived), once, before the per-repo
-      // loop. When eligible (Plan-Only, verified no-op, etc.) the per-repo no_commits guard below is skipped so an
-      // intentionally commit-free workspace task is not blocked from completion.
-      const workspacePromptContent = (task as Task & { prompt?: unknown }).prompt;
-      const workspacePromptEligibility = evaluatePromptDerivedNoCommitEligibility(
-        task,
-        typeof workspacePromptContent === "string" ? workspacePromptContent : "",
-      );
-      const workspaceNoCommitEligibilityReason =
-        getNoCommitEligibilityReason(task) ??
-        (options?.noOpCompletion
-          ? options.noOpCompletionReason ?? "verified no-op/duplicate completion sentinel"
-          : null) ??
-        (workspacePromptEligibility.eligible
-          ? workspacePromptEligibility.reason ?? "prompt-derived no-commit eligibility"
-          : null);
-      if (workspaceNoCommitEligibilityReason) {
-        executorLog.debug(`${task.id}: workspace fn_task_done no_commits guard skipped (${workspaceNoCommitEligibilityReason})`);
-      }
-      // FNXC:Workspace 2026-06-21-15:00: F6 — iterate sorted repo keys so the FIRST failing repo
-      // returned here is deterministic across runs/rehydrate (the value is surfaced to the operator).
-      for (const repoRel of Object.keys(workspaceWorktrees).sort()) {
-        const repo = workspaceWorktrees[repoRel];
-        const expectedBranch = repo.branch || canonicalFusionBranchName(task.id);
-        // Skip git checks if the worktree dir is gone (mirrors the singular FN-009 carve-out below): completion does not require a live worktree on disk.
-        if (!existsSync(repo.worktreePath)) {
-          executorLog.log(`${task.id}: workspace worktree for ${repoRel} not found at ${repo.worktreePath} — skipping git validation`);
-          continue;
-        }
-        let expectedWorktreeRealpath: string;
-        try {
-          expectedWorktreeRealpath = canonicalizePath(repo.worktreePath);
-        } catch (error) {
-          return {
-            ok: false,
-            reason: "wrong_toplevel",
-            repo: repoRel,
-            observed: `unresolvable repo worktree (${repo.worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
-            expected: `resolvable worktree for ${repoRel}`,
-          };
-        }
-        try {
-          const { stdout } = await execAsync("git rev-parse --show-toplevel", {
-            cwd: repo.worktreePath,
-            encoding: "utf-8",
-            timeout: 10_000,
-            maxBuffer: 1024 * 1024,
-          });
-          const observedTopLevelRaw = stdout.trim();
-          if (observedTopLevelRaw) {
-            const observedTopLevel = canonicalizePath(observedTopLevelRaw);
-            if (observedTopLevel !== expectedWorktreeRealpath) {
-              return {
-                ok: false,
-                reason: "wrong_toplevel",
-                repo: repoRel,
-                observed: observedTopLevel,
-                expected: expectedWorktreeRealpath,
-              };
-            }
-          }
-        } catch (error) {
-          return {
-            ok: false,
-            reason: "wrong_toplevel",
-            repo: repoRel,
-            observed: error instanceof Error ? error.message : String(error),
-            expected: expectedWorktreeRealpath,
-          };
-        }
-        try {
-          const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
-            cwd: repo.worktreePath,
-            encoding: "utf-8",
-            timeout: 10_000,
-            maxBuffer: 1024 * 1024,
-          });
-          const observedBranch = stdout.trim();
-          if (observedBranch && observedBranch !== expectedBranch) {
-            return {
-              ok: false,
-              reason: "wrong_branch",
-              repo: repoRel,
-              observed: observedBranch,
-              expected: expectedBranch,
-            };
-          }
-        } catch (error) {
-          return {
-            ok: false,
-            reason: "wrong_branch",
-            repo: repoRel,
-            observed: error instanceof Error ? error.message : String(error),
-            expected: expectedBranch,
-          };
-        }
-        // FNXC:Workspace 2026-06-22-00:00: KTD2 — per-repo no_commits guard (parity with the singular path at :10821).
-        // Phase B originally returned {ok:true} after the toplevel/branch checks, so a workspace task could call
-        // fn_task_done having committed NOTHING in any sub-repo (scope-leak sees zero touched files, branch names match)
-        // and still advance to in-review. Enforce the same `git rev-list --count <base>..HEAD > 0` invariant per repo,
-        // gated by the SAME task-wide no-commit eligibility below so Plan-Only / no-op-sentinel tasks stay exempt.
-        // The first sub-repo with zero commits fails with reason:'no_commits' (consumer-stable union).
-        if (!workspaceNoCommitEligibilityReason) {
-          const repoBaseRef = await resolveDiffBaseRef(repo.worktreePath, repo.baseCommitSha);
-          if (repoBaseRef) {
-            try {
-              const { stdout } = await execAsync(`git rev-list --count ${repoBaseRef}..HEAD`, {
-                cwd: repo.worktreePath,
-                encoding: "utf-8",
-                timeout: 10_000,
-                maxBuffer: 1024 * 1024,
-              });
-              const trimmedCount = stdout.trim();
-              if (trimmedCount) {
-                const count = Number.parseInt(trimmedCount, 10);
-                if (!Number.isFinite(count) || count <= 0) {
-                  return {
-                    ok: false,
-                    reason: "no_commits",
-                    repo: repoRel,
-                    observed: Number.isFinite(count) ? String(count) : trimmedCount,
-                    expected: "> 0",
-                  };
-                }
-              }
-            } catch (error) {
-              return {
-                ok: false,
-                reason: "no_commits",
-                repo: repoRel,
-                observed: error instanceof Error ? error.message : String(error),
-                expected: `git rev-list --count ${repoBaseRef}..HEAD > 0`,
-              };
-            }
-          } else {
-            executorLog.warn(`${task.id}: unable to resolve diff base for ${repoRel} no_commits guard; skipping for this sub-repo`);
-          }
-        }
-      }
-      return { ok: true };
-    }
-    const branchName = resolveTaskWorkingBranch(task);
-    // Non-workspace tasks hold a one-element set; fall back to its sole member to preserve the original singular resolution.
-    const worktreePath = worktreePathOverride ?? task.worktree ?? this.getActiveWorktreePaths(task.id)[0] ?? null;
-
-    if (!worktreePath) {
-      return {
-        ok: false,
-        reason: "wrong_toplevel",
-        observed: "missing task.worktree",
-        expected: `registered task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
-      };
-    }
-
-    const expectedRoot = canonicalizePath(this.rootDir);
-    let expectedWorktreeRealpath: string;
-    try {
-      expectedWorktreeRealpath = canonicalizePath(worktreePath);
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "wrong_toplevel",
-        observed: `unresolvable task.worktree (${worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
-        expected: `resolvable task worktree under ${resolveWorktreesDir(this.rootDir, settings)}/*`,
-      };
-    }
-
-    // FN-009: If worktree directory doesn't exist, skip git validation for task completion.
-    // This is safe because:
-    // 1. Task completion doesn't modify the worktree
-    // FNXC:PostgresRuntimeStorage 2026-07-14-18:47: Deliverables (task documents and follow-up tasks) are stored in the project-scoped PostgreSQL store.
-    // 3. If code changes were made, the worktree would exist
-    // 4. This prevents ENOENT errors when agents complete documentation/coordination tasks
-    if (!existsSync(worktreePath)) {
-      executorLog.log(
-        `${task.id}: worktree directory not found at ${worktreePath} — skipping git validation for task completion`,
-      );
-      return { ok: true };
-    }
-
-    try {
-      const { stdout } = await execAsync("git rev-parse --show-toplevel", {
-        cwd: worktreePath,
-        encoding: "utf-8",
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const observedTopLevelRaw = stdout.trim();
-      if (observedTopLevelRaw) {
-        const observedTopLevel = canonicalizePath(observedTopLevelRaw);
-
-        if (
-          observedTopLevel === expectedRoot ||
-          !isInsideWorktreesDir(this.rootDir, observedTopLevel, settings) ||
-          observedTopLevel !== expectedWorktreeRealpath
-        ) {
-          if (allowReanchor && observedTopLevel !== expectedRoot && isInsideWorktreesDir(this.rootDir, observedTopLevel, settings)) {
-            const reanchor = await detectNestedWorktreeRoot(this.rootDir, worktreePath, settings);
-            if (reanchor.reanchored) {
-              await this.store.updateTask(task.id, { worktree: reanchor.root });
-              executorLog.log(`${task.id}: re-anchored nested task.worktree ${worktreePath} -> ${reanchor.root}`);
-              await this.store.logEntry(task.id, `Re-anchored nested task.worktree from ${worktreePath} to ${reanchor.root}`, undefined, this.getRunContextFor(task.id));
-              await this.emitWorktreeReanchoredAudit(task.id, worktreePath, reanchor.root, "verify-worktree-invariants");
-              return this.verifyWorktreeInvariants(task, reanchor.root, false, options);
-            }
-          }
-          return {
-            ok: false,
-            reason: "wrong_toplevel",
-            observed: observedTopLevel,
-            expected: expectedWorktreeRealpath,
-          };
-        }
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "wrong_toplevel",
-        observed: error instanceof Error ? error.message : String(error),
-        expected: expectedWorktreeRealpath,
-      };
-    }
-
-    try {
-      const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
-        cwd: worktreePath,
-        encoding: "utf-8",
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const observedBranch = stdout.trim();
-      if (observedBranch && observedBranch !== branchName) {
-        if (observedBranch.toLowerCase() === branchName.toLowerCase()) {
-          executorLog.log(`${task.id}: branch case-mismatch detected; canonicalizing observed=${observedBranch} expected=${branchName}`);
-          const autocorrectResult = await attemptBranchAutocorrect({
-            worktreePath,
-            observedBranch,
-            expectedBranch: branchName,
-            rootDir: this.rootDir,
-          });
-          if (autocorrectResult.status !== "failed") {
-            const auditor = createRunAuditor(this.store, this.getRunContextFor(task.id));
-            await auditor.git({
-              type: "branch:auto-canonicalize-case",
-              target: worktreePath,
-              metadata: {
-                taskId: task.id,
-                observed: observedBranch,
-                expected: branchName,
-                worktreePath,
-                mode: autocorrectResult.status,
-              },
-            });
-            return { ok: true };
-          }
-          executorLog.warn(`${task.id}: failed to canonicalize branch case mismatch: ${autocorrectResult.reason ?? "unknown"}`);
-        }
-        return {
-          ok: false,
-          reason: "wrong_branch",
-          observed: observedBranch,
-          expected: branchName,
-        };
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "wrong_branch",
-        observed: error instanceof Error ? error.message : String(error),
-        expected: branchName,
-      };
-    }
-
-    const promptContent = (task as Task & { prompt?: unknown }).prompt;
-    const promptDerivedEligibility = evaluatePromptDerivedNoCommitEligibility(
+    return verifyWorktreeInvariantsImpl(
+      this.worktreeInvariantDeps(),
       task,
-      typeof promptContent === "string" ? promptContent : "",
+      worktreePathOverride,
+      allowReanchor,
+      options,
     );
-    const noCommitEligibilityReason =
-      getNoCommitEligibilityReason(task) ??
-      (options?.noOpCompletion
-        ? options.noOpCompletionReason ?? "verified no-op/duplicate completion sentinel"
-        : null) ??
-      (promptDerivedEligibility.eligible
-        ? promptDerivedEligibility.reason ?? "prompt-derived no-commit eligibility"
-        : null);
-    if (noCommitEligibilityReason) {
-      executorLog.debug(`${task.id}: fn_task_done no_commits guard skipped (${noCommitEligibilityReason})`);
-      try {
-        await this.store.logEntry(
-          task.id,
-          `fn_task_done no_commits guard skipped (${noCommitEligibilityReason})`,
-          undefined,
-          this.getRunContextFor(task.id),
-        );
-      } catch (error) {
-        executorLog.warn(
-          `${task.id}: failed to write no_commits guard skip audit log: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      return { ok: true };
-    }
-
-    const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
-    if (!baseRef) {
-      executorLog.warn(`${task.id}: unable to resolve diff base for invariant commit-count check; skipping no_commits guard`);
-      return { ok: true };
-    }
-
-    try {
-      const { stdout } = await execAsync(`git rev-list --count ${baseRef}..HEAD`, {
-        cwd: worktreePath,
-        encoding: "utf-8",
-        timeout: 10_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const trimmedCount = stdout.trim();
-      if (!trimmedCount) {
-        return { ok: true };
-      }
-      const count = Number.parseInt(trimmedCount, 10);
-      if (!Number.isFinite(count) || count <= 0) {
-        return {
-          ok: false,
-          reason: "no_commits",
-          observed: Number.isFinite(count) ? String(count) : stdout.trim(),
-          expected: "> 0",
-        };
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        reason: "no_commits",
-        observed: error instanceof Error ? error.message : String(error),
-        expected: `git rev-list --count ${baseRef}..HEAD > 0`,
-      };
-    }
-
-    return { ok: true };
   }
 
   private async evaluateTaskDoneScopeLeak(
@@ -17966,27 +17653,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     toPath: string,
     source: "verify-worktree-invariants" | "executor-liveness-gate",
   ): Promise<void> {
-    const runContext = this.getRunContextFor(taskId);
-    if (!runContext?.runId || !runContext.agentId) return;
-    const auditor = createRunAuditor(this.store, {
-      runId: runContext.runId,
-      agentId: runContext.agentId,
-      taskId,
-      phase: "execute",
-    });
-    await auditor.git({
-      type: "worktree:reanchored",
-      target: toPath,
-      metadata: {
-        taskId,
-        fromPath,
-        toPath,
-        source,
+    return emitWorktreeReanchoredAuditImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id: string) => this.getRunContextFor(id),
       },
-    });
+      taskId,
+      fromPath,
+      toPath,
+      source,
+    );
   }
-
-
 
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
     const holders: Array<{ taskId: string; worktreePath: string }> = [];
