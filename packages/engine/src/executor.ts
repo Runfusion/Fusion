@@ -664,6 +664,9 @@ import { runExecutorDeterministicVerification as runExecutorDeterministicVerific
 export { runExecutorDeterministicVerification as runExecutorDeterministicVerificationFree } from "./executor/deterministic-verification.js";
 import { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsImpl } from "./executor/workflow-step-failure-injection.js";
 export { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsFree } from "./executor/workflow-step-failure-injection.js";
+import { sendTaskBackForFix as sendTaskBackForFixImpl } from "./executor/send-task-back-for-fix.js";
+export { sendTaskBackForFix as sendTaskBackForFixFree } from "./executor/send-task-back-for-fix.js";
+
 
 
 
@@ -15831,73 +15834,26 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
     mergeVerificationFailure: boolean = false,
     retryPresentation?: { attempt: number; max?: number },
   ): Promise<void> {
-    const taskId = task.id;
-    this.clearCompletedTaskWatchdog(taskId);
-
-    // 1. Add a task comment explaining the failure
-    await this.store.addTaskComment(
-      taskId,
-      `${reason}. The failing workflow step was "${stepName}". ` +
-      `Feedback:\n${failureFeedback}\n\n` +
-      `Please fix the issues so the verification can pass on the next attempt.`,
-      "agent",
-    );
-
-    // 2. Log an entry explaining the task was sent back
-    await this.store.logEntry(
-      taskId,
-      `${reason} — moved back to in-progress for remediation`,
-    );
-
-    /*
-     * FNXC:CodeReviewRetryBudget 2026-07-22-00:00:
-     * A graph-owned Code Review REVISE is not a workflow-step hard-failure retry.
-     * Preserve its resolved per-step budget in PROMPT.md: unset Code Review policy
-     * is unlimited, while an explicit finite value (including zero at the gate)
-     * remains operator-visible. The execute requeue progress-signature guard, not
-     * this display, remains the safety boundary for unchanged remediation loops.
-     */
-    await this.injectWorkflowStepFailureInstructions(
+    return sendTaskBackForFixImpl(
+      {
+        store: this.store,
+        clearCompletedTaskWatchdog: (taskId: string) => this.clearCompletedTaskWatchdog(taskId),
+        injectWorkflowStepFailureInstructions: (t, fb, sn, r) => this.injectWorkflowStepFailureInstructions(t, fb, sn, r),
+        reopenLastStepForRevision: (taskId, t) => this.reopenLastStepForRevision(taskId, t),
+        scheduleWorkflowRerun: (taskId, wp, msg, preserve) => this.scheduleWorkflowRerun(taskId, wp, msg, preserve),
+        maxWorkflowStepRetries: MAX_WORKFLOW_STEP_RETRIES,
+      },
       task,
+      worktreePath,
       failureFeedback,
       stepName,
-      retryPresentation ?? { attempt: MAX_WORKFLOW_STEP_RETRIES, max: MAX_WORKFLOW_STEP_RETRIES },
-    );
-
-    // 4. Re-open only the last step for a single in-place fix pass. Earlier
-    // done steps stay done so the executor doesn't redo finished work.
-    const updatedTask = await this.store.getTask(taskId);
-    await this.reopenLastStepForRevision(taskId, updatedTask);
-
-    // 5. Clear error/status/session fields and reset workflow step retries.
-    //    FNXC:ReviewLeniency 2026-07-02-02:10: prior terminal failure results
-    //    (incl. optional gate nodes like code-review) are cleared by the rerun
-    //    bounce AFTER the task leaves the mergeable in-review column (see
-    //    clearTerminalStepFailuresForRetry), NOT here — clearing them while the
-    //    task is still in-review would drop the merge blocker during the async
-    //    bounce window and let a concurrent auto-merge sweep merge an
-    //    empty-`steps` graph-native task with the gate failure unaddressed.
-    await this.store.updateTask(taskId, {
-      status: mergeVerificationFailure ? "merging-fix" : null,
-      error: null,
-      sessionFile: null,
-      workflowStepRetries: 0,
-    });
-
-    // 6. Schedule the move after the guard unwinds (per guard-unwind requirement)
-    this.scheduleWorkflowRerun(
-      taskId,
-      worktreePath,
-      `${taskId}: sent back to in-progress for remediation`,
+      reason,
       preserveResumeState,
+      mergeVerificationFailure,
+      retryPresentation,
     );
   }
 
-  /**
-   * Inject or update the "Workflow Step Failure" section in PROMPT.md.
-   * This section contains failure feedback from workflow steps that hard-failed.
-   * The section is replaced entirely to avoid accumulation of old feedback.
-   */
   private async injectWorkflowStepFailureInstructions(
     task: Task,
     failureFeedback: string,
