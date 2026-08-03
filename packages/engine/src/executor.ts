@@ -413,6 +413,27 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
 import { detectPendingReviewBlock } from "./executor/pending-review-block.js";
 import { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
+import {
+  isTaskWorkComplete,
+  isNoProgressNoTaskDoneFailure,
+  createSeenSteeringIds,
+  createConfiguredCommandAbortError,
+  graphActiveContextKey,
+  isRetryableMergePauseAbortStatus,
+  isTerminalMergeGraphFailureValue,
+  isAwaitingGraphFailureValue,
+} from "./executor/task-predicates.js";
+export {
+  isTaskWorkComplete,
+  isNoProgressNoTaskDoneFailure,
+  createSeenSteeringIds,
+  createConfiguredCommandAbortError,
+  graphActiveContextKey,
+  isRetryableMergePauseAbortStatus,
+  isTerminalMergeGraphFailureValue,
+  isAwaitingGraphFailureValue,
+} from "./executor/task-predicates.js";
+
 export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 export type { WorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 
@@ -1174,14 +1195,6 @@ export class TaskExecutor {
     }
   }
 
-  private createSeenSteeringIds(task: { comments?: Array<{ id: string }>; steeringComments?: Array<{ id: string }> }): Set<string> {
-    const seenSteeringIds = new Set<string>();
-    for (const comment of task.steeringComments ?? task.comments ?? []) {
-      seenSteeringIds.add(comment.id);
-    }
-    return seenSteeringIds;
-  }
-
   private registerConfiguredCommandController(taskId: string, controller: AbortController): void {
     const controllers = this.activeConfiguredCommandControllers.get(taskId) ?? new Set<AbortController>();
     controllers.add(controller);
@@ -1195,12 +1208,6 @@ export class TaskExecutor {
     if (controllers.size === 0) {
       this.activeConfiguredCommandControllers.delete(taskId);
     }
-  }
-
-  private createConfiguredCommandAbortError(taskId: string, command: string): Error {
-    const error = new Error(`Configured command aborted for ${taskId}: ${command}`);
-    error.name = "AbortError";
-    return error;
   }
 
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
@@ -2310,7 +2317,7 @@ export class TaskExecutor {
       }
 
       this.approvalSuspended.delete(task.id);
-      if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
+      if (isTaskWorkComplete(task) && !task.mergeDetails) {
         /*
         FNXC:ExecutorResume 2026-07-21-23:06:
         recoverCompletedTask refuses when resumingUnpaused still holds the id.
@@ -2987,7 +2994,7 @@ export class TaskExecutor {
             Task-detail chat comments must reach the running LLM thread immediately across legacy, step-session, and workflow-step surfaces. Step-session runs can be between per-step AgentSessions when a comment arrives, so keep the executor's task snapshot current and treat zero-session fan-out as a next-prompt fallback while preserving seenSteeringIds exactly-once delivery.
             */
             stepExecutor.updateSteeringComments?.(task.steeringComments);
-            const seenSteeringIds = this.activeStepExecutorSeenSteeringIds.get(task.id) ?? this.createSeenSteeringIds(task);
+            const seenSteeringIds = this.activeStepExecutorSeenSteeringIds.get(task.id) ?? createSeenSteeringIds(task);
             this.activeStepExecutorSeenSteeringIds.set(task.id, seenSteeringIds);
             injectionTargets.push({
               kind: "step-session",
@@ -3005,7 +3012,7 @@ export class TaskExecutor {
 
           const workflowSession = this.activeWorkflowStepSessions.get(task.id);
           if (workflowSession) {
-            const seenSteeringIds = this.activeWorkflowStepSessionSeenSteeringIds.get(task.id) ?? this.createSeenSteeringIds(task);
+            const seenSteeringIds = this.activeWorkflowStepSessionSeenSteeringIds.get(task.id) ?? createSeenSteeringIds(task);
             this.activeWorkflowStepSessionSeenSteeringIds.set(task.id, seenSteeringIds);
             injectionTargets.push({
               kind: "workflow-step",
@@ -3179,16 +3186,6 @@ export class TaskExecutor {
 
   }
 
-  /**
-   * Check whether a task's work is complete — all steps are done or skipped.
-   * Used to detect tasks that called fn_task_done() but never transitioned to in-review
-   * (e.g., killed by stuck detector after fn_task_done but before moveTask).
-   */
-  private isTaskWorkComplete(task: Task): boolean {
-    if (task.steps.length === 0) return false;
-    return task.steps.every((s) => s.status === "done" || s.status === "skipped");
-  }
-
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): Promise<Task> {
     /*
     FNXC:WorkflowResolvedColumns 2026-07-30-16:40 (executor):
@@ -3254,7 +3251,7 @@ export class TaskExecutor {
     const refreshedTask = await this.store.getTask(task.id);
     const steps = refreshedTask.steps ?? [];
     if (steps.length > 0) {
-      const allStepsComplete = this.isTaskWorkComplete(refreshedTask);
+      const allStepsComplete = isTaskWorkComplete(refreshedTask);
       if (allStepsComplete) {
         await this.reopenLastStepForRevision(task.id, refreshedTask);
       } else {
@@ -3285,12 +3282,6 @@ export class TaskExecutor {
 
     await this.store.logEntry(task.id, logMessage, undefined, this.getRunContextFor(task.id));
     return this.store.getTask(task.id);
-  }
-
-  private isNoProgressNoTaskDoneFailure(task: Task): boolean {
-    return task.status === "failed" &&
-      task.error?.includes("without calling fn_task_done") === true &&
-      task.steps.every((step) => step.status === "pending");
   }
 
   private async clearResumeFailureState(task: Task): Promise<void> {
@@ -3407,7 +3398,7 @@ export class TaskExecutor {
           || currentTask.column !== (await this.resolveResumeLanes(taskId)).wip) {
           return;
         }
-        if (!this.isTaskWorkComplete(currentTask)) {
+        if (!isTaskWorkComplete(currentTask)) {
           return;
         }
 
@@ -3658,7 +3649,7 @@ export class TaskExecutor {
     this.workflowRerunWatchdogs.set(taskId, watchdog);
   }
 
-  private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = this.isTaskWorkComplete(task)): Promise<boolean> {
+  private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = isTaskWorkComplete(task)): Promise<boolean> {
     if (task.paused === true || task.userPaused === true) return false;
     /*
     FNXC:WorkflowLifecycleColumns 2026-07-29-13:10:
@@ -3751,7 +3742,7 @@ export class TaskExecutor {
     is never blocked.
     */
     const workComplete = taskDone
-      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
+      || (isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
     if (completionBlocker) {
       executorLog.log(`${taskId} completion blocked — ${completionBlocker}`);
       if (workComplete && await this.parkCompletedBlockedTask(task, completionBlocker, "finalization", workComplete)) {
@@ -3779,7 +3770,7 @@ export class TaskExecutor {
     // column are honest completion signals and stay unaffected.
     return taskDone
       || task.column === reviewLane
-      || (this.isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
+      || (isTaskWorkComplete(task) && !evaluateSkipBypassTaint(task).blocked);
   }
 
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> {
@@ -4141,7 +4132,7 @@ export class TaskExecutor {
       if (
         liveForCompletenessCheck
         && (liveForCompletenessCheck.steps?.length ?? 0) > 0
-        && !this.isTaskWorkComplete(liveForCompletenessCheck)
+        && !isTaskWorkComplete(liveForCompletenessCheck)
       ) {
         executorLog.debug(`${task.id}: skipping recoverCompletedTask — task has incomplete steps awaiting executor remediation`);
         return false;
@@ -5054,7 +5045,7 @@ export class TaskExecutor {
       yieldNext = true;
       // Fast-path: if the task already completed its work (all steps done),
       // move it directly to in-review instead of re-executing from scratch.
-      if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
+      if (isTaskWorkComplete(task) && !task.mergeDetails) {
         if (this.recoveringCompleted.has(task.id)) {
           executorLog.debug(`${task.id} completed-task recovery already running - skipping duplicate startup recovery`);
           continue;
@@ -5077,7 +5068,7 @@ export class TaskExecutor {
         continue;
       }
 
-      if (this.isNoProgressNoTaskDoneFailure(task)) {
+      if (isNoProgressNoTaskDoneFailure(task)) {
         executorLog.log(`${task.id} failed without fn_task_done and has no step progress — leaving for self-healing requeue`);
         continue;
       }
@@ -5210,11 +5201,6 @@ export class TaskExecutor {
    * was rolled back, so it must not reach the task chat before resetStepToBaseline completes.
    */
   private graphRethinkNarrations = new Map<string, string>();
-
-  /** Composite key for graph-owned per-instance state: never share parallel foreach instances. */
-  private graphActiveContextKey(taskId: string, instanceId: string): string {
-    return `${taskId}:${instanceId}`;
-  }
 
   /** Column-agent seam wiring (column-agent plan U4, R2/R3/R4). Per-run binding
    *  resolver keyed by task id: maps a governing node id to its column-agent
@@ -6350,7 +6336,7 @@ export class TaskExecutor {
       }
     }
     const liveSteps = await this.store.getTask(taskId).then((t) => t.steps).catch(() => []);
-    const narrationKey = this.graphActiveContextKey(taskId, active.instanceId);
+    const narrationKey = graphActiveContextKey(taskId, active.instanceId);
     const reviewSummary = this.graphRethinkNarrations.get(narrationKey);
     try {
       await resetStepToBaseline(
@@ -6596,7 +6582,7 @@ export class TaskExecutor {
    *  step-execute seam stamps. Returns undefined outside a foreach instance. */
   private foreachActiveForTask(taskId: string, instanceId?: string): ForeachActiveContext | undefined {
     if (typeof instanceId === "string") {
-      const byInstance = this.graphStepActiveContext.get(this.graphActiveContextKey(taskId, instanceId));
+      const byInstance = this.graphStepActiveContext.get(graphActiveContextKey(taskId, instanceId));
       if (byInstance) return byInstance;
     }
     // Fallback (single-instance / no instanceId threaded): return the sole slot
@@ -6807,7 +6793,7 @@ export class TaskExecutor {
             data: { status: liveStatus },
           };
         }
-        this.graphStepActiveContext.set(this.graphActiveContextKey(task.id, active.instanceId), active);
+        this.graphStepActiveContext.set(graphActiveContextKey(task.id, active.instanceId), active);
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
         const seamSkillName = context[SEAM_SKILL_NAME_CONTEXT_KEY];
         return await this.runProjectedGraphTaskStep(
@@ -7500,7 +7486,7 @@ export class TaskExecutor {
         // machinery installs applies to either worktree unchanged (not bypassed).
         // Stamp the active instance so `runGraphTaskStep` can honor
         // `deferDoneToReview` when judging a non-terminal step (FIX 3).
-        this.graphStepActiveContext.set(this.graphActiveContextKey(seamTask.id, active.instanceId), active);
+        this.graphStepActiveContext.set(graphActiveContextKey(seamTask.id, active.instanceId), active);
         // Column-agent seam wiring (U4, R4): the governing node id — the foreach
         // INSTANCE node id (`<foreachId>#<i>:<templateNodeId>`) stamped into
         // context by createPromptLikeHandler — threads INTO runGraphTaskStep,
@@ -7676,7 +7662,7 @@ export class TaskExecutor {
             : buildReviewVerdictMessage(review.verdict, review.summary);
         if (review.verdict === "RETHINK") {
           // RETHINK's rollback claim is emitted by applyGraphRethinkReset only after reset succeeds.
-          this.graphRethinkNarrations.set(this.graphActiveContextKey(seamTask.id, active.instanceId), review.summary);
+          this.graphRethinkNarrations.set(graphActiveContextKey(seamTask.id, active.instanceId), review.summary);
         } else {
           void emitProactiveStatus(this.store, seamTask.id, narration, "reviewer", narration ? sanitizeFailureReason(review.summary) : undefined);
         }
@@ -7845,7 +7831,7 @@ export class TaskExecutor {
         }),
         abort.signal,
       );
-      if (abort.signal.aborted) throw this.createConfiguredCommandAbortError(task.id, command);
+      if (abort.signal.aborted) throw createConfiguredCommandAbortError(task.id, command);
       if (result.spawnError || result.timedOut || result.exitCode !== 0) {
         return { success: false, error: configuredCommandErrorMessage(result) };
       }
@@ -8151,7 +8137,7 @@ export class TaskExecutor {
             commandAbortController.signal,
           ).then((result) => {
             if (commandAbortController.signal.aborted) {
-              throw this.createConfiguredCommandAbortError(task.id, command);
+              throw createConfiguredCommandAbortError(task.id, command);
             }
             return result;
           }),
@@ -9209,10 +9195,6 @@ export class TaskExecutor {
     return typeof containerValue === "string" ? containerValue : undefined;
   }
 
-  private isAwaitingGraphFailureValue(value: string | undefined): value is "awaiting-user-input" | "awaiting-cli-approval" {
-    return value === "awaiting-user-input" || value === "awaiting-cli-approval";
-  }
-
   /*
   FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
   FN-7996: a session-start unusable-worktree refusal (assertValidWorktreeSession in pi.ts)
@@ -9365,17 +9347,6 @@ export class TaskExecutor {
     return failedNode === "code-review-remediation" || failedNode === "browser-verification-remediation";
   }
 
-  private isTerminalMergeGraphFailureValue(value: string | undefined): boolean {
-    if (!value) return false;
-    const normalized = value.toLowerCase();
-    return normalized.includes("conflict")
-      || normalized.includes("contamination")
-      || normalized.includes("foreign")
-      || normalized.includes("retry-exhausted")
-      || normalized.includes("retries exhausted")
-      || normalized.includes("max retries");
-  }
-
   private latestFailedPreMergeWorkflowStep(task: Pick<Task, "workflowStepResults">): CoreWorkflowStepResult | undefined {
     return (task.workflowStepResults ?? [])
       .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
@@ -9464,14 +9435,6 @@ export class TaskExecutor {
     return true;
   }
 
-  private isRetryableMergePauseAbortStatus(status: string | null | undefined): boolean {
-    /*
-    FNXC:WorkflowMerge 2026-07-01-22:05:
-    FN-7335 surfaced a merge-node pause/resume abort while the row was legitimately `in-review` with status="reviewing" from the AI merge reviewer. That status is merge activity, not a pre-existing terminal failure; keep the retry classifier strict on real errors while allowing transient merge/review statuses to re-enter bounded merge retry.
-    */
-    return status == null || status === "reviewing" || status === "merging" || status === "merging-pr";
-  }
-
   private async isRetryableBenignMergePauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
@@ -9496,10 +9459,10 @@ export class TaskExecutor {
     stale-replay handlers, this retryable merge abort). The literal made the recovery inert, silently.
     */
     if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review
-      || !this.isRetryableMergePauseAbortStatus(live.status) || live.error != null) return false;
+      || !isRetryableMergePauseAbortStatus(live.status) || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
     const failureValue = this.graphFailureValue(result);
-    if (this.isTerminalMergeGraphFailureValue(failureValue)) return false;
+    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 / Runfusion#1991 — missing implementation proof is not a transient merge pause. Let the implementation-incomplete classifier fail closed or requeue resumable parsed steps before any requester can mint a no-branch no-op merge proof. */
     if (failureValue === "implementation-incomplete") return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
@@ -9567,7 +9530,7 @@ export class TaskExecutor {
     if (live.userPaused === true) return false;
     if (live.status != null || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (this.isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (this.isMergeGraphFailure(failedNode)) return false;
     if (live.steps.length === 0) return false;
@@ -9601,7 +9564,7 @@ export class TaskExecutor {
     if (live.paused || live.userPaused === true) return false;
     if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (this.isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (!this.isMergeGraphFailure(failedNode)) return false;
     const cleanRow = live.status == null && live.error == null;
@@ -9647,7 +9610,7 @@ export class TaskExecutor {
       ? result.context[`node:${failedNode}:value`] as string
       : this.graphFailureValue(result);
     if (failureValue !== "aborted") return false;
-    if (this.isTerminalMergeGraphFailureValue(failureValue)) return false;
+    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     const cleanRow = live.status == null && live.error == null;
     const staleParkedFailure = this.isStalePauseAbortParkFailure(live, "plan");
     if (!cleanRow && !staleParkedFailure) return false;
@@ -9728,7 +9691,7 @@ export class TaskExecutor {
       ? result.context[`node:${failedNode}:value`] as string
       : this.graphFailureValue(result);
     if (failureValue !== "aborted") return false;
-    if (this.isTerminalMergeGraphFailureValue(failureValue)) return false;
+    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     const cleanRow = live.status == null && live.error == null;
     const staleParkedFailure = this.isStalePauseAbortParkFailure(live, "parse");
     if (!cleanRow && !staleParkedFailure) return false;
@@ -9844,7 +9807,7 @@ export class TaskExecutor {
     if (!result.interruptedNodeId) return false;
     if (live.column === resumeLanes.review && result.interruptedNodeId === "plan") return false;
     if (this.isMergeGraphFailure(result.interruptedNodeId)) return false;
-    if (this.isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
     if ((live.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
     let settings: Settings | undefined;
     if (abortProvenance === "global-pause" || live.column === resumeLanes.review) {
@@ -10903,10 +10866,10 @@ export class TaskExecutor {
           return;
         }
       }
-      if (mergeGraphFailure && !this.isTerminalMergeGraphFailureValue(failureValue) && await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
+      if (mergeGraphFailure && !isTerminalMergeGraphFailureValue(failureValue) && await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
         return;
       }
-      if (mergeGraphFailure && this.isTerminalMergeGraphFailureValue(failureValue) && !(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) {
+      if (mergeGraphFailure && isTerminalMergeGraphFailureValue(failureValue) && !(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) {
         const message = `Workflow graph terminal merge failure at node '${failedNode ?? "unknown"}' (${failureValue}) — operator action required`;
         executorLog.warn(`${task.id}: ${message}`);
         await this.store.logEntry(task.id, message, undefined, this.getRunContextFor(task.id));
@@ -10938,7 +10901,7 @@ export class TaskExecutor {
         await this.store.logEntry(task.id, benignMessage, undefined, this.getRunContextFor(task.id));
         return;
       }
-      if (this.isAwaitingGraphFailureValue(failureValue)) {
+      if (isAwaitingGraphFailureValue(failureValue)) {
         /*
         FNXC:WorkflowLifecycle 2026-06-15-12:00:
         Awaiting-input and awaiting-CLI-approval workflow node values are resumable operator waits, not terminal execute failures. Classify the node value before the generic graph-failure sink so a stale or partially reloaded pause flag cannot park a legitimately runnable task in review with the execute-node symptom.
@@ -12002,7 +11965,7 @@ export class TaskExecutor {
                 taskCommandAbortController.signal,
               ).then((result) => {
                 if (taskCommandAbortController.signal.aborted) {
-                  throw this.createConfiguredCommandAbortError(task.id, command);
+                  throw createConfiguredCommandAbortError(task.id, command);
                 }
                 return result;
               }),
@@ -12047,7 +12010,7 @@ export class TaskExecutor {
               setupAbortController.signal,
             );
             if (setupAbortController.signal.aborted) {
-              throw this.createConfiguredCommandAbortError(task.id, scriptCommand);
+              throw createConfiguredCommandAbortError(task.id, scriptCommand);
             }
             if (setupResult.spawnError || setupResult.timedOut || setupResult.exitCode !== 0) {
               throw new Error(configuredCommandErrorMessage(setupResult));
@@ -12510,7 +12473,7 @@ export class TaskExecutor {
           },
         });
         stepExecutorRef.current = stepExecutor;
-        this.setActiveStepExecutor(task.id, stepExecutor, worktreePath, this.createSeenSteeringIds(detail));
+        this.setActiveStepExecutor(task.id, stepExecutor, worktreePath, createSeenSteeringIds(detail));
 
         const stepWork = async () => {
           const results = await stepExecutor.executeAll();
@@ -13461,7 +13424,7 @@ export class TaskExecutor {
         // Register session so the pause listener can terminate it.
         // Initialize with all existing steering comments so only mid-flight
         // comments are injected into the running session.
-        const seenSteeringIds = this.createSeenSteeringIds(detail);
+        const seenSteeringIds = createSeenSteeringIds(detail);
         this.setActiveSession(task.id, {
           session,
           seenSteeringIds,
@@ -17564,7 +17527,7 @@ ${scopeGuard}
         scriptAbortController.signal,
       );
       if (scriptAbortController.signal.aborted) {
-        throw this.createConfiguredCommandAbortError(task.id, scriptCommand);
+        throw createConfiguredCommandAbortError(task.id, scriptCommand);
       }
       if (scriptResult.spawnError || scriptResult.timedOut || scriptResult.exitCode !== 0) {
         return { success: false, error: configuredCommandErrorMessage(scriptResult) };
@@ -18153,7 +18116,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         task.id,
         `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
       );
-      this.setActiveWorkflowStepSession(task.id, session, worktreePath, this.createSeenSteeringIds(task));
+      this.setActiveWorkflowStepSession(task.id, session, worktreePath, createSeenSteeringIds(task));
       // FNXC:TaskTiming 2026-07-30-21:40: graph-owned Plan Review is the only
       // post-spec planning lane. Start before prompting and finalize in finally before any replan handoff.
       const ownsPlanningSegment = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
