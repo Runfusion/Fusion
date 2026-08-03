@@ -164,10 +164,9 @@ import type { CliSessionStore } from "@fusion/core";
 import {
   StaleWorktreeIndexLockError,
   classifyStaleLock,
-  parseIndexLockPath,
   tryRemoveStaleLock,
 } from "./worktree/worktree-stale-lock.js";
-import { parseStaleRegistrationPath, recoverStaleRegistration } from "./worktree/worktree-stale-registration.js";
+import { recoverStaleRegistration } from "./worktree/worktree-stale-registration.js";
 import {
   BranchConflictError,
   BranchCrossContaminationError,
