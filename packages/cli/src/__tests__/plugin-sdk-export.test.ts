@@ -1,10 +1,38 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { definePlugin, validatePluginManifest } from "@fusion/plugin-sdk";
 import { applyPrepackTransform } from "../../scripts/prepare-publish-manifest.mjs";
 
 const workspaceRoot = join(__dirname, "..", "..", "..", "..");
+
+function executableModuleSpecifiers(source: string): string[] {
+  const sourceFile = ts.createSourceFile("artifact.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const specifiers: string[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require")) &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return specifiers;
+}
 
 describe("plugin-sdk export surface", () => {
   it("keeps definePlugin as identity and validates manifests", () => {
@@ -51,6 +79,10 @@ describe("plugin-sdk export surface", () => {
 
     expect(tsupRaw).toContain('"plugin-sdk-core-runtime-shim.mjs"');
     expect(shimRaw).toContain('from "../../core/src/postgres/schema/index.js"');
+    /*
+     * FNXC:BundledPlugins 2026-08-03-18:39:
+     * Bundled plugins must receive runtime values through the CLI source shim so clean package builds never leave private `@fusion/core` imports unresolved.
+     */
     expect(shimRaw).toContain('from "../../core/src/agents/agent-store.js"');
     expect(shimRaw).toContain("export { AgentStore, postgresSchema }");
     expect(shimRaw).toContain("export function superviseSpawn");
@@ -63,12 +95,27 @@ describe("plugin-sdk export surface", () => {
       return;
     }
     const built = readFileSync(distPath, "utf-8");
-    /*
-     * FNXC:BundledPlugins 2026-08-03-11:29:
-     * The runtime artifact may embed documentation that names package-scoped verification commands. Reject executable static, dynamic, and CommonJS `@fusion/*` specifiers without treating documentation text as an unresolved runtime dependency.
-     */
-    const fusionRuntimeSpecifier = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']@fusion\//;
-    expect(built).not.toMatch(fusionRuntimeSpecifier);
+    const fusionRuntimeSpecifiers = executableModuleSpecifiers(built).filter((specifier) =>
+      specifier.startsWith("@fusion/"),
+    );
+    expect(fusionRuntimeSpecifiers).toEqual([]);
+  });
+
+  it("distinguishes executable @fusion specifiers from documentation text", () => {
+    const source = [
+      'import value from "@fusion/static";',
+      'import /* comment */ ("@fusion/dynamic");',
+      'require(/* comment */ "@fusion/commonjs");',
+      'export {} from /* comment */ "@fusion/exported";',
+      'const docs = "Run pnpm --filter @fusion/core test";',
+    ].join("\n");
+
+    expect(executableModuleSpecifiers(source)).toEqual([
+      "@fusion/static",
+      "@fusion/dynamic",
+      "@fusion/commonjs",
+      "@fusion/exported",
+    ]);
   });
 
   it("has no @fusion specifiers in built plugin-sdk declaration artifact when present", () => {
