@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 import { delimiter } from "node:path";
-import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
+import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { resolveWorkflowIrForTask, resolveEffectiveAgent, AgentStore } from "@fusion/core";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
@@ -14,7 +14,6 @@ import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review
 import { resolvePlannerLanes } from "./execution/replan-target.js";
 import type { WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
-import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowBranchPersistence } from "./workflows/workflow-graph-branches.js";
 import type {
@@ -691,6 +690,40 @@ export {
   buildWorktreeInvariantDeps as buildWorktreeInvariantDepsFree,
   buildNonContinuableSessionDeps as buildNonContinuableSessionDepsFree,
 } from "./executor/deps-bags.js";
+import { sessionRegistryPath as sessionRegistryPathImpl } from "./executor/session-registry-path.js";
+import {
+  addActiveWorktree as addActiveWorktreeImpl,
+  getActiveWorktreePaths as getActiveWorktreePathsImpl,
+} from "./executor/active-worktrees.js";
+import {
+  type ActiveSessionBookkeepingDeps,
+  setActiveSession as setActiveSessionImpl,
+  markGraphExecuteSelfRequeued as markGraphExecuteSelfRequeuedImpl,
+  deleteActiveSession as deleteActiveSessionImpl,
+  setActiveStepExecutor as setActiveStepExecutorImpl,
+  deleteActiveStepExecutor as deleteActiveStepExecutorImpl,
+  setActiveWorkflowStepSession as setActiveWorkflowStepSessionImpl,
+  deleteActiveWorkflowStepSession as deleteActiveWorkflowStepSessionImpl,
+} from "./executor/active-session-bookkeeping.js";
+import {
+  markCompletionFinalized as markCompletionFinalizedImpl,
+  clearPausedAborted as clearPausedAbortedImpl,
+} from "./executor/pause-abort-markers.js";
+import { updateStepGraph as updateStepGraphImpl } from "./executor/update-step-graph.js";
+import { buildColumnBoundaryHooks as buildColumnBoundaryHooksImpl } from "./executor/build-column-boundary-hooks.js";
+import { trackTaskDisposal as trackTaskDisposalImpl } from "./executor/track-task-disposal.js";
+import {
+  registerConfiguredCommandController as registerConfiguredCommandControllerImpl,
+  unregisterConfiguredCommandController as unregisterConfiguredCommandControllerImpl,
+} from "./executor/configured-command-controllers.js";
+export { sessionRegistryPath as sessionRegistryPathFree } from "./executor/session-registry-path.js";
+export { addActiveWorktree as addActiveWorktreeFree, getActiveWorktreePaths as getActiveWorktreePathsFree } from "./executor/active-worktrees.js";
+export { setActiveSession as setActiveSessionFree, markGraphExecuteSelfRequeued as markGraphExecuteSelfRequeuedFree, deleteActiveSession as deleteActiveSessionFree, setActiveStepExecutor as setActiveStepExecutorFree, deleteActiveStepExecutor as deleteActiveStepExecutorFree, setActiveWorkflowStepSession as setActiveWorkflowStepSessionFree, deleteActiveWorkflowStepSession as deleteActiveWorkflowStepSessionFree } from "./executor/active-session-bookkeeping.js";
+export { markCompletionFinalized as markCompletionFinalizedFree, clearPausedAborted as clearPausedAbortedFree } from "./executor/pause-abort-markers.js";
+export { updateStepGraph as updateStepGraphFree } from "./executor/update-step-graph.js";
+export { buildColumnBoundaryHooks as buildColumnBoundaryHooksFree } from "./executor/build-column-boundary-hooks.js";
+export { trackTaskDisposal as trackTaskDisposalFree } from "./executor/track-task-disposal.js";
+export { registerConfiguredCommandController as registerConfiguredCommandControllerFree, unregisterConfiguredCommandController as unregisterConfiguredCommandControllerFree } from "./executor/configured-command-controllers.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -966,17 +999,14 @@ export class TaskExecutor {
    * FNXC:Workspace 2026-06-21-12:00: Register a worktree path under a task's active set, creating the set on first add (KTD2). Single-repo tasks call this once → one-element set.
    */
   private addActiveWorktree(taskId: string, worktreePath: string): void {
-    const set = this.activeWorktrees.get(taskId) ?? new Set<string>();
-    set.add(worktreePath);
-    this.activeWorktrees.set(taskId, set);
+    addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath);
   }
 
   /**
    * FNXC:Workspace 2026-06-21-12:00: Read-only snapshot of every worktree path a task currently holds (KTD2). Empty when the task holds none.
    */
   private getActiveWorktreePaths(taskId: string): string[] {
-    const set = this.activeWorktrees.get(taskId);
-    return set ? Array.from(set) : [];
+    return getActiveWorktreePathsImpl(this.activeWorktrees, taskId);
   }
   private executing = new Set<string>();
   /** Tasks currently being prepared for unpause resume, before execute() has registered them. */
@@ -1145,16 +1175,17 @@ export class TaskExecutor {
     );
   }
 
-  private markCompletionFinalized(taskId: string): void {
-    this.markPausedAborted(taskId, "completion-finalize", "completion-finalize");
-    this.completionFinalizedTaskIds.add(taskId);
+  private pauseAbortMarkerDeps() {
+    return {
+      pausedAborted: this.pausedAborted,
+      pausedAbortProvenance: this.pausedAbortProvenance,
+      completionFinalizedTaskIds: this.completionFinalizedTaskIds,
+      markPausedAborted: (id: string, provenance?: import("./executor/paused-abort-provenance.js").PausedAbortProvenance, source?: string) =>
+        this.markPausedAborted(id, provenance, source),
+    };
   }
-
-  private clearPausedAborted(taskId: string): void {
-    this.pausedAborted.delete(taskId);
-    this.pausedAbortProvenance.delete(taskId);
-    this.completionFinalizedTaskIds.delete(taskId);
-  }
+  private markCompletionFinalized(taskId: string): void { markCompletionFinalizedImpl(this.pauseAbortMarkerDeps(), taskId); }
+  private clearPausedAborted(taskId: string): void { clearPausedAbortedImpl(this.pauseAbortMarkerDeps(), taskId); }
 
   private async clearStalePauseAbortBeforeDispatch(task: Task): Promise<void> {
     return clearStalePauseAbortBeforeDispatchImpl(
@@ -1205,10 +1236,21 @@ export class TaskExecutor {
   root is never one. Liveness still works because the synthetic key stays in the registry under the task.
   */
   private sessionRegistryPath(taskId: string, worktreePath: string): string {
-    if (worktreePath === this.rootDir) {
-      return `${worktreePath}#session:${taskId}`;
-    }
-    return worktreePath;
+    return sessionRegistryPathImpl(this.rootDir, taskId, worktreePath);
+  }
+
+
+  private activeSessionBookkeepingDeps(): ActiveSessionBookkeepingDeps {
+    return {
+      rootDir: this.rootDir, activeSessions: this.activeSessions, activeStepExecutors: this.activeStepExecutors,
+      activeStepExecutorSeenSteeringIds: this.activeStepExecutorSeenSteeringIds,
+      activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+      activeWorkflowStepSessionSeenSteeringIds: this.activeWorkflowStepSessionSeenSteeringIds,
+      effectiveColumnAgentByTask: this.effectiveColumnAgentByTask, graphRouting: this.graphRouting,
+      graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
+      getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
+      acquireSessionRegistryPath: (id, path, kind, owner) => this.acquireSessionRegistryPath(id, path, kind, owner),
+    };
   }
 
   /*
@@ -1236,83 +1278,39 @@ export class TaskExecutor {
   }
 
   private setActiveSession(taskId: string, sessionState: ActiveExecutorSessionState, worktreePath: string): void {
-    this.activeSessions.set(taskId, sessionState);
-    this.acquireSessionRegistryPath(taskId, this.sessionRegistryPath(taskId, worktreePath), "executor", taskId);
+    setActiveSessionImpl(this.activeSessionBookkeepingDeps(), taskId, sessionState, worktreePath);
   }
 
   private markGraphExecuteSelfRequeued(taskId: string): void {
-    if (this.graphRouting.has(taskId)) {
-      this.graphExecuteSelfRequeued.add(taskId);
-    }
+    markGraphExecuteSelfRequeuedImpl(this.activeSessionBookkeepingDeps(), taskId);
   }
 
   private deleteActiveSession(taskId: string, worktreePath?: string): void {
-    this.activeSessions.delete(taskId);
-    // U5: drop the effective column-agent principal for this task's session.
-    this.effectiveColumnAgentByTask.delete(taskId);
-    // FNXC:Workspace 2026-06-21-12:00: KTD2 — when no explicit path is given, unregister EVERY worktree path the task holds (a workspace task holds N sub-repo paths); single-repo tasks resolve a one-element set.
-    const resolvedWorktreePaths = worktreePath ? [worktreePath] : this.getActiveWorktreePaths(taskId);
-    for (const path of resolvedWorktreePaths) {
-      // FNXC:Workspace 2026-06-24-15:45: map through sessionRegistryPath so the task-scoped synthetic
-      // session key registered for the shared workspace browse-root is the one we unregister (the
-      // in-memory Set holds the REAL root). Non-workspace/sub-repo paths pass through unchanged.
-      activeSessionRegistry.unregisterPath(this.sessionRegistryPath(taskId, path));
-    }
+    deleteActiveSessionImpl(this.activeSessionBookkeepingDeps(), taskId, worktreePath);
   }
 
   private setActiveStepExecutor(taskId: string, stepExecutor: StepSessionExecutor, worktreePath: string, seenSteeringIds = new Set<string>()): void {
-    this.activeStepExecutors.set(taskId, stepExecutor);
-    this.activeStepExecutorSeenSteeringIds.set(taskId, seenSteeringIds);
-    this.acquireSessionRegistryPath(taskId, this.sessionRegistryPath(taskId, worktreePath), "step-session", `${taskId}#step-session`);
+    setActiveStepExecutorImpl(this.activeSessionBookkeepingDeps(), taskId, stepExecutor, worktreePath, seenSteeringIds);
   }
 
   private deleteActiveStepExecutor(taskId: string, worktreePath?: string): void {
-    this.activeStepExecutors.delete(taskId);
-    this.activeStepExecutorSeenSteeringIds.delete(taskId);
-    // U5: drop the effective column-agent principal for this task's step session.
-    this.effectiveColumnAgentByTask.delete(taskId);
-    // FNXC:Workspace 2026-06-21-12:00: KTD2 — unregister every held worktree path (Set), not one.
-    const resolvedWorktreePaths = worktreePath ? [worktreePath] : this.getActiveWorktreePaths(taskId);
-    for (const path of resolvedWorktreePaths) {
-      // FNXC:Workspace 2026-06-24-15:45: map through sessionRegistryPath so the task-scoped synthetic
-      // session key registered for the shared workspace browse-root is the one we unregister (the
-      // in-memory Set holds the REAL root). Non-workspace/sub-repo paths pass through unchanged.
-      activeSessionRegistry.unregisterPath(this.sessionRegistryPath(taskId, path));
-    }
+    deleteActiveStepExecutorImpl(this.activeSessionBookkeepingDeps(), taskId, worktreePath);
   }
 
   private setActiveWorkflowStepSession(taskId: string, session: AgentSession, worktreePath: string, seenSteeringIds = new Set<string>()): void {
-    this.activeWorkflowStepSessions.set(taskId, session);
-    this.activeWorkflowStepSessionSeenSteeringIds.set(taskId, seenSteeringIds);
-    this.acquireSessionRegistryPath(taskId, this.sessionRegistryPath(taskId, worktreePath), "workflow-step", `${taskId}#workflow-step`);
+    setActiveWorkflowStepSessionImpl(this.activeSessionBookkeepingDeps(), taskId, session, worktreePath, seenSteeringIds);
   }
 
   private deleteActiveWorkflowStepSession(taskId: string, worktreePath?: string): void {
-    this.activeWorkflowStepSessions.delete(taskId);
-    this.activeWorkflowStepSessionSeenSteeringIds.delete(taskId);
-    // FNXC:Workspace 2026-06-21-12:00: KTD2 — unregister every held worktree path (Set), not one.
-    const resolvedWorktreePaths = worktreePath ? [worktreePath] : this.getActiveWorktreePaths(taskId);
-    for (const path of resolvedWorktreePaths) {
-      // FNXC:Workspace 2026-06-24-15:45: map through sessionRegistryPath so the task-scoped synthetic
-      // session key registered for the shared workspace browse-root is the one we unregister (the
-      // in-memory Set holds the REAL root). Non-workspace/sub-repo paths pass through unchanged.
-      activeSessionRegistry.unregisterPath(this.sessionRegistryPath(taskId, path));
-    }
+    deleteActiveWorkflowStepSessionImpl(this.activeSessionBookkeepingDeps(), taskId, worktreePath);
   }
 
   private registerConfiguredCommandController(taskId: string, controller: AbortController): void {
-    const controllers = this.activeConfiguredCommandControllers.get(taskId) ?? new Set<AbortController>();
-    controllers.add(controller);
-    this.activeConfiguredCommandControllers.set(taskId, controllers);
+    registerConfiguredCommandControllerImpl(this.activeConfiguredCommandControllers, taskId, controller);
   }
 
   private unregisterConfiguredCommandController(taskId: string, controller: AbortController): void {
-    const controllers = this.activeConfiguredCommandControllers.get(taskId);
-    if (!controllers) return;
-    controllers.delete(controller);
-    if (controllers.size === 0) {
-      this.activeConfiguredCommandControllers.delete(taskId);
-    }
+    unregisterConfiguredCommandControllerImpl(this.activeConfiguredCommandControllers, taskId, controller);
   }
 
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
@@ -1782,16 +1780,7 @@ export class TaskExecutor {
    * executor log instead.
    */
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void {
-    const wrapped = disposal
-      .catch((err) => {
-        executorLog.warn(`${taskId}: tracked disposal failed: ${err}`);
-      })
-      .finally(() => {
-        if (this.pendingTaskDisposals.get(taskId) === wrapped) {
-          this.pendingTaskDisposals.delete(taskId);
-        }
-      });
-    this.pendingTaskDisposals.set(taskId, wrapped);
+    trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal);
   }
 
   /**
@@ -3559,16 +3548,14 @@ export class TaskExecutor {
   stays here is only genuine Executor state: the in-flight graph-move marker and the logger.
   */
   private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): WorkflowColumnBoundaryHooks {
-    return createExecutorColumnBoundaryHooks({
-      store: this.store,
+    return buildColumnBoundaryHooksImpl(
+      {
+        store: this.store,
+        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
+      },
       task,
       workflowRunId,
-      markMoveInFlight: (taskId) => this.workflowLifecycleMovesInFlight.add(taskId),
-      clearMoveInFlight: (taskId) => this.workflowLifecycleMovesInFlight.delete(taskId),
-      onWarn: (message, detail) => {
-        executorLog.debug(`[workflow-column-boundary] ${task.id}: ${message} ${JSON.stringify(detail)}`);
-      },
-    });
+    );
   }
 
   /**
@@ -3936,15 +3923,7 @@ export class TaskExecutor {
     stepIndex: number,
     status: import("@fusion/core").StepStatus,
   ): Promise<void> {
-    const store = this.store as unknown as {
-      updateStep: (
-        id: string,
-        idx: number,
-        status: import("@fusion/core").StepStatus,
-        opts?: { source?: "graph" },
-      ) => Promise<unknown>;
-    };
-    await store.updateStep(taskId, stepIndex, status, { source: "graph" });
+    return updateStepGraphImpl({ store: this.store }, taskId, stepIndex, status);
   }
 
   /**
