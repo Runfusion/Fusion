@@ -89,6 +89,13 @@ const RECORDED_GATING_SITES: ReadonlySet<string> = new Set([
   "packages/engine/src/mission-execution-loop.ts :: fixTaskTerminalColumns",
   "packages/engine/src/mission-feature-sync.ts :: LEGACY_PLANNER_COLUMNS",
   "packages/engine/src/triage.ts :: LEGACY_PLANNER_COLUMN_IDS",
+  /*
+  FNXC:WorkflowEvents 2026-08-03-02:01:
+  Wake-on-column handler: when task:updated carries resolved lanes, hold|intake decide membership;
+  when lanes are omitted the builtin-board set is the documented fallback (todo|triage). Recorded
+  so the ledger does not re-flag a RESOLVED site with a deliberate legacy arm.
+  */
+  "packages/engine/src/triage.ts :: LEGACY_PLANNER_WAKE_COLUMNS",
   "packages/engine/src/worktree-pool.ts :: managed",
 ]);
 

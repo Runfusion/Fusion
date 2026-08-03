@@ -197,8 +197,14 @@ describe("CreateRoomModal", () => {
     expect(await screen.findByText("No agents in this project yet.")).toBeInTheDocument();
     empty.unmount();
 
+    // Re-pin the populated list after mockResolvedValueOnce([]) so the no-match path cannot race an empty load.
+    mockFetchAgents.mockResolvedValue([
+      { id: "agent-1", name: "Alpha", role: "executor", state: "idle", metadata: {}, createdAt: "", updatedAt: "" },
+      { id: "agent-2", name: "Beta", role: "reviewer", state: "idle", metadata: {}, createdAt: "", updatedAt: "" },
+    ] as any);
     render(<CreateRoomModal isOpen onClose={vi.fn()} onCreate={vi.fn()} />);
-    await userEvent.type(await screen.findByLabelText("Members"), "zzz");
+    await screen.findByRole("button", { name: /Alpha/i });
+    await userEvent.type(screen.getByLabelText("Members"), "zzz");
     expect(screen.getByText("No agents match your search.")).toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("Members"));
     await userEvent.click(await screen.findByRole("button", { name: /Alpha/i }));

@@ -36,7 +36,8 @@ describe("AgentLogViewer", () => {
       const entries = [makeEntry({ text: "Read", type: "tool", detail: longDetail })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       fireEvent.click(screen.getByTestId("tool-detail-toggle"));
-      const detail = container.querySelector(".agent-log-tool-detail");
+      // FNXC:ToolCallDisplay 2026-08-03-02:01: FN-8701 wraps payload in ToolCallDetails (label + pre).
+      const detail = container.querySelector(".agent-log-tool-detail .tool-call-details-value");
       expect(detail).toBeTruthy();
       expect(detail!.textContent).toContain(longDetail);
       expect(detail!.textContent!.length).toBe(5000);
@@ -92,7 +93,8 @@ describe("AgentLogViewer", () => {
       const entries = [makeEntry({ text: "Bash", type: "tool_result", detail: detailText })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       fireEvent.click(screen.getByTestId("tool-detail-toggle"));
-      const detail = container.querySelector(".agent-log-tool-detail") as HTMLElement;
+      // FNXC:ToolCallDisplay 2026-08-03-02:01: FN-8701 keeps the raw payload in a nested <pre>.
+      const detail = container.querySelector(".agent-log-tool-detail .tool-call-details-value") as HTMLElement;
       expect(detail).toBeTruthy();
       expect(detail.tagName).toBe("PRE");
       expect(detail.textContent).toBe(detailText);

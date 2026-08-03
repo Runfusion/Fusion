@@ -74,6 +74,8 @@ function harness(task: Partial<Task>, ir: unknown) {
     emit: vi.fn(),
     isWatching: false,
     taskCache: new Map(),
+    // Real TaskStore always has laneCache; dependency re-spec emits only on a real column move.
+    laneCache: { set: vi.fn(), get: vi.fn(), invalidate: vi.fn() },
   } as Record<string, unknown>;
   /*
   The impl touches a long tail of TaskStore methods that have nothing to do with the column decision

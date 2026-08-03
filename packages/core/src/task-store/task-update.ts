@@ -158,8 +158,9 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       if (updates.workspaceWorktrees !== undefined) {
         task.workspaceWorktrees = updates.workspaceWorktrees;
       }
-      // Detect new dependencies being added to a todo task → auto-move to triage
+      // Detect new dependencies being added to a hold-lane task → re-seed for re-specification
       let movedToTriage = false;
+      let respecifyFromColumn: string | undefined;
       if (updates.dependencies !== undefined) {
         const oldDeps = new Set((task.dependencies ?? []).map((dependency) => dependency.trim()).filter(Boolean));
         const normalizedDependencies = updates.dependencies.map((dependency) => dependency.trim()).filter(Boolean);
@@ -183,6 +184,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         — the card's current column — so the move becomes a no-op while the status reset and the log
         entry still record the re-specification. When the workflow will not resolve, the column is
         left ALONE: refusing to move is recoverable, writing a column that may not exist is not.
+
+        FNXC:WorkflowEvents 2026-08-03-02:01:
+        The task:moved emit below used to fire on every re-seed with hardcoded from=todo/to=triage,
+        including default-board no-ops where intake===hold. That announced a deleted column and
+        required laneCache on every dependency edit. Match update-task-deps: emit only when the
+        column actually changed, with the real endpoints.
         */
         const depLanes = hasNewDeps
           ? await resolveTaskLifecycleColumns(store, id).catch(() => undefined)
@@ -192,6 +199,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         const holdLane = depLanes === undefined ? "todo" : depLanes.hold;
         if (hasNewDeps && holdLane !== undefined && task.column === holdLane) {
           const intakeLane = depLanes?.intake;
+          respecifyFromColumn = task.column;
           const relocating = intakeLane !== undefined && intakeLane !== task.column;
           if (relocating) {
             task.column = intakeLane;
@@ -1003,16 +1011,25 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         }
       }
 
-      if (movedToTriage) {
+      if (movedToTriage && respecifyFromColumn !== undefined && respecifyFromColumn !== task.column) {
         /* FNXC:WorkflowEvents 2026-07-31-23:10 (fleet — the last two emitters):
            #3109 attached lanes at moves.ts and #3120 at the archive/completion emits. This one and
            `update-task-deps.ts` were still sending `lanes: undefined`, and a listener reads absence as
            "unknown" and falls back to `resolveTaskParkedColumnsSync` — the DEFAULT board under
            PostgreSQL. So these two paths kept the pre-#3109 behaviour while the listeners read as
-           resolved. */
+           resolved.
+
+           FNXC:WorkflowEvents 2026-08-03-02:01: only announce a real column change; endpoints are the
+           resolved hold/intake pair, never the deleted `triage` literal. */
         const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, id).catch(() => undefined));
         store.laneCache.set(task.id, lanes);
-        store.emit("task:moved", { task, from: "todo" as Column, to: "triage" as Column, source: "engine", lanes });
+        store.emit("task:moved", {
+          task,
+          from: respecifyFromColumn as Column,
+          to: task.column as Column,
+          source: "engine",
+          lanes,
+        });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);
       return task;

@@ -83,6 +83,8 @@ import {
   MISSION_TASK_PREFIX_VERSION,
   CREDENTIAL_INSTANCE_SELECTION_VERSION,
   TASK_LIFECYCLE_OUTBOX_VERSION,
+  TASK_LIFECYCLE_CONSUMERS_VERSION,
+  VALIDATOR_INPUT_FINGERPRINT_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -99,7 +101,9 @@ const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
 describe("schema-applier: immutable migration identities", () => {
   it("registers the task lifecycle outbox after credential selection", () => {
     expect(TASK_LIFECYCLE_OUTBOX_VERSION).toBe("0040");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0040");
+    expect(TASK_LIFECYCLE_CONSUMERS_VERSION).toBe("0041");
+    expect(VALIDATOR_INPUT_FINGERPRINT_VERSION).toBe("0042");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0042");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -714,7 +718,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 100 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 104 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -735,9 +739,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295)
     // + 1 task_verification_requests + 1 durable symbol_locks table (FN-8305)
     // + 1 mission_lineage_stops (FNXC:MissionLineageBudget FN-8543 / migration 0035)
-    // + 2 task lifecycle outbox tables (FN-8684 migration 0040).
+    // + 2 task lifecycle outbox tables (FN-8684 migration 0040)
+    // + 4 task lifecycle consumer tables (FN-8685 migration 0041).
     // Plugin tables are added separately by the hook.
-    expect(bySchema.project).toBe(100);
+    expect(bySchema.project).toBe(104);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1619,6 +1624,13 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       /* slice_id required before 0023 research provenance unique index can attach. */
       CREATE TABLE project.mission_features (id text PRIMARY KEY, slice_id text);
       /*
+      FNXC:MissionValidation 2026-08-03-02:01:
+      Migration 0042 (FN-8694) ALTERs project.mission_validator_runs for input_fingerprint.
+      Real 0000 databases have the table (baseline since the PG cutover), so this
+      historical fixture must retain it or upgrade-from-0000 fails with missing relation.
+      */
+      CREATE TABLE project.mission_validator_runs (id text PRIMARY KEY, feature_id text, project_id text);
+      /*
       FNXC:MissionValidation 2026-07-23-21:30:
       Migration 0034 (FN-8542) ALTERs project.mission_contract_assertions and builds
       the derived-milestone partial unique index on (project_id, milestone_id).
@@ -1747,6 +1759,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_TASK_PREFIX_VERSION,
       CREDENTIAL_INSTANCE_SELECTION_VERSION,
       TASK_LIFECYCLE_OUTBOX_VERSION,
+      TASK_LIFECYCLE_CONSUMERS_VERSION,
+      VALIDATOR_INPUT_FINGERPRINT_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1813,6 +1827,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_TASK_PREFIX_VERSION,
       CREDENTIAL_INSTANCE_SELECTION_VERSION,
       TASK_LIFECYCLE_OUTBOX_VERSION,
+      TASK_LIFECYCLE_CONSUMERS_VERSION,
+      VALIDATOR_INPUT_FINGERPRINT_VERSION,
     ]);
   });
 
@@ -2012,6 +2028,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_TASK_PREFIX_VERSION,
       CREDENTIAL_INSTANCE_SELECTION_VERSION,
       TASK_LIFECYCLE_OUTBOX_VERSION,
+      TASK_LIFECYCLE_CONSUMERS_VERSION,
+      VALIDATOR_INPUT_FINGERPRINT_VERSION,
     ]);
   });
 
@@ -2092,6 +2110,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_TASK_PREFIX_VERSION,
       CREDENTIAL_INSTANCE_SELECTION_VERSION,
       TASK_LIFECYCLE_OUTBOX_VERSION,
+      TASK_LIFECYCLE_CONSUMERS_VERSION,
+      VALIDATOR_INPUT_FINGERPRINT_VERSION,
     ]);
   });
 
@@ -2172,6 +2192,8 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       MISSION_TASK_PREFIX_VERSION,
       CREDENTIAL_INSTANCE_SELECTION_VERSION,
       TASK_LIFECYCLE_OUTBOX_VERSION,
+      TASK_LIFECYCLE_CONSUMERS_VERSION,
+      VALIDATOR_INPUT_FINGERPRINT_VERSION,
     ]);
   });
 });
