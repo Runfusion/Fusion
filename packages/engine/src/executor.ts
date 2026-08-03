@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -819,6 +819,10 @@ import { resolveFailedPreMergeWorkflowStepBudget as resolveFailedPreMergeWorkflo
 export { resolveFailedPreMergeWorkflowStepBudget as resolveFailedPreMergeWorkflowStepBudgetFree } from "./executor/resolve-failed-pre-merge-workflow-step-budget.js";
 import { hasTrailingConsecutiveToolFailures as hasTrailingConsecutiveToolFailuresImpl } from "./executor/has-trailing-consecutive-tool-failures.js";
 export { hasTrailingConsecutiveToolFailures as hasTrailingConsecutiveToolFailuresFree } from "./executor/has-trailing-consecutive-tool-failures.js";
+import { isLiveSharedBranchGroupMember as isLiveSharedBranchGroupMemberImpl } from "./executor/is-live-shared-branch-group-member.js";
+export { isLiveSharedBranchGroupMember as isLiveSharedBranchGroupMemberFree } from "./executor/is-live-shared-branch-group-member.js";
+import { resolveEffectivePrincipalId as resolveEffectivePrincipalIdImpl } from "./executor/resolve-effective-principal-id.js";
+export { resolveEffectivePrincipalId as resolveEffectivePrincipalIdFree } from "./executor/resolve-effective-principal-id.js";
 
 
 
@@ -5696,19 +5700,14 @@ export class TaskExecutor {
     task: Task,
     detail: Task,
   ): string | undefined {
-    const ownSettings = extractOwnSettings(detail);
-    const assignedAgentId = ownSettings.ownAgentId;
-
-    const governingNodeId = this.graphSeamGoverningNodeId.get(task.id);
-    const resolveBinding = this.graphColumnAgentResolver.get(task.id);
-    if (!governingNodeId || !resolveBinding) return assignedAgentId;
-
-    const binding = resolveBinding(governingNodeId);
-    if (!binding) return assignedAgentId;
-
-    const effective = resolveEffectiveAgent({ binding, ...ownSettings });
-    if (effective.source === "column-agent") return effective.agentId;
-    return assignedAgentId;
+    return resolveEffectivePrincipalIdImpl(
+      {
+        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
+        graphColumnAgentResolver: this.graphColumnAgentResolver,
+      },
+      task,
+      detail,
+    );
   }
 
   /**
@@ -6498,10 +6497,7 @@ export class TaskExecutor {
   }
 
   private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
-    const groupId = live.branchContext?.groupId?.trim();
-    // FNXC:PostgresCutover 2026-07-10: getBranchGroup is async on the PG branch.
-    const branchGroup = groupId ? await this.store.getBranchGroup(groupId) : null;
-    return isLiveSharedBranchGroupMemberIntegration(live, branchGroup);
+    return isLiveSharedBranchGroupMemberImpl({ store: this.store }, live);
   }
 
   private async routeRetryableRemediationGraphFailureToPreMergeFix(
