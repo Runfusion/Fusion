@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { delimiter, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
@@ -135,7 +135,7 @@ import {
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
@@ -514,6 +514,17 @@ export {
   resolveDiffBaseRef,
   captureBaseCommitSha,
 } from "./executor/worktree-git-refs.js";
+import {
+  isRegisteredWorktree,
+  assertWorktreePathNotNested,
+  getWorktreeBranchMap,
+} from "./executor/worktree-registry-helpers.js";
+export {
+  isRegisteredWorktree,
+  assertWorktreePathNotNested,
+  getWorktreeBranchMap,
+} from "./executor/worktree-registry-helpers.js";
+
 
 
 export { quoteShellArg } from "./executor/shell-quote.js";
@@ -561,7 +572,8 @@ import {
 } from "./executor/prompt-derived-eligibility.js";
 
 
-class NonRetryableWorktreeError extends Error {}
+export { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
+import { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
 
 import {
   canonicalizePath,
@@ -17935,7 +17947,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
           // best-effort
         }
         try {
-          const worktreeMap = await this.getWorktreeBranchMap();
+          const worktreeMap = await getWorktreeBranchMap(this.rootDir);
           if (!worktreeMap.has(error.branchName)) {
             await execAsync(`git branch -D "${error.branchName}"`, { cwd: this.rootDir });
           }
@@ -18651,7 +18663,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     // at a worktree directory instead of the main repo — produces paths like
     // `.worktrees/green-finch/.worktrees/amber-panda` that bloat the filesystem
     // and confuse every tool that walks git state.
-    await this.assertWorktreePathNotNested(path, taskId);
+    await assertWorktreePathNotNested(this.rootDir, this.store, path, taskId);
 
     const installGuardOrCleanup = async () => {
       try {
@@ -18677,7 +18689,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
     // If directory exists but is not a registered worktree, remove it first
     if (existsSync(path)) {
-      const isRegistered = await this.isRegisteredWorktree(path);
+      const isRegistered = await isRegisteredWorktree(this.rootDir, path);
       if (!isRegistered) {
         await this.store.logEntry(
           taskId,
@@ -19111,61 +19123,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     if (!activeRecord) return false;
     if (activeRecord.taskId !== taskId) return true;
     return executingTaskLock.has(taskId) || this.hasActiveWorktreeBinding(taskId, worktreePath);
-  }
-
-  /**
-   * Check if a path is registered as a git worktree.
-   */
-  private async isRegisteredWorktree(path: string): Promise<boolean> {
-    return isRegisteredGitWorktree(this.rootDir, path);
-  }
-
-  /**
-   * Throw if `path` lies inside an existing registered worktree other than the
-   * repo root. The repo root itself is a worktree (main branch) and must be
-   * allowed — we only reject paths strictly *inside* a non-root worktree.
-   */
-  private async assertWorktreePathNotNested(path: string, taskId: string): Promise<void> {
-    const target = resolvePath(path);
-    const rootResolved = resolvePath(this.rootDir);
-    const registered = await getRegisteredWorktreePaths(this.rootDir);
-
-    for (const wt of registered) {
-      if (wt === rootResolved) continue; // root is allowed as ancestor
-      if (wt === target) continue; // exact match handled later as "already registered"
-      const rel = relative(wt, target);
-      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
-        await this.store.logEntry(
-          taskId,
-          `Refusing to create nested worktree`,
-          `target ${target} is inside registered worktree ${wt}`,
-        );
-        throw new NonRetryableWorktreeError(
-          `Refusing to create worktree at ${target}: path is nested inside existing worktree ${wt}. ` +
-          `This usually means the executor was launched with rootDir pointing at a worktree instead of the main repo.`,
-        );
-      }
-    }
-  }
-
-  /**
-   * Determine if we should generate a new worktree name instead of cleaning up.
-   * Returns true if the conflicting worktree is used by an active task.
-   */
-  private async getWorktreeBranchMap(): Promise<Map<string, string>> {
-    const { stdout } = await execAsync("git worktree list --porcelain", { cwd: this.rootDir, encoding: "utf-8" });
-    const map = new Map<string, string>();
-    let currentWorktree: string | null = null;
-    for (const line of stdout.split("\n")) {
-      if (line.startsWith("worktree ")) {
-        currentWorktree = line.slice("worktree ".length).trim();
-      } else if (line.startsWith("branch refs/heads/") && currentWorktree) {
-        map.set(line.slice("branch refs/heads/".length).trim(), currentWorktree);
-      } else if (!line.trim()) {
-        currentWorktree = null;
-      }
-    }
-    return map;
   }
 
   private async shouldGenerateNewWorktreeName(
