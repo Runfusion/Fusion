@@ -252,6 +252,8 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.status !== undefined) {
         task.status = updates.status;
       }
+      // FNXC:PlanApproval 2026-08-03-19:03: `null` clears the fingerprint;
+      // `undefined` preserves it by omitting the field from this merge.
       if (updates.approvedPlanFingerprint === null) {
         task.approvedPlanFingerprint = undefined;
       } else if (updates.approvedPlanFingerprint !== undefined) {

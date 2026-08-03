@@ -89,4 +89,25 @@ pgDescribe("plan approval status persistence", () => {
     expect(isTaskBlockedOnApproval(persisted)).toBe(false);
     expect(persisted.approvedPlanFingerprint).toBeUndefined();
   });
+
+  it("keeps the approval hold when the rejected plan cannot be removed", async () => {
+    const task = await store.createTask({ description: "Reject a plan that cannot be removed" });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      approvedPlanFingerprint: "rejected-fingerprint",
+    });
+
+    const promptPath = join(harness.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+    await rm(promptPath, { force: true });
+    await mkdir(promptPath, { recursive: true });
+    await writeFile(join(promptPath, "nested-plan.md"), "# Rejected plan\n", "utf8");
+
+    const response = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
+
+    expect(response.status).toBe(500);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.status).toBe("awaiting-approval");
+    expect(isTaskBlockedOnApproval(persisted)).toBe(true);
+    expect(persisted.approvedPlanFingerprint).toBe("rejected-fingerprint");
+  });
 });

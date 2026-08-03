@@ -4110,6 +4110,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Log the rejection
       await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
 
+      /*
+       * FNXC:PlanApproval 2026-08-03-19:03:
+       * Remove PROMPT.md before releasing the approval hold. If removal fails, the rejected
+       * plan must remain blocked rather than becoming schedulable with rejected content.
+       */
+      const { rm } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+      await rm(promptPath, { force: true });
+
       // Clear status to return to normal triage state
       /*
        * FNXC:PlanApproval 2026-07-04-22:41:
@@ -4118,12 +4128,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
        * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
        */
       await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null });
-
-      // Remove PROMPT.md to force regeneration
-      const { rm } = await import("node:fs/promises");
-      const { join } = await import("node:path");
-      const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
-      await rm(promptPath, { force: true });
 
       const updated = await scopedStore.getTask(task.id);
       res.json(updated);
