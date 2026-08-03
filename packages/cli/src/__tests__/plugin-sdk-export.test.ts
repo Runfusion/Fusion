@@ -63,7 +63,12 @@ describe("plugin-sdk export surface", () => {
       return;
     }
     const built = readFileSync(distPath, "utf-8");
-    expect(built.includes("@fusion/")).toBe(false);
+    /*
+     * FNXC:BundledPlugins 2026-08-03-11:29:
+     * The runtime artifact may embed documentation that names package-scoped verification commands. Reject executable static, dynamic, and CommonJS `@fusion/*` specifiers without treating documentation text as an unresolved runtime dependency.
+     */
+    const fusionRuntimeSpecifier = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)["']@fusion\//;
+    expect(built).not.toMatch(fusionRuntimeSpecifier);
   });
 
   it("has no @fusion specifiers in built plugin-sdk declaration artifact when present", () => {
