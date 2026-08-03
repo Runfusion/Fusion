@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
-import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type AgentMemoryInclusionMode, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowIrNodeKind, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
@@ -86,14 +86,12 @@ import {
   getTaskMergeBlocker,
   isEphemeralAgent,
   isMergeRequestContractShadowEnabled,
-  resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
   resolveEffectiveAgentPermissionPolicy,
   resolveAgentMemoryInclusionMode,
   loadWorkspaceConfig,
   type WorkspaceConfig,
   type RunCommandResult,
-  FUSION_RUNTIME_SELF_AWARENESS,
 } from "@fusion/core";
 import { findWorktreeUser, getConflictedFiles } from "./merger.js";
 import {
@@ -122,10 +120,8 @@ import {
 } from "./agents/agent-session-helpers.js";
 import { buildSessionSkillContext } from "./cli-runtime/session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp/mcp-resolution.js";
-import { proseSignalsClearApproval, extractJsonObjectCandidates, type ReviewVerdict, type ReviewResult } from "./execution/reviewer.js";
+import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
 import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agents/agent-user-comments.js";
-import { resolveSandboxBackend } from "./sandbox/index.js";
-import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   PRIORITY_EXECUTE,
@@ -139,9 +135,9 @@ import {
 // maps the task's repo-prefixed declared File Scope to a repo-LOCAL subset so the per-repo scope-leak
 // filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
 // executor→workspace-paths edge (workspace-paths imports nothing).
-import { deriveRepoScopeSubset, normalizeRepoRelPath } from "./worktree/workspace-paths.js";
+import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type GitRepoDetection, type WorktreePool } from "./worktree/worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, getRegisteredWorktreePaths, isInsideWorktreesDir, isRegisteredGitWorktree, relocateReclaimableWorktreeIntoRoot, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
 import { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
@@ -294,7 +290,6 @@ import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js
 import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
 import {
   getEnabledPluginTools,
-  getResearchGuidanceForSurface,
   isResearchToolSurfaceEnabled,
 } from "./execution/tool-availability.js";
 import { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
@@ -380,8 +375,6 @@ import { getResumeOrphanDelayMs } from "./executor/resume-orphan-delay.js";
 const tokenCacheMetricsLog = createLogger("token-cache-metrics");
 
 import {
-  OPTIONAL_STEP_REVISION_KEY_MARKER,
-  normalizeOptionalStepRevisionKey,
   optionalStepRevisionKey,
   countOptionalStepRevisionAttempts,
   optionalStepRevisionLogOutcome,
@@ -504,13 +497,10 @@ export {
 } from "./executor/task-done-refusal.js";
 import {
   evaluateTaskDoneRefusal,
-  determineRevisionResetStart,
-  formatTaskDoneRefusal,
   buildSkipBypassTaintRefusal,
 } from "./executor/task-done-refusal.js";
 
 
-const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
 
 export {
   extractReferencedPathsFromWorkflowFeedback,
@@ -519,11 +509,9 @@ export {
 } from "./executor/workflow-feedback-paths.js";
 export type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
 import {
-  extractReferencedPathsFromWorkflowFeedback,
   isAlwaysAllowedScopeLeakPath,
   workflowPathMatchesDeclaredScope,
 } from "./executor/workflow-feedback-paths.js";
-import type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
 
 
 export {
@@ -545,8 +533,6 @@ class NonRetryableWorktreeError extends Error {}
 import {
   canonicalizePath,
   formatGitRepositoryDetectionError,
-  buildSessionWorktreePathRegex,
-  normalizeWorktreePath,
   extractPersistedSessionWorktreePath,
   isSessionWorktreeCompatible,
 } from "./executor/session-worktree-paths.js";
@@ -690,13 +676,10 @@ export type {
 } from "./executor/workflow-step-verdict.js";
 import {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
-  parseWorkflowStepVerdict,
-  inferWorkflowStepVerdictFromProse,
   parseWorkflowStepOutput,
 } from "./executor/workflow-step-verdict.js";
 import type {
   WorkflowStepOutcome,
-  WorkflowStepResult,
 } from "./executor/workflow-step-verdict.js";
 
 /** Result returned from fn_spawn_agent tool */

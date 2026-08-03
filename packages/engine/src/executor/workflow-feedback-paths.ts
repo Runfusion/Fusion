@@ -34,7 +34,7 @@ export function extractReferencedPathsFromWorkflowFeedback(feedback: string): st
   for (const match of feedback.matchAll(WORKFLOW_FEEDBACK_PATH_REGEX)) {
     const candidate = stripTrailingPathPunctuation(match[1] ?? match[2] ?? "");
     const normalized = normalizeWorkflowScopePath(candidate);
-    if (!normalized.includes("/") || !normalized) continue;
+    if (!normalized.includes("/")) continue;
     if (seen.has(normalized)) continue;
     seen.add(normalized);
     extracted.push(normalized);
