@@ -29,7 +29,6 @@ import {
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflows/workflow-node-handlers.js";
-import { MERGE_REGION_KINDS } from "./workflows/workflow-graph-executor.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
 import type {
   PreparedWorktree,
@@ -652,6 +651,22 @@ export {
   evaluateWorkflowMergeBoundary as evaluateWorkflowMergeBoundaryFree,
   getWorkflowMergeImplementationProofFailure as getWorkflowMergeImplementationProofFailureFree,
 } from "./executor/evaluate-workflow-merge-boundary.js";
+import { renewTaskLease as renewTaskLeaseImpl } from "./executor/renew-task-lease.js";
+export { renewTaskLease as renewTaskLeaseFree } from "./executor/renew-task-lease.js";
+import { readTaskArtifact as readTaskArtifactImpl } from "./executor/read-task-artifact.js";
+export { readTaskArtifact as readTaskArtifactFree } from "./executor/read-task-artifact.js";
+import { getExecutionPauseLabel as getExecutionPauseLabelImpl } from "./executor/get-execution-pause-label.js";
+export { getExecutionPauseLabel as getExecutionPauseLabelFree } from "./executor/get-execution-pause-label.js";
+import {
+  resolveMergeBoundaryColumn as resolveMergeBoundaryColumnImpl,
+  loadMergeBoundaryInstances as loadMergeBoundaryInstancesImpl,
+  shouldCompleteChecklistAtWorkflowMerge as shouldCompleteChecklistAtWorkflowMergeImpl,
+} from "./executor/workflow-merge-boundary-helpers.js";
+export {
+  resolveMergeBoundaryColumn as resolveMergeBoundaryColumnFree,
+  loadMergeBoundaryInstances as loadMergeBoundaryInstancesFree,
+  shouldCompleteChecklistAtWorkflowMerge as shouldCompleteChecklistAtWorkflowMergeFree,
+} from "./executor/workflow-merge-boundary-helpers.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -1308,25 +1323,18 @@ export class TaskExecutor {
     nodeId: string,
     runId: string | undefined,
   ): Promise<void> {
-    const renewedAt = new Date().toISOString();
-    if (this.options.agentStore) {
-      await this.options.agentStore.checkoutTask(
-        agentId,
-        taskId,
-        {
-          nodeId,
-          runId,
-          leaseEpoch,
-          renewedAt,
-        },
-        this.getRunContextFor(taskId),
-      );
-      return;
-    }
-    await this.store.renewCheckoutLease(taskId, {
-      checkoutRunId: runId ?? null,
-      checkoutLeaseRenewedAt: renewedAt,
-    });
+    return renewTaskLeaseImpl(
+      {
+        store: this.store,
+        options: this.options as { agentStore?: import("@fusion/core").AgentStore | null; [k: string]: unknown },
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
+      taskId,
+      agentId,
+      leaseEpoch,
+      nodeId,
+      runId,
+    );
   }
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
@@ -1342,10 +1350,7 @@ export class TaskExecutor {
 
 
   private async getExecutionPauseLabel(): Promise<"global pause" | "engine pause" | null> {
-    const settings = await this.store.getSettings();
-    if (settings.globalPause) return "global pause";
-    if (settings.enginePaused) return "engine pause";
-    return null;
+    return getExecutionPauseLabelImpl({ store: this.store });
   }
 
   private async shouldDeferCompletionForGlobalPause(
@@ -3632,28 +3637,7 @@ export class TaskExecutor {
    * code-node deps (FIX 7: one source of truth for the fallback).
    */
   private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
-    // Declared artifacts ride the task-documents layer.
-    let documentReadError: unknown;
-    try {
-      const doc = await this.store.getTaskDocument(taskId, key);
-      if (doc) return doc.content;
-    } catch (error) {
-      documentReadError = error;
-    }
-    if (key === "PROMPT.md") {
-      try {
-        const detail = await this.store.getTask(taskId);
-        if (typeof detail.prompt === "string") return detail.prompt;
-        return undefined;
-      } catch (error) {
-        throw new Error(
-          `Unable to read required artifact ${key} from task documents or task storage: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: documentReadError ?? error },
-        );
-      }
-    }
-    if (documentReadError) throw documentReadError;
-    return undefined;
+    return readTaskArtifactImpl({ store: this.store }, taskId, key);
   }
 
   private buildParseStepsDeps(runId?: string): ParseStepsHandlerDeps {
@@ -3875,23 +3859,7 @@ export class TaskExecutor {
   }
 
   private async resolveMergeBoundaryColumn(taskId: string, nodeId: string): Promise<string> {
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, taskId);
-      // Prefer the named node's column when it is itself a merge-class node
-      // (merge-gate/merge-attempt/…). Otherwise fall back to the FIRST merge-class
-      // node's column — the boundary's caller may pass a synthetic id
-      // ("legacy-merge-seam") or a non-merge node, so keying on merge-class kinds
-      // (not an arbitrary node's column) is what reliably lands the card in the
-      // workflow's merge column: `in-review` for builtin:coding (KTD-7 parity),
-      // `Merging` for the benchmark.
-      const named = ir.nodes.find((n) => n.id === nodeId);
-      if (named && MERGE_REGION_KINDS.has(named.kind) && named.column) return named.column;
-      const mergeNode = ir.nodes.find((n) => MERGE_REGION_KINDS.has(n.kind) && n.column);
-      if (mergeNode?.column) return mergeNode.column;
-      return "in-review";
-    } catch {
-      return "in-review";
-    }
+    return resolveMergeBoundaryColumnImpl({ store: this.store }, taskId, nodeId);
   }
 
   private async ensureWorkflowMergeBoundaryTask(
@@ -3933,16 +3901,7 @@ export class TaskExecutor {
   }
 
   private async loadMergeBoundaryInstances(taskId: string, runId?: string): Promise<Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>> {
-    if (!runId) return [];
-    const store = this.store as typeof this.store & {
-      loadWorkflowRunStepInstancesAsync?: (id: string, idRun: string) => Promise<Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>>;
-      loadWorkflowRunStepInstances?: (id: string, idRun: string) => Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>;
-    };
-    try {
-      return await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId)
-        ?? store.loadWorkflowRunStepInstances?.(taskId, runId)
-        ?? [];
-    } catch { return []; }
+    return loadMergeBoundaryInstancesImpl({ store: this.store }, taskId, runId);
   }
 
   private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
@@ -3963,11 +3922,7 @@ export class TaskExecutor {
   Non-foreach/no-seam coverage is vacuous and does not change legacy move behavior.
   */
   private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): boolean {
-    if (!Array.isArray(task.steps) || task.steps.length === 0) return false;
-    if (task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
-    if (proof) return proof.complete;
-    const graphNodeResults = (task.workflowStepResults ?? []).filter((result) => result.source === "node" && (result.phase ?? "pre-merge") === "pre-merge");
-    return graphNodeResults.length > 0 && graphNodeResults.every((result) => result.status === "passed" || result.status === "skipped");
+    return shouldCompleteChecklistAtWorkflowMergeImpl(task, proof);
   }
 
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams {
