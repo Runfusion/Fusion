@@ -72,7 +72,6 @@ import { WorkflowPlanningService } from "./workflows/workflow-planning-service.j
 import {
   buildPlanVerifiedMessage,
   buildReviewUnavailableMessage,
-  buildReviewRollbackFailureMessage,
   buildReviewVerdictMessage,
   buildStepFailureMessage,
   emitProactiveStatus,
@@ -694,6 +693,9 @@ import { tryBootstrapMisbindingRecovery as tryBootstrapMisbindingRecoveryImpl } 
 export { tryBootstrapMisbindingRecovery as tryBootstrapMisbindingRecoveryFree } from "./executor/bootstrap-misbinding-recovery.js";
 import { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnImpl } from "./executor/no-merge-complete-column.js";
 export { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnFree } from "./executor/no-merge-complete-column.js";
+import { applyGraphRethinkReset as applyGraphRethinkResetImpl } from "./executor/graph-rethink-reset.js";
+export { applyGraphRethinkReset as applyGraphRethinkResetFree } from "./executor/graph-rethink-reset.js";
+
 
 
 
@@ -6179,96 +6181,17 @@ export class TaskExecutor {
     };
   }
 
-  /**
-   * RETHINK reset-on-rework (KTD-4, U5): reset the active foreach instance's step
-   * to its per-step baseline before the rework edge re-enters step-execute. Drives
-   * the single extracted `resetStepToBaseline` (step-runner.ts) with the
-   * instance's persisted `baselineSha`/`checkpointId`. Session rewind is best-effort
-   * for graph-owned runs (the per-step session lives inside StepSessionExecutor and
-   * is not exposed as a single ref here) — missing-checkpoint partial recovery is
-   * the documented KTD-2 semantics; the git reset + step→pending are authoritative.
-   */
   private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
-    // Clear the memoized implementation pass so the next `runGraphTaskStep`
-    // re-executes (T9): the per-run pass is memoized in `graphStepRunOnce` keyed
-    // by task id and is normally only cleared on REJECTION. A RETHINK fires AFTER
-    // a SUCCESSFUL pass (a review verdict resets git/step state via this reset),
-    // so without clearing the memo the rework re-awaits the already-resolved
-    // promise and implementation never re-runs — leaving the instance permanently
-    // pending or falsely successful under `deferDoneToReview`. Mirrors the
-    // rejection-clear guard: only delete the memo when the stored promise is the
-    // SETTLED pass (a fresh in-flight attempt another caller installed is left
-    // untouched). At rethink time the pass under review has already resolved, so
-    // checking settled-ness avoids clobbering a concurrent re-dispatch.
-    const memo = this.graphStepRunOnce.get(taskId);
-    if (memo) {
-      let settled = false;
-      await Promise.race([memo.then(
-        () => { settled = true; },
-        () => { settled = true; },
-      ), Promise.resolve()]);
-      if (settled && this.graphStepRunOnce.get(taskId) === memo) {
-        this.graphStepRunOnce.delete(taskId);
-      }
-    }
-    // Worktree isolation (KTD-11): reset the instance's OWN branch/worktree only —
-    // sibling instances and the integration base are untouched, so the blast-radius
-    // guard is STRUCTURAL (skipped) in this mode. Shared isolation resets the task's
-    // main worktree and keeps the KTD-2 ancestry guard as written.
-    const branchScoped = typeof active.worktreePath === "string" && active.worktreePath.length > 0;
-    let worktreePath = active.worktreePath ?? this.rootDir;
-    if (!branchScoped) {
-      try {
-        worktreePath = (await this.store.getTask(taskId)).worktree || this.rootDir;
-      } catch {
-        // Best-effort worktree resolution; fall back to rootDir.
-      }
-    }
-    const liveSteps = await this.store.getTask(taskId).then((t) => t.steps).catch(() => []);
-    const narrationKey = graphActiveContextKey(taskId, active.instanceId);
-    const reviewSummary = this.graphRethinkNarrations.get(narrationKey);
-    try {
-      await resetStepToBaseline(
-        {
-          store: this.store,
-          worktreePath,
-          // No single session ref for graph-owned step-sessions — rewind is skipped
-          // when checkpointId resolves but no session is current (KTD-2 partial path).
-          sessionRef: { current: null },
-          reviewType: "code",
-          // Branch-scoped RETHINK under worktree isolation makes the guard structural
-          // (the reset can only touch the instance's own branch); shared isolation
-          // keeps the defensive ancestry guard (KTD-2/KTD-11).
-          blastRadiusGuard: branchScoped
-            ? undefined
-            : makeAncestryBlastRadiusGuard({
-                worktreePath,
-                task: { id: taskId, steps: liveSteps },
-                stepIndex: active.stepIndex,
-              }),
-        },
-        { id: taskId, steps: liveSteps },
-        active.stepIndex,
-        active.baselineSha,
-        active.checkpointId,
-      );
-      if (reviewSummary !== undefined) {
-        const narration = buildReviewVerdictMessage("RETHINK", reviewSummary);
-        void emitProactiveStatus(this.store, taskId, narration, "reviewer", sanitizeFailureReason(reviewSummary));
-      }
-    } catch (error) {
-      const safeReason = sanitizeFailureReason(error);
-      void emitProactiveStatus(
-        this.store,
-        taskId,
-        buildReviewRollbackFailureMessage(safeReason),
-        "reviewer",
-        safeReason,
-      );
-      throw error;
-    } finally {
-      this.graphRethinkNarrations.delete(narrationKey);
-    }
+    return applyGraphRethinkResetImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        graphStepRunOnce: this.graphStepRunOnce,
+        graphRethinkNarrations: this.graphRethinkNarrations,
+      },
+      taskId,
+      active,
+    );
   }
 
   /**
