@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "./executor-test-helpers.js";
 import { AgentSemaphore } from "../concurrency/concurrency.js";
 import { detectReviewHandoffIntent, determineRevisionResetStart } from "../executor.js";
-import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
+import { TaskExecutor, buildExecutionPrompt, extractWorktreeConflictInfo } from "../executor.js";
 import { createFnAgent } from "../pi.js";
 import { reviewStep as mockedReviewStepFn } from "../execution/reviewer.js";
 import { execSync } from "node:child_process";
@@ -806,26 +806,21 @@ describe("TaskExecutor worktree recovery", () => {
   });
 
   it("extractWorktreeConflictInfo classifies not-a-git-repository errors", () => {
-    const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
-
     const error: any = new Error("fatal: not a git repository");
     error.stderr = Buffer.from("fatal: not a git repository");
 
-    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    const conflictInfo = extractWorktreeConflictInfo(error);
     expect(conflictInfo.type).toBe("not-git-repo");
     expect(conflictInfo.message).toContain("not a git repository");
   });
 
   it("extractWorktreeConflictInfo does not misclassify dubious ownership as not-git-repo", () => {
-    const store = createMockStore();
-    const executor = new TaskExecutor(store, "/tmp/test");
     const rootDir = "C:/Users/drewd/Documents/1. App Development/1. Active/NextGenEHS";
 
     const error: any = new Error(`fatal: detected dubious ownership in repository at '${rootDir}'`);
     error.stderr = Buffer.from(`fatal: detected dubious ownership in repository at '${rootDir}'`);
 
-    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    const conflictInfo = extractWorktreeConflictInfo(error);
     expect(conflictInfo.type).toBe("unknown");
     expect(conflictInfo.message).toContain("detected dubious ownership");
   });
@@ -868,7 +863,7 @@ describe("TaskExecutor worktree recovery", () => {
       "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
     );
 
-    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    const conflictInfo = extractWorktreeConflictInfo(error);
     expect(conflictInfo).toMatchObject({
       type: "already-used",
       path: "/tmp/test/.worktrees/green-sage",

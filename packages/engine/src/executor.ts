@@ -412,6 +412,9 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
 import { detectPendingReviewBlock } from "./executor/pending-review-block.js";
+import { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
+export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
+export type { WorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 
 export {
   evaluateTaskDoneRefusal,
@@ -19410,7 +19413,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       await installGuardOrCleanup();
       return { path, branch };
     } catch (initialError: unknown) {
-      const conflictInfo = this.extractWorktreeConflictInfo(initialError);
+      const conflictInfo = extractWorktreeConflictInfo(initialError);
 
       if (conflictInfo.type === "index-lock-contention" && !staleLockRecoveryAttempted) {
         staleLockRecoveryAttempted = true;
@@ -19494,7 +19497,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       } catch (fallbackError: unknown) {
         const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
         // Check if the fallback also hit an "already used" conflict
-        const fallbackConflictInfo = this.extractWorktreeConflictInfo(fallbackError);
+        const fallbackConflictInfo = extractWorktreeConflictInfo(fallbackError);
         if (fallbackConflictInfo.type === "index-lock-contention" && !staleLockRecoveryAttempted) {
           staleLockRecoveryAttempted = true;
           const recovered = await this.recoverIndexLockIfStale(taskId, path, fallbackConflictInfo);
@@ -19759,7 +19762,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
          */
         return await this.tryCreateWorktree(suffixedBranch, newPath, taskId, conflictStartPoint, attemptNumber, 0, true, settings);
       } catch (suffixErr: unknown) {
-        const info = this.extractWorktreeConflictInfo(suffixErr);
+        const info = extractWorktreeConflictInfo(suffixErr);
         if (info.type === "already-used") {
           continue;
         }
@@ -20281,78 +20284,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
    * - "invalid reference" / "unable to resolve reference" / "stale file handle"
    * - "could not create leading directories"
    * - "working tree already exists"
-   */
-  private extractWorktreeConflictInfo(error: unknown): {
-    type: "already-used" | "invalid-reference" | "leading-directories" | "already-exists" | "not-git-repo" | "index-lock-contention" | "stale-registration" | "unknown";
-    path?: string;
-    lockPath?: string;
-    message?: string;
-  } {
-    const execError = error instanceof Error ? error : new Error(String(error));
-    const output = [
-      execError.message,
-      "stderr" in execError && typeof execError.stderr === "string" ? execError.stderr.toString() : undefined,
-      "stdout" in execError && typeof execError.stdout === "string" ? execError.stdout.toString() : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    // Pattern: already used by worktree at '/path/to/worktree'
-    const alreadyUsedMatch = output.match(/already used by worktree at '([^']+)'/);
-    if (alreadyUsedMatch) {
-      return { type: "already-used", path: alreadyUsedMatch[1], message: output };
-    }
-
-    // Pattern: already checked out at '/path/to/worktree'
-    const alreadyCheckedOutMatch = output.match(/is already checked out at '([^']+)'/);
-    if (alreadyCheckedOutMatch) {
-      return { type: "already-used", path: alreadyCheckedOutMatch[1], message: output };
-    }
-
-    const lockPath = parseIndexLockPath(output);
-    if (lockPath) {
-      return { type: "index-lock-contention", lockPath, message: output };
-    }
-
-    const staleRegistrationPath = parseStaleRegistrationPath(output);
-    if (staleRegistrationPath) {
-      return { type: "stale-registration", path: staleRegistrationPath, message: output };
-    }
-
-    // Pattern: invalid reference: 'branch-name'
-    // Also covers: unable to resolve reference, stale file handle, not a valid ref
-    if (
-      output.match(/invalid reference/i) ||
-      output.match(/unable to resolve reference/i) ||
-      output.match(/stale file handle/i) ||
-      output.match(/not a valid ref/i) ||
-      output.match(/unable to delete.*ref/i)
-    ) {
-      return { type: "invalid-reference", message: output };
-    }
-
-    // Pattern: could not create leading directories
-    if (output.match(/could not create leading directories/i)) {
-      return { type: "leading-directories", message: output };
-    }
-
-    // Pattern: working tree already exists
-    if (output.match(/working tree already exists/i)) {
-      return { type: "already-exists", message: output };
-    }
-
-    // Pattern: not a git repository / not a git repo
-    if (output.match(/not a git repo(sitory)?/i)) {
-      return { type: "not-git-repo", message: output };
-    }
-
-    return { type: "unknown", message: output };
-  }
-
-  /**
-   * Remove a task's worktree, but only if no other in-progress or todo task
-   * shares the same worktree path (dependency-chain reuse). The branch is
-   * always cleaned up by the merger on a per-task basis.
    */
   async cleanup(taskId: string): Promise<void> {
     const worktreePaths = this.getActiveWorktreePaths(taskId);
