@@ -12,7 +12,7 @@ const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS
 import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowIrNodeKind, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
@@ -432,6 +432,25 @@ export {
   isTerminalMergeGraphFailureValue,
   isAwaitingGraphFailureValue,
 } from "./executor/task-predicates.js";
+import {
+  graphFailureErrorTexts,
+  recordedNodeValue,
+  graphFailureValue,
+  extractUnusableWorktreeGraphFailure,
+  isMergeGraphFailure,
+  latestFailedPreMergeWorkflowStep,
+  isStalePauseAbortParkFailure,
+} from "./executor/graph-failure-pure.js";
+export {
+  graphFailureErrorTexts,
+  recordedNodeValue,
+  graphFailureValue,
+  extractUnusableWorktreeGraphFailure,
+  isMergeGraphFailure,
+  latestFailedPreMergeWorkflowStep,
+  isStalePauseAbortParkFailure,
+} from "./executor/graph-failure-pure.js";
+
 
 export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 export type { WorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
@@ -8991,25 +9010,9 @@ export class TaskExecutor {
       || latestAction === "Resuming execution after unpause";
   }
 
-  /*
-  FNXC:SessionContention 2026-07-25-21:30:
-  Two ways in, because contention must never slip through to a park:
-   - the typed failure value the graph now publishes (SESSION_CONTENTION_HOLD_VALUE), and
-   - a message-shape fallback over the run's `:error` context patches, so contention arriving from a
-     path that has not been taught the typed value is still recognized.
-  */
-  private graphFailureErrorTexts(result: WorkflowGraphTaskRunResult): string[] {
-    if (!result.context) return [];
-    const texts: string[] = [];
-    for (const [key, value] of Object.entries(result.context)) {
-      if (key.endsWith(":error") && typeof value === "string" && value.trim()) texts.push(value);
-    }
-    return texts;
-  }
-
   private isSessionContentionGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
-    if (this.graphFailureValue(result) === SESSION_CONTENTION_HOLD_VALUE) return true;
-    return this.graphFailureErrorTexts(result).some((text) => isSessionContentionError(text));
+    if (graphFailureValue(result) === SESSION_CONTENTION_HOLD_VALUE) return true;
+    return graphFailureErrorTexts(result).some((text) => isSessionContentionError(text));
   }
 
   /** True only for the pre-session refresh refusal values emitted by graph preparation. */
@@ -9022,7 +9025,7 @@ export class TaskExecutor {
       "git-refresh-failed",
       "base-persistence-failed-compensated",
       "base-reconciliation-required",
-    ]).has(this.graphFailureValue(result) ?? "");
+    ]).has(graphFailureValue(result) ?? "");
   }
 
   /*
@@ -9046,7 +9049,7 @@ export class TaskExecutor {
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
   ): Promise<void> {
-    const detail = this.graphFailureErrorTexts(result).find((text) => isSessionContentionError(text));
+    const detail = graphFailureErrorTexts(result).find((text) => isSessionContentionError(text));
     const priorAttempts = this.sessionContentionHoldAttempts.get(task.id) ?? 0;
     const attempt = priorAttempts + 1;
 
@@ -9125,120 +9128,12 @@ export class TaskExecutor {
     that node's outcome is the run's, and this classifier stays out of the way.
     */
     for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
-      const value = this.recordedNodeValue(context, result.visitedNodeIds[i]);
+      const value = recordedNodeValue(context, result.visitedNodeIds[i]);
       if (typeof value === "string") return value === "review-pending";
     }
     return false;
   }
 
-  /*
-  FNXC:WorkflowExecutionOwnership 2026-07-30-10:10 (U8, PR #2599 review — coderabbit, major):
-  A visited node id does NOT always name the context key its value is stored under, and the two
-  shapes that differ are the ones this unit cares about most. A foreach instance
-  (`steps#0:step-execute`) records under the CONTAINER key `node:steps:value`; an optional-group
-  template (`group::template`) records under the group key, then the template key. Reading
-  `node:<visitedId>:value` directly therefore misses a foreach ending and walks on to some
-  earlier node's value — and the default coding workflow IS a foreach, so the backward walk
-  would have misread precisely the shape it was written for.
-
-  Extracted from `graphFailureValue`, which already knew this, so the two cannot drift apart.
-  */
-  private recordedNodeValue(context: Record<string, unknown>, nodeId: string): string | undefined {
-    const direct = context[`node:${nodeId}:value`];
-    if (typeof direct === "string") return direct;
-    const groupDelimiter = nodeId.indexOf("::");
-    if (groupDelimiter !== -1) {
-      const groupValue = context[`node:${nodeId.slice(0, groupDelimiter)}:value`];
-      if (typeof groupValue === "string") return groupValue;
-      const templateValue = context[`node:${nodeId.slice(groupDelimiter + 2)}:value`];
-      return typeof templateValue === "string" ? templateValue : undefined;
-    }
-    const foreachDelimiter = nodeId.indexOf("#");
-    if (foreachDelimiter === -1) return undefined;
-    const containerValue = context[`node:${nodeId.slice(0, foreachDelimiter)}:value`];
-    return typeof containerValue === "string" ? containerValue : undefined;
-  }
-
-  private graphFailureValue(result: WorkflowGraphTaskRunResult): string | undefined {
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!failedNode || !result.context) return undefined;
-    const value = result.context[`node:${failedNode}:value`];
-    if (typeof value === "string") return value;
-    /*
-    FNXC:WorkflowLifecycle 2026-07-16-18:20:
-    Optional-group template failures record materialized `<groupId>::<templateId>` ids in
-    visitedNodeIds, but runOptionalGroup publishes context values under the UNQUALIFIED
-    template id, and the group wrapper publishes the group's FINAL routing value (e.g.
-    FN-7977's plan-review provider-failure hold) under the group id. FN-7996 parked
-    terminally because this lookup only understood `#` foreach ids, so every graph-failure
-    router (provider hold, awaiting states) missed group-template failures. Prefer the
-    group's own value (it carries post-classification routing intent), then the template's.
-    */
-    const groupInstanceDelimiter = failedNode.indexOf("::");
-    if (groupInstanceDelimiter !== -1) {
-      const groupNode = failedNode.slice(0, groupInstanceDelimiter);
-      const groupValue = result.context[`node:${groupNode}:value`];
-      if (typeof groupValue === "string") return groupValue;
-      const templateNode = failedNode.slice(groupInstanceDelimiter + 2);
-      const templateValue = result.context[`node:${templateNode}:value`];
-      return typeof templateValue === "string" ? templateValue : undefined;
-    }
-    const foreachInstanceDelimiter = failedNode.indexOf("#");
-    if (foreachInstanceDelimiter === -1) return undefined;
-    /*
-    FNXC:WorkflowLifecycle 2026-06-15-03:23:
-    Foreach step-execute failures record instance ids in visitedNodeIds, but the graph walk stores the failed value on the foreach container context key. Check that container key before classifying execute-node failures so awaiting operator states from step-execute are preserved instead of parked as terminal graph failures.
-    */
-    const foreachContainerNode = failedNode.slice(0, foreachInstanceDelimiter);
-    const containerValue = result.context[`node:${foreachContainerNode}:value`];
-    return typeof containerValue === "string" ? containerValue : undefined;
-  }
-
-  /*
-  FNXC:MissingWorktreeRecovery 2026-07-16-18:25:
-  FN-7996: a session-start unusable-worktree refusal (assertValidWorktreeSession in pi.ts)
-  thrown inside ANY workflow graph node (Plan Review, code review, custom gates) surfaced as a
-  generic node "exception" and fell through every graph-failure router into the terminal park,
-  which also OVERWROTE task.error with a generic message — erasing the signature the in-review
-  missing-worktree self-healing sweep classifies on. The overseer then blindly re-dispatched the
-  same stale task.worktree all day. Extract the underlying node error from the graph context so
-  handleGraphFailure can route these into the same bounded recovery the execute session-start
-  path already uses (clear stale worktree/branch/session metadata, requeue to todo, budgeted by
-  worktreeSessionRetryCount).
-  */
-  private extractUnusableWorktreeGraphFailure(result: WorkflowGraphTaskRunResult): string | null {
-    if (!result.context) return null;
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!failedNode) return null;
-    /*
-    FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
-    Detection is scoped to the FAILED node's error keys only (exact id, plus the
-    `group::template` / `container#N:template` materialized-id derivations under which
-    runOptionalGroup/foreach publish template context). A catch-all scan over every
-    `node:*:error` entry would match a STALE error left by an earlier, already-handled node
-    and misroute an unrelated later failure into worktree recovery (greptile PR#2231 P1).
-    */
-    const candidateKeys: string[] = [`node:${failedNode}:error`];
-    const groupInstanceDelimiter = failedNode.indexOf("::");
-    if (groupInstanceDelimiter !== -1) {
-      candidateKeys.push(`node:${failedNode.slice(groupInstanceDelimiter + 2)}:error`);
-      candidateKeys.push(`node:${failedNode.slice(0, groupInstanceDelimiter)}:error`);
-    }
-    const foreachInstanceDelimiter = failedNode.indexOf("#");
-    if (foreachInstanceDelimiter !== -1) {
-      candidateKeys.push(`node:${failedNode.slice(0, foreachInstanceDelimiter)}:error`);
-      const instanceRest = failedNode.slice(foreachInstanceDelimiter + 1);
-      const templateDelimiter = instanceRest.indexOf(":");
-      if (templateDelimiter !== -1) {
-        candidateKeys.push(`node:${instanceRest.slice(templateDelimiter + 1)}:error`);
-      }
-    }
-    for (const key of candidateKeys) {
-      const value = result.context[key];
-      if (typeof value === "string" && isMissingWorktreeSessionStartFailure(value)) return value;
-    }
-    return null;
-  }
 
   private async routeUnusableWorktreeGraphFailureToRecovery(
     task: Task,
@@ -9253,7 +9148,7 @@ export class TaskExecutor {
     // Pause/abort provenance owns aborted runs; a genuine abort never carries the
     // session-start refusal as its terminal node error in the same walk.
     if (this.pausedAborted.has(task.id)) return false;
-    const errorText = this.extractUnusableWorktreeGraphFailure(result);
+    const errorText = extractUnusableWorktreeGraphFailure(result);
     if (!errorText) return false;
     /*
     FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
@@ -9282,16 +9177,6 @@ export class TaskExecutor {
     return outcome === "requeue-todo";
   }
 
-  private isMergeGraphFailure(failedNode: string | undefined): boolean {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-19-00:00:
-    FN-6735 requires every workflow merge-region node id to classify as a merge-seam graph failure. A benign pause/resume abort can surface as the synthetic legacy `merge`, `requestMerge`, or a primitive merge-region id, and all must route through bounded merge retry rather than terminal operator-action parking.
-    */
-    if (!failedNode) return false;
-    if (failedNode === "merge" || failedNode === "requestMerge") return true;
-    if (MERGE_REGION_KINDS.has(failedNode as WorkflowIrNodeKind)) return true;
-    return failedNode === "merge-manual-hold" || failedNode === "merge-retry";
-  }
 
   /*
   FNXC:WorkflowRemediation 2026-07-01-23:40:
@@ -9346,15 +9231,6 @@ export class TaskExecutor {
     return failedNode === "code-review-remediation" || failedNode === "browser-verification-remediation";
   }
 
-  private latestFailedPreMergeWorkflowStep(task: Pick<Task, "workflowStepResults">): CoreWorkflowStepResult | undefined {
-    return (task.workflowStepResults ?? [])
-      .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
-      .sort((a, b) => {
-        const aTs = Date.parse(a.completedAt || a.startedAt || "");
-        const bTs = Date.parse(b.completedAt || b.startedAt || "");
-        return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
-      })[0];
-  }
 
   private async resolveFailedPreMergeWorkflowStepBudget(
     task: Task,
@@ -9413,7 +9289,7 @@ export class TaskExecutor {
     if (!settings || settings.globalPause === true || settings.enginePaused === true) return false;
     /* FNXC:AutoMergeHold 2026-07-09-17:04: FN-7750 requires retryable pre-merge remediation to treat stale shared-group members as standalone manual-hold rows when global auto-merge is off; only live/open groups retain the shared-member exemption. */
     if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
-    const target = this.latestFailedPreMergeWorkflowStep(live);
+    const target = latestFailedPreMergeWorkflowStep(live);
     if (!target) return false;
     const budget = await this.resolveFailedPreMergeWorkflowStepBudget(live, target);
     if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
@@ -9460,12 +9336,12 @@ export class TaskExecutor {
     if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review
       || !isRetryableMergePauseAbortStatus(live.status) || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
-    const failureValue = this.graphFailureValue(result);
+    const failureValue = graphFailureValue(result);
     if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 / Runfusion#1991 — missing implementation proof is not a transient merge pause. Let the implementation-incomplete classifier fail closed or requeue resumable parsed steps before any requester can mint a no-branch no-op merge proof. */
     if (failureValue === "implementation-incomplete") return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!this.isMergeGraphFailure(failedNode)) return false;
+    if (!isMergeGraphFailure(failedNode)) return false;
     let settings: Settings | undefined;
     try {
       settings = await this.store.getSettings();
@@ -9529,21 +9405,14 @@ export class TaskExecutor {
     if (live.userPaused === true) return false;
     if (live.status != null || live.error != null) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (this.isMergeGraphFailure(failedNode)) return false;
+    if (isMergeGraphFailure(failedNode)) return false;
     if (live.steps.length === 0) return false;
     if (!live.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
     return true;
   }
 
-  private isStalePauseAbortParkFailure(live: TaskDetail, nodeId = "plan"): boolean {
-    return live.status === "failed"
-      && typeof live.error === "string"
-      && live.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER)
-      && live.error.includes("engine abort during pause/resume")
-      && live.error.includes(`at node '${nodeId}'`);
-  }
 
   private async isBenignManualMergeHoldPauseAbort(
     live: TaskDetail,
@@ -9563,11 +9432,11 @@ export class TaskExecutor {
     if (live.paused || live.userPaused === true) return false;
     if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
     if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!this.isMergeGraphFailure(failedNode)) return false;
+    if (!isMergeGraphFailure(failedNode)) return false;
     const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = this.isStalePauseAbortParkFailure(live, failedNode);
+    const staleParkedFailure = isStalePauseAbortParkFailure(live, failedNode);
     if (!cleanRow && !staleParkedFailure) return false;
     let settings: Settings | undefined;
     try {
@@ -9604,14 +9473,14 @@ export class TaskExecutor {
     if (result.interruptedAbortKind && result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
     const failedNode = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1];
     if (failedNode !== "plan") return false;
-    if (this.isMergeGraphFailure(failedNode)) return false;
+    if (isMergeGraphFailure(failedNode)) return false;
     const failureValue = typeof result.context?.[`node:${failedNode}:value`] === "string"
       ? result.context[`node:${failedNode}:value`] as string
-      : this.graphFailureValue(result);
+      : graphFailureValue(result);
     if (failureValue !== "aborted") return false;
     if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = this.isStalePauseAbortParkFailure(live, "plan");
+    const staleParkedFailure = isStalePauseAbortParkFailure(live, "plan");
     if (!cleanRow && !staleParkedFailure) return false;
     let settings: Settings;
     try {
@@ -9688,11 +9557,11 @@ export class TaskExecutor {
     if (failedNode !== "parse") return false;
     const failureValue = typeof result.context?.[`node:${failedNode}:value`] === "string"
       ? result.context[`node:${failedNode}:value`] as string
-      : this.graphFailureValue(result);
+      : graphFailureValue(result);
     if (failureValue !== "aborted") return false;
     if (isTerminalMergeGraphFailureValue(failureValue)) return false;
     const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = this.isStalePauseAbortParkFailure(live, "parse");
+    const staleParkedFailure = isStalePauseAbortParkFailure(live, "parse");
     if (!cleanRow && !staleParkedFailure) return false;
     const priorRetries = live.graphResumeRetryCount ?? 0;
     if (priorRetries >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
@@ -9805,8 +9674,8 @@ export class TaskExecutor {
     if (result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
     if (!result.interruptedNodeId) return false;
     if (live.column === resumeLanes.review && result.interruptedNodeId === "plan") return false;
-    if (this.isMergeGraphFailure(result.interruptedNodeId)) return false;
-    if (isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    if (isMergeGraphFailure(result.interruptedNodeId)) return false;
+    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
     if ((live.graphResumeRetryCount ?? 0) >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
     let settings: Settings | undefined;
     if (abortProvenance === "global-pause" || live.column === resumeLanes.review) {
@@ -10004,7 +9873,7 @@ export class TaskExecutor {
   ): Promise<boolean> {
     if (!this.mergeRequester) return false;
     /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 defense in depth — implementation-incomplete merge graph failures must never reach the merge requester, because a no-branch task can otherwise be finalized as an intentional no-op. */
-    if (this.graphFailureValue(result) === "implementation-incomplete") return false;
+    if (graphFailureValue(result) === "implementation-incomplete") return false;
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
@@ -10183,7 +10052,7 @@ export class TaskExecutor {
       in the task log. Exhaustion deliberately leaves the task held for a later clean acquisition.
       */
       if (this.isWorktreeBaseRefreshGraphFailure(result)) {
-        const refreshKind = this.graphFailureValue(result)!;
+        const refreshKind = graphFailureValue(result)!;
         const priorRetries = live.graphResumeRetryCount ?? 0;
         if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
           const nextRetries = priorRetries + 1;
@@ -10219,7 +10088,7 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (isRequiredArtifactReadFailedValue(this.graphFailureValue(result))) {
+      if (isRequiredArtifactReadFailedValue(graphFailureValue(result))) {
         /*
         FNXC:WorkflowArtifacts 2026-07-21-17:00:
         A TaskStore read outage is not proof that an artifact is absent. Keep the
@@ -10256,7 +10125,7 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
-      if (this.graphFailureValue(result) === PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE) {
+      if (graphFailureValue(result) === PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE) {
         /*
          * FNXC:PlanReviewReplan 2026-07-15-16:35:
          * FN-7977: graph-native Plan Review provider failures are a bounded
@@ -10359,7 +10228,7 @@ export class TaskExecutor {
           || (pausedAborted && !mergeSeamAborted && !completionFinalizeAborted && !suppressFinalizedCompletionAbort),
       );
       const failedNodeForLog = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
-      const failureValueForLog = this.graphFailureValue(result) ?? "none";
+      const failureValueForLog = graphFailureValue(result) ?? "none";
       if (pausedAborted || live.paused || live.userPaused || abortProvenance) {
         this.safeLogEntry(
           task.id,
@@ -10392,7 +10261,7 @@ export class TaskExecutor {
         && abortProvenance !== "global-pause"
         && abortProvenance !== "completion-finalize"
         && live.userPaused !== true
-        && this.isMergeGraphFailure(failedNodeForLog)
+        && isMergeGraphFailure(failedNodeForLog)
         && failureValueForLog === "implementation-incomplete"
       ) {
         if (await this.routeImplementationIncompleteMergeGraphFailure(live, failedNodeForLog)) {
@@ -10661,8 +10530,8 @@ export class TaskExecutor {
         return;
       }
       const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-      const mergeGraphFailure = this.isMergeGraphFailure(failedNode);
-      const failureValue = this.graphFailureValue(result);
+      const mergeGraphFailure = isMergeGraphFailure(failedNode);
+      const failureValue = graphFailureValue(result);
       /*
       FNXC:DuplicateIntake 2026-08-01-19:24:
       Defense in depth for FN-8704: if a card slipped into WIP with PROMPT.md = only
@@ -11170,7 +11039,7 @@ export class TaskExecutor {
      */
     if (failedNode === COMPLETION_SUMMARY_NODE_ID) return false;
     const incompleteSteps = hasNonTerminalWorkflowSteps(live);
-    const implementationIncompleteMergeFailure = this.isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
+    const implementationIncompleteMergeFailure = isMergeGraphFailure(failedNode) && failureValue === "implementation-incomplete";
     if (implementationIncompleteMergeFailure && !incompleteSteps) return false;
     const prematureMergeWithIncompleteSteps = implementationIncompleteMergeFailure && incompleteSteps;
     /*
