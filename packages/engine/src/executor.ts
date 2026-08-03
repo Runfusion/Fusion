@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getBuiltinWorkflow, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -186,7 +186,7 @@ import type { AgentReflectionService } from "./agents/agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import {
-  extractMissingWorktreePathFromSessionStartFailure,
+
 } from "./healing/restart-recovery-coordinator.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflows/workflow-step-tool-policy.js";
@@ -361,7 +361,6 @@ export {
 } from "./executor/task-predicates.js";
 import {
   graphFailureValue,
-  extractUnusableWorktreeGraphFailure,
   isMergeGraphFailure,
 
   isSessionContentionGraphFailure,
@@ -810,6 +809,12 @@ import { routeGraphMergeFailureToRetry as routeGraphMergeFailureToRetryImpl } fr
 export { routeGraphMergeFailureToRetry as routeGraphMergeFailureToRetryFree } from "./executor/route-graph-merge-failure-to-retry.js";
 import { routeImplementationIncompleteMergeGraphFailure as routeImplementationIncompleteMergeGraphFailureImpl } from "./executor/route-implementation-incomplete-merge-graph-failure.js";
 export { routeImplementationIncompleteMergeGraphFailure as routeImplementationIncompleteMergeGraphFailureFree } from "./executor/route-implementation-incomplete-merge-graph-failure.js";
+import { evaluateTaskVerdictProviders as evaluateTaskVerdictProvidersImpl } from "./executor/evaluate-task-verdict-providers.js";
+export { evaluateTaskVerdictProviders as evaluateTaskVerdictProvidersFree } from "./executor/evaluate-task-verdict-providers.js";
+import { blockOuterDispatchWhenEphemeralDisabled as blockOuterDispatchWhenEphemeralDisabledImpl } from "./executor/block-outer-dispatch-when-ephemeral-disabled.js";
+export { blockOuterDispatchWhenEphemeralDisabled as blockOuterDispatchWhenEphemeralDisabledFree } from "./executor/block-outer-dispatch-when-ephemeral-disabled.js";
+import { routeUnusableWorktreeGraphFailureToRecovery as routeUnusableWorktreeGraphFailureToRecoveryImpl } from "./executor/route-unusable-worktree-graph-failure-to-recovery.js";
+export { routeUnusableWorktreeGraphFailureToRecovery as routeUnusableWorktreeGraphFailureToRecoveryFree } from "./executor/route-unusable-worktree-graph-failure-to-recovery.js";
 
 
 
@@ -6433,41 +6438,21 @@ export class TaskExecutor {
     /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    if (live.deletedAt) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
-    // Pause/abort provenance owns aborted runs; a genuine abort never carries the
-    // session-start refusal as its terminal node error in the same walk.
-    if (this.pausedAborted.has(task.id)) return false;
-    const errorText = extractUnusableWorktreeGraphFailure(result);
-    if (!errorText) return false;
-    /*
-    FNXC:MissingWorktreeRecovery 2026-07-16-19:40:
-    FN-5147: with auto-merge off, `in-review` is terminal-until-human-merged — recovery must
-    not move those tasks backward or re-enqueue them. Mirrors the gating the in-review
-    self-healing sweep (recoverMissingWorktreeReviewFailures) applies before the same recovery.
-    */
-    /* FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet): FN-5147 — with the literal, a renamed board
-       skipped this auto-merge-off gate entirely, so an automatic recovery moved a human-review-terminal
-       card backward. #2689 converted the terminal guard at the top of this method; this is the other half
-       of the same decision. */
-    if (live.column === (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) {
-      const settings = await this.store.getSettings();
-      if (!allowsAutoMergeProcessing(live, settings)) return false;
-    }
-    const stalePath = extractMissingWorktreePathFromSessionStartFailure(errorText) ?? live.worktree ?? "";
-    const audit = createRunAuditor(this.store, {
-      runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("graph-worktree-recovery", task.id),
-      agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
-      taskId: task.id,
-      phase: "execute",
-    });
-    const outcome = await this.recoverMissingWorktreeSessionStartFailure(live, stalePath, new Error(errorText), audit);
-    // escalate-exhausted intentionally returns false: the failure falls through to the
-    // visible terminal park so a human inspects the task instead of it looping silently.
-    return outcome === "requeue-todo";
+    return routeUnusableWorktreeGraphFailureToRecoveryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        pausedAborted: this.pausedAborted,
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        recoverMissingWorktreeSessionStartFailure: (liveTask, path, err, audit) =>
+          this.recoverMissingWorktreeSessionStartFailure(liveTask, path, err, audit),
+      },
+      task,
+      live,
+      result,
+      resumeLanesMemo,
+    );
   }
-
 
   /*
   FNXC:WorkflowRemediation 2026-07-01-23:40:
@@ -7920,42 +7905,7 @@ export class TaskExecutor {
     task: TaskDetail,
     context: Record<string, unknown> = {},
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    let workflow: WorkflowIr;
-    try {
-      workflow = await resolveWorkflowIrForTask(this.store, task.id);
-    } catch (error) {
-      executorLog.warn(`${task.id}: failed to resolve workflow for verdict providers: ${error instanceof Error ? error.message : String(error)}`);
-      return { ok: true };
-    }
-
-    const providers = getWorkflowExtensionRegistry().list("verdict-provider");
-    for (const definition of providers) {
-      const extension = definition.extension;
-      if (definition.degraded || extension.kind !== "verdict-provider" || !extension.evaluate) continue;
-      try {
-        const verdict = await extension.evaluate({
-          task,
-          workflow,
-          reworkRound: 0,
-          metadata: context,
-        });
-        if (verdict.status === "pass") continue;
-        const reasons = verdict.failureReasons?.map((reason) => reason.message).filter(Boolean).join("; ");
-        return {
-          ok: false,
-          message: `fn_task_done refused (verdict-provider): ${verdict.summary}${reasons ? ` — ${reasons}` : ""}`,
-        };
-      } catch (error) {
-        if (extension.fallback === "degradeToDefault") continue;
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          ok: false,
-          message: `fn_task_done refused (verdict-provider): provider '${definition.id}' failed — ${message}`,
-        };
-      }
-    }
-
-    return { ok: true };
+    return evaluateTaskVerdictProvidersImpl({ store: this.store }, task, context);
   }
 
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): Promise<boolean> {
@@ -7975,41 +7925,14 @@ export class TaskExecutor {
   This guard is the executor's last line of defense, mirroring the scheduler cutover gate (scheduler.ts:2464) and the spawn refusal (ephemeral-worker-manager.ts:132). It runs once at the top of the outer dispatch — before all three workflow paths — so a single check covers every workflow dispatch entry point. A task explicitly assigned to a permanent (non-ephemeral) agent is exactly how ephemeral-off mode is meant to run, so those are allowed through; everything else is re-queued for the scheduler to auto-assign a permanent agent or hold.
   */
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): Promise<boolean> {
-    const settings = await this.store.getSettings();
-    if (settings.ephemeralAgentsEnabled !== false) return false;
-
-    // A permanent (non-ephemeral) assignment is the sanctioned executor when
-    // ephemeral workers are off. `assignedAgentId` is only ever set by permanent
-    // assignment — default ephemeral mode never sets it — so when we cannot
-    // resolve the agent (no agentStore) we trust the presence of the id and allow
-    // the run rather than starving a legitimately-assigned task.
-    const assignedId = task.assignedAgentId?.trim();
-    if (assignedId) {
-      if (!this.options.agentStore) return false;
-      const agent = await this.options.agentStore.getAgent(assignedId).catch(() => null);
-      if (agent && !isEphemeralAgent(agent)) return false;
-    }
-
-    const liveTask = (await this.store.getTask(task.id).catch(() => null)) ?? task;
-    const reboundColumn = await resolveReboundColumnFor(this.store, liveTask.id);
-    if (liveTask.column !== reboundColumn) {
-      await this.store.moveTask(liveTask.id, reboundColumn, {
-        preserveProgress: true,
-        preserveWorktree: true,
-        preserveResumeState: true,
-        moveSource: "engine",
-        recoveryRehome: true,
-      });
-    }
-    await this.store.updateTask(liveTask.id, { status: "queued" }, this.getRunContextFor(liveTask.id));
-    await this.store.logEntry(
-      liveTask.id,
-      "queued — ephemeral agents disabled; no permanent executor assigned",
-      "Executor pre-dispatch ephemeral gate blocked workflow/authoritative execution.",
-      this.getRunContextFor(liveTask.id),
+    return blockOuterDispatchWhenEphemeralDisabledImpl(
+      {
+        store: this.store,
+        agentStore: this.options.agentStore,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
+      task,
     );
-    executorLog.log(`${liveTask.id}: executor dispatch blocked — ephemeralAgentsEnabled=false and no permanent agent assigned`);
-    return true;
   }
 
   /*
