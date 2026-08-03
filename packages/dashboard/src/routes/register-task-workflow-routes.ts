@@ -4064,13 +4064,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       // Move to todo and clear status
       const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
-      const updated = await scopedStore.moveTask(task.id, reboundColumn);
-      await scopedStore.updateTask(task.id, {
-        status: undefined,
-        ...(approvedPlanFingerprint ? { approvedPlanFingerprint } : {}),
+      await scopedStore.moveTask(task.id, reboundColumn);
+      /*
+       * FNXC:PlanApproval 2026-08-03-18:53:
+       * Approval must clear the durable awaiting-approval hold with TaskStore's explicit
+       * null sentinel; undefined omits a field from the patch. Persist the current plan's
+       * fingerprint, or explicitly clear a prior fingerprint when PROMPT.md was unreadable,
+       * so a stale plan can never bypass a later manual approval gate.
+       */
+      const updated = await scopedStore.updateTask(task.id, {
+        status: null,
+        approvedPlanFingerprint: approvedPlanFingerprint ?? null,
       });
 
-      res.json({ ...updated, status: undefined, ...(approvedPlanFingerprint ? { approvedPlanFingerprint } : {}) });
+      res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -4110,7 +4117,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
        * clear and PROMPT.md removal, so the regenerated plan is always treated as new and
        * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
        */
-      await scopedStore.updateTask(task.id, { status: undefined, approvedPlanFingerprint: null });
+      await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null });
 
       // Remove PROMPT.md to force regeneration
       const { rm } = await import("node:fs/promises");

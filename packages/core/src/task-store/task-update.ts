@@ -252,6 +252,11 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       } else if (updates.status !== undefined) {
         task.status = updates.status;
       }
+      if (updates.approvedPlanFingerprint === null) {
+        task.approvedPlanFingerprint = undefined;
+      } else if (updates.approvedPlanFingerprint !== undefined) {
+        task.approvedPlanFingerprint = updates.approvedPlanFingerprint;
+      }
       /*
       FNXC:PlanApproval 2026-08-01-04:39:
       `awaitingApprovalReason` was persisted (persistence.ts) and serialized (serialization.ts)
@@ -1055,4 +1060,3 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       return task;
     }
   }
-
