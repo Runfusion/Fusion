@@ -235,6 +235,14 @@ function readSidebarWidth(projectId?: string): number {
 const LIST_SIDEBAR_MIN_WIDTH = 64; // FNXC:ListView 2026-06-22-00:00: The desktop task-list split sidebar minimum is 64 (was 120) so users can shrink the left panel much further; task titles wrap to two lines (.list-split-sidebar .list-cell-title) so they stay legible at narrow widths. Resize, keyboard, and ARIA paths share one clamp value.
 const LIST_SIDEBAR_MAX_RATIO = 0.65;
 const LIST_SIDEBAR_KEYBOARD_STEP = 16;
+const LIST_MINIMUM_USABLE_TASK_LIST_WIDTH = 320;
+const LIST_MINIMUM_USABLE_DETAIL_WIDTH = 480;
+export const LIST_MINIMUM_SPLIT_LAYOUT_WIDTH = LIST_MINIMUM_USABLE_TASK_LIST_WIDTH + LIST_MINIMUM_USABLE_DETAIL_WIDTH;
+
+/** Returns whether the List surface can keep both its task list and embedded detail usable. */
+export function canUseListSplitLayout(containerWidth: number): boolean {
+  return containerWidth >= LIST_MINIMUM_SPLIT_LAYOUT_WIDTH;
+}
 
 function getSidebarMaxWidth(containerWidth: number): number {
   return Math.max(LIST_SIDEBAR_MIN_WIDTH, containerWidth * LIST_SIDEBAR_MAX_RATIO);
@@ -425,11 +433,19 @@ export function ListView({
   });
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  const [listContainerWidth, setListContainerWidth] = useState<number | null>(null);
   /*
-  FNXC:ListView 2026-07-10-00:00 (FN-7809):
-  Tablet-width List view must use the same single-pane layout as mobile because the desktop two-pane sidebar leaves too little horizontal room and clips the primary actions plus expanded QuickEntryBox. Keep touch-only long-press behavior on `isMobile`; this gate only controls split-vs-single-pane structure and detail routing.
+  FNXC:ListView 2026-08-03-05:47:
+  Available List width—not the global viewport label—owns split-versus-modal routing. A measured
+  surface must leave 320px for task navigation and 480px for the existing embedded detail; real
+  phones remain single-pane even when a synthetic measurement is large. When measurement support is
+  unavailable, retain the established desktop split and constrained tablet modal fallbacks.
   */
-  const useSinglePaneList = viewportMode === "mobile" || viewportMode === "tablet";
+  const canRenderSplitLayout = viewportMode !== "mobile"
+    && (listContainerWidth !== null
+      ? canUseListSplitLayout(listContainerWidth)
+      : viewportMode === "desktop");
+  const useSinglePaneList = !canRenderSplitLayout;
   const { confirm, confirmWithChoice } = useConfirm();
 
   useEffect(() => {
@@ -493,6 +509,11 @@ export function ListView({
   });
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readSidebarWidth(projectId));
   const splitLayoutRef = useRef<HTMLDivElement>(null);
+  const [splitLayoutContainer, setSplitLayoutContainer] = useState<HTMLDivElement | null>(null);
+  const setSplitLayoutRef = useCallback((node: HTMLDivElement | null) => {
+    splitLayoutRef.current = node;
+    setSplitLayoutContainer(node);
+  }, []);
   const splitSidebarRef = useRef<HTMLDivElement>(null);
   // FNXC:ListView 2026-06-22-18:00: Holds the active pointer-drag teardown so move/up/cancel/unmount all detach the same listeners — prevents the "window mousemove with no cleanup" leak called out by the frontend-races review.
   const splitResizeTeardownRef = useRef<(() => void) | null>(null);
@@ -549,6 +570,24 @@ export function ListView({
       return { ...previous, ...liveTask };
     });
   }, [selectedTaskId, tasks]);
+
+  useLayoutEffect(() => {
+    if (!splitLayoutContainer) return;
+
+    const measureContainer = (observedWidth?: number) => {
+      const width = observedWidth ?? (splitLayoutContainer.getBoundingClientRect().width || splitLayoutContainer.clientWidth);
+      setListContainerWidth(width > 0 ? width : null);
+    };
+
+    measureContainer();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      measureContainer(entries[0]?.contentRect.width);
+    });
+    observer.observe(splitLayoutContainer);
+    return () => observer.disconnect();
+  }, [splitLayoutContainer]);
 
   useEffect(() => {
     if (useSinglePaneList || typeof ResizeObserver === "undefined") return;
@@ -2949,7 +2988,7 @@ export function ListView({
       )}
 
       <div className="list-table-container">
-        <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={splitLayoutRef}>
+        <div className={useSinglePaneList ? "" : "list-split-layout"} data-testid={useSinglePaneList ? undefined : "list-split-layout"} ref={setSplitLayoutRef}>
           <div
             className={useSinglePaneList ? "" : "list-split-sidebar"}
             data-testid={useSinglePaneList ? undefined : "list-split-sidebar"}

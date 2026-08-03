@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { useEffect, useState } from "react";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ListView } from "../ListView";
+import { ListView, LIST_MINIMUM_SPLIT_LAYOUT_WIDTH } from "../ListView";
 import type { Task, TaskDetail } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
@@ -411,6 +411,33 @@ function mockDesktopViewport() {
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   }));
+}
+
+function installControlledResizeObserver() {
+  const callbacks = new Set<ResizeObserverCallback>();
+  class ControlledResizeObserver {
+    constructor(private readonly observerCallback: ResizeObserverCallback) {
+      callbacks.add(observerCallback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {
+      callbacks.delete(this.observerCallback);
+    }
+  }
+  const OriginalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = ControlledResizeObserver as unknown as typeof ResizeObserver;
+
+  return {
+    resize(width: number) {
+      for (const callback of callbacks) {
+        callback([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver);
+      }
+    },
+    restore() {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    },
+  };
 }
 
 /*
@@ -2322,6 +2349,132 @@ describe("ListView", () => {
     viewportSpy.mockRestore();
   });
 
+  it("uses measured List width rather than tablet viewport classification for detail routing", async () => {
+    const viewportSpy = mockTabletViewport();
+    const resizeObserver = installControlledResizeObserver();
+    const task = createMockTask({ id: "FN-8754", title: "Measured tablet task" });
+    const onOpenDetail = vi.fn();
+
+    try {
+      renderListView({ tasks: [task], onOpenDetail });
+
+      // The constrained control remains the existing card/modal route.
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH - 1));
+      const constrainedCard = document.querySelector('.list-card[data-id="FN-8754"]') as HTMLElement;
+      fireEvent.keyDown(constrainedCard, { key: "Enter" });
+      expect(onOpenDetail).toHaveBeenCalledWith(task, { origin: "list-mobile" });
+      expect(screen.queryByTestId("list-split-detail")).toBeNull();
+
+      onOpenDetail.mockClear();
+      // At the named usable boundary, the same tablet surface owns the existing split detail.
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH));
+      const boundaryRow = document.querySelector('tr[data-id="FN-8754"]') as HTMLElement;
+      fireEvent.keyDown(boundaryRow, { key: " " });
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
+      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754");
+      expect(screen.getByTestId("list-split-resize-handle")).toHaveAttribute("role", "separator");
+
+      // Above the boundary pointer opens use that same single embedded host.
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
+      fireEvent.click(document.querySelector('tr[data-id="FN-8754"]') as HTMLElement);
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
+    } finally {
+      resizeObserver.restore();
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("routes a constrained desktop List surface through the modal without split chrome", async () => {
+    const viewportSpy = mockDesktopViewport();
+    const resizeObserver = installControlledResizeObserver();
+    const task = createMockTask({ id: "FN-8754-desktop", title: "Constrained desktop task" });
+    const onOpenDetail = vi.fn();
+
+    try {
+      renderListView({ tasks: [task], onOpenDetail });
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH - 1));
+      fireEvent.click(document.querySelector('.list-card[data-id="FN-8754-desktop"]') as HTMLElement);
+
+      expect(onOpenDetail).toHaveBeenCalledWith(task, { origin: "list-mobile" });
+      expect(screen.queryByTestId("list-split-detail")).toBeNull();
+      expect(screen.queryByTestId("list-split-resize-handle")).toBeNull();
+    } finally {
+      resizeObserver.restore();
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("keeps phones single-pane when a synthetic List measurement is wide", async () => {
+    const viewportSpy = mockMobileViewport();
+    const resizeObserver = installControlledResizeObserver();
+    const task = createMockTask({ id: "FN-8754-mobile", title: "Phone task" });
+    const onOpenDetail = vi.fn();
+
+    try {
+      renderListView({ tasks: [task], onOpenDetail });
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
+      fireEvent.click(document.querySelector('.list-card[data-id="FN-8754-mobile"]') as HTMLElement);
+
+      expect(onOpenDetail).toHaveBeenCalledWith(task, { origin: "list-mobile" });
+      expect(screen.queryByTestId("list-split-detail")).toBeNull();
+    } finally {
+      resizeObserver.restore();
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("keeps the explicit popup preference above measured tablet split routing", async () => {
+    const viewportSpy = mockTabletViewport();
+    const resizeObserver = installControlledResizeObserver();
+    const task = createMockTask({ id: "FN-8754-popup", title: "Popup wins" });
+    const onOpenDetail = vi.fn();
+    const onPopOut = vi.fn();
+
+    try {
+      renderListView({ tasks: [task], onOpenDetail, onPopOut, openMobileTasksInPopup: true });
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
+      fireEvent.click(document.querySelector('tr[data-id="FN-8754-popup"]') as HTMLElement);
+
+      expect(onPopOut).toHaveBeenCalledWith(task);
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("list-split-detail-content")).toBeNull();
+      expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBeNull();
+    } finally {
+      resizeObserver.restore();
+      viewportSpy.mockRestore();
+    }
+  });
+
+  it("removes and restores split chrome across List width transitions without opening a modal", async () => {
+    const viewportSpy = mockTabletViewport();
+    const resizeObserver = installControlledResizeObserver();
+    const task = createMockTask({ id: "FN-8754-resize", title: "Resize task" });
+    const onOpenDetail = vi.fn();
+
+    try {
+      renderListView({ tasks: [task], onOpenDetail });
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
+      fireEvent.click(document.querySelector('tr[data-id="FN-8754-resize"]') as HTMLElement);
+      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754-resize");
+
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH - 1));
+      expect(screen.queryByTestId("list-split-detail")).toBeNull();
+      expect(screen.queryByTestId("list-split-resize-handle")).toBeNull();
+      expect(onOpenDetail).not.toHaveBeenCalled();
+      expect(localStorage.getItem(scopedStorageKey("kb-dashboard-list-selected-task"))).toBe("FN-8754-resize");
+
+      await act(async () => resizeObserver.resize(LIST_MINIMUM_SPLIT_LAYOUT_WIDTH + 1));
+      expect(screen.getAllByTestId("list-split-detail-content")).toHaveLength(1);
+      expect(screen.getByTestId("task-detail-content")).toHaveTextContent("FN-8754-resize");
+      expect(onOpenDetail).not.toHaveBeenCalled();
+    } finally {
+      resizeObserver.restore();
+      viewportSpy.mockRestore();
+    }
+  });
+
   it("renders tablet List view as a single full-width pane without split chrome", () => {
     const viewportSpy = mockTabletViewport();
     const tasks = [createMockTask({ id: "FN-001", title: "Tablet task" })];
@@ -2978,19 +3131,13 @@ describe("ListView", () => {
     expect(singlePaneToolbarRule).toContain("justify-content: center");
   });
 
-  it("loads CSS fixture rules that apply single-pane non-clipping layout at tablet while keeping desktop split rules", () => {
+  it("keeps measured tablet split chrome visible while scoping card hiding to single-pane List", () => {
     const css = loadAllAppCss();
-    const splitHideRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-split-resize-handle,\s*\n\s*\.list-split-detail\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0] ?? "";
-    const cardRule = css.match(/@media\s*\(max-width:\s*1024px\)[\s\S]*?\.list-table\s*\{[^}]*display:\s*none;[^}]*\}[\s\S]*?\.list-cards\s*\{[^}]*width:\s*100%;[^}]*\}/)?.[0] ?? "";
+    const singlePaneCardRule = css.match(/\.list-view--single-pane \.list-table\s*\{[^}]*display:\s*none;[^}]*\}/)?.[0] ?? "";
     const desktopSplitRule = css.match(/\.list-split-layout\s*\{[^}]*grid-template-columns:\s*auto 0 minmax\(0, 1fr\);[^}]*\}/)?.[0] ?? "";
 
-    expect(splitHideRule).toContain("max-width: 1024px");
-    expect(splitHideRule).toContain(".list-split-resize-handle");
-    expect(splitHideRule).toContain("display: none");
-    expect(cardRule).toContain(".list-table");
-    expect(cardRule).toContain("display: none");
-    expect(cardRule).toContain(".list-cards");
-    expect(cardRule).toContain("width: 100%");
+    expect(css).not.toMatch(/\.list-split-resize-handle,\s*\n\s*\.list-split-detail\s*\{[^}]*display:\s*none/);
+    expect(singlePaneCardRule).toContain("display: none");
     expect(desktopSplitRule).toContain("grid-template-columns: auto 0 minmax(0, 1fr)");
   });
 
