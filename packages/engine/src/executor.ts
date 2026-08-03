@@ -757,6 +757,8 @@ import { recoverCompletedTask as recoverCompletedTaskImpl } from "./executor/rec
 export { recoverCompletedTask as recoverCompletedTaskFree } from "./executor/recover-completed-task.js";
 import { markStuckAborted as markStuckAbortedImpl } from "./executor/mark-stuck-aborted.js";
 export { markStuckAborted as markStuckAbortedFree } from "./executor/mark-stuck-aborted.js";
+import { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl } from "./executor/await-abort-in-flight.js";
+export { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkFree } from "./executor/await-abort-in-flight.js";
 
 
 
@@ -2086,144 +2088,33 @@ export class TaskExecutor {
    * calls instead of fire-and-forget.
    */
   async awaitAbortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): Promise<void> {
-    let hadActiveSurface = false;
-    const abortedSurfaces: string[] = [];
-
-    if (options.userCanceled) {
-      this.userCanceledTaskIds.add(taskId);
-    }
-    /*
-    FNXC:WorkflowLifecycle 2026-07-26-11:20:
-    KB-PROV: Stamp the provenance the caller actually reported instead of a blanket `hard-cancel`. `options.userCanceled` is already the truthful operator-intent signal every caller computes (`source === "user"`, soft-delete, the registered move disposer), so derive the label from it: operator withdrawal keeps `hard-cancel`, everything else is an `engine-abort`. Without this, the FN-8596 engine rerun bounce told the operator `provenance=hard-cancel` for work the engine itself re-dispatched, and any future consumer branching on `hard-cancel` would read an engine bounce as an operator withdrawal. Behaviour is unchanged: `userPaused` is still never set by engine rebounds, and the downstream classifiers accept both labels via `isGenericAbortProvenance()`.
-    */
-    this.markPausedAborted(taskId, options.userCanceled ? "hard-cancel" : "engine-abort", `abort-in-flight:${reason}`);
-    this.options.stuckTaskDetector?.untrackTask(taskId);
-    this.clearWorkflowRerunWatchdog(taskId);
-    this.clearCompletedTaskWatchdog(taskId);
-    // Defensive graph-interpreter cleanup: a pause/abort mid-graph must not leave a
-    // stale routing claim behind. The graph runner's own finally blocks also clear
-    // this; double-delete is harmless.
-    // FNXC:WorkflowExecution 2026-07-19-01:30: U5d — there is no completion-interceptor
-    // entry to clear anymore. The graph-owned signal is now a call-scoped callback
-    // parameter (see GraphCompletionCallback), so it cannot outlive the run that created
-    // it and needs no abort-time cleanup.
-    TaskExecutor.processWideGraphRouting.delete(taskId);
-
-    // FN-5256: claim each surface synchronously BEFORE awaiting any async
-    // abort. Without this, two concurrent disposal calls for the same task
-    // (e.g., task:moved-away followed immediately by task:deleted) both pass
-    // the `has(taskId)` guards and double-call abort/dispose.
-    const claimedSession = this.activeSessions.get(taskId);
-    if (claimedSession) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("agent-session");
-      this.deleteActiveSession(taskId);
-    }
-    const claimedStepExecutor = this.activeStepExecutors.get(taskId);
-    if (claimedStepExecutor) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("step-session");
-      this.deleteActiveStepExecutor(taskId);
-    }
-    const claimedWorkflowSession = this.activeWorkflowStepSessions.get(taskId);
-    if (claimedWorkflowSession) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("workflow-step-session");
-      this.deleteActiveWorkflowStepSession(taskId);
-    }
-    const claimedConfiguredCommands = this.activeConfiguredCommandControllers.get(taskId);
-    if (claimedConfiguredCommands && claimedConfiguredCommands.size > 0) {
-      hadActiveSurface = true;
-      abortedSurfaces.push(`configured-command:${claimedConfiguredCommands.size}`);
-      this.activeConfiguredCommandControllers.delete(taskId);
-      for (const controller of claimedConfiguredCommands) {
-        controller.abort();
-      }
-    }
-    const claimedWorkflowGraphController = this.activeWorkflowGraphAbortControllers.get(taskId);
-    if (claimedWorkflowGraphController) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("workflow-graph");
-      this.activeWorkflowGraphAbortControllers.delete(taskId);
-      claimedWorkflowGraphController.abort();
-    }
-    const claimedSubagents = this.activeSubagentSessions.has(taskId);
-    if (claimedSubagents) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("subagent-session");
-      this.disposeSubagentsForTask(taskId, reason);
-    }
-    // CLI Agent Executor (U7): a cli-agent session is a hard-cancel surface like
-    // any API session. Claim it synchronously, then SIGKILL the PTY and mark
-    // `killed` (never resume-eligible) — the same dispose/abort contract API
-    // sessions honor. moveTask(in-progress→todo) routes here (AGENTS.md hard
-    // cancel), so this is what guarantees the PTY tree is reaped on column exit.
-    const claimedCliSession = this.activeCliTaskSessions.get(taskId);
-    if (claimedCliSession) {
-      hadActiveSurface = true;
-      abortedSurfaces.push("cli-agent-session");
-      this.activeCliTaskSessions.delete(taskId);
-    }
-
-    if (claimedSession) {
-      const { session } = claimedSession;
-      const sessionWithAbort = session as AgentSession & { abort?: () => Promise<void> };
-      if (typeof sessionWithAbort.abort === "function") {
-        await sessionWithAbort.abort().catch((err) => {
-          executorLog.warn(`Failed to abort agent session for ${taskId}: ${err}`);
-        });
-      }
-      try {
-        session.dispose();
-      } catch (err) {
-        executorLog.warn(`Failed to dispose agent session for ${taskId}: ${err}`);
-      }
-    }
-
-    if (claimedStepExecutor) {
-      const stepExecutorWithAbort = claimedStepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => void };
-      if (typeof stepExecutorWithAbort.abortAllSessionBash === "function") {
-        try {
-          stepExecutorWithAbort.abortAllSessionBash();
-        } catch (err) {
-          executorLog.warn(`Failed to abort step-session bash for ${taskId}: ${err}`);
-        }
-      }
-      await claimedStepExecutor.terminateAllSessions().catch((err) =>
-        executorLog.error(`Failed to terminate step sessions for ${taskId}:`, err),
-      );
-    }
-
-    if (claimedWorkflowSession) {
-      const sessionWithAbort = claimedWorkflowSession as AgentSession & { abort?: () => Promise<void> };
-      if (typeof sessionWithAbort.abort === "function") {
-        await sessionWithAbort.abort().catch((err) => {
-          executorLog.warn(`Failed to abort workflow step session for ${taskId}: ${err}`);
-        });
-      }
-      try {
-        claimedWorkflowSession.dispose();
-      } catch (err) {
-        executorLog.warn(`Failed to dispose workflow step session for ${taskId}: ${err}`);
-      }
-    }
-
-    if (claimedCliSession) {
-      await claimedCliSession.kill("killed").catch((err) => {
-        executorLog.warn(`Failed to kill CLI agent session for ${taskId}: ${err}`);
-      });
-    }
-
-    this.loopRecoveryState.delete(taskId);
-    this.stuckAborted.delete(taskId);
-
-    if (hadActiveSurface) {
-      executorLog.log(`${taskId}: awaited abort of in-flight work — ${reason}`);
-      this.safeLogEntry(
-        taskId,
-        `Pause abort cleanup completed: reason=${reason}; surfaces=${abortedSurfaces.join(", ") || "none"}`,
-      );
-    }
+    return awaitAbortInFlightTaskWorkImpl(
+      {
+        userCanceledTaskIds: this.userCanceledTaskIds,
+        markPausedAborted: (id, provenance, source) => this.markPausedAborted(id, provenance, source),
+        untrackStuckTask: (id) => { this.options.stuckTaskDetector?.untrackTask(id); },
+        clearWorkflowRerunWatchdog: (id) => this.clearWorkflowRerunWatchdog(id),
+        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        activeSessions: this.activeSessions,
+        deleteActiveSession: (id) => this.deleteActiveSession(id),
+        activeStepExecutors: this.activeStepExecutors,
+        deleteActiveStepExecutor: (id) => this.deleteActiveStepExecutor(id),
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        deleteActiveWorkflowStepSession: (id) => this.deleteActiveWorkflowStepSession(id),
+        activeConfiguredCommandControllers: this.activeConfiguredCommandControllers,
+        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        activeSubagentSessions: this.activeSubagentSessions,
+        disposeSubagentsForTask: (id, r) => this.disposeSubagentsForTask(id, r),
+        activeCliTaskSessions: this.activeCliTaskSessions,
+        loopRecoveryState: this.loopRecoveryState,
+        stuckAborted: this.stuckAborted,
+        safeLogEntry: (id, msg) => this.safeLogEntry(id, msg),
+      },
+      taskId,
+      reason,
+      options,
+    );
   }
 
   async abortAllInFlight(reason: string): Promise<void> {
