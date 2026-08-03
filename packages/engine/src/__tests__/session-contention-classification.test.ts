@@ -19,12 +19,12 @@ import { describe, expect, it } from "vitest";
 import {
   isSessionContentionError,
   isTransientError,
-} from "../transient-error-patterns.js";
-import { isNonPlanDefectPlanReviewFailure } from "../transient-error-detector.js";
+} from "../errors/transient-error-patterns.js";
+import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import {
   ActiveSessionRegistry,
   acquireActiveSessionPath,
-} from "../active-session-registry.js";
+} from "../agents/active-session-registry.js";
 
 const REPORTED_MESSAGE =
   "active-session path /home/ubuntu/dev/freemap-svelte is held by task FN-1398; task FN-1403 may not overwrite it";

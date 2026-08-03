@@ -13,7 +13,7 @@ suite caught that, which is why the union is here and why this file records the 
 */
 import { describe, expect, it } from "vitest";
 import "@fusion/core";
-import { reconcileMissionFeatureState } from "../mission-feature-sync.js";
+import { reconcileMissionFeatureState } from "../missions/mission-feature-sync.js";
 
 /** A store whose IR resolution yields a workflow with renamed planner lanes. */
 function renamedStore() {

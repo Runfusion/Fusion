@@ -25,7 +25,7 @@ rule invented here.
 import { describe, expect, it, vi } from "vitest";
 import type { RunAuditEventInput, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { MeshLeaseManager } from "../mesh-lease-manager.js";
+import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 
 const WF = "custom:wf";
 

@@ -81,7 +81,7 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
   const DECIDER = { actorId: "user-1", actorType: "user" as const, actorName: "Admin" };
 
   async function seed(id: string) {
-    const store = await import("../../async-approval-request-store.js");
+    const store = await import("../../async-stores/async-approval-request-store.js");
     await store.createApprovalRequest(ctx!.layer, {
       id,
       requester: REQUESTER,
@@ -128,7 +128,7 @@ pgDescribe("approval request lifecycle security (PostgreSQL)", () => {
 
   it("deciding a request that does not exist reports not-found", async () => {
     ctx = await setupCtx();
-    const store = await import("../../async-approval-request-store.js");
+    const store = await import("../../async-stores/async-approval-request-store.js");
 
     await expect(
       store.decideApprovalRequest(ctx.layer, "apr-missing", "approved", { actor: DECIDER }),

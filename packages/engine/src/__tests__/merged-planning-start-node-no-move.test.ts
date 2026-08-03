@@ -26,7 +26,7 @@ capacity seam, and before `moveTask` is reachable at all.
 */
 import { describe, expect, it, vi } from "vitest";
 import { getBuiltinWorkflow, parseWorkflowIr, type WorkflowIr, type WorkflowIrNode } from "@fusion/core";
-import { createWorkflowColumnBoundary } from "../workflow-column-boundary.js";
+import { createWorkflowColumnBoundary } from "../workflows/workflow-column-boundary.js";
 
 /** The real default workflow — `builtin:coding`, post-merge. Not a hand-written fixture. */
 const defaultIr: WorkflowIr = parseWorkflowIr(getBuiltinWorkflow("builtin:coding")!.ir as never);

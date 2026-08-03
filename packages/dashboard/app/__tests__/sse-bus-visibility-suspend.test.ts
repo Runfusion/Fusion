@@ -336,7 +336,7 @@ describe("sse-bus hidden-tab suspend", () => {
     try {
       vi.resetModules();
       await import("../sse-bus");
-      await import("../api/event-source");
+      await import("../api/client/event-source");
       const types = spy.mock.calls.map(([type]) => type);
       expect(types).not.toContain("beforeunload");
       expect(types).toContain("pagehide");

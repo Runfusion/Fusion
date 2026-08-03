@@ -282,7 +282,7 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
 
 describe("credential-instance workflow settings", () => {
   it("accepts valid ids and atomically rejects malformed companion values", async () => {
-    const { validateSettingValuePatch } = await import("../workflow-settings.js");
+    const { validateSettingValuePatch } = await import("../workflows/workflow-settings.js");
     const declarations: WorkflowSettingDefinition[] = [
       { id: "executionCredentialInstanceId", name: "Instance", type: "string" },
     ];

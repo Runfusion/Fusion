@@ -22,7 +22,7 @@ straight from a removed planning column into a review or complete column, which 
 adjacency rules exist to prevent. An operator who wants it elsewhere moves it twice.
 */
 import { describe, expect, it } from "vitest";
-import { resolveAllowedColumns } from "../workflow-transitions.js";
+import { resolveAllowedColumns } from "../workflows/workflow-transitions.js";
 import { getBuiltinWorkflow, parseWorkflowIr, type WorkflowIr } from "../index.js";
 
 /** The real default workflow, post-merge: one Planning column (`todo`), no `triage`. */

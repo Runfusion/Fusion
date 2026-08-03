@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getTraitRegistry } from "../trait-registry.js";
+import { getTraitRegistry } from "../workflows/trait-registry.js";
 import { registerBuiltinTraits } from "../builtin-traits.js";
-import { DEFAULT_SETTINGS } from "../settings-schema.js";
+import { DEFAULT_SETTINGS } from "../config/settings-schema.js";
 
 /*
 FNXC:CapacityModel 2026-07-28-10:15:

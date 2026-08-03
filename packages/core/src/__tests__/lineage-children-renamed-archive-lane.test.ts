@@ -23,7 +23,7 @@ would not distinguish this guard from the three other conditions in the same `an
 */
 
 import { describe, expect, it } from "vitest";
-import { liveLineageChildFilter } from "../task-store/async-lifecycle.js";
+import { liveLineageChildFilter } from "../task-store/async/async-lifecycle.js";
 
 /*
 Drizzle's SQL graph is CYCLIC (column -> table -> columns), so this needs a visited set — the first

@@ -99,7 +99,7 @@ export function wrapCustomToolsForPluginRuntime(
   const withRtk = wrapToolsWithRtkRewrite(tools);
   const withPermanent = wrapToolsWithPermanentAgentGating(withRtk, options.permanentAgentGating);
   const withActionGate = wrapToolsWithActionGate(withPermanent, options.actionGateContext);
-  // FNXC:ToolOutputBudget 2026-08-06-16:00:
+  // FNXC:ToolOutputBudget 2026-08-03-16:00:
   // Non-pi runtimes do not pass through createFnAgent, so apply the same outermost
   // setting-derived clamp here exactly once. A null budget leaves tools byte-identical.
   return wrapToolsWithOutputBudget(withActionGate, { maxChars: options.toolOutputMaxChars });
@@ -903,7 +903,7 @@ export async function createResolvedAgentSession(
   Plugin skill names alone never deliver bodies; chat, step, and cron lanes require both halves of the #2017 contract (FN-8443 / #2364).
   */
   /*
-  FNXC:ToolOutputBudget 2026-08-06-16:00:
+  FNXC:ToolOutputBudget 2026-08-03-16:00:
   Resolve the merged settings once at this all-lanes seam. A caller can still provide
   an explicit runtime value (including null for unlimited); otherwise settings supply
   the finite default, custom cap, or explicit no-limit sentinel interpretation.

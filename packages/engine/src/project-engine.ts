@@ -650,7 +650,7 @@ export class ProjectEngine {
     */
     const projectId = this.config.projectId || this.config.workingDirectory;
     /*
-    FNXC:ConcurrencyAdmission 2026-08-06-16:20:
+    FNXC:ConcurrencyAdmission 2026-08-03-16:20:
     FN-8453/#2359 requires the actual durable merge queue to refresh on every
     project admission pass. A one-shot candidate only exists after this pump
     dequeues it, which lets a newer planning/execute candidate overtake an older

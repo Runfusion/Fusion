@@ -34,7 +34,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { MeshLeaseManager } from "../mesh-lease-manager.js";
+import { MeshLeaseManager } from "../project/mesh-lease-manager.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live lease-rebound E2E: where a recovered lease lands, and what the audit says", () => {

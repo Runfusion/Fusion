@@ -40,7 +40,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { finalizeProvenAutoMergeTask } from "../auto-merge-finalization.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, MERGED_VOCAB, MERGED_RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live merge safeguards E2E: real store, real refusals", () => {

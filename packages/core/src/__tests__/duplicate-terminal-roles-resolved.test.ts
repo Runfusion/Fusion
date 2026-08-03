@@ -25,8 +25,8 @@ no-flags cases exercise that shared degraded mode and pass either way.
 REVERT PROOF, measured: restore the literal pairs and 4 of the 8 cases fail — two per file.
 */
 import { describe, expect, it } from "vitest";
-import { findSameAgentDuplicates } from "../duplicate-intake.js";
-import { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "../near-duplicate-canonical.js";
+import { findSameAgentDuplicates } from "../duplicates/duplicate-intake.js";
+import { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "../duplicates/near-duplicate-canonical.js";
 import type { ColumnRoleTraitFlags } from "../column-roles.js";
 
 const COMPLETE_FLAGS = { complete: true } as unknown as ColumnRoleTraitFlags;

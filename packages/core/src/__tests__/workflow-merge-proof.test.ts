@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { instanceNodeId } from "../column-agent-resolver.js";
+import { instanceNodeId } from "../agents/column-agent-resolver.js";
 import { evaluateForeachMergeProof } from "../workflow-merge-proof.js";
 import type { TaskStep, WorkflowIr, WorkflowStepResult } from "../types.js";
 

@@ -23,9 +23,9 @@ good as its ability to tell the vocabularies apart.
 */
 import { describe, expect, it } from "vitest";
 
-import { PLANNER_AGENT_ROLE } from "../types/task-log.js";
-import { resolveAgentPrompt } from "../agent-prompts.js";
-import { resolveDefaultWorkflowIr } from "../builtin-workflows.js";
+import { PLANNER_AGENT_ROLE } from "../types/task/task-log.js";
+import { resolveAgentPrompt } from "../agents/agent-prompts.js";
+import { resolveDefaultWorkflowIr } from "../workflows/builtin-workflows.js";
 import { resolveLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
 
 describe("the planner ROLE and the deleted intake COLUMN share a name and nothing else", () => {

@@ -46,7 +46,7 @@ describe("getProjectRootFromWorktree", () => {
 
     try {
       const { getProjectRootFromWorktree: getProjectRootFromWorktreeWithPartialMock } = await import(
-        "../pi-extensions.js"
+        "../plugins/pi-extensions.js"
       );
       const unmatchedPath = join(tmpdir(), "fn-6102-not-a-worktree");
 

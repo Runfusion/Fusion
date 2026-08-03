@@ -1764,7 +1764,7 @@ function formatTaskReadLines(lines: string[], emptyStateText: string): string {
 }
 
 /*
-FNXC:ToolOutputBudget 2026-08-06-12:00:
+FNXC:ToolOutputBudget 2026-08-03-06:41:
 FN-8614 requires high-volume read tools to preserve their identifying headers while
 providing a useful source-level stop before the universal per-result wrapper runs.
 The hint names the narrowing surface instead of silently tail-cutting an agent's context.

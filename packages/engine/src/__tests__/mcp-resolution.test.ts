@@ -74,7 +74,7 @@ describe("resolveMcpServersForRuntime", () => {
   });
 
   it("uses the store scoped provider rather than requiring raw loader output", async () => {
-    const { resolveMcpServersForStore } = await import("../mcp-resolution.js");
+    const { resolveMcpServersForStore } = await import("../mcp/mcp-resolution.js");
     const result = await resolveMcpServersForStore({
       async getSettingsByScope() { return { global: { mcpServers: { enabled: true } }, project: { mcpServers: { enabled: true } } }; },
       async getSecretsStore() { return secrets({}); },

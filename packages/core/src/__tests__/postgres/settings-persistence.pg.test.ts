@@ -11,7 +11,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../../settings-schema.js";
+import { GLOBAL_SETTINGS_KEYS, PROJECT_SETTINGS_KEYS } from "../../config/settings-schema.js";
 
 const credentialLaneKeys = [
   ["defaultProvider", "defaultCredentialInstanceId"],

@@ -34,8 +34,8 @@ Written against the literal implementations and observed FAILING first.
 */
 import { describe, expect, it } from "vitest";
 
-import { reconcileMissionFeatureState } from "../mission-feature-sync.js";
-import { shouldSkipSpecStalenessForPreservedProgress } from "../spec-staleness.js";
+import { reconcileMissionFeatureState } from "../missions/mission-feature-sync.js";
+import { shouldSkipSpecStalenessForPreservedProgress } from "../execution/spec-staleness.js";
 
 const RENAMED = ["inbox", "drafting"] as const;
 /* spec-staleness takes the DEDICATED planner lane only — see the header. */

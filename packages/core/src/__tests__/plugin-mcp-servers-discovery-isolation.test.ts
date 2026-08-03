@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PluginLoader } from "../plugin-loader.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
 import { createProjectScopedPluginMcpProvider } from "../plugin-mcp-servers.js";
-import type { PluginInstallation } from "../plugin-types.js";
+import type { PluginInstallation } from "../plugins/plugin-types.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });

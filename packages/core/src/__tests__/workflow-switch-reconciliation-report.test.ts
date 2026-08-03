@@ -13,7 +13,7 @@ fallback and the "vanished row" case fails — it reports `{ preserved: true, to
 fromColumn }`, fabricating a live column for a row that is gone.
 */
 import { describe, expect, it } from "vitest";
-import { buildSwitchReconciliation } from "../workflow-reconciliation.js";
+import { buildSwitchReconciliation } from "../workflows/workflow-reconciliation.js";
 
 describe("workflow switch reconciliation reporting", () => {
   it("reports the ACTUAL column, not the intended one", () => {

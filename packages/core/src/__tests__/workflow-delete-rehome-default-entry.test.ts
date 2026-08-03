@@ -25,7 +25,7 @@ it should, if the two IRs ever converge again.
 */
 import { describe, expect, it } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR, resolveDefaultWorkflowIr } from "../index.js";
-import { resolveEntryColumnId } from "../workflow-reconciliation.js";
+import { resolveEntryColumnId } from "../workflows/workflow-reconciliation.js";
 
 describe("the workflow-delete rehome target comes from the DEFAULT workflow", () => {
   it("the default workflow's entry column is `todo`", () => {

@@ -39,7 +39,7 @@ import {
   resolveDedicatedPlannerColumnsForTask,
   resolvePlannerLanesForTask,
 } from "../planner-lane-resolution.js";
-import { shouldSkipSpecStalenessForPreservedProgress } from "../spec-staleness.js";
+import { shouldSkipSpecStalenessForPreservedProgress } from "../execution/spec-staleness.js";
 import { MERGED_RENAMED_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 /*

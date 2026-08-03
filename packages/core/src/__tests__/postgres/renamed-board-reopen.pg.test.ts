@@ -26,7 +26,7 @@ import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import type { WorkflowIr } from "../../workflow-ir-types.js";
+import type { WorkflowIr } from "../../workflows/workflow-ir-types.js";
 
 /** Standard lifecycle traits under non-default column names, with a reopen edge. */
 function renamedBoardIr(): WorkflowIr {

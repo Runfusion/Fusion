@@ -12,7 +12,7 @@ is also registered in core's role-parameter-caller-audit — this file proves th
 HONOURED, the audit proves it is PASSED. Neither alone is enough.
 */
 import { describe, expect, it } from "vitest";
-import { shouldSkipSpecStalenessForPreservedProgress } from "../spec-staleness.js";
+import { shouldSkipSpecStalenessForPreservedProgress } from "../execution/spec-staleness.js";
 
 const started = { column: "drafting", currentStep: 2, status: undefined } as never;
 

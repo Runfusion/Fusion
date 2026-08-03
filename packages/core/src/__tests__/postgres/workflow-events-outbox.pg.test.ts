@@ -37,7 +37,7 @@ import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-l
 import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import { applySchemaBaseline } from "../../postgres/schema-applier.js";
-import { insertTaskRow, readTaskRow } from "../../task-store/async-persistence.js";
+import { insertTaskRow, readTaskRow } from "../../task-store/async/async-persistence.js";
 import * as schema from "../../postgres/schema/index.js";
 import { and, eq } from "drizzle-orm";
 import type { DbTransaction } from "../../postgres/data-layer.js";
@@ -46,7 +46,7 @@ import {
   listDueWorkflowWorkItems,
   transitionWorkflowWorkItem,
   getWorkflowWorkItem,
-} from "../../task-store/async-workflow-workitems.js";
+} from "../../task-store/async/async-workflow-workitems.js";
 import { createWorkflowEventBus } from "../../workflow-events.js";
 import type { WorkflowLifecycleEvent } from "../../types/workflow-events.js";
 

@@ -14,7 +14,7 @@ so the fallback cases below also pin that a default board is byte-identical afte
 REVERT CHECK, measured: replacing either body with a bare `return "<legacy id>"` fails its renamed case.
 */
 import { describe, expect, it, vi } from "vitest";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import type { WorkflowIrResolverStore } from "../workflows/workflow-ir-resolver.js";
 import { resolveReboundTargetForTask, resolveArchiveTargetForTask, resolveWipTargetForTask } from "../workflows/workflow-lifecycle-traits.js";
 

@@ -28,7 +28,7 @@ This file does not argue for either option. It removes one wrong reason for choo
 
 import { describe, expect, it } from "vitest";
 import { columnsWithFlag, resolveColumnFlags } from "../index.js";
-import { RESTRICTED_TRAIT_FLAGS } from "../trait-types.js";
+import { RESTRICTED_TRAIT_FLAGS } from "../workflows/trait-types.js";
 import "../builtin-traits.js";
 
 /** A custom workflow whose archive lane is `filed` and whose complete lane is `shipped`. */

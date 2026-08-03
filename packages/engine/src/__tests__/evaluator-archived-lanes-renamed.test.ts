@@ -40,7 +40,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
   return { ...actual, collectDeterministicSignals: collectSpy };
 });
 
-const { HybridEvaluatorService } = await import("../evaluator.js");
+const { HybridEvaluatorService } = await import("../eval/evaluator.js");
 
 const WF = "custom:renamed-archive";
 

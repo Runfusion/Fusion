@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { withRateLimitRetry } from "../rate-limit-retry.js";
+import { withRateLimitRetry } from "../errors/rate-limit-retry.js";
 
 const limited = () => new Error("429 quota exceeded");
 

@@ -27,7 +27,7 @@ re-deriving it as I had to.
 */
 import { describe, expect, it } from "vitest";
 
-import { getResearchGuidanceForSurface } from "../tool-availability.js";
+import { getResearchGuidanceForSurface } from "../execution/tool-availability.js";
 
 describe("agent-lane vocabulary is not board-column vocabulary", () => {
   it("returns distinct research guidance per agent lane", () => {

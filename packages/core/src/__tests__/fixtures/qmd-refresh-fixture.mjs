@@ -9,7 +9,7 @@
  * once this script's own work is done. Loaded via `tsx` so it can import the real
  * TypeScript source directly (no separate build step required for the test).
  */
-import { scheduleQmdProjectMemoryRefresh, scheduleQmdAgentMemoryRefresh } from "../../memory-backend.ts";
+import { scheduleQmdProjectMemoryRefresh, scheduleQmdAgentMemoryRefresh } from "../../memory/memory-backend.js";
 
 const rootDir = process.argv[2];
 const mode = process.argv[3] ?? "project";

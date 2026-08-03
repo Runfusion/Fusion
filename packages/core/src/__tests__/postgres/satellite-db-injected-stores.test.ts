@@ -219,7 +219,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
   */
   it("ApprovalRequestStore: replayed/conflicting decisions 409, grants expire, ownership enforced", async () => {
     ctx = await setupCtx();
-    const { createApprovalRequest, decideApprovalRequest, markApprovalRequestCompleted, getApprovalAuditHistory } = await import("../../async-approval-request-store.js");
+    const { createApprovalRequest, decideApprovalRequest, markApprovalRequestCompleted, getApprovalAuditHistory } = await import("../../async-stores/async-approval-request-store.js");
     const { eq } = await import("drizzle-orm");
     const schema = await import("../../postgres/schema/index.js");
     const requester = { actorId: "agent-1", actorType: "agent" as const, actorName: "Bot" };

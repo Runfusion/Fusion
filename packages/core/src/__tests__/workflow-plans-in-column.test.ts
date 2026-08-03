@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { workflowDeclaresColumnModel, workflowHasColumn, workflowPlansInColumn } from "../workflow-transitions.js";
-import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
-import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../builtin-coding-ideas-workflow-ir.js";
-import { BUILTIN_WORKFLOWS } from "../builtin-workflows.js";
-import { parseWorkflowIr } from "../workflow-ir.js";
-import type { WorkflowIr } from "../workflow-ir.js";
+import { workflowDeclaresColumnModel, workflowHasColumn, workflowPlansInColumn } from "../workflows/workflow-transitions.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
+import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../workflows/builtin-coding-ideas-workflow-ir.js";
+import { BUILTIN_WORKFLOWS } from "../workflows/builtin-workflows.js";
+import { parseWorkflowIr } from "../workflows/workflow-ir.js";
+import type { WorkflowIr } from "../workflows/workflow-ir.js";
 
 /** Builtin IRs are authored either as objects or as JSON strings. */
 function irOf(workflow: { ir: unknown }): WorkflowIr {

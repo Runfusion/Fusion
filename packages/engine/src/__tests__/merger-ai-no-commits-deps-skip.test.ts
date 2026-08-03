@@ -16,11 +16,11 @@ import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 
 vi.mock("../merge-dependency-sync.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../merge-dependency-sync.js")>();
+  const actual = await importOriginal<typeof import("../merge/merge-dependency-sync.js")>();
   return { ...actual, installWorktreeDependencies: vi.fn() };
 });
 
-import { installWorktreeDependencies } from "../merge-dependency-sync.js";
+import { installWorktreeDependencies } from "../merge/merge-dependency-sync.js";
 import { landOneRepo } from "../merge/merger-ai.js";
 import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
 

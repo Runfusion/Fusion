@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Settings, Task, TaskDetail, TaskStore } from "@fusion/core";
-import { activeSessionRegistry } from "../active-session-registry.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { TriageProcessor } from "../triage.js";
 
 /*

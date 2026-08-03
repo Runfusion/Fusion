@@ -21,7 +21,7 @@ nothing about the seam.
 
 import { describe, expect, it, vi } from "vitest";
 import type { MergeResult, Task, TaskStore, WorkflowIr } from "@fusion/core";
-import { finalizeProvenAutoMergeTask } from "../auto-merge-finalization.js";
+import { finalizeProvenAutoMergeTask } from "../merge/auto-merge-finalization.js";
 
 /** Complete lane is `shipped`; the board declares no column called `done`. */
 const RENAMED_IR = {

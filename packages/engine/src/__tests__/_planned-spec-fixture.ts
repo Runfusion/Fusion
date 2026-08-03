@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { isUnplannedSeedPrompt } from "@fusion/core";
-import { getPromptPath } from "../spec-staleness.js";
+import { getPromptPath } from "../execution/spec-staleness.js";
 
 /*
 FNXC:WorkflowLifecycleColumns 2026-07-30-12:05:

@@ -245,7 +245,7 @@ export class ProjectAdmissionCoordinator {
         .flat()
         .filter((candidate) => candidate.projectId === params.projectId)
         .sort(compareAdmissionCandidates);
-      // FNXC:ConcurrencyAdmission 2026-08-06-12:00: FN-8453/#2359 requires
+      // FNXC:ConcurrencyAdmission 2026-08-03-06:41: FN-8453/#2359 requires
       // in-memory handoffs to count until they either become live or are dropped.
       // Persisted task rows lag a fire-and-forget lane start, so omitting these
       // reservations lets a second coordinator pass over-admit one project.
@@ -437,7 +437,7 @@ value: an optional parameter that reads as if it does something.
 
 The coordinator reservation is the half that MATTERS and stays: every rejection path
 funnels through this helper so an early scheduler/triage return cannot permanently
-consume a project slot (FNXC:ConcurrencyAdmission 2026-08-06-12:00).
+consume a project slot (FNXC:ConcurrencyAdmission 2026-08-03-06:41).
 
 Sites that still hold a semaphore reference release it EXPLICITLY next to their
 drop, so behaviour is unchanged for any caller that supplies one.

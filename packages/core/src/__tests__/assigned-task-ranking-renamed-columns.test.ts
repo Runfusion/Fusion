@@ -23,7 +23,7 @@ Written against the literal implementation and observed FAILING first.
 */
 import { describe, expect, it } from "vitest";
 
-import { rankAssignedTasksForWakeDelta } from "../assigned-task-ranking.js";
+import { rankAssignedTasksForWakeDelta } from "../agents/assigned-task-ranking.js";
 
 type Ranked = ReturnType<typeof rankAssignedTasksForWakeDelta>;
 

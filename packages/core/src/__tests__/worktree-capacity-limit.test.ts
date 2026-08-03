@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveWorktreeCapacityLimit } from "../workflows/workflow-capacity.js";
-import { DEFAULT_SETTINGS } from "../settings-schema.js";
+import { DEFAULT_SETTINGS } from "../config/settings-schema.js";
 
 /*
 FNXC:CapacityModel 2026-07-28-12:40:

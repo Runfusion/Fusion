@@ -24,7 +24,7 @@ the delegation rather than a mock.
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../types.js";
-import { softDeleteTaskRowInTransaction } from "../task-store/async-persistence.js";
+import { softDeleteTaskRowInTransaction } from "../task-store/async/async-persistence.js";
 
 let pgRow: Task | null = null;
 let lineageChildIds: string[] = [];

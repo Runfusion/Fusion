@@ -18,7 +18,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFusionAuthStorage, getFusionAuthPath } from "../auth-storage.js";
+import { createFusionAuthStorage, getFusionAuthPath } from "../auth/auth-storage.js";
 
 const RAW_API_KEY = "sk-ant-api03-raw-key-from-settings-card";
 const SUBSCRIPTION_ACCESS_TOKEN = "sk-ant-oat01-subscription-access-token";

@@ -3,8 +3,8 @@ import {
   configureApprovalRequestTtls,
   normalizeAgentPermissionPolicyFromPreset,
 } from "@fusion/core";
-import { evaluateAgentActionGate, resolveGateOutcome } from "../agent-action-gate.js";
-import { resolvePermanentAgentToolDecision } from "../permanent-agent-gating.js";
+import { evaluateAgentActionGate, resolveGateOutcome } from "../agents/agent-action-gate.js";
+import { resolvePermanentAgentToolDecision } from "../agents/permanent-agent-gating.js";
 
 /*
 FNXC:AgentGating 2026-07-26-14:10:

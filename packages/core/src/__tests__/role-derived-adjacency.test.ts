@@ -11,8 +11,8 @@ The critical assertion in this file is the FIRST one: the legacy six must still 
 `VALID_TRANSITIONS` verbatim. Everything else is worthless if that regressed.
 */
 import { describe, expect, it } from "vitest";
-import { resolveAllowedColumns, resolveColumnAdjacency } from "../workflow-transitions.js";
-import { VALID_TRANSITIONS } from "../types/board-config.js";
+import { resolveAllowedColumns, resolveColumnAdjacency } from "../workflows/workflow-transitions.js";
+import { VALID_TRANSITIONS } from "../types/board/board-config.js";
 import { getBuiltinWorkflow, parseWorkflowIr, type WorkflowIr } from "../index.js";
 
 const defaultIr: WorkflowIr = parseWorkflowIr(getBuiltinWorkflow("builtin:coding")!.ir as never);

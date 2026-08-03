@@ -14,7 +14,7 @@ vi.mock("../run-audit.js", async (importOriginal) => {
 });
 
 import { SelfHealingManager } from "../self-healing.js";
-import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
+import { activeSessionRegistry, executingTaskLock } from "../agents/active-session-registry.js";
 
 /*
 FNXC:OrphanedPendingSteps 2026-07-22-16:20 (FN-8492 incident):

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeBlockerFanoutMap, isStaleBlockedByBlocker } from "../blocker-fanout.js";
+import { computeBlockerFanoutMap, isStaleBlockedByBlocker } from "../tasks/blocker-fanout.js";
 import type { Task } from "../types.js";
 
 /*

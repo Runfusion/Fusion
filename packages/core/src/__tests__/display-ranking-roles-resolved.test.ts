@@ -35,8 +35,8 @@ intended routing, but it is not evidence.
 The legacy-board cases pass either way; they are the degraded mode, not coverage of the change.
 */
 import { describe, expect, it } from "vitest";
-import { sortTasksForDisplayColumn } from "../task-priority.js";
-import { rankAssignedTasksForWakeDelta } from "../assigned-task-ranking.js";
+import { sortTasksForDisplayColumn } from "../tasks/task-priority.js";
+import { rankAssignedTasksForWakeDelta } from "../agents/assigned-task-ranking.js";
 import type { ColumnRoleTraitFlags } from "../column-roles.js";
 
 const HOLD_FLAGS = { hold: true } as unknown as ColumnRoleTraitFlags;

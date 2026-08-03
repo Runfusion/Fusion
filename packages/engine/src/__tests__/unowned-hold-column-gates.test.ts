@@ -28,8 +28,8 @@ synchronous predicates required (#2551).
 import { describe, expect, it, vi } from "vitest";
 import type { Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { GridlockDetector } from "../gridlock-detector.js";
-import { MissionAutopilot } from "../mission-autopilot.js";
+import { GridlockDetector } from "../healing/gridlock-detector.js";
+import { MissionAutopilot } from "../missions/mission-autopilot.js";
 
 const WF = "custom:hold-vocab";
 

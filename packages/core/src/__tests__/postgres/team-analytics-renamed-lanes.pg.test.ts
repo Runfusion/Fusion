@@ -25,7 +25,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../__test-utils__/pg-test-harness.js";
-import { aggregateTeamAnalytics } from "../../team-analytics.js";
+import { aggregateTeamAnalytics } from "../../board/team-analytics.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../../index.js";
 
 const IN_RANGE = "2026-06-15T12:00:00.000Z";

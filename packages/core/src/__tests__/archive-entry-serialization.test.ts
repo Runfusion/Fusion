@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { archiveEntryToTask } from "../task-store/serialization.js";
-import type { ArchivedTaskEntry } from "../types/archive-planning.js";
+import type { ArchivedTaskEntry } from "../types/mesh/archive-planning.js";
 
 describe("archiveEntryToTask", () => {
   const entry = {

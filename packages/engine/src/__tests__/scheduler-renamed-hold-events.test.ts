@@ -32,7 +32,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TaskStore, WorkflowIr } from "@fusion/core";
 import { toTaskMoveLanes } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
-import { evaluateParkedAgentTaskLink } from "../task-agent-sync.js";
+import { evaluateParkedAgentTaskLink } from "../agents/task-agent-sync.js";
 import { flushAsyncHandlers } from "./_flush-async-handlers.js";
 
 const WF = "custom:wf";

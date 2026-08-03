@@ -31,7 +31,7 @@ REVERT PROOF, measured: restoring the literal fallback fails the renamed-complet
 `columnFlagsByColumnId:` argument fails the structural case.
 */
 import { describe, expect, it } from "vitest";
-import { findSameAgentDuplicates } from "../duplicate-intake.js";
+import { findSameAgentDuplicates } from "../duplicates/duplicate-intake.js";
 import type { ColumnRoleTraitFlags } from "../column-roles.js";
 
 const COMPLETE_FLAGS = { complete: true } as unknown as ColumnRoleTraitFlags;

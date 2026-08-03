@@ -20,7 +20,7 @@ would leave the other on the literal.
 */
 import { describe, expect, it, vi } from "vitest";
 import "@fusion/core"; // registers the built-in column traits so flags resolve
-import { getTaskCompletionBlockerForStore } from "../task-completion.js";
+import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
 import type { Task } from "@fusion/core";
 
 /** The dependency's own board: `shipped` carries `complete`; it declares no `done` at all. */

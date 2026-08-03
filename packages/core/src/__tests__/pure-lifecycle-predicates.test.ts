@@ -22,8 +22,8 @@ direction, and the one a type checker cannot catch.
 import { describe, expect, it } from "vitest";
 import type { Task } from "../types.js";
 
-import { getTaskAgeStalenessSignal } from "../task-age-staleness.js";
-import { isStaleBlockedByBlocker } from "../blocker-fanout.js";
+import { getTaskAgeStalenessSignal } from "../tasks/task-age-staleness.js";
+import { isStaleBlockedByBlocker } from "../tasks/blocker-fanout.js";
 
 function task(overrides: Partial<Task>): Task {
   return {

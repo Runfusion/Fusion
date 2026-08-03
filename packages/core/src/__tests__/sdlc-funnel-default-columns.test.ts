@@ -22,10 +22,10 @@ test stops being evidence and becomes a chore.
 */
 import { describe, expect, it } from "vitest";
 
-import { buildColumnStageMap, stageForTraits } from "../activity-analytics.js";
-import { resolveDefaultWorkflowIr } from "../builtin-workflows.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import type { WorkflowIrColumn } from "../workflow-ir-types.js";
+import { buildColumnStageMap, stageForTraits } from "../board/activity-analytics.js";
+import { resolveDefaultWorkflowIr } from "../workflows/builtin-workflows.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import type { WorkflowIrColumn } from "../workflows/workflow-ir-types.js";
 
 function columnsOf(ir: unknown): Array<{ id: string; traits: Array<{ trait: string }> }> {
   const v2 = ir as { version?: string; columns?: WorkflowIrColumn[] };

@@ -50,7 +50,7 @@ import {
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
-import { evaluateParkedAgentTaskLink } from "../task-agent-sync.js";
+import { evaluateParkedAgentTaskLink } from "../agents/task-agent-sync.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 /** Live execution proof, so the only variable below is whether the card reads as PARKED. */

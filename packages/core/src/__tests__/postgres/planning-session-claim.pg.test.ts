@@ -24,7 +24,7 @@ import {
   releasePlanningSessionTaskCreation,
   upsertAiSession,
   type AiSessionRow,
-} from "../../async-ai-session-store.js";
+} from "../../async-stores/async-ai-session-store.js";
 
 const pgTest = pgDescribe;
 

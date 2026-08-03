@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import type { OrgTreeNode } from "@fusion/core";
 import { TeamArea } from "../TeamArea";
-import type { DateRange } from "../DateRangePicker";
+import type { DateRange } from "../../DateRangePicker";
 
 const mocks = vi.hoisted(() => ({
   fetchOrgTree: vi.fn(),

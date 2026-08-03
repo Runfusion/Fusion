@@ -16,7 +16,7 @@ happens to be declared and fails for the other.
 */
 import { describe, expect, it } from "vitest";
 import "../index.js"; // registers the built-in column traits
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import { resolveTerminalColumns } from "../workflows/workflow-lifecycle-traits.js";
 
 function ir(columns: Array<{ id: string; trait: string }>): WorkflowIr {

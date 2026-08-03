@@ -101,7 +101,7 @@ import {
   executeCliSessionBannerAction,
 } from "./utils/appLifecycle";
 // Re-export the unit-tested lifecycle helpers so existing `from "./App"` /
-// `from "../../App"` imports keep resolving after the bodies moved to utils.
+// `from "./App"` imports keep resolving after the bodies moved to utils.
 export {
   didEnterAwaitingApproval,
   didEnterDone,

@@ -2404,7 +2404,7 @@ export class TriageProcessor {
       || this.processing.has(task.id)
       || this.hasLivePlanningWork(task.id)
     ) {
-      // FNXC:ConcurrencyAdmission 2026-08-06-09:00:
+      // FNXC:ConcurrencyAdmission 2026-08-03-09:00:
       // A coordinator winner owns a real pre-held host slot. A duplicate/stale
       // planner handoff must return it instead of pinning max concurrency.
       if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
@@ -3503,7 +3503,7 @@ export class TriageProcessor {
         this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
       }
     } finally {
-      // FNXC:ConcurrencyAdmission 2026-08-06-10:00: a coordinator reservation
+      // FNXC:ConcurrencyAdmission 2026-08-03-10:00: a coordinator reservation
       // can exist before planner setup reaches takePreHeldExecutorSlot(). Every
       // early setup failure must return that untransferred host slot; after a
       // successful transfer this is intentionally a no-op.

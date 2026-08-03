@@ -16,7 +16,7 @@ vi.mock("../postgres/startup-factory.js", () => ({
 }));
 
 vi.mock("../async-central-core.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../async-central-core.js")>();
+  const actual = await importOriginal<typeof import("../async-stores/async-central-core.js")>();
   return {
     ...actual,
     ensureBackendBootstrap: mocks.ensureBackendBootstrap,
@@ -24,7 +24,7 @@ vi.mock("../async-central-core.js", async (importOriginal) => {
   };
 });
 
-import { CentralCore } from "../central-core.js";
+import { CentralCore } from "../central/central-core.js";
 
 const cleanupDirs: string[] = [];
 const ownedLayer = { db: {} };

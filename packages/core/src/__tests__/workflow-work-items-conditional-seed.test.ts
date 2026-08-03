@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createSharedPgTaskStoreTestHarness, pgDescribe, type SharedPgTaskStoreHarness } from "../__test-utils__/pg-test-harness.js";
-import { withTaskWorkflowSerialization } from "../task-store/async-workflow-workitems.js";
+import { withTaskWorkflowSerialization } from "../task-store/async/async-workflow-workitems.js";
 
 const pgTest = pgDescribe;
 

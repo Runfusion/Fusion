@@ -17,8 +17,8 @@ import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-l
 import { createConnectionSetFromUrl } from "../../postgres/connection.js";
 import type { ResolvedBackend } from "../../postgres/backend-resolver.js";
 import * as schema from "../../postgres/schema/index.js";
-import { countRunAuditEvents } from "../async-audit.js";
-import { softDeleteTaskRowInTransaction } from "../async-persistence.js";
+import { countRunAuditEvents } from "../async/async-audit.js";
+import { softDeleteTaskRowInTransaction } from "../async/async-persistence.js";
 import {
   makeTaskLifecycleEventId,
   type TaskDeletedLifecyclePayload,

@@ -20,7 +20,7 @@ import {
   type WorkflowIr,
   type WorkflowLifecycleEvent,
 } from "@fusion/core";
-import { createWorkflowColumnBoundary } from "../workflow-column-boundary.js";
+import { createWorkflowColumnBoundary } from "../workflows/workflow-column-boundary.js";
 
 /** Minimal two-column IR: a wip column and a review column, plus the remediation target. */
 function ir(): WorkflowIr {

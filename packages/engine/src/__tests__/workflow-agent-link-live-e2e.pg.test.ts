@@ -33,7 +33,7 @@ import {
   createSharedPgTaskStoreTestHarness,
   type SharedPgTaskStoreHarness,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
-import { attachAgentLinkSync, type AgentLinkSyncOutcome } from "../task-agent-sync.js";
+import { attachAgentLinkSync, type AgentLinkSyncOutcome } from "../agents/task-agent-sync.js";
 import { DEFAULT_VOCAB, RENAMED_VOCAB, lifecycleIr, type Vocabulary } from "./_workflow-vocabulary-fixture.js";
 
 pgDescribe("live agent-link E2E: a finished card must release its agent", () => {

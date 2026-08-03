@@ -23,7 +23,7 @@ the default-named one role-for-role.
 import { describe, expect, it, vi } from "vitest";
 import type { Agent, AgentStore, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { attachAgentLinkSync, isParkedTaskColumn } from "../task-agent-sync.js";
+import { attachAgentLinkSync, isParkedTaskColumn } from "../agents/task-agent-sync.js";
 
 const WF = "custom:wf";
 

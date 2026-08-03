@@ -2962,7 +2962,7 @@ describe("TaskChatTab", () => {
     const source = readFileSync(resolve(__dirname, "../TaskDetailModal.tsx"), "utf8");
     const taskChatMounts = source.match(/<TaskChatTab\b/g) ?? [];
 
-    expect(source).toContain('import { TaskChatTab } from "./TaskChatTab"');
+    expect(source).toContain('import { TaskChatTab } from "../TaskChatTab"');
     expect(taskChatMounts).toHaveLength(1);
     expect(source).toContain("const isActivityExpanded = activityExpanded && activeTab === \"chat\" && !isEditing");
     expect(source).toContain("task-detail-content--chat-expanded");

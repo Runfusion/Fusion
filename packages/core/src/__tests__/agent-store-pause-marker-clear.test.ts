@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { AgentStore } from "../agent-store.js";
+import { AgentStore } from "../agents/agent-store.js";
 import {
   createSharedPgTaskStoreTestHarness,
   pgDescribe,

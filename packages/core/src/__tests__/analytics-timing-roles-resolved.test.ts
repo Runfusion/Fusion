@@ -22,7 +22,7 @@ behavioural cases in `task-timing`, plus the structural ratchet on each analytic
 */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getTotalAgentActiveMs } from "../task-timing.js";
+import { getTotalAgentActiveMs } from "../tasks/task-timing.js";
 import type { ColumnRoleTraitFlags } from "../column-roles.js";
 
 const WIP_FLAGS = { countsTowardWip: true } as unknown as ColumnRoleTraitFlags;

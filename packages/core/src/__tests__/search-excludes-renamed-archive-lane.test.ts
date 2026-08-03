@@ -27,7 +27,7 @@ SQL excludes, and a database fixture would test Drizzle's rendering instead.
 */
 
 import { describe, expect, it } from "vitest";
-import { liveSearchPredicate } from "../task-store/async-search.js";
+import { liveSearchPredicate } from "../task-store/async/async-search.js";
 
 /*
 Drizzle SQL objects hold their bound params as nested nodes, and the graph is CYCLIC — a column

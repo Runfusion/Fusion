@@ -14,7 +14,7 @@
  * past the strict exit-bound the test asserts. Loaded via `tsx` so it can import
  * the real TypeScript source directly (no separate build step required).
  */
-import { QmdMemoryBackend } from "../../memory-backend.ts";
+import { QmdMemoryBackend } from "../../memory/memory-backend.js";
 
 const rootDir = process.argv[2];
 if (!rootDir) {

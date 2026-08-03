@@ -31,7 +31,7 @@ vocabulary rather than go silent, which is the failure being fixed.
 import { describe, expect, it, vi } from "vitest";
 import type { MissionFeature, Task, TaskStore, WorkflowIr } from "@fusion/core";
 
-import { reconcileMissionFeatureState } from "../mission-feature-sync.js";
+import { reconcileMissionFeatureState } from "../missions/mission-feature-sync.js";
 
 const DEFAULT_NAMES = {
   intake: "triage", hold: "todo", wip: "in-progress",

@@ -18,7 +18,7 @@ public `findLatestByDedupeKey` through a fake prepare/all seam — no database, 
 network, no timers.
 */
 import { describe, expect, it } from "vitest";
-import { ApprovalRequestStore } from "../approval-request-store.js";
+import { ApprovalRequestStore } from "../agents/approval-request-store.js";
 
 type Row = Record<string, unknown>;
 

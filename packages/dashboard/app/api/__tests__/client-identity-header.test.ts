@@ -12,7 +12,7 @@ task-delete call itself so no future route has to remember the header.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FUSION_CLIENT_HEADER, FUSION_DASHBOARD_UI_CLIENT } from "@fusion/core";
 import { api } from "../client";
-import { deleteTask } from "../tasks-lifecycle";
+import { deleteTask } from "../tasks/tasks-lifecycle";
 import * as auth from "../../auth";
 
 function mockFetch() {

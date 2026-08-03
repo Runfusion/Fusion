@@ -16,9 +16,9 @@ binaries opening these databases is an observed event in this project. These cas
 fail if the downgrade is removed, and they pin the exact boundary of when it applies.
 */
 import { describe, expect, it } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflow-ir.js";
-import type { WorkflowIrV2 } from "../workflow-ir-types.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { downgradeIrToV1IfPure, parseWorkflowIr, serializeWorkflowIr } from "../workflows/workflow-ir.js";
+import type { WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 
 describe("v1 IR rollback-compat persistence shape", () => {
   it("stores a pure-v1-equivalent graph in the v1 shape", () => {

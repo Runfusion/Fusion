@@ -26,7 +26,7 @@ parity-checked; converting it would erase the reference implementation.
 */
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { __resetTraitRegistryForTests } from "../trait-registry.js";
+import { __resetTraitRegistryForTests } from "../workflows/trait-registry.js";
 import { registerBuiltinTraits } from "../builtin-traits.js";
 import {
   __resetDefaultWorkflowHooksForTests,
@@ -37,10 +37,10 @@ import {
   isReopenIntoPlanning,
   registerDefaultWorkflowHooks,
   type DefaultWorkflowMoveContext,
-} from "../default-workflow-hooks.js";
-import { getTotalAgentActiveMs } from "../task-timing.js";
+} from "../workflows/default-workflow-hooks.js";
+import { getTotalAgentActiveMs } from "../tasks/task-timing.js";
 import { resolveLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
-import type { WorkflowIr } from "../workflow-ir-types.js";
+import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 import type { Task } from "../types.js";
 
 /** A board whose columns carry the SAME traits under DIFFERENT names. */

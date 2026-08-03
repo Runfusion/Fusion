@@ -18,10 +18,10 @@ It intentionally compares ORDER too, not just membership: the menu renders targe
 the order it receives them, so a reordering is an operator-visible change.
 */
 import { describe, expect, it } from "vitest";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
-import { resolveAllowedColumns } from "../workflow-transitions.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
+import { resolveAllowedColumns } from "../workflows/workflow-transitions.js";
 import { COLUMNS } from "../types/board.js";
-import { VALID_TRANSITIONS } from "../types/board-config.js";
+import { VALID_TRANSITIONS } from "../types/board/board-config.js";
 
 describe("built-in workflow adjacency vs the legacy transition table", () => {
   it.each(COLUMNS)("column %s resolves the same targets, in the same order", (column) => {

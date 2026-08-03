@@ -29,8 +29,8 @@ export { postgresSchema };
 import {
   columnsWithFlag,
   resolveReviewColumns,
-} from "../../core/src/workflow-lifecycle-traits.js";
-import { resolveWorkflowIrForTask } from "../../core/src/workflow-ir-resolver.js";
+} from "../../core/src/workflows/workflow-lifecycle-traits.js";
+import { resolveWorkflowIrForTask } from "../../core/src/workflows/workflow-ir-resolver.js";
 
 export { columnsWithFlag, resolveReviewColumns, resolveWorkflowIrForTask };
 

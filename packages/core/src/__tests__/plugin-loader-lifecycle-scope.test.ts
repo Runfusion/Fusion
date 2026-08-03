@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PluginLoader } from "../plugin-loader.js";
-import type { PluginInstallation } from "../plugin-types.js";
+import { PluginLoader } from "../plugins/plugin-loader.js";
+import type { PluginInstallation } from "../plugins/plugin-types.js";
 const roots: string[] = []; afterEach(async () => { await Promise.all(roots.splice(0).map((r) => rm(r, { recursive: true, force: true }))); });
 async function fixture() { const root = await mkdtemp(join(tmpdir(), "fusion-loader-scope-")); roots.push(root); const path = join(root, "plugin.mjs"); await writeFile(path, `export default { manifest: { id: "scope", name: "Scope", version: "1.0.0", description: "fixture" }, state: "installed", hooks: {} };`); const plugin: PluginInstallation = { id: "scope", name: "Scope", version: "1.0.0", description: "fixture", path, enabled: true, state: "installed", settings: {}, dependencies: [], createdAt: "", updatedAt: "" }; const pluginStore = { getPlugin: vi.fn(async () => ({ ...plugin })), listPlugins: vi.fn(async () => [{ ...plugin }]), updatePluginState: vi.fn(async () => undefined) }; const taskStore = { getRootDir: () => root, preflightPluginSchema: vi.fn(() => null), runPluginSchemaInits: vi.fn(async () => undefined), recordPluginActivation: vi.fn() }; return { pluginStore, taskStore }; }
 describe("PluginLoader lifecycle scopes", () => {

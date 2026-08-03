@@ -9,7 +9,7 @@ describe("bin pr router wiring", () => {
     expect(source).toContain('case "pr":');
     expect(source).toContain('case "create":');
     expect(source).toContain("runPrCreate(id, parsePrCreateOptions(args.slice(3)), projectName)");
-    expect(source).toContain('await import("./commands/pr.js")');
+    expect(source).toContain('await import("../commands/pr.js")');
   });
 
   it("parses draft/no-ai/reviewer flags for pr create", () => {

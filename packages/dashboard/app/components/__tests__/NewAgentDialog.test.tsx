@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { NewAgentDialog } from "../NewAgentDialog";
 
 vi.mock("../api", async () => {
-  const actual = await vi.importActual<typeof import("../api")>("../api");
+  const actual = await vi.importActual<typeof import("../../api")>("../api");
   return {
     ...actual,
     fetchModels: vi.fn().mockResolvedValue({

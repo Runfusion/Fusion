@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { FusionAuthStorage } from "../auth-storage.js";
-import { CredentialInstanceResolutionError, createFusionCredentialStore, resolveCredentialInstanceRef } from "../auth-storage.js";
+import type { FusionAuthStorage } from "../auth/auth-storage.js";
+import { CredentialInstanceResolutionError, createFusionCredentialStore, resolveCredentialInstanceRef } from "../auth/auth-storage.js";
 
 function storage(): FusionAuthStorage {
   const values = new Map([

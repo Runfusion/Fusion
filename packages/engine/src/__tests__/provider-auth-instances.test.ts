@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { FusionAuthStorage } from "../auth-storage.js";
-import { wrapAuthStorageWithApiKeyProviders } from "../provider-auth.js";
+import type { FusionAuthStorage } from "../auth/auth-storage.js";
+import { wrapAuthStorageWithApiKeyProviders } from "../auth/provider-auth.js";
 
 function storageFixture() {
   const credential = { type: "api_key" as const, key: "secret", label: "Second account" };

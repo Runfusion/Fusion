@@ -14,7 +14,7 @@ vi.mock("../run-audit.js", async (importOriginal) => {
 });
 
 import { SelfHealingManager } from "../self-healing.js";
-import { executingTaskLock } from "../active-session-registry.js";
+import { executingTaskLock } from "../agents/active-session-registry.js";
 
 /*
 FNXC:StalledCardWatchdog 2026-07-26-19:50 (FN-8596 class):

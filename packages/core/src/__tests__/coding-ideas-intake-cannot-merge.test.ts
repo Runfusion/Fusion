@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../builtin-coding-ideas-workflow-ir.js";
-import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
+import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "../workflows/builtin-coding-ideas-workflow-ir.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../workflows/builtin-stepwise-final-review-coding-workflow-ir.js";
 import { resolveLifecycleColumns } from "../workflows/workflow-lifecycle-traits.js";
-import { validateColumnTraits } from "../trait-registry.js";
-import type { WorkflowIrColumn, WorkflowIrV2 } from "../workflow-ir-types.js";
+import { validateColumnTraits } from "../workflows/trait-registry.js";
+import type { WorkflowIrColumn, WorkflowIrV2 } from "../workflows/workflow-ir-types.js";
 import "../builtin-traits.js";
 
 /*
