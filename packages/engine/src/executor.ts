@@ -93,7 +93,6 @@ import {
 } from "@fusion/core";
 import { findWorktreeUser, getConflictedFiles } from "./merger.js";
 import {
-  runVerificationCommand,
   summarizeVerificationOutput,
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
@@ -662,6 +661,9 @@ import { handleDepAbortCleanup as handleDepAbortCleanupImpl } from "./executor/d
 export { handleDepAbortCleanup as handleDepAbortCleanupFree } from "./executor/dep-abort-cleanup.js";
 import { reopenLastStepForRevision as reopenLastStepForRevisionImpl } from "./executor/reopen-last-step-for-revision.js";
 export { reopenLastStepForRevision as reopenLastStepForRevisionFree } from "./executor/reopen-last-step-for-revision.js";
+import { runExecutorDeterministicVerification as runExecutorDeterministicVerificationImpl } from "./executor/deterministic-verification.js";
+export { runExecutorDeterministicVerification as runExecutorDeterministicVerificationFree } from "./executor/deterministic-verification.js";
+
 
 
 
@@ -15604,66 +15606,16 @@ export class TaskExecutor {
     settings: Settings,
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<VerificationResult> {
-    const testCommand = settings.testCommand?.trim();
-    const buildCommand = settings.buildCommand?.trim();
-
-    if (!testCommand && !buildCommand) {
-      executorLog.debug(`${task.id}: no test/build commands configured — skipping verification`);
-      return { allPassed: true };
-    }
-
-    const parts: string[] = [];
-    if (testCommand) parts.push(`test: ${testCommand}`);
-    if (buildCommand) parts.push(`build: ${buildCommand}`);
-    // FNXC:EngineDiagnostics 2026-07-26-09:33: green path verification start/pass is expected work — debug so failures stay prominent.
-    executorLog.debug(`${task.id}: [verification] running deterministic verification (${parts.join(", ")})`);
-    await this.store.logEntry(
-      task.id,
-      `[verification] Running deterministic verification (${parts.join(", ")})`,
-      undefined,
-      this.getRunContextFor(task.id),
+    return runExecutorDeterministicVerificationImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      },
+      task,
+      worktreePath,
+      settings,
+      extraEnv,
     );
-
-    const result: VerificationResult = { allPassed: true };
-
-    // Run test command first if configured
-    if (testCommand) {
-      const testResult = await runVerificationCommand(
-        this.store, worktreePath, task.id, testCommand, "test", undefined, executorLog, "executor", extraEnv, settings.verificationCommandTimeoutMs,
-      );
-      result.testResult = testResult;
-
-      if (!testResult.success) {
-        result.allPassed = false;
-        result.failedCommand = "testCommand";
-        executorLog.log(`${task.id}: [verification] test failed (exit ${testResult.exitCode})`);
-        return result;
-      }
-    }
-
-    // Run build command second if configured
-    if (buildCommand) {
-      const buildResult = await runVerificationCommand(
-        this.store, worktreePath, task.id, buildCommand, "build", undefined, executorLog, "executor", extraEnv, settings.verificationCommandTimeoutMs,
-      );
-      result.buildResult = buildResult;
-
-      if (!buildResult.success) {
-        result.allPassed = false;
-        result.failedCommand = "buildCommand";
-        executorLog.log(`${task.id}: [verification] build failed (exit ${buildResult.exitCode})`);
-        return result;
-      }
-    }
-
-    executorLog.debug(`${task.id}: [verification] passed`);
-    await this.store.logEntry(
-      task.id,
-      `[verification] Deterministic verification passed`,
-      undefined,
-      this.getRunContextFor(task.id),
-    );
-    return result;
   }
 
   /**
