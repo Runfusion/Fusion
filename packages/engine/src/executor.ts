@@ -621,6 +621,11 @@ export {
   captureWorkspaceModifiedFiles as captureWorkspaceModifiedFilesFree,
   captureUncommittedModifiedFiles as captureUncommittedModifiedFilesFree,
 } from "./executor/worktree-capture-modified-files.js";
+import { executeScriptWorkflowStep as executeScriptWorkflowStepImpl } from "./executor/workflow-script-step.js";
+export { executeScriptWorkflowStep as executeScriptWorkflowStepFree } from "./executor/workflow-script-step.js";
+import { reviewWorkspacePerRepo as reviewWorkspacePerRepoImpl } from "./executor/workspace-review-per-repo.js";
+export { reviewWorkspacePerRepo as reviewWorkspacePerRepoFree } from "./executor/workspace-review-per-repo.js";
+
 
 
 
@@ -640,10 +645,10 @@ import {
 
 
 import {
-  truncateWorkflowScriptOutput,
   configuredCommandErrorMessage,
   getConfiguredCommandSandboxBackend,
 } from "./executor/configured-command.js";
+export { truncateWorkflowScriptOutput } from "./executor/configured-command.js";
 
 
 async function runConfiguredCommand(
@@ -16355,84 +16360,11 @@ ${scopeGuard}
     return captureWorkspaceModifiedFilesImpl(task, audit, source);
   }
 
-  /**
-   * FNXC:Workspace 2026-06-22-00:30: KTD3 — per-repo review by looping the EXISTING single-cwd reviewStep.
-   * The reviewer is an AGENT spawned with `cwd = worktree`, told (in prompt text, reviewer.ts) to run `git diff`
-   * itself — it does NOT read a diff passed in code. So per-repo review = ONE reviewer agent per sub-repo. We keep
-   * `reviewStep` single-cwd; the CALLERS loop. This helper is the shared loop+aggregate so both review entry points
-   * (historically the deleted in-session review tool, now only the step-inversion `stepReview` seam) iterate
-   * identically: it invokes the caller's
-   * own `invokeForCwd(cwd)` once per acquired worktree (cwd = repo.worktreePath) and aggregates the repo-tagged
-   * verdicts as a CONJUNCTION — the task is "reviewed" only if EVERY repo passes; the FIRST non-APPROVE repo's
-   * verdict becomes the aggregate verdict (mirroring verifyWorktreeInvariants' first-failing-repo return), and its
-   * findings are repo-tagged. A zero-acquire workspace task (empty map) returns UNAVAILABLE so the caller routes it
-   * rather than fabricating an APPROVE.
-   *
-   * Verdict severity for the conjunction: any RETHINK/REVISE/UNAVAILABLE fails the whole review; only all-APPROVE
-   * (or all-skipped UNAVAILABLE-advisory, handled by the caller) approves. We surface the first failing repo's exact
-   * verdict so the caller's existing verdict→edge mapping (APPROVE done-marking, REVISE block, RETHINK reset,
-   * UNAVAILABLE retry) is unchanged.
-   */
   private async reviewWorkspacePerRepo(
-    // FNXC:Workspace 2026-06-21-15:00: F7 — drop the dead `repoRel` callback param.
-    // Both call sites bind `(cwd) => runForCwd(cwd)` and discard the second arg, so the type wrongly
-    // implied repo identity is observable inside `runForCwd`. Removed until a real consumer needs it
-    // (Phase C). The loop below still tags findings with `repoRel` from its own iteration key.
     task: Task,
     invokeForCwd: (cwd: string) => Promise<ReviewResult>,
   ): Promise<ReviewResult> {
-    const workspaceWorktrees = task.workspaceWorktrees ?? {};
-    // FNXC:Workspace 2026-06-21-15:00: F6 — sort repo keys so the reported FIRST failing repo is
-    // deterministic across runs/rehydrate.
-    const repoKeys = Object.keys(workspaceWorktrees).sort();
-    if (repoKeys.length === 0) {
-      // No acquired worktree — surface UNAVAILABLE so the caller routes it rather than
-      // fabricating an authoritative APPROVE for an un-reviewable workspace task.
-      return {
-        verdict: "UNAVAILABLE",
-        review: "No acquired sub-repo worktree to review (workspace task with zero worktrees).",
-        summary: "Skipped: no sub-repo worktree",
-      };
-    }
-
-    const reviewSections: string[] = [];
-    const summarySections: string[] = [];
-    let firstFailing: { repo: string; result: ReviewResult } | undefined;
-    for (const repoRel of repoKeys) {
-      const repo = workspaceWorktrees[repoRel];
-      const result = await invokeForCwd(repo.worktreePath);
-      // Tag every per-repo finding with its sub-repo so downstream readers attribute it correctly.
-      reviewSections.push(`### [${repoRel}] ${result.verdict}\n${result.review}`);
-      summarySections.push(`[${repoRel}] ${result.verdict}: ${result.summary}`);
-      if (result.verdict !== "APPROVE") {
-        // FNXC:Workspace 2026-06-21-15:00: F3 — BREAK on the first non-APPROVE repo.
-        // The contract is "the FIRST non-APPROVE repo's verdict becomes the aggregate". Without the
-        // break, a LATER repo's reviewer throwing would discard this already-determined REVISE/RETHINK
-        // and the caller would see UNAVAILABLE — masking the real verdict. Stop at the first failure.
-        firstFailing = { repo: repoRel, result };
-        break;
-      }
-    }
-
-    if (firstFailing) {
-      // Conjunction failed: the aggregate carries the FIRST failing repo's verdict (so the caller's
-      // verdict→edge mapping is identical to single-cwd), with the full repo-tagged review body.
-      return {
-        verdict: firstFailing.result.verdict,
-        // FNXC:Workspace 2026-06-22-00:00: the conjunction BREAKS on the first non-APPROVE repo,
-        // so reviewSections holds only the repos evaluated up to (and including) the failure — not
-        // every sub-repo. Label it honestly so operators don't read a partial list as exhaustive.
-        review: `Workspace review failed in sub-repo \`${firstFailing.repo}\` (verdict ${firstFailing.result.verdict}). Per-repo verdicts (evaluation stopped at first failure; later repos not reviewed):\n\n${reviewSections.join("\n\n")}`,
-        summary: `${firstFailing.repo}: ${firstFailing.result.verdict} — ${summarySections.join(" | ")}`,
-      };
-    }
-
-    // Every sub-repo approved → the task is reviewed (conjunction satisfied).
-    return {
-      verdict: "APPROVE",
-      review: `All ${repoKeys.length} sub-repo(s) approved. Per-repo verdicts:\n\n${reviewSections.join("\n\n")}`,
-      summary: `APPROVE across ${repoKeys.length} sub-repo(s): ${summarySections.join(" | ")}`,
-    };
+    return reviewWorkspacePerRepoImpl(task, invokeForCwd);
   }
 
   private async captureUncommittedModifiedFiles(worktreePath: string): Promise<string[]> {
@@ -16452,60 +16384,22 @@ ${scopeGuard}
     settings: Settings,
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    const scriptName = workflowStep.scriptName!.trim();
-    const scriptCommand = settings.scripts?.[scriptName];
-
-    if (!scriptCommand) {
-      const available = settings.scripts ? Object.keys(settings.scripts).join(", ") : "none";
-      const msg = `Script '${scriptName}' not found in project settings. Available scripts: ${available}`;
-      await this.store.logEntry(task.id, msg);
-      return { success: false, error: msg };
-    }
-
-    executorLog.log(`${task.id}: workflow step '${workflowStep.name}' executing script '${scriptName}': ${scriptCommand}`);
-    await this.store.logEntry(task.id, `Workflow step '${workflowStep.name}' executing script '${scriptName}': ${scriptCommand}`);
-
-    const scriptAbortController = new AbortController();
-    this.registerConfiguredCommandController(task.id, scriptAbortController);
-    try {
-      const scriptResult = await runConfiguredCommand(
-        scriptCommand,
-        worktreePath,
-        120_000,
-        extraEnv,
-        createRunAuditor(this.store, {
-          runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("exec-script", task.id),
-          agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
-          taskId: task.id,
-          phase: "execute",
-        }),
-        scriptAbortController.signal,
-      );
-      if (scriptAbortController.signal.aborted) {
-        throw createConfiguredCommandAbortError(task.id, scriptCommand);
-      }
-      if (scriptResult.spawnError || scriptResult.timedOut || scriptResult.exitCode !== 0) {
-        return { success: false, error: configuredCommandErrorMessage(scriptResult) };
-      }
-      return { success: true, output: `Script '${scriptName}' completed successfully` };
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw err;
-      }
-      const execError = err instanceof Error ? err : new Error(String(err));
-      const stderr = "stderr" in execError && typeof execError.stderr === "string" ? execError.stderr.trim() : "";
-      const stdout = "stdout" in execError && typeof execError.stdout === "string" ? execError.stdout.trim() : "";
-      const exitCode = "code" in execError ? execError.code : ("status" in execError ? execError.status : undefined);
-      const parts: string[] = [];
-      if (exitCode !== undefined) parts.push(`Exit code: ${exitCode}`);
-      if (stdout) parts.push(`stdout: ${truncateWorkflowScriptOutput(stdout)}`);
-      if (stderr) parts.push(`stderr: ${truncateWorkflowScriptOutput(stderr)}`);
-      if (!parts.length) parts.push(execError.message || "Unknown error");
-      const errorOutput = parts.join("\n");
-      return { success: false, error: errorOutput };
-    } finally {
-      this.unregisterConfiguredCommandController(task.id, scriptAbortController);
-    }
+    return executeScriptWorkflowStepImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        registerConfiguredCommandController: (taskId, controller) =>
+          this.registerConfiguredCommandController(taskId, controller),
+        unregisterConfiguredCommandController: (taskId, controller) =>
+          this.unregisterConfiguredCommandController(taskId, controller),
+        runConfiguredCommand,
+      },
+      task,
+      workflowStep,
+      worktreePath,
+      settings,
+      extraEnv,
+    );
   }
 
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
