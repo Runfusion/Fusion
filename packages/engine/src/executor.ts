@@ -738,6 +738,10 @@ import { executeReviewHandoff as executeReviewHandoffImpl } from "./executor/exe
 export { executeReviewHandoff as executeReviewHandoffFree } from "./executor/execute-review-handoff.js";
 import { shouldDeferForHeartbeat as shouldDeferForHeartbeatImpl } from "./executor/should-defer-for-heartbeat.js";
 export { shouldDeferForHeartbeat as shouldDeferForHeartbeatFree } from "./executor/should-defer-for-heartbeat.js";
+import { parkPlanReviewReplanCapExhausted as parkPlanReviewReplanCapExhaustedImpl } from "./executor/park-plan-review-replan-cap.js";
+export { parkPlanReviewReplanCapExhausted as parkPlanReviewReplanCapExhaustedFree } from "./executor/park-plan-review-replan-cap.js";
+import { resumeTaskForAgent as resumeTaskForAgentImpl } from "./executor/resume-task-for-agent.js";
+export { resumeTaskForAgent as resumeTaskForAgentFree } from "./executor/resume-task-for-agent.js";
 
 
 
@@ -3909,25 +3913,15 @@ export class TaskExecutor {
     currentCount: number,
     feedback: string,
   ): Promise<void> {
-    await this.store.logEntry(
+    return parkPlanReviewReplanCapExhaustedImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
       taskId,
-      "Plan Review replan cap reached — escalating to manual approval",
-      `The Plan Review gate requested a planning revision ${currentCount} times without converging (cap ${capLabel}). To avoid an endless plan → Plan Review REVISE → replan loop, the task is routed to awaiting-approval for a human decision instead of replanning again. Latest Plan Review feedback:\n${feedback}`,
-      this.getRunContextFor(taskId),
-    );
-    // awaitingApprovalReason is written through a Record<string, unknown> (matching
-    // the manual plan-approval hold + the deleted triage cap-park) so the distinct
-    // reason survives the update path.
-    const escalationUpdates: Record<string, unknown> = {
-      status: "awaiting-approval",
-      awaitingApprovalReason: "plan-review-replan-cap",
-      error: null,
-      recoveryRetryCount: null,
-      nextRecoveryAt: null,
-    };
-    await this.store.updateTask(taskId, escalationUpdates as Partial<Task>, this.getRunContextFor(taskId));
-    executorLog.warn(
-      `${taskId}: Plan Review replan cap (${capLabel}) reached after ${currentCount} attempts — escalating to awaiting-approval`,
+      capLabel,
+      currentCount,
+      feedback,
     );
   }
 
@@ -4294,49 +4288,19 @@ export class TaskExecutor {
   }
 
   async resumeTaskForAgent(agentId: string): Promise<void> {
-    const settings = await this.store.getSettings();
-    if (settings.globalPause || settings.enginePaused) return;
-    const tasks = await this.listWipLaneTasks();
-    const dispatched = new Set<string>();
-    const isDispatchable = (task: Task): boolean =>
-      !task.deletedAt
-      && !task.paused
-      && !this.executing.has(task.id)
-      && !this.activeSessions.has(task.id)
-      && !this.activeStepExecutors.has(task.id)
-      && !this.activeWorkflowStepSessions.has(task.id);
-    const dispatch = (task: Task, reason: string): void => {
-      if (dispatched.has(task.id)) return;
-      dispatched.add(task.id);
-      executorLog.log(`${task.id}: re-dispatching execute() after heartbeat completion for agent ${agentId} (${reason})`);
-      this.execute(task).catch((err) =>
-        executorLog.error(`Failed to resume ${task.id} after heartbeat completion:`, err),
-      );
-    };
-
-    // Pass 1: directly-assigned tasks (legacy behavior, byte-identical).
-    for (const task of tasks) {
-      if (task.assignedAgentId === agentId && isDispatchable(task)) {
-        dispatch(task, "assigned");
-      }
-    }
-
-    // Pass 2: tasks whose EFFECTIVE column agent resolves to `agentId`. The graph
-    // engine is the default runtime; the IR resolve is best-effort and skipped
-    // for tasks already dispatched/executing.
-    for (const task of tasks) {
-      if (dispatched.has(task.id) || !isDispatchable(task)) continue;
-      // Skip tasks the assigned-agent filter already covers — a redundant column
-      // binding to the same agent would only re-confirm pass 1.
-      if (task.assignedAgentId === agentId) continue;
-      let matches = false;
-      try {
-        matches = await this.taskEffectiveAgentMatches(task, agentId);
-      } catch {
-        matches = false;
-      }
-      if (matches) dispatch(task, "effective-column-agent");
-    }
+    return resumeTaskForAgentImpl(
+      {
+        store: this.store,
+        executing: this.executing,
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        listWipLaneTasks: () => this.listWipLaneTasks(),
+        taskEffectiveAgentMatches: (task, id) => this.taskEffectiveAgentMatches(task, id),
+        execute: (task) => this.execute(task),
+      },
+      agentId,
+    );
   }
 
   /** Column-agent principal alignment (plan U5, R6). True when the EFFECTIVE agent
