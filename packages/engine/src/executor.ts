@@ -710,6 +710,9 @@ export {
   recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsFree,
   isRequiredArtifactRecoveryProtected as isRequiredArtifactRecoveryProtectedFree,
 } from "./executor/required-artifact-recovery.js";
+import { performWorkflowRerunBounce as performWorkflowRerunBounceImpl } from "./executor/workflow-rerun-bounce.js";
+export { performWorkflowRerunBounce as performWorkflowRerunBounceFree } from "./executor/workflow-rerun-bounce.js";
+
 
 
 
@@ -3623,111 +3626,18 @@ export class TaskExecutor {
     worktreePath: string,
     preserveResumeState: boolean = true,
   ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
-    const pauseLabel = await this.getExecutionPauseLabel();
-    if (pauseLabel) {
-      executorLog.log(`${taskId}: workflow rerun deferred — ${pauseLabel} active`);
-      return "deferred-paused";
-    }
-
-    // Re-entry guard: if a previous bounce for the same task is still
-    // mid-flight (e.g., the watchdog fired before the original sequence
-    // completed), skip rather than racing two concurrent moveTask sequences.
-    if (this.workflowRerunPending.has(taskId)) {
-      executorLog.warn(`${taskId}: workflow rerun bounce already in flight — skipping re-entry`);
-      return "skipped-pending";
-    }
-    this.workflowRerunPending.add(taskId);
-    try {
-      // moveTask(in-progress → todo) clears `task.worktree`; restore it before
-      // the return trip so the dashboard never renders the task under
-      // "Unassigned" and self-healing can't reclaim the worktree as idle.
-      const latestTask = await this.store.getTask(taskId);
-      if (!latestTask) {
-        throw new Error("task missing during workflow rerun bounce");
-      }
-      if (latestTask.paused) {
-        executorLog.log(`${taskId}: workflow rerun deferred — task is paused`);
-        return "deferred-paused";
-      }
-
-      /*
-      FNXC:WorkflowOptionalStepFix 2026-06-27-13:30:
-      A pre-merge optional step REVISE (Code Review / Browser Verification) schedules this
-      bounce via sendTaskBackForFix AFTER reopening the last plan step to `pending`. The
-      graph run that hosted that step reports `disposition: "completed"`, so the outer
-      completion flow can route the task to `in-review` BEFORE this setTimeout(0) bounce
-      runs. Previously the bounce only handled `in-progress`/`todo` and THREW on `in-review`
-      ("cannot bounce to in-progress"), leaving the task stranded in-review with a `pending`
-      step: the merge gate blocks forever on the incomplete step while self-healing only
-      re-runs the workflow graph (re-passing the advisory step) and never re-launches the
-      executor to finish the reopened step — a permanent deadlock (observed on FN-7122).
-      The bounce's ONLY caller is sendTaskBackForFix, which unconditionally intends to send
-      the task back for remediation, so `in-review` must bounce back exactly like
-      `in-progress` regardless of the column the completion race left it in.
-      */
-      /* FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet): both lanes from ONE snapshot — the comment
-         above says in-review must bounce EXACTLY like in-progress, so resolving them separately is how the
-         bounce ends up handling one lane and throwing on the other, which is the bug that comment is about. */
-      const bounceLanes = await this.resolveResumeLanes(taskId);
-      if (latestTask.column === bounceLanes.wip || latestTask.column === bounceLanes.review) {
-        const originalExecutionStartedAt = latestTask.executionStartedAt;
-        // Preserve step progress across the in-progress/in-review → todo hop:
-        // moveTask's default reopen-to-todo path resets every step to
-        // pending and rewrites PROMPT.md checkboxes, which would discard
-        // the partial progress this bounce is supposed to retry on top of.
-        // `preserveWorktree` keeps the same checkout assigned across the
-        // hop so listeners never observe an interim `worktree=null` state
-        // — this bounce immediately re-promotes the task on the same
-        // directory, so releasing it would publish a misleading snapshot
-        // and could let self-healing reclaim the worktree as idle.
-        if (preserveResumeState) {
-          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), {
-            preserveResumeState: true,
-            preserveWorktree: true,
-          });
-        } else {
-          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), { preserveWorktree: true });
-        }
-        // Restore worktree + executionStartedAt unconditionally to match
-        // the original bounce contract: even with preserveWorktree the
-        // worktree pointer could have been cleared by an in-flight
-        // updateTask, and executionStartedAt is reset by moveTask when
-        // preserveResumeState is false. Keep the writes so callers and
-        // tests can observe the restoration deterministically.
-        await this.store.updateTask(taskId, {
-          worktree: worktreePath,
-          executionStartedAt: originalExecutionStartedAt ?? null,
-        });
-        const pauseLabelAfterTodo = await this.getExecutionPauseLabel();
-        if (pauseLabelAfterTodo) {
-          executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelAfterTodo} became active during bounce`);
-          return "deferred-paused";
-        }
-        // Now in `todo` (non-mergeable) — safe to clear prior gate failures.
-        await this.clearTerminalStepFailuresForRetry(taskId);
-        /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
-        await this.store.moveTask(taskId, await resolveWipTargetForTask(this.store, taskId));
-        return "bounced";
-      }
-
-      if (latestTask.column === await resolveReboundColumnFor(this.store, taskId)) {
-        await this.store.updateTask(taskId, { worktree: worktreePath });
-        const pauseLabelBeforeResume = await this.getExecutionPauseLabel();
-        if (pauseLabelBeforeResume) {
-          executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelBeforeResume} became active before resume`);
-          return "deferred-paused";
-        }
-        // Already in `todo` (non-mergeable) — safe to clear prior gate failures.
-        await this.clearTerminalStepFailuresForRetry(taskId);
-        /* FNXC:WorkflowResolvedColumns 2026-07-30-21:40: census-invisible moveTask DESTINATION — a call argument, not a comparison. The SOURCE guard four lines up already resolves via resolveReboundColumnFor; leaving the destination literal is a split brain inside one function. */
-        await this.store.moveTask(taskId, await resolveWipTargetForTask(this.store, taskId));
-        return "bounced";
-      }
-
-      throw new Error(`task is in '${latestTask.column}', cannot bounce to in-progress`);
-    } finally {
-      this.workflowRerunPending.delete(taskId);
-    }
+    return performWorkflowRerunBounceImpl(
+      {
+        store: this.store,
+        workflowRerunPending: this.workflowRerunPending,
+        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
+        resolveResumeLanes: (id: string) => this.resolveResumeLanes(id),
+        clearTerminalStepFailuresForRetry: (id: string) => this.clearTerminalStepFailuresForRetry(id),
+      },
+      taskId,
+      worktreePath,
+      preserveResumeState,
+    );
   }
 
   private scheduleWorkflowRerun(
