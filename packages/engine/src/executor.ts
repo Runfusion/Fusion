@@ -85,13 +85,13 @@ import {
   type WorkspaceConfig,
   type RunCommandResult,
 } from "@fusion/core";
-import { findWorktreeUser, getConflictedFiles } from "./merger.js";
+import { findWorktreeUser } from "./merger.js";
 import {
   summarizeVerificationOutput,
   VERIFICATION_LOG_MAX_CHARS,
   type VerificationResult,
 } from "./execution/verification-utils.js";
-import { canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
+import { generateWorktreeName } from "./worktree/worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -161,7 +161,7 @@ import { AgentLogger } from "./agents/agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./errors/usage-limit-detector.js";
-import { isNonPlanDefectPlanReviewFailure, isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
+import { isTransientError, isSilentTransientError } from "./errors/transient-error-detector.js";
 import { withRateLimitRetry } from "./errors/rate-limit-retry.js";
 import type { CredentialInstanceRotator } from "./credential-instance-rotation.js";
 import {
@@ -171,7 +171,6 @@ import {
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 import {
   isRequiredArtifactReadFailedValue,
-  parseRequiredArtifactMissingValue,
   requiredArtifactMissingValue,
   requiredArtifactReadFailedValue,
   workflowEntryArtifacts,
@@ -315,7 +314,6 @@ import {
 import {
   optionalStepRevisionKey,
   countOptionalStepRevisionAttempts,
-  optionalStepRevisionLogOutcome,
 } from "./executor/optional-step-revision.js";
 
 
@@ -793,6 +791,10 @@ import { resetStepsIfWorkLost as resetStepsIfWorkLostImpl } from "./executor/res
 export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./executor/reset-steps-if-work-lost.js";
 import { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixImpl } from "./executor/route-retryable-remediation.js";
 export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixFree } from "./executor/route-retryable-remediation.js";
+import { buildForeachWorktreeDeps as buildForeachWorktreeDepsImpl } from "./executor/build-foreach-worktree-deps.js";
+export { buildForeachWorktreeDeps as buildForeachWorktreeDepsFree } from "./executor/build-foreach-worktree-deps.js";
+import { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixImpl } from "./executor/request-pre-merge-optional-step-fix.js";
+export { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixFree } from "./executor/request-pre-merge-optional-step-fix.js";
 
 
 
@@ -3395,194 +3397,22 @@ export class TaskExecutor {
       maxRevisions?: unknown;
     },
   ): Promise<boolean> {
-    if (info.phase !== "pre-merge") return false;
-    if (info.status !== "advisory_failure" && info.status !== "failed") return false;
-
-    const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
-    const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
-    if (missingArtifactKeys) {
-      await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
-        source: "workflow-step",
-        nodeId: info.nodeId,
-      });
-      return true;
-    }
-    const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
-    if (isPlanReview) {
-      /*
-       * FNXC:PlanReviewReplan 2026-07-05-17:32:
-       * FN-7561: a malformed reviewer response arrives as `advisory_failure` with NO parsed verdict. That is an infra/formatting failure (e.g. the reviewer could not locate the spec, or fumbled its trailing JSON), not a plan defect — it must NEVER bounce the task to a triage replan. The graph already excludes malformed advisories from the fix handoff (shouldRequestPreMergeFix); this guard defends the explicit remediation-node path and any future caller so a malformed advisory can never drive the replan loop. A genuine REVISE (verdict === "REVISE", also carried as advisory_failure) still replans below.
-       */
-      if (info.status === "advisory_failure" && info.verdict !== "REVISE") return false;
-      if (info.verdict !== undefined && info.verdict !== "REVISE") return false;
-      /*
-       * FNXC:PlanReviewReplan 2026-07-15-12:00:
-       * FN-7977 / issue #2124: graph traversal is the primary guard, but this
-       * compatibility seam also receives explicit remediation edges and future
-       * callers. A provider/model/transport failure without a genuine REVISE must
-       * be logged and left in its current execution column, never sent to replan.
-       */
-      if (isNonPlanDefectPlanReviewFailure({
-        verdict: info.verdict,
-        errorMessage: info.feedback,
-        failureValue: info.failureValue,
-      })) {
-        await this.store.logEntry(
-          taskId,
-          "Plan Review provider failure — task kept in place",
-          `Plan Review failed without a REVISE verdict due to a provider, model, transport, or abort condition. The task remains in ${liveTask.column}; no automatic replan was scheduled.\n\nDiagnostic:\n${info.feedback}`,
-          this.getRunContextFor(taskId),
-        );
-        return false;
-      }
-      /*
-       * FNXC:PlanReviewReplan 2026-06-29-00:41:
-       * Plan Review is pre-execution spec validation, so a failed/revision result
-       * must repair PROMPT.md through triage instead of reopening implementation
-       * steps. Triage already advances an approved `needs-replan` task to `todo`,
-       * which lets the scheduler continue execution after the planner fixes it.
-       */
-      const feedback = info.feedback?.trim()
-        || "Plan Review failed before execution. Revise the task plan, then continue execution.";
-      const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
-      const maxRevisions = resolveOptionalReviewRevisionBudget({
-        optionalGroupId: info.nodeId ?? "plan-review",
-        workflowSettings: settings as Record<string, unknown>,
-        nodeMaxRevisions: info.maxRevisions,
-        fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
-      });
-      const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
-      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
-        // FNXC:RemediationVisibility 2026-07-26-19:20 (FN-8596 follow-up): returning false here
-        // makes the graph's plan-replan node fail with `remediation-not-scheduled` and leaves the
-        // card parked in place with nothing scheduled to fix it. Never let that be silent.
-        executorLog.warn(
-          `${taskId}: plan-review remediation NOT scheduled — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
-        );
-        return false;
-      }
-      const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
-      const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
-      if (!budget.unbounded && currentCount >= budget.max) {
-        // U3: finite replan budget exhausted → park awaiting-approval (cap park
-        // re-owned from the deleted triage gate), not a silent leave-in-place.
-        const feedbackForPark = info.feedback?.trim()
-          || "Plan Review requested another planning revision but the replan budget is exhausted.";
-        await this.parkPlanReviewReplanCapExhausted(taskId, String(budget.max), currentCount, feedbackForPark);
-        return true;
-      }
-      /*
-       * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
-       * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud halting log entry and STOP replanning (return false) so the gate falls through to a visible failed/parked state a human can act on, instead of looping indefinitely. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
-       */
-      const PLAN_REVIEW_REPLAN_HARD_CAP = 15;
-      if (budget.unbounded && currentCount >= PLAN_REVIEW_REPLAN_HARD_CAP) {
-        // U3: the unbounded-default safety ceiling now parks awaiting-approval with
-        // the replan-cap reason (re-owned from the deleted triage gate) so the
-        // non-convergence surfaces to a human instead of silently sitting in place.
-        await this.parkPlanReviewReplanCapExhausted(
-          taskId,
-          String(PLAN_REVIEW_REPLAN_HARD_CAP),
-          currentCount,
-          feedback,
-        );
-        return true;
-      }
-      const nextCount = currentCount + 1;
-      const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
-      const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
-      await this.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, this.getRunContextFor(taskId));
-      this.clearPausedAborted(taskId);
-      await this.store.logEntry(
-        taskId,
-        "AI spec revision requested",
-        `Plan Review requested a planning revision before execution.\n\nStatus: ${info.status}\nFeedback:\n${feedback}`,
-        this.getRunContextFor(taskId),
-      );
-      /*
-      FNXC:PlanReviewReplan 2026-07-12-23:20:
-      The replan rebound is workflow-aware: workflows without a "triage" column (Coding
-      (Ideas)) replan in place in their planner column ("todo") instead of being orphaned
-      in an undeclared "triage" column, which the board rendered back in the intake lane.
-      */
-      const replanColumn = await resolveReplanTargetColumn(this.store, taskId);
-      await this.store.logEntry(
-        taskId,
-        `Plan Review failed — moved to ${replanColumn} for automatic replan (attempt ${nextCount}/${budgetLabel})`,
-        optionalStepRevisionLogOutcome(feedback, revisionKey),
-        this.getRunContextFor(taskId),
-      );
-      this.workflowLifecycleMovesInFlight.add(taskId);
-      try {
-        await moveTaskToReplanColumn(this.store, { id: taskId, column: liveTask.column }, replanColumn);
-      } finally {
-        this.workflowLifecycleMovesInFlight.delete(taskId);
-      }
-      await this.store.updateTask(taskId, {
-        status: "needs-replan",
-        error: null,
-        recoveryRetryCount: null,
-        nextRecoveryAt: null,
-        graphResumeRetryCount: 0,
-      }, this.getRunContextFor(taskId));
-      return true;
-    }
-
-    if (info.verdict !== "REVISE") {
-      // FNXC:RemediationVisibility 2026-07-26-19:20: a hard-failed gate with no parsed REVISE
-      // verdict schedules nothing, so the remediation node fails and the card parks. Say so.
-      executorLog.warn(
-        `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — status=${info.status}, verdict=${info.verdict ?? "none"}. Card left parked.`,
-      );
-      return false;
-    }
-    const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
-    const maxRevisions = resolveOptionalReviewRevisionBudget({
-      optionalGroupId: info.nodeId ?? "",
-      workflowSettings: settings as Record<string, unknown>,
-      nodeMaxRevisions: info.maxRevisions,
-      fallbackMaxRevisions: settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES,
-    });
-    const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? DEFAULT_MAX_POST_REVIEW_FIXES);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) {
-      executorLog.warn(
-        `${taskId}: pre-merge remediation NOT scheduled for step "${info.stepName}" — revision budget is zero/invalid (max=${String(budget.max)}). Card left parked.`,
-      );
-      return false;
-    }
-
-    const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
-    const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
-    if (!budget.unbounded && currentCount >= budget.max) {
-      // Budget exhaustion is a legitimate terminal outcome, but it must be visible: the card stays
-      // in place with a failed pre-merge step and only an operator bypass clears it.
-      executorLog.warn(
-        `${taskId}: pre-merge remediation budget EXHAUSTED for step "${info.stepName}" (${currentCount}/${String(budget.max)}). Card left parked for operator action.`,
-      );
-      return false;
-    }
-
-    const nextCount = currentCount + 1;
-    const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
-    const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
-    await this.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, this.getRunContextFor(taskId));
-    await this.store.logEntry(
+    return requestPreMergeOptionalStepFixImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        recoverMissingRequiredArtifacts: (task, keys, source) =>
+          this.recoverMissingRequiredArtifacts(task, keys, source),
+        parkPlanReviewReplanCapExhausted: (id, cap, count, feedback) =>
+          this.parkPlanReviewReplanCapExhausted(id, cap, count, feedback),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
+        sendTaskBackForFix: (...args) => this.sendTaskBackForFix(...args),
+      },
       taskId,
-      `Pre-merge optional workflow step requested executor fixes (attempt ${nextCount}/${budgetLabel})`,
-      optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
-      this.getRunContextFor(taskId),
+      fallbackTask,
+      info,
     );
-    await this.sendTaskBackForFix(
-      liveTask,
-      liveTask.worktree ?? "",
-      info.feedback,
-      info.stepName,
-      `Pre-merge optional workflow step "${info.stepName}" requested revision`,
-      true,
-      false,
-      { attempt: nextCount, max: budget.unbounded ? undefined : budget.max },
-    );
-    return true;
   }
 
   private async recoverMissingRequiredArtifacts(
@@ -4604,261 +4434,17 @@ export class TaskExecutor {
     });
   }
 
-  /**
-   * Build the worktree-isolation + ordered-integration + parallel-scheduling deps
-   * for a graph-owned foreach (KTD-11, U10). Returns the additive set the
-   * WorkflowGraphTaskRunner forwards to the foreach sub-walk:
-   *
-   *   - `allocateInstanceWorktree(i, base)` — a per-instance worktree on a
-   *     canonical `fusion/<task>-step-<i>` branch off `base` (the main tip),
-   *     created via the existing `createWorktree` path (the file-scope guard the
-   *     session machinery installs applies unchanged to anything the instance
-   *     session commits in this worktree — we do NOT bypass it);
-   *   - `resolveIntegrationBase()` — the task's main branch tip, re-read before each
-   *     (re)allocation so a rework lands on the UPDATED base;
-   *   - `integrationGitOps` — rebase the instance branch onto the main branch in
-   *     the task's MAIN worktree, fast-forward main on success; on conflict reuse
-   *     merger.ts `getConflictedFiles` (NOT reimplemented) and abort the rebase so
-   *     the next instance can integrate; `discardBranch` deletes the branch + frees
-   *     the instance worktree (pool hygiene);
-   *   - `integrationProjection` — projection-first ordering (KTD-7): `markStepDone`
-   *     flips the step `done` via `updateStep(source:"graph")` (the dependency-order
-   *     guard admits it), THEN `markInstanceIntegrated` flips the persisted row;
-   *   - `semaphoreAvailability` — the live free-slot count so parallel scheduling
-   *     clamps without hold-and-wait.
-   *
-   * Best-effort throughout: a git failure routes the foreach to a clean failure
-   * (parked for human review) rather than crashing the run.
-   */
-  private buildForeachWorktreeDeps(task: Task, runId?: string): {
-    allocateInstanceWorktree: (
-      stepIndex: number,
-      base: string | undefined,
-    ) => Promise<{ worktreePath: string; branchName: string }>;
-    resolveIntegrationBase: () => Promise<string | undefined>;
-    integrationGitOps: import("./execution/step-integration.js").IntegrationGitOps;
-    integrationProjection: import("./execution/step-integration.js").IntegrationProjection;
-    semaphoreAvailability: () => number;
-    resumeReconcile: (
-      pinned: number,
-    ) => Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>>;
-  } {
-    const taskId = task.id;
-    // Per-instance worktree paths, so discard can free them.
-    const instancePaths = new Map<number, string>();
-
-    const mainWorktree = async (): Promise<string> => {
-      try {
-        return (await this.store.getTask(taskId)).worktree || this.rootDir;
-      } catch {
-        return this.rootDir;
-      }
-    };
-    const mainBranch = async (): Promise<string> => {
-      try {
-        const detail = await this.store.getTask(taskId);
-        return resolveTaskWorkingBranch(detail);
-      } catch {
-        return resolveTaskWorkingBranch(task);
-      }
-    };
-
-    return {
-      resolveIntegrationBase: async (): Promise<string | undefined> => {
-        // The main branch tip (HEAD of the task's working branch in its worktree).
-        try {
-          const { stdout } = await execAsync("git rev-parse HEAD", { cwd: await mainWorktree() });
-          const sha = stdout.trim();
-          return sha.length > 0 ? sha : await mainBranch();
-        } catch {
-          return await mainBranch();
-        }
+  private buildForeachWorktreeDeps(task: Task, runId?: string): ReturnType<typeof buildForeachWorktreeDepsImpl> {
+    return buildForeachWorktreeDepsImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        createWorktree: (branch, path, taskId, startPoint) => this.createWorktree(branch, path, taskId, startPoint),
+        semaphoreAvailableCount: () => this.options.semaphore?.availableCount ?? 1,
       },
-      allocateInstanceWorktree: async (stepIndex, base): Promise<{ worktreePath: string; branchName: string }> => {
-        const branchName = canonicalStepInstanceBranchName(taskId, stepIndex);
-        const worktreePath = resolveTaskWorktreePath(
-          this.rootDir,
-          undefined,
-          `${taskId.toLowerCase()}-step-${stepIndex}`,
-        );
-        // createWorktree installs the file-scope guard (session machinery,
-        // unchanged) and branches off `base` (the integration base / updated tip).
-        const created = await this.createWorktree(branchName, worktreePath, taskId, base);
-        instancePaths.set(stepIndex, created.path);
-        return { worktreePath: created.path, branchName: created.branch };
-      },
-      integrationGitOps: {
-        integrate: async (branchName, stepIndex): Promise<import("./execution/step-integration.js").IntegrationAttemptResult> => {
-          const cwd = await mainWorktree();
-          const target = await mainBranch();
-          // The instance branch is checked out in its OWN worktree, so the rebase
-          // (which checks out `branchName`) must run THERE — running it from the
-          // main worktree fails with "branch is already checked out in another
-          // worktree". The final fast-forward merge still runs from the main
-          // worktree (it only advances `target`, which is checked out there).
-          const instanceCwd = instancePaths.get(stepIndex) ?? cwd;
-          try {
-            // Rebase the instance branch onto the current main tip (in its own
-            // worktree), then ff main from the main worktree.
-            await execAsync(`git rebase ${target} ${branchName}`, { cwd: instanceCwd });
-            await execAsync(`git checkout ${target}`, { cwd });
-            await execAsync(`git merge --ff-only ${branchName}`, { cwd });
-            return { kind: "integrated", integratedAt: new Date().toISOString() };
-          } catch (err) {
-            // Conflict (or other rebase failure): classify via merger helper, abort.
-            // The rebase ran in the instance worktree, so conflicts live there and
-            // the abort must target that same cwd.
-            const conflictedFiles = await getConflictedFiles(instanceCwd);
-            try {
-              await execAsync("git rebase --abort", { cwd: instanceCwd });
-            } catch {
-              // best-effort; leave the worktree recoverable.
-            }
-            // Restore main checkout so the next instance integrates cleanly.
-            try {
-              await execAsync(`git checkout ${target}`, { cwd });
-            } catch {
-              // best-effort.
-            }
-            executorLog.warn(
-              `[step-integration] ${taskId} step ${stepIndex} branch ${branchName} conflict: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            return { kind: "conflict", conflictedFiles };
-          }
-        },
-        discardBranch: async (branchName, stepIndex): Promise<void> => {
-          const cwd = await mainWorktree();
-          const path = instancePaths.get(stepIndex);
-          if (path) {
-            // Remove the instance worktree (pool hygiene). Best-effort; force so a
-            // dirty/conflicting tree is still cleaned up.
-            try {
-              await execAsync(`git worktree remove --force "${path}"`, { cwd: this.rootDir });
-            } catch {
-              // best-effort cleanup.
-            }
-            instancePaths.delete(stepIndex);
-          }
-          // Delete the (now-merged or conflicting) branch.
-          try {
-            await execAsync(`git branch -D ${branchName}`, { cwd });
-          } catch {
-            // best-effort — the branch may already be gone.
-          }
-        },
-      },
-      integrationProjection: {
-        markStepDone: async (stepIndex): Promise<void> => {
-          // Projection-first (KTD-7): graph-source write relaxes the guard to
-          // dependency order; predecessors are integrated (done) by construction.
-          await this.store.updateStep(taskId, stepIndex, "done", { source: "graph" });
-        },
-        markInstanceIntegrated: async (stepIndex, integratedAt, identity): Promise<void> => {
-          const store = this.store as unknown as {
-            saveWorkflowRunStepInstanceAsync?: (state: WorkflowStepInstanceState) => Promise<void>;
-            loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
-            saveWorkflowRunStepInstance?: (state: WorkflowStepInstanceState) => void;
-            loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
-          };
-          if (typeof store.saveWorkflowRunStepInstanceAsync !== "function" && typeof store.saveWorkflowRunStepInstance !== "function") return;
-          // The upsert is keyed by (taskId, runId, foreachNodeId, stepIndex). The
-          // queue passes the REAL identity (the same runId + foreachNodeId the
-          // foreach sub-walk persisted the row under) so this FLIPS the existing
-          // row to completed/integratedAt instead of writing an orphan (FIX 1).
-          // Load the current row to preserve its fields (currentNodeId, baseline,
-          // reworkCount) we don't otherwise carry on the identity.
-          let existing: WorkflowStepInstanceState | undefined;
-          try {
-            const rows = await store.loadWorkflowRunStepInstancesAsync?.(taskId, identity.runId)
-              ?? store.loadWorkflowRunStepInstances?.(taskId, identity.runId)
-              ?? [];
-            existing = rows.find(
-              (r) => r.foreachNodeId === identity.foreachNodeId && r.stepIndex === stepIndex,
-            );
-          } catch {
-            // Best-effort read; fall back to a minimal flip below.
-          }
-          try {
-            await (store.saveWorkflowRunStepInstanceAsync?.({
-              ...(existing ?? {}),
-              taskId,
-              runId: identity.runId,
-              foreachNodeId: identity.foreachNodeId,
-              stepIndex,
-              pinnedStepCount: identity.pinnedStepCount,
-              currentNodeId: existing?.currentNodeId ?? "",
-              status: "completed",
-              reworkCount: existing?.reworkCount ?? 0,
-              branchName: identity.branchName || canonicalStepInstanceBranchName(taskId, stepIndex),
-              integratedAt,
-            } as WorkflowStepInstanceState) ?? store.saveWorkflowRunStepInstance?.({
-              ...(existing ?? {}),
-              taskId,
-              runId: identity.runId,
-              foreachNodeId: identity.foreachNodeId,
-              stepIndex,
-              pinnedStepCount: identity.pinnedStepCount,
-              currentNodeId: existing?.currentNodeId ?? "",
-              status: "completed",
-              reworkCount: existing?.reworkCount ?? 0,
-              branchName: identity.branchName || canonicalStepInstanceBranchName(taskId, stepIndex),
-              integratedAt,
-            } as WorkflowStepInstanceState));
-          } catch {
-            // Persistence is additive bookkeeping — never fail the integration.
-          }
-        },
-      },
-      semaphoreAvailability: (): number => this.options.semaphore?.availableCount ?? 1,
-      resumeReconcile: async (
-        pinned,
-      ): Promise<Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }>> => {
-        // Crash-resume reconciliation (KTD-11): reconcile each persisted instance
-        // row against branch existence. integrated → done; branch exists not
-        // integrated → re-enter the integration queue; branch missing → re-run.
-        // NOTE (handoff): this is the per-run resume seeding only; the full
-        // self-healing sweep across stale runs (recoverStaleTransitionPending
-        // analogue) is out of scope for U10.
-        const store = this.store as unknown as {
-          loadWorkflowRunStepInstancesAsync?: (taskId: string, runId: string) => Promise<WorkflowStepInstanceState[]>;
-          loadWorkflowRunStepInstances?: (taskId: string, runId: string) => WorkflowStepInstanceState[];
-        };
-        if (typeof store.loadWorkflowRunStepInstancesAsync !== "function" && typeof store.loadWorkflowRunStepInstances !== "function") return [];
-        let rows: WorkflowStepInstanceState[] = [];
-        try {
-          // Load under the REAL run id (threaded) so resume actually sees the rows
-          // the sub-walk persisted; the legacy literal is the unthreaded fallback.
-          rows = await store.loadWorkflowRunStepInstancesAsync?.(taskId, runId ?? `${taskId}:run`)
-            ?? store.loadWorkflowRunStepInstances?.(taskId, runId ?? `${taskId}:run`)
-            ?? [];
-        } catch {
-          return [];
-        }
-        const cwd = await mainWorktree();
-        const out: Array<{ stepIndex: number; disposition: "integrated" | "reintegrate" | "rerun"; branchName?: string }> = [];
-        for (const row of rows) {
-          if (row.stepIndex < 0 || row.stepIndex >= pinned) continue;
-          if (row.status === "completed" || row.integratedAt) {
-            out.push({ stepIndex: row.stepIndex, disposition: "integrated" });
-            continue;
-          }
-          const branchName = row.branchName || canonicalStepInstanceBranchName(taskId, row.stepIndex);
-          let branchExists = false;
-          try {
-            await execAsync(`git rev-parse --verify --quiet ${branchName}`, { cwd });
-            branchExists = true;
-          } catch {
-            branchExists = false;
-          }
-          if (branchExists && row.status === "awaiting-integration") {
-            out.push({ stepIndex: row.stepIndex, disposition: "reintegrate", branchName });
-          } else {
-            out.push({ stepIndex: row.stepIndex, disposition: "rerun" });
-          }
-        }
-        return out;
-      },
-    };
+      task,
+      runId,
+    );
   }
 
   private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
