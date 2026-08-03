@@ -12,7 +12,7 @@ const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS
 import { delimiter, join, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
@@ -730,6 +730,14 @@ import { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryImpl } from
 export { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryFree } from "./executor/reconcile-steps-from-git-history.js";
 import { clearPhantomExecutorBinding as clearPhantomExecutorBindingImpl } from "./executor/clear-phantom-executor-binding.js";
 export { clearPhantomExecutorBinding as clearPhantomExecutorBindingFree } from "./executor/clear-phantom-executor-binding.js";
+import { cleanupMergeStateForReverification as cleanupMergeStateForReverificationImpl } from "./executor/cleanup-merge-state.js";
+export { cleanupMergeStateForReverification as cleanupMergeStateForReverificationFree } from "./executor/cleanup-merge-state.js";
+import { clearResumeFailureState as clearResumeFailureStateImpl } from "./executor/clear-resume-failure-state.js";
+export { clearResumeFailureState as clearResumeFailureStateFree } from "./executor/clear-resume-failure-state.js";
+import { executeReviewHandoff as executeReviewHandoffImpl } from "./executor/execute-review-handoff.js";
+export { executeReviewHandoff as executeReviewHandoffFree } from "./executor/execute-review-handoff.js";
+import { shouldDeferForHeartbeat as shouldDeferForHeartbeatImpl } from "./executor/should-defer-for-heartbeat.js";
+export { shouldDeferForHeartbeat as shouldDeferForHeartbeatFree } from "./executor/should-defer-for-heartbeat.js";
 
 
 
@@ -3314,78 +3322,25 @@ export class TaskExecutor {
     );
   }
 
-    private async cleanupMergeStateForReverification(
+  private async cleanupMergeStateForReverification(
     task: Task,
     logMessage: string,
     options?: { preserveVerificationFailureCount?: boolean },
   ): Promise<Task> {
-    const preservedWorkflowStepResults = preservePreExecutionWorkflowStepResults(task);
-    await this.store.updateTask(task.id, {
-      mergeDetails: null,
-      mergeRetries: 0,
-      status: null,
-      error: null,
-      verificationFailureCount: options?.preserveVerificationFailureCount ? task.verificationFailureCount ?? 0 : 0,
-      workflowStepResults: preservedWorkflowStepResults,
-    });
-
-    const refreshedTask = await this.store.getTask(task.id);
-    const steps = refreshedTask.steps ?? [];
-    if (steps.length > 0) {
-      const allStepsComplete = isTaskWorkComplete(refreshedTask);
-      if (allStepsComplete) {
-        await this.reopenLastStepForRevision(task.id, refreshedTask);
-      } else {
-        const resetIndexes = new Set<number>();
-        for (let i = 0; i < steps.length; i++) {
-          const name = steps[i].name.toLowerCase();
-          if (/testing|verification/.test(name) || /documentation|delivery/.test(name)) {
-            resetIndexes.add(i);
-          }
-        }
-
-        if (resetIndexes.size === 0) {
-          const reopened = await this.reopenLastStepForRevision(task.id, refreshedTask);
-          if (reopened) {
-            resetIndexes.add(reopened.index);
-          }
-        } else {
-          for (const index of resetIndexes) {
-            if (steps[index].status !== "pending") {
-              await this.store.updateStep(task.id, index, "pending");
-            }
-          }
-          const earliestIndex = Math.min(...Array.from(resetIndexes));
-          await this.store.updateTask(task.id, { currentStep: earliestIndex });
-        }
-      }
-    }
-
-    await this.store.logEntry(task.id, logMessage, undefined, this.getRunContextFor(task.id));
-    return this.store.getTask(task.id);
+    return cleanupMergeStateForReverificationImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        reopenLastStepForRevision: (id, t) => this.reopenLastStepForRevision(id, t),
+      },
+      task,
+      logMessage,
+      options,
+    );
   }
 
   private async clearResumeFailureState(task: Task): Promise<void> {
-    const updates: { status?: null; error?: null; blockedBy?: null } = {};
-    if (task.status === "failed" || task.error) {
-      updates.status = null;
-      updates.error = null;
-    }
-    // Pre-dispatch gating state must not survive into a resumed in-progress run.
-    // The scheduler sets status="queued" + blockedBy on dep/file-scope conflicts
-    // (scheduler.ts:618, 660) and clears them on the todo→in-progress transition
-    // (scheduler.ts:696). Resume paths (unpause, drift recovery, engine restart)
-    // bypass that clear, so a task can end up actively executing while still
-    // labeled "queued" in the UI.
-    if (task.status === "queued") {
-      updates.status = null;
-    }
-    if (task.blockedBy) {
-      updates.blockedBy = null;
-    }
-    if (Object.keys(updates).length > 0) {
-      await this.store.updateTask(task.id, updates);
-    }
+    return clearResumeFailureStateImpl({ store: this.store }, task);
   }
 
   private clearCompletedTaskWatchdog(taskId: string): void {
@@ -3642,49 +3597,20 @@ export class TaskExecutor {
     _session: AgentSession,
     _sessionEntry: { session: AgentSession; seenSteeringIds: Set<string>; lastResolvedModelProvider?: string; lastResolvedModelId?: string; lastTaskModelProvider?: string | null; lastTaskModelId?: string | null; lastAssignedAgentId?: string | null },
   ): Promise<void> {
-    try {
-      executorLog.log(`Executing review handoff for ${task.id}`);
-
-      // Log the handoff event
-      await this.store.logEntry(
-        task.id,
-        "Review handoff requested by agent — moving to in-review for user review",
-        undefined,
-        this.getRunContextFor(task.id)
-      );
-
-      // Update task with awaiting-user-review status and assignee
-      // Use a single updateTask call for atomicity
-      await this.store.updateTask(
-        task.id,
-        {
-          status: "awaiting-user-review",
-          assigneeUserId: "requesting-user",
-        },
-        this.getRunContextFor(task.id)
-      );
-
-      // Move the task to in-review column (this will also emit task:moved event)
-      // The task:moved handler will clean up activeSessions
-      await this.persistTokenUsage(task.id);
-      await this.handoffTaskToReview(task, "review-handoff-requested");
-
-      // Dispose the agent session (this may already be done by task:moved handler)
-      // but we do it here to be explicit
-      if (this.activeSessions.has(task.id)) {
-        const { session: activeSession } = this.activeSessions.get(task.id)!;
-        activeSession.dispose();
-        this.deleteActiveSession(task.id);
-      }
-
-      // Untrack from stuck detector
-      this.options.stuckTaskDetector?.untrackTask(task.id);
-
-      executorLog.log(`Review handoff complete for ${task.id} — task moved to in-review`);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.error(`Failed to execute review handoff for ${task.id}: ${errorMessage}`);
-    }
+    return executeReviewHandoffImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        handoffTaskToReview: (t, reason) => this.handoffTaskToReview(t, reason),
+        activeSessions: this.activeSessions,
+        deleteActiveSession: (id) => this.deleteActiveSession(id),
+        untrackStuckTask: (id) => { this.options.stuckTaskDetector?.untrackTask(id); },
+      },
+      task,
+      _session,
+      _sessionEntry,
+    );
   }
 
   /**
@@ -4270,14 +4196,10 @@ export class TaskExecutor {
    * when agentStore is unavailable or the agent cannot be resolved.
    */
   private async shouldDeferForHeartbeat(agentId: string): Promise<boolean> {
-    if (!this.options.agentStore) return false;
-    const agent = await this.options.agentStore.getAgent(agentId).catch(() => null);
-    if (!agent) return false;
-    if (isEphemeralAgent(agent)) return false;
-    const rc = (agent.runtimeConfig ?? {}) as AgentHeartbeatConfig;
-    if (rc.allowParallelExecution !== false) return false;
-    const activeRun = await this.options.agentStore.getActiveHeartbeatRun(agentId).catch(() => null);
-    return activeRun !== null;
+    return shouldDeferForHeartbeatImpl(
+      { agentStore: this.options.agentStore },
+      agentId,
+    );
   }
 
   private async getAuthoritativeAssignedAgent(
@@ -17136,7 +17058,6 @@ import {
   areExplicitEnabledWorkflowStepsSatisfied,
   hasUnsatisfiedExplicitEnabledWorkflowSteps,
   areEnabledPreMergeWorkflowStepsSatisfied,
-  preservePreExecutionWorkflowStepResults,
 } from "./executor/workflow-step-satisfaction.js";
 
 export {
