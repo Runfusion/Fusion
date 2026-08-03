@@ -755,6 +755,8 @@ import { handleLoopDetected as handleLoopDetectedImpl } from "./executor/handle-
 export { handleLoopDetected as handleLoopDetectedFree, LOOP_COMPACTION_TIMEOUT_MS } from "./executor/handle-loop-detected.js";
 import { recoverCompletedTask as recoverCompletedTaskImpl } from "./executor/recover-completed-task.js";
 export { recoverCompletedTask as recoverCompletedTaskFree } from "./executor/recover-completed-task.js";
+import { markStuckAborted as markStuckAbortedImpl } from "./executor/mark-stuck-aborted.js";
+export { markStuckAborted as markStuckAbortedFree } from "./executor/mark-stuck-aborted.js";
 
 
 
@@ -15815,150 +15817,29 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
    *   false if the stuck kill budget is exhausted (task already marked failed).
    */
   markStuckAborted(taskId: string, shouldRequeue: boolean = true): void {
-    // Terminate step-session executor if active
-    const stepExecutor = this.activeStepExecutors.get(taskId);
-    if (stepExecutor) {
-      stepExecutor.terminateAllSessions().catch(err =>
-        executorLog.warn(`Failed to terminate step sessions for stuck task ${taskId}: ${err}`)
-      );
-    }
-    this.stuckAborted.set(taskId, shouldRequeue);
-
-    // Safety net: if the executor's Promise never resolves (e.g. a bash subprocess
-    // is blocking the agent session even after dispose()), force-requeue the task
-    // directly after a short grace period.  Without this, a task with a hung tool
-    // call stays stranded in "in-progress" until the engine restarts.
-    if (shouldRequeue && this.executing.has(taskId)) {
-      const FORCE_REQUEUE_GRACE_MS = 60_000; // 60 s — generous, but bounded
-      setTimeout(async () => {
-        if (!this.executing.has(taskId)) return; // executor unwound normally — nothing to do
-        // Re-check the latest column: self-healing may have already moved the
-        // task out of in-progress (e.g. recoverCompletedTasks → in-review).
-        // Force-requeueing in that case would clobber a valid recovery, undo
-        // the worktree/branch state that recovery now relies on, and reset
-        // step progress.
-        let latestColumn: string | undefined;
-        try {
-          const latestTask = await this.store.getTask(taskId);
-          latestColumn = latestTask.column;
-        } catch (err: unknown) {
-          executorLog.warn(
-            `${taskId} force-requeue could not read latest task state: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-        /* FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet): the board's wip lane; with the literal a
-           renamed board skipped every force-requeue as "recovered concurrently". */
-        if (latestColumn && latestColumn !== (await this.resolveResumeLanes(taskId)).wip) {
-          executorLog.log(
-            `${taskId} force-requeue skipped — task is now in '${latestColumn}' (recovered concurrently)`,
-          );
-          this.executing.delete(taskId);
-          executingTaskLock.release(taskId);
-          this.stuckAborted.delete(taskId);
-          return;
-        }
-        executorLog.warn(
-          `${taskId} still executing ${FORCE_REQUEUE_GRACE_MS / 1000}s after stuck-kill signal ` +
-          `(likely a hung subprocess) — force-requeueing`,
-        );
-        try {
-          const settings = await this.store.getSettings();
-          const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
-          const latestTask = await this.store.getTask(taskId);
-          const worktreePath = this.getWorktreePath(taskId) ?? latestTask.worktree;
-          /*
-          FNXC:Workspace 2026-06-21-22:30:
-          F8 — observability for the workspace case. A workspace task has no singular
-          worktree (getWorktreePath returns undefined for a multi-worktree task, and
-          latestTask.worktree is null on the browse-only root), so the removeWorktree
-          block below silently no-ops. Per-repo teardown is Phase B; until then make
-          the skip visible rather than silent. Behavior is unchanged.
-          */
-          if (this.workspaceConfig && !worktreePath) {
-            await this.store.logEntry(
-              taskId,
-              `workspace task ${taskId}: no singular worktree to force-requeue (per-repo teardown is Phase B)`,
-            );
-          }
-          await this.store.logEntry(
-            taskId,
-            `Force-kill cleanup starting after stuck-kill unwind timeout — reaping in-flight surfaces and worktree`,
-          );
-
-          // Spawned children must be terminated before the canonical reaper clears
-          // spawnedAgents bookkeeping; otherwise child agent sessions would be orphaned.
-          await this.terminateAllChildren(taskId).catch((err: unknown) => {
-            executorLog.warn(`${taskId}: spawned child cleanup failed during force-requeue: ${err instanceof Error ? err.message : String(err)}`);
-          });
-          await this.awaitAbortInFlightTaskWork(taskId, "force-requeue after stuck-kill unwind timeout");
-          // awaitAbortInFlightTaskWork marks pausedAborted as a generic abort
-          // signal (KB-PROV 2026-07-26: `engine-abort`, since the force-requeue is
-          // engine-initiated and passes no `userCanceled`).
-          // The force-requeue path has already handled the task move, so
-          // clear it to prevent a later subprocess unwind from logging/moving as a pause.
-          this.clearPausedAborted(taskId);
-
-          /*
-          FNXC:StuckRequeue 2026-06-27-23:15:
-          The force path mirrors normal stuck-requeue cleanup: before reaping a hung executor's worktree, reconcile step progress against committed branch state so preserved progress never points at deleted uncommitted work.
-          */
-          await this.resetStepsIfWorkLost(latestTask);
-
-          let cleanupFailed = false;
-          if (worktreePath && existsSync(worktreePath)) {
-            try {
-              await removeWorktree({
-                worktreePath,
-                rootDir: this.rootDir,
-                settings,
-                taskId,
-                reason: RemovalReason.ExecutorStuckKilled,
-                expectedOwnerTaskId: taskId,
-                liveOwnerProbe: (path, ownerTaskId) => this.hasActiveWorktreeBinding(ownerTaskId, path),
-              });
-              executorLog.log(`${taskId}: removed worktree during force-requeue cleanup: ${worktreePath}`);
-            } catch (cleanupErr: unknown) {
-              cleanupFailed = true;
-              const cleanupErrMessage = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-              executorLog.warn(`${taskId}: worktree removal failed during force-requeue cleanup (${worktreePath}): ${cleanupErrMessage}`);
-              await this.store.logEntry(taskId, `Force-kill cleanup failed to remove worktree ${worktreePath}: ${cleanupErrMessage}`);
-            }
-          }
-
-          this.activeWorktrees.delete(taskId);
-
-          await this.store.logEntry(
-            taskId,
-            `Force-requeued after stuck-kill: executor did not unwind within ${FORCE_REQUEUE_GRACE_MS / 1000}s (hung subprocess)${preserveProgress ? " — progress preserved" : ""}`,
-          );
-          await this.store.updateTask(taskId, {
-            status: "queued",
-            error: null,
-            worktree: null,
-            branch: null,
-          });
-          await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId), preserveProgress ? { preserveProgress: true } : undefined);
-          // Remove from executing only after the hung surfaces and worktree have
-          // been reaped, preventing a scheduler re-dispatch onto stale resources.
-          this.executing.delete(taskId);
-          executingTaskLock.release(taskId);
-          this.stuckAborted.delete(taskId);
-          this.loopRecoveryState.delete(taskId);
-          await this.store.logEntry(
-            taskId,
-            cleanupFailed
-              ? "Force-kill cleanup completed with non-fatal worktree removal failure — task requeued"
-              : "Force-kill cleanup completed — in-flight surfaces reaped and task requeued",
-          );
-          executorLog.log(`${taskId} force-requeued to todo after stuck-kill cleanup`);
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          executorLog.error(`Failed to force-requeue stuck task ${taskId}: ${errorMessage}`);
-          await this.store.logEntry(taskId, `Force-kill cleanup failed during stuck-kill force-requeue: ${errorMessage}`).catch(() => undefined);
-        }
-      }, FORCE_REQUEUE_GRACE_MS);
-    }
+    return markStuckAbortedImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        workspaceConfig: this.workspaceConfig,
+        activeStepExecutors: this.activeStepExecutors,
+        stuckAborted: this.stuckAborted,
+        executing: this.executing,
+        activeWorktrees: this.activeWorktrees,
+        loopRecoveryState: this.loopRecoveryState,
+        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
+        getWorktreePath: (id) => this.getWorktreePath(id),
+        terminateAllChildren: (id) => this.terminateAllChildren(id),
+        awaitAbortInFlightTaskWork: (id, reason) => this.awaitAbortInFlightTaskWork(id, reason),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        resetStepsIfWorkLost: (t) => this.resetStepsIfWorkLost(t),
+        hasActiveWorktreeBinding: (owner, path) => this.hasActiveWorktreeBinding(owner, path),
+      },
+      taskId,
+      shouldRequeue,
+    );
   }
+
 
   /**
    * Handle a loop-detected event from the stuck task detector.
