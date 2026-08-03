@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -784,6 +784,14 @@ import { buildCodeNodeRunner as buildCodeNodeRunnerImpl } from "./executor/build
 export { buildCodeNodeRunner as buildCodeNodeRunnerFree } from "./executor/build-code-node-runner.js";
 import { routeResetParsePinMismatchToRetry as routeResetParsePinMismatchToRetryImpl } from "./executor/route-reset-parse-pin-mismatch.js";
 export { routeResetParsePinMismatchToRetry as routeResetParsePinMismatchToRetryFree } from "./executor/route-reset-parse-pin-mismatch.js";
+import { ensureGraphCustomNodeWorktree as ensureGraphCustomNodeWorktreeImpl } from "./executor/ensure-graph-custom-node-worktree.js";
+export { ensureGraphCustomNodeWorktree as ensureGraphCustomNodeWorktreeFree } from "./executor/ensure-graph-custom-node-worktree.js";
+import { taskEffectiveAgentMatches as taskEffectiveAgentMatchesImpl } from "./executor/task-effective-agent-matches.js";
+export { taskEffectiveAgentMatches as taskEffectiveAgentMatchesFree } from "./executor/task-effective-agent-matches.js";
+import { runRawCliCommand as runRawCliCommandImpl } from "./executor/run-raw-cli-command.js";
+export { runRawCliCommand as runRawCliCommandFree } from "./executor/run-raw-cli-command.js";
+import { resetStepsIfWorkLost as resetStepsIfWorkLostImpl } from "./executor/reset-steps-if-work-lost.js";
+export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./executor/reset-steps-if-work-lost.js";
 
 
 
@@ -3723,43 +3731,7 @@ export class TaskExecutor {
    *  `resumeTaskForAgent` second pass to re-dispatch column-bound tasks the
    *  `assignedAgentId` filter misses. Best-effort: an unresolvable IR yields false. */
   private async taskEffectiveAgentMatches(task: Task, agentId: string): Promise<boolean> {
-    /*
-    FNXC:WorkflowColumns 2026-06-22-18:00:
-    Workflow columns are the default runtime, so resume pass 2 always resolves the task workflow IR. Persisted experimentalFeatures.workflowColumns=false values must not make column-agent dispatch inert.
-    */
-    const ir = await resolveWorkflowIrForTask(this.store, task.id);
-    if (!ir || ir.version !== "v2") return false;
-
-    const ownSettings = extractOwnSettings(task);
-    const matchesNodeId = (nodeId: string): boolean => {
-      const binding = resolveColumnAgentBinding(ir, nodeId);
-      if (!binding) return false;
-      const effective = resolveEffectiveAgent({ binding, ...ownSettings });
-      return effective.source === "column-agent" && effective.agentId === agentId;
-    };
-
-    // Governing seam nodes: the execute-seam prompt node lives at the top level.
-    for (const node of ir.nodes) {
-      const seam = node.kind === "prompt" ? node.config?.seam : undefined;
-      if (seam !== "execute" && seam !== "step-execute") continue;
-      if (matchesNodeId(node.id)) return true;
-    }
-
-    // step-execute seam nodes are legal ONLY inside a foreach template
-    // (workflow-ir.ts), so they never appear in ir.nodes above. Walk each foreach
-    // node's template subgraph and resolve the binding via a synthesized instance
-    // node id. Step index 0 is sufficient — column resolution is index-independent
-    // (all instances share the same template node and thus the same binding, R4).
-    for (const node of ir.nodes) {
-      if (node.kind !== "foreach") continue;
-      const templateNodes = (node.config as { template?: { nodes?: WorkflowIrNode[] } } | undefined)?.template?.nodes ?? [];
-      for (const templateNode of templateNodes) {
-        const seam = templateNode.kind === "prompt" ? templateNode.config?.seam : undefined;
-        if (seam !== "step-execute") continue;
-        if (matchesNodeId(instanceNodeId(node.id, 0, templateNode.id))) return true;
-      }
-    }
-    return false;
+    return taskEffectiveAgentMatchesImpl(this.store, task, agentId);
   }
 
   /**
@@ -6069,35 +6041,21 @@ export class TaskExecutor {
     worktreePath: string,
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    executorLog.log(`${task.id}: workflow node '${label}' executing approved CLI command: ${command}`);
-    await this.store.logEntry(task.id, `Workflow node '${label}' executing CLI command: ${command}`, undefined, this.getRunContextFor(task.id));
-    const abort = new AbortController();
-    this.registerConfiguredCommandController(task.id, abort);
-    try {
-      const result = await runConfiguredCommand(
-        command,
-        worktreePath,
-        120_000,
-        extraEnv,
-        createRunAuditor(this.store, {
-          runId: this.getRunContextFor(task.id)?.runId ?? generateSyntheticRunId("exec-cli", task.id),
-          agentId: this.getRunContextFor(task.id)?.agentId ?? (task.assignedAgentId ?? "executor"),
-          taskId: task.id,
-          phase: "execute",
-        }),
-        abort.signal,
-      );
-      if (abort.signal.aborted) throw createConfiguredCommandAbortError(task.id, command);
-      if (result.spawnError || result.timedOut || result.exitCode !== 0) {
-        return { success: false, error: configuredCommandErrorMessage(result) };
-      }
-      return { success: true, output: `CLI command completed successfully` };
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") throw err;
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      this.unregisterConfiguredCommandController(task.id, abort);
-    }
+    return runRawCliCommandImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        registerConfiguredCommandController: (id, c) => this.registerConfiguredCommandController(id, c),
+        unregisterConfiguredCommandController: (id, c) => this.unregisterConfiguredCommandController(id, c),
+        runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
+          runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
+      },
+      task,
+      label,
+      command,
+      worktreePath,
+      extraEnv,
+    );
   }
 
   /** Fetch the column agent and surface its model + persona for adoption by a
@@ -6246,86 +6204,29 @@ export class TaskExecutor {
     nodeId: string,
     refreshStaleBase = false,
   ): Promise<TaskDetail> {
-    /*
-    FNXC:WorkflowExecution 2026-06-29-08:21:
-    Custom graph nodes can be the first executable node in a workflow. If such a node is coding/script-capable, acquire the same task worktree the legacy executor would have acquired instead of failing with `no-worktree-for-write-node`; the node remains isolated from main and CE `plan` can run first.
-    */
-    if (this.workspaceConfig === undefined) {
-      this.workspaceConfig = await loadWorkspaceConfig(this.rootDir);
-    }
-    if (this.workspaceConfig && (this.workspaceConfig.repos.length ?? 0) > 0) {
-      return task;
-    }
-
-    const syntheticRunId = generateSyntheticRunId("workflow-node-worktree", task.id);
-    const audit = createRunAuditor(this.store, {
-      runId: syntheticRunId,
-      agentId: task.assignedAgentId ?? "executor",
-      taskId: task.id,
-      phase: "execute",
-    });
-    const commandAbortController = new AbortController();
-    this.registerConfiguredCommandController(task.id, commandAbortController);
-    try {
-      await this.store.logEntry(
-        task.id,
-        `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-      const acquisition = await acquireTaskWorktree({
-        task,
-        rootDir: this.rootDir,
+    return ensureGraphCustomNodeWorktreeImpl(
+      {
         store: this.store,
-        settings,
+        rootDir: this.rootDir,
+        getWorkspaceConfig: () => this.workspaceConfig,
+        setWorkspaceConfig: (c) => { this.workspaceConfig = c; },
+        getRunContextFor: (id) => this.getRunContextFor(id),
         pool: this.options.pool,
-        logger: executorLog,
-        audit,
-        runContext: this.getRunContextFor(task.id),
-        runInitCommand: true,
-        createWorktree: this.createWorktree.bind(this),
-        runConfiguredCommand: (command, cwd, timeoutMs, env) =>
-          runConfiguredCommand(
-            command,
-            cwd,
-            timeoutMs,
-            env,
-            audit,
-            commandAbortController.signal,
-          ).then((result) => {
-            if (commandAbortController.signal.aborted) {
-              throw createConfiguredCommandAbortError(task.id, command);
-            }
-            return result;
-          }),
-        taskEnv: process.env,
         secretsStore: this.options.secretsStore,
-        refreshStaleBase,
-      });
-      this.addActiveWorktree(task.id, acquisition.worktreePath);
-      if (!acquisition.isResume) {
-        await captureBaseCommitSha(this.store, task, acquisition.worktreePath, audit, { isResume: false });
-      }
-      this.options.onStart?.(task, acquisition.worktreePath);
-      /*
-      FNXC:EngineDiagnostics 2026-08-03-05:54:
-      Per-node worktree acquisition is expected graph plumbing once the task has a worktree;
-      Worktree created / Starting lines remain the operator-visible lifecycle events.
-      */
-      executorLog.debug(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
-      return await this.store.getTask(task.id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.store.logEntry(
-        task.id,
-        `Workflow node '${nodeId}' failed to acquire task worktree: ${message}`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-      throw error;
-    } finally {
-      this.unregisterConfiguredCommandController(task.id, commandAbortController);
-    }
+        createWorktree: (branch, path, taskId, startPoint, allowSibling) =>
+          this.createWorktree(branch, path, taskId, startPoint, allowSibling),
+        runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
+          runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
+        addActiveWorktree: (id, path) => this.addActiveWorktree(id, path),
+        onStart: this.options.onStart,
+        registerConfiguredCommandController: (id, c) => this.registerConfiguredCommandController(id, c),
+        unregisterConfiguredCommandController: (id, c) => this.unregisterConfiguredCommandController(id, c),
+      },
+      task,
+      settings,
+      nodeId,
+      refreshStaleBase,
+    );
   }
 
   /*
@@ -15042,40 +14943,13 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
    * Called during stuck-kill cleanup when the worktree is about to be destroyed.
    */
   private async resetStepsIfWorkLost(task: Task): Promise<void> {
-    const completedSteps = task.steps.filter(
-      (s) => s.status === "done" || s.status === "in-progress",
+    return resetStepsIfWorkLostImpl(
+      {
+        rootDir: this.rootDir,
+        resetLostWorkStepProgress: (t, count, reason) => this.resetLostWorkStepProgress(t, count, reason),
+      },
+      task,
     );
-    if (completedSteps.length === 0) return;
-
-    const branchName = resolveTaskWorkingBranch(task);
-
-    try {
-      // Check if the branch has any unique commits vs main
-      const { stdout: mergeBaseStdout } = await execAsync(
-        `git merge-base "${branchName}" HEAD 2>/dev/null`,
-        { cwd: this.rootDir, encoding: "utf-8" },
-      );
-      const { stdout: branchHeadStdout } = await execAsync(
-        `git rev-parse "${branchName}" 2>/dev/null`,
-        { cwd: this.rootDir, encoding: "utf-8" },
-      );
-      const mergeBase = mergeBaseStdout.trim();
-      const branchHead = branchHeadStdout.trim();
-
-      if (mergeBase === branchHead) {
-        await this.resetLostWorkStepProgress(task, completedSteps.length, "branch had no commits");
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(
-        `${task.id}: unable to prove surviving branch commits before worktree removal — resetting ${completedSteps.length} step(s) to pending: ${msg}`,
-      );
-      /*
-      FNXC:StuckRequeue 2026-06-27-23:55:
-      Stuck-requeue cleanup is about to delete the checkout. If git cannot prove the branch has durable commits, treat completed/in-progress steps as lost work rather than preserving progress that may point at deleted uncommitted output.
-      */
-      await this.resetLostWorkStepProgress(task, completedSteps.length, `git proof failed: ${msg}`);
-    }
   }
 
   private async resetLostWorkStepProgress(task: Task, completedStepCount: number, reason: string): Promise<void> {
