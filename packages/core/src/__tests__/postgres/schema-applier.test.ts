@@ -733,15 +733,12 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
       GROUP BY table_schema
     `)) as unknown as Array<{ table_schema: string; n: number }>;
     const bySchema = Object.fromEntries(rows.map((r) => [r.table_schema, r.n]));
-    // Project: 87 typed core tables + 2 lossless legacy preservation tables
-    // + 1 import_translation_cache (FNXC:GitHubImportTranslate 2026-07-15-09:30)
-    // + 1 configuration_revisions (FNXC:ConfigVersioning 2026-07-18-14:00)
-    // + 2 ideation_sessions/ideation_candidates (FNXC:Ideation 2026-07-18-13:25 / FN-8295)
-    // + 1 task_verification_requests + 1 durable symbol_locks table (FN-8305)
-    // + 1 mission_lineage_stops (FNXC:MissionLineageBudget FN-8543 / migration 0035)
-    // + 2 task lifecycle outbox tables (FN-8684 migration 0040)
-    // + 4 task lifecycle consumer tables (FN-8685 migration 0041).
-    // Plugin tables are added separately by the hook.
+    /*
+    FNXC:PgSchemaApplier 2026-08-03-02:16:
+    Project table count = historical core baseline plus later migrations. 0040 adds 2 lifecycle
+    outbox tables; 0041 adds 4 lifecycle consumer tables (100 → 104). Plugin tables are added
+    separately by the schema-init hook and are excluded here.
+    */
     expect(bySchema.project).toBe(104);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):

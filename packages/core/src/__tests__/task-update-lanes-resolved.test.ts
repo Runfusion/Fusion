@@ -74,7 +74,11 @@ function harness(task: Partial<Task>, ir: unknown) {
     emit: vi.fn(),
     isWatching: false,
     taskCache: new Map(),
-    // Real TaskStore always has laneCache; dependency re-spec emits only on a real column move.
+    /*
+    FNXC:WorkflowEvents 2026-08-03-02:16:
+    Real TaskStore always has laneCache; dependency re-spec emits only on a real column move and
+    caches the same lanes payload listeners receive on task:moved.
+    */
     laneCache: { set: vi.fn(), get: vi.fn(), invalidate: vi.fn() },
   } as Record<string, unknown>;
   /*
@@ -131,6 +135,38 @@ describe("adding a dependency never parks a card in a deleted column", () => {
     await run(store, { dependencies: ["FN-2"] });
 
     expect(row.column).toBe("inbox");
+  });
+
+  it("emits task:moved with the same resolved lanes used for the relocation", async () => {
+    /*
+    FNXC:WorkflowEvents 2026-08-03-02:16:
+    Regression for the double-IR-resolve hazard: from/to must not ship without lanes, or self-healing
+    falls back to builtin lane ids on a renamed board.
+    */
+    const { store, row } = harness({ column: "backlog", dependencies: [] }, RENAMED_IR);
+
+    await run(store, { dependencies: ["FN-2"] });
+
+    expect(row.column).toBe("inbox");
+    expect(store.emit).toHaveBeenCalledWith(
+      "task:moved",
+      expect.objectContaining({
+        from: "backlog",
+        to: "inbox",
+        source: "engine",
+        lanes: expect.objectContaining({
+          hold: "backlog",
+          intake: "inbox",
+          wip: "building",
+          review: "signoff",
+          complete: "shipped",
+        }),
+      }),
+    );
+    expect((store as any).laneCache.set).toHaveBeenCalledWith(
+      "FN-1",
+      expect.objectContaining({ hold: "backlog", intake: "inbox" }),
+    );
   });
 
   it("leaves the column ALONE when the workflow cannot be resolved", async () => {

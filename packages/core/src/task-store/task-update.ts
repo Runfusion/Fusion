@@ -7,9 +7,13 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {type TaskStore, storeLog} from "../store.js";
-import {toTaskMoveLanes} from "../workflow-lifecycle-traits.js";
+import {
+  resolveLifecycleColumns,
+  resolveTaskLifecycleColumns,
+  toTaskMoveLanes,
+  type TaskMoveLanes,
+} from "../workflow-lifecycle-traits.js";
 import {resolveWorkflowIrForTask} from "../workflow-ir-resolver.js";
-import {resolveTaskLifecycleColumns} from "../workflow-lifecycle-traits.js";
 import {InvalidFileScopeError} from "./errors.js";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -161,6 +165,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       // Detect new dependencies being added to a hold-lane task → re-seed for re-specification
       let movedToTriage = false;
       let respecifyFromColumn: string | undefined;
+      let respecifyMoveLanes: TaskMoveLanes | undefined;
       if (updates.dependencies !== undefined) {
         const oldDeps = new Set((task.dependencies ?? []).map((dependency) => dependency.trim()).filter(Boolean));
         const normalizedDependencies = updates.dependencies.map((dependency) => dependency.trim()).filter(Boolean);
@@ -190,10 +195,18 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         including default-board no-ops where intake===hold. That announced a deleted column and
         required laneCache on every dependency edit. Match update-task-deps: emit only when the
         column actually changed, with the real endpoints.
+
+        FNXC:WorkflowEvents 2026-08-03-02:16:
+        Resolve the task IR once for both the hold/intake decision and the task:moved lanes payload.
+        A second resolveWorkflowIrForTask that failed after a successful relocation used to emit
+        from/to for a custom board with lanes:undefined, and self-healing fell back to legacy lane
+        ids for board-stall / fan-out. Reuse the same IR (or withhold the event when lanes are absent).
         */
-        const depLanes = hasNewDeps
-          ? await resolveTaskLifecycleColumns(store, id).catch(() => undefined)
+        const respecifyIr = hasNewDeps
+          ? await resolveWorkflowIrForTask(store, id).catch(() => undefined)
           : undefined;
+        respecifyMoveLanes = toTaskMoveLanes(respecifyIr);
+        const depLanes = respecifyIr ? resolveLifecycleColumns(respecifyIr) : undefined;
         /* DELIBERATE-LITERAL — the unresolvable-workflow default for the SOURCE lane only; the
            destination below never falls back to a literal. Reviewed 2026-07-31-02:40. */
         const holdLane = depLanes === undefined ? "todo" : depLanes.hold;
@@ -1011,7 +1024,12 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         }
       }
 
-      if (movedToTriage && respecifyFromColumn !== undefined && respecifyFromColumn !== task.column) {
+      if (
+        movedToTriage
+        && respecifyFromColumn !== undefined
+        && respecifyFromColumn !== task.column
+        && respecifyMoveLanes
+      ) {
         /* FNXC:WorkflowEvents 2026-07-31-23:10 (fleet — the last two emitters):
            #3109 attached lanes at moves.ts and #3120 at the archive/completion emits. This one and
            `update-task-deps.ts` were still sending `lanes: undefined`, and a listener reads absence as
@@ -1020,15 +1038,17 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
            resolved.
 
            FNXC:WorkflowEvents 2026-08-03-02:01: only announce a real column change; endpoints are the
-           resolved hold/intake pair, never the deleted `triage` literal. */
-        const lanes = toTaskMoveLanes(await resolveWorkflowIrForTask(store, id).catch(() => undefined));
-        store.laneCache.set(task.id, lanes);
+           resolved hold/intake pair, never the deleted `triage` literal.
+
+           FNXC:WorkflowEvents 2026-08-03-02:16: emit only when respecifyMoveLanes is present from the
+           same IR used for the relocation — never a second IR lookup that can fail after the move. */
+        store.laneCache.set(task.id, respecifyMoveLanes);
         store.emit("task:moved", {
           task,
           from: respecifyFromColumn as Column,
           to: task.column as Column,
           source: "engine",
-          lanes,
+          lanes: respecifyMoveLanes,
         });
       }
       store.emitTaskLifecycleEventSafely("task:updated", [task]);

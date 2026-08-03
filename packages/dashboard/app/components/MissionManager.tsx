@@ -2738,8 +2738,10 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   }, [isActive, onClose]);
 
   /*
-  FNXC:MissionDraftDiscard 2026-06-24-02:42:
-  The mission draft Discard confirmation must send the current browser tab id so a draft locked by this tab can be removed while a draft actively owned by another tab returns the lock warning and stays visible.
+  FNXC:MissionDraftDiscard 2026-08-03-02:16:
+  Discard posts the draft session id and optional projectId only (project-scoped API). A 409 lock
+  conflict keeps the draft visible and surfaces the "open in another tab" warning; 404 removes the
+  stale list row. No browser tab id is sent in the body.
 
   FNXC:Missions 2026-08-03-02:01:
   Hoisted above `if (!isActive) return null` so hide/show of the inline Missions tab does not change
@@ -2764,7 +2766,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       setDeleteConfirmId(null);
     }
   }, [addToast, projectId, t]);
-
   /*
   FNXC:MissionAssertions 2026-08-01-19:44:
   Every deleteConfirmId type must dispatch a deletion, and the shared confirmation panel must surface rejected requests. Assertion deletion is an operator recovery path for validation failures, so a silent no-op would leave stale rollups unrepairable.
