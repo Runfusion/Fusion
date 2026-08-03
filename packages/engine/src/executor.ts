@@ -10,8 +10,8 @@ const execFileAsync = promisify(execFile);
 const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
 import { delimiter, isAbsolute, join, resolve as resolvePath } from "node:path";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type AgentHeartbeatConfig, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
@@ -135,7 +135,7 @@ import {
 // executor→workspace-paths edge (workspace-paths imports nothing).
 import { deriveRepoScopeSubset } from "./worktree/workspace-paths.js";
 import { preservedWorktreeTargetPathForTask } from "./worktree/worktree-pinning.js";
-import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, isRegisteredGitWorktree, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
+import { RemovalReason, classifyTaskWorktree, describeRegisteredWorktrees, detectGitRepository, detectNestedWorktreeRoot, isInsideWorktreesDir, removeWorktree, type WorktreePool } from "./worktree/worktree-pool.js";
 import { attemptBranchAutocorrect } from "./execution/branch-autocorrect.js";
 import {canonicalizeWorktreePath, registerArchiveWorkspaceWorktreeDisposer, registerArchiveWorktreeDisposer, registerTaskMoveDisposer} from "@fusion/core";
 import {
@@ -213,7 +213,6 @@ import {
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree/worktree-acquisition.js";
 
-import { installTaskWorktreeIdentityGuard } from "./worktree/worktree-hooks.js";
 import {
   resolveAgentInstructions,
   buildSystemPromptWithInstructions,
@@ -404,7 +403,6 @@ const LOOP_COMPACTION_TIMEOUT_MS = 60_000;
 
 export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
 import { detectPendingReviewBlock } from "./executor/pending-review-block.js";
-import { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 import {
   isTaskWorkComplete,
   isNoProgressNoTaskDoneFailure,
@@ -510,8 +508,6 @@ export {
   captureBaseCommitSha,
 } from "./executor/worktree-git-refs.js";
 import {
-  isRegisteredWorktree,
-  assertWorktreePathNotNested,
   getWorktreeBranchMap,
 } from "./executor/worktree-registry-helpers.js";
 export {
@@ -604,6 +600,17 @@ import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.j
 export { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
 import { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
 export { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
+import {
+  tryCreateWorktree as tryCreateWorktreeImpl,
+  handleWorktreeConflict as handleWorktreeConflictImpl,
+} from "./executor/worktree-create-conflict.js";
+export {
+  tryCreateWorktree as tryCreateWorktreeFree,
+  handleWorktreeConflict as handleWorktreeConflictFree,
+} from "./executor/worktree-create-conflict.js";
+import { cleanupConflictingWorktree as cleanupConflictingWorktreeImpl } from "./executor/worktree-cleanup-conflicting.js";
+export { cleanupConflictingWorktree as cleanupConflictingWorktreeFree } from "./executor/worktree-cleanup-conflicting.js";
+
 
 
 
@@ -18467,395 +18474,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
 
 
-  private async tryCreateWorktree(
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    attemptNumber = 0,
-    recoveryDepth = 0,
-    allowSiblingBranchRename = false,
-    settings: Partial<Settings> = {},
-  ): Promise<{ path: string; branch: string }> {
-    // Guard: refuse to create a worktree nested inside another worktree.
-    // Nested worktrees happen when the executor is launched with rootDir pointed
-    // at a worktree directory instead of the main repo — produces paths like
-    // `.worktrees/green-finch/.worktrees/amber-panda` that bloat the filesystem
-    // and confuse every tool that walks git state.
-    await assertWorktreePathNotNested(this.rootDir, this.store, path, taskId);
-
-    const installGuardOrCleanup = async () => {
-      try {
-        await installTaskWorktreeIdentityGuard({
-          worktreePath: path,
-          taskId,
-          commitMsgHookEnabled: settings.commitMsgHookEnabled,
-          taskPrefix: settings.taskPrefix,
-          taskAttributionTrailerName: settings.taskAttributionTrailerNames?.[0],
-          commitAuthorEnabled: settings.commitAuthorEnabled,
-          commitAuthorName: settings.commitAuthorName,
-          commitAuthorEmail: settings.commitAuthorEmail,
-        });
-      } catch (error) {
-        try {
-          await rm(path, { recursive: true, force: true });
-        } catch {
-          executorLog.log(`Warning: failed to remove worktree after identity-guard install failure: ${path}`);
-        }
-        throw error;
-      }
-    };
-
-    // If directory exists but is not a registered worktree, remove it first
-    if (existsSync(path)) {
-      const isRegistered = await isRegisteredWorktree(this.rootDir, path);
-      if (!isRegistered) {
-        await this.store.logEntry(
-          taskId,
-          `Removing existing directory (not a registered worktree): ${path}`,
-        );
-        try {
-          await rm(path, { recursive: true, force: true });
-        } catch (e: unknown) {
-          const eMessage = e instanceof Error ? e.message : String(e);
-          throw new Error(`Failed to remove existing directory ${path}: ${eMessage}`);
-        }
-      } else {
-        executorLog.debug(`Worktree already exists: ${path}`);
-        await installGuardOrCleanup();
-        return { path, branch };
-      }
-    }
-
-    const createWithBranch = async (branchToCreate: string) => {
-      const cmd = startPoint
-        ? `git worktree add -b "${branchToCreate}" "${path}" "${startPoint}"`
-        : `git worktree add -b "${branchToCreate}" "${path}"`;
-      try {
-        await execAsync(cmd, { cwd: this.rootDir });
-      } catch (err) {
-        // Remove any partial directory left behind so the invariant holds:
-        // "if .worktrees/<slug> exists on disk, it is a fully registered git worktree."
-        try {
-          await rm(path, { recursive: true, force: true });
-        } catch {
-          // best-effort cleanup; log but don't mask the original error
-          executorLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${path}`);
-        }
-        throw err;
-      }
-    };
-
-    const createFromExistingBranch = async () => {
-      try {
-        await execAsync(`git worktree add "${path}" "${branch}"`, { cwd: this.rootDir });
-      } catch (err) {
-        // Remove any partial directory left behind so the invariant holds:
-        // "if .worktrees/<slug> exists on disk, it is a fully registered git worktree."
-        try {
-          await rm(path, { recursive: true, force: true });
-        } catch {
-          // best-effort cleanup; log but don't mask the original error
-          executorLog.log(`Warning: failed to remove partial worktree directory after creation failure: ${path}`);
-        }
-        throw err;
-      }
-    };
-
-    let staleLockRecoveryAttempted = false;
-    let staleRegistrationRecoveryAttempted = false;
-    try {
-      await createWithBranch(branch);
-      executorLog.log(`Worktree created: ${path}${startPoint ? ` (from ${startPoint})` : ""}`);
-      if (attemptNumber > 0) {
-        await this.store.logEntry(taskId, `Worktree created on attempt ${attemptNumber + 1}`, path);
-      }
-      await installGuardOrCleanup();
-      return { path, branch };
-    } catch (initialError: unknown) {
-      const conflictInfo = extractWorktreeConflictInfo(initialError);
-
-      if (conflictInfo.type === "index-lock-contention" && !staleLockRecoveryAttempted) {
-        staleLockRecoveryAttempted = true;
-        const recovered = await this.recoverIndexLockIfStale(taskId, path, conflictInfo);
-        if (recovered) {
-          await createWithBranch(branch);
-          executorLog.log(`Worktree created after stale lock recovery: ${path}`);
-          await installGuardOrCleanup();
-          return { path, branch };
-        }
-      }
-
-      if (conflictInfo.type === "stale-registration" && !staleRegistrationRecoveryAttempted) {
-        staleRegistrationRecoveryAttempted = true;
-        const recovered = await this.recoverStaleRegistration(taskId, path, conflictInfo);
-        if (recovered) {
-          await createWithBranch(branch);
-          executorLog.log(`Worktree created after stale registration recovery: ${path}`);
-          await installGuardOrCleanup();
-          return { path, branch };
-        }
-      }
-
-      if (conflictInfo.type === "not-git-repo") {
-        throw new NonRetryableWorktreeError(
-          "Project directory is not a Git repository. Fusion requires a Git repository for worktree creation. Initialize with 'git init' or run from a Git project directory.",
-        );
-      }
-
-      // Handle "already used by worktree" conflict
-      if (conflictInfo.type === "already-used" && conflictInfo.path) {
-        const result = await this.handleWorktreeConflict(
-          conflictInfo.path,
-          branch,
-          path,
-          taskId,
-          startPoint,
-          attemptNumber,
-          allowSiblingBranchRename,
-          settings,
-        );
-        if (result) {
-          return result;
-        }
-        throw new Error(
-          `Worktree conflict at ${conflictInfo.path}: automatic cleanup failed`,
-        );
-      }
-
-      // Handle "invalid reference" - stale branch that doesn't exist
-      if (conflictInfo.type === "invalid-reference") {
-        if (recoveryDepth >= this.MAX_WORKTREE_RETRIES - 1) {
-          throw new NonRetryableWorktreeError(
-            `Stale branch reference for ${branch} remained invalid after ${this.MAX_WORKTREE_RETRIES} cleanup attempts`,
-          );
-        }
-        const branchCleaned = await this.cleanupStaleBranch(branch, taskId);
-        if (branchCleaned) {
-          await this.store.logEntry(taskId, `Removed stale branch reference, retrying`);
-          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1, allowSiblingBranchRename, settings);
-        }
-        throw new Error(
-          `Invalid reference for branch ${branch}: unable to clean up stale reference`,
-        );
-      }
-
-      // Handle "could not create leading directories" - permission/path issues
-      if (conflictInfo.type === "leading-directories") {
-        throw new Error(
-          `Cannot create worktree at ${path}: permission or path issue. ` +
-          `Check that parent directories are writable.`,
-        );
-      }
-
-      // Try creating from existing branch (branch might already exist)
-      try {
-        await createFromExistingBranch();
-        executorLog.log(`Worktree created from existing branch: ${path}`);
-        await installGuardOrCleanup();
-        return { path, branch };
-      } catch (fallbackError: unknown) {
-        const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        // Check if the fallback also hit an "already used" conflict
-        const fallbackConflictInfo = extractWorktreeConflictInfo(fallbackError);
-        if (fallbackConflictInfo.type === "index-lock-contention" && !staleLockRecoveryAttempted) {
-          staleLockRecoveryAttempted = true;
-          const recovered = await this.recoverIndexLockIfStale(taskId, path, fallbackConflictInfo);
-          if (recovered) {
-            await createFromExistingBranch();
-            executorLog.log(`Worktree created from existing branch after stale lock recovery: ${path}`);
-            await installGuardOrCleanup();
-            return { path, branch };
-          }
-        }
-
-        if (fallbackConflictInfo.type === "stale-registration" && !staleRegistrationRecoveryAttempted) {
-          staleRegistrationRecoveryAttempted = true;
-          const recovered = await this.recoverStaleRegistration(taskId, path, fallbackConflictInfo);
-          if (recovered) {
-            await createFromExistingBranch();
-            executorLog.log(`Worktree created from existing branch after stale registration recovery: ${path}`);
-            await installGuardOrCleanup();
-            return { path, branch };
-          }
-        }
-
-        if (fallbackConflictInfo.type === "not-git-repo") {
-          throw new NonRetryableWorktreeError(
-            "Project directory is not a Git repository. Fusion requires a Git repository for worktree creation. Initialize with 'git init' or run from a Git project directory.",
-          );
-        }
-
-        if (fallbackConflictInfo.type === "already-used" && fallbackConflictInfo.path) {
-          const result = await this.handleWorktreeConflict(
-            fallbackConflictInfo.path,
-            branch,
-            path,
-            taskId,
-            startPoint,
-            attemptNumber,
-            allowSiblingBranchRename,
-            settings,
-          );
-          if (result) {
-            return result;
-          }
-          throw new Error(
-            `Worktree conflict at ${fallbackConflictInfo.path}: automatic cleanup failed`,
-          );
-        }
-
-        // Handle stale reference in fallback path too
-        if (fallbackConflictInfo.type === "invalid-reference") {
-          if (recoveryDepth >= this.MAX_WORKTREE_RETRIES - 1) {
-            throw new NonRetryableWorktreeError(
-              `Stale branch reference for ${branch} remained invalid after ${this.MAX_WORKTREE_RETRIES} cleanup attempts`,
-            );
-          }
-          const branchCleaned = await this.cleanupStaleBranch(branch, taskId);
-          if (branchCleaned) {
-            await this.store.logEntry(taskId, `Cleaned up stale reference in fallback, retrying`);
-            return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1, allowSiblingBranchRename, settings);
-          }
-        }
-
-        throw new Error(`Failed to create worktree: ${fallbackErrorMessage}`);
-      }
-    }
-  }
-
-  /**
-   * Handle "already used by worktree" conflict.
-   * Either generates a new worktree name (if conflicting worktree is in use by active task)
-   * or cleans up the conflicting worktree and retries.
-   *
-   * @returns The worktree path if recovery succeeded, null if recovery failed
-   */
-  private async handleWorktreeConflict(
-    conflictPath: string,
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    attemptNumber?: number,
-    allowSiblingBranchRename = false,
-    settings: Partial<Settings> = {},
-  ): Promise<{ path: string; branch: string } | null> {
-    const tryFreshFallback = () => this.tryFreshWorktreeAfterLiveConflict({
-      conflictPath,
-      branch,
-      taskId,
-      startPoint,
-      attemptNumber,
-      allowSiblingBranchRename,
-      settings,
-    });
-    const shouldGenerateNewName = await this.shouldGenerateNewWorktreeName(
-      conflictPath,
-      taskId,
-    );
-
-    /*
-     * FNXC:ExecutorWorktree 2026-07-18-17:20:
-     * Inspect every branch/worktree collision before cleanup, including inactive
-     * same-task bindings. The old inactive path skipped inspection and called
-     * cleanupConflictingWorktree directly, which force-deleted a branch carrying
-     * completed task commits during workflow-node recovery. Liveness determines
-     * whether a sibling checkout is needed; it must never determine whether task
-     * history is disposable.
-     */
-    const inspection = await inspectBranchConflict({
-      repoDir: this.rootDir,
-      branchName: branch,
-      conflictingWorktreePath: conflictPath,
-      requestingTaskId: taskId,
-      ownerTaskId: taskId,
-      startPoint,
-      integrationRef: await resolveIntegrationBranch(this.rootDir, settings),
-    });
-
-    if (inspection.kind === "reclaimable") {
-      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
-        ? inspection.livePath
-        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
-      await this.store.logEntry(
-        taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (${inspection.taskAttributedCommitCount} commits preserved)`,
-        inspection.tipSha,
-      );
-      return { path: livePath, branch };
-    }
-
-    if (inspection.kind === "fully-subsumed") {
-      const livePath = isInsideWorktreesDir(this.rootDir, inspection.livePath, settings)
-        ? inspection.livePath
-        : await this.normalizeReclaimableWorktreePath(inspection.livePath, path, taskId, settings);
-      await this.store.logEntry(
-        taskId,
-        `[recovery] reclaimed existing worktree for ${taskId} at ${livePath} (0 commits preserved)`,
-        inspection.tipSha,
-      );
-      return { path: livePath, branch };
-    }
-
-    if (shouldGenerateNewName) {
-      if (inspection.kind === "stale" || inspection.kind === "stale-resolved" || inspection.kind === "tip-already-merged") {
-        const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
-        if (cleanupSuccess) {
-          await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
-          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, 0, allowSiblingBranchRename, settings);
-        }
-        // FN-4811: When git classifies a worktree as stale but the DB liveness gate refuses
-        // removal (an active task still has this worktree bound), fall through to the
-        // sibling-rename path rather than failing the whole conflict-recovery attempt. This
-        // preserves the live task while letting the requesting task proceed with a fresh
-        // worktree name.
-      }
-
-      if (inspection.kind === "live-foreign") {
-        const cleanupSuccess = await this.cleanupConflictingWorktree(inspection.livePath, branch, taskId);
-        if (cleanupSuccess) {
-          await this.store.logEntry(taskId, `Removed foreign conflicting worktree and retrying`, inspection.livePath);
-          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, 0, allowSiblingBranchRename, settings);
-        }
-        // FN-4811: Cleanup was refused because the foreign worktree is actively bound to a
-        // live session. Force-removing would yank an active task's filesystem. Fall through
-        // to the sibling-rename path (suffix-2 through suffix-6) so the requesting task can
-        // proceed without disturbing the live owner. If sibling-rename is disabled, the
-        // generic conflict error below will trigger the caller's auto-recovery dispatcher.
-      }
-
-      if (!allowSiblingBranchRename) {
-        throw new Error(`Branch ${branch} conflict could not be auto-resolved`);
-      }
-
-      return tryFreshFallback();
-    }
-
-    const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
-    if (cleanupSuccess) {
-      await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
-      return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, 0, allowSiblingBranchRename, settings);
-    }
-
-    if (await this.isLiveCleanupRefusal(conflictPath, taskId)) {
-      return tryFreshFallback();
-    }
-
-    return null;
-  }
-
-  /**
-   * FN-6782 leaked-slot reaper support: expose a read-only snapshot of the
-   * in-memory `activeWorktrees` holders so SelfHealingManager can cross-check
-   * each holder's task column and reclaim a slot whose holder is no longer
-   * legitimately in-progress (the "in todo yet still maxWorktrees holder"
-   * leak). Returns a copied array — never the live Map — so callers cannot
-   * mutate executor state. The actual release still goes through
-   * `clearPhantomExecutorBinding`, which refuses to detach live session
-   * surfaces, so this introspection cannot by itself pull a worktree out from
-   * under a running agent.
-   */
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
     const holders: Array<{ taskId: string; worktreePath: string }> = [];
     // FNXC:Workspace 2026-06-21-12:00: KTD2 — flat-map each task's Set into one holder row per worktree path. A workspace task emits N rows; the FN-6782 reaper (self-healing.ts) and in-process-runtime adapter key purely off taskId (verified) and are idempotent across duplicate-task rows, so multi-row holders do not mis-count maxWorktrees slots.
@@ -18982,6 +18600,90 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     );
   }
 
+  /*
+  FNXC:CodeOrganization 2026-08-03-15:10:
+  Thin facades over tryCreateWorktree / handleWorktreeConflict / cleanupConflictingWorktree
+  (U4 Slice B). Shared deps bag wires circular callbacks through this.
+  */
+  private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
+    return {
+      rootDir: this.rootDir,
+      store: this.store,
+      maxWorktreeRetries: this.MAX_WORKTREE_RETRIES,
+      recoverIndexLockIfStale: (taskId, path, info) => this.recoverIndexLockIfStale(taskId, path, info),
+      recoverStaleRegistration: (taskId, path, info) => this.recoverStaleRegistration(taskId, path, info),
+      cleanupStaleBranch: (branch, taskId) => this.cleanupStaleBranch(branch, taskId),
+      handleWorktreeConflict: (
+        conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename, settings,
+      ) => this.handleWorktreeConflict(
+        conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename ?? false, settings ?? {},
+      ),
+      tryCreateWorktree: (
+        branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
+      ) => this.tryCreateWorktree(
+        branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename ?? false, settings ?? {},
+      ),
+      tryFreshWorktreeAfterLiveConflict: (input) => this.tryFreshWorktreeAfterLiveConflict(input),
+      shouldGenerateNewWorktreeName: (conflictPath, taskId) => this.shouldGenerateNewWorktreeName(conflictPath, taskId),
+      cleanupConflictingWorktree: (worktreePath, branch, taskId) => this.cleanupConflictingWorktree(worktreePath, branch, taskId),
+      normalizeReclaimableWorktreePath: (sourcePath, targetPath, taskId, settings) =>
+        this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
+      isLiveCleanupRefusal: (worktreePath, taskId) => this.isLiveCleanupRefusal(worktreePath, taskId),
+    };
+  }
+
+  private async tryCreateWorktree(
+    branch: string,
+    path: string,
+    taskId: string,
+    startPoint?: string,
+    attemptNumber = 0,
+    recoveryDepth = 0,
+    allowSiblingBranchRename = false,
+    settings: Partial<Settings> = {},
+  ): Promise<{ path: string; branch: string }> {
+    return tryCreateWorktreeImpl(
+      this.worktreeCreateConflictDeps(),
+      branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
+    );
+  }
+
+  private async handleWorktreeConflict(
+    conflictPath: string,
+    branch: string,
+    path: string,
+    taskId: string,
+    startPoint?: string,
+    attemptNumber?: number,
+    allowSiblingBranchRename = false,
+    settings: Partial<Settings> = {},
+  ): Promise<{ path: string; branch: string } | null> {
+    return handleWorktreeConflictImpl(
+      this.worktreeCreateConflictDeps(),
+      conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename, settings,
+    );
+  }
+
+  private async cleanupConflictingWorktree(
+    worktreePath: string,
+    branch: string,
+    taskId: string,
+  ): Promise<boolean> {
+    return cleanupConflictingWorktreeImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        reconcileSelfOwnedBeforeRemove: (p, tid) => this.reconcileSelfOwnedBeforeRemove(p, tid),
+        findActiveWorktreeOwner: (p, tid) => this.findActiveWorktreeOwner(p, tid),
+        removeOwnWorktreeWithReconcile: (input) => this.removeOwnWorktreeWithReconcile(input),
+      },
+      worktreePath,
+      branch,
+      taskId,
+    );
+  }
+
+
 
   private async removeOwnWorktreeWithReconcile(input: {
     worktreePath: string;
@@ -19015,162 +18717,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   }
 
 
-  private async cleanupConflictingWorktree(
-    worktreePath: string,
-    branch: string,
-    taskId: string,
-  ): Promise<boolean> {
-    await this.reconcileSelfOwnedBeforeRemove(worktreePath, taskId);
-
-    // FN-4811: Hard liveness gate — refuse to remove a worktree that is currently bound to
-    // an active executor/merger session, regardless of git-level conflict classification.
-    // This is the canonical guard against the FN-4781/FN-4804 race where a startup cleanup
-    // pass or branch-conflict recovery yanked the worktree of a still-running session, causing
-    // "assigned worktree path disappeared mid-task" + parallel-runs + cross-task contamination.
-    const activeOwner = await this.findActiveWorktreeOwner(worktreePath, taskId);
-    if (activeOwner !== null) {
-      const refusalMessage = `[FN-4811] Refused to remove worktree ${worktreePath}: actively owned by ${activeOwner} (requested by ${taskId})`;
-      executorLog.warn(refusalMessage);
-      await this.store.logEntry(taskId, `Refused to remove conflicting worktree — actively owned by another task`, `${worktreePath} (owner: ${activeOwner})`);
-      return false;
-    }
-
-    try {
-      // Check if worktree is locked and unlock if needed
-      try {
-        await execAsync(`git worktree unlock "${worktreePath}"`, {
-          cwd: this.rootDir,
-        });
-        await this.store.logEntry(taskId, `Unlocked worktree`, worktreePath);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        executorLog.warn(`${taskId}: failed to unlock conflicting worktree ${worktreePath} before cleanup: ${msg}`);
-      }
-
-      // Remove the worktree
-      const settings = await this.store.getSettings();
-      await this.removeOwnWorktreeWithReconcile({
-        worktreePath,
-        settings,
-        taskId,
-        reason: RemovalReason.ExecutorDispose,
-      });
-      await this.store.logEntry(taskId, `Removed conflicting worktree`, worktreePath);
-
-      // Delete the branch if it exists
-      try {
-        await execAsync(`git branch -D "${branch}"`, {
-          cwd: this.rootDir,
-        });
-        await this.store.logEntry(taskId, `Deleted branch`, branch);
-        // FN-2165 regression guard: null baseBranch on any task that stored this branch
-        await this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        executorLog.warn(`${taskId}: failed to delete conflicting branch ${branch}: ${msg}`);
-      }
-
-      return true;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      // FN-4811 follow-up (FN-4813): when `git worktree remove --force` fails because the
-      // conflicting path isn't a recoverable git worktree, treat it as already-cleaned:
-      // prune any stale admin entry, force-remove the leftover directory, best-effort delete
-      // the branch, and return success so the caller can proceed with fresh worktree creation.
-      // Without this recovery, every `tryCreateWorktree` retry on such a path fails with
-      // "automatic cleanup failed".
-      //
-      // Three variants land here, all meaning "no live worktree to preserve at this path":
-      //   1. `validation failed, cannot remove working tree` — stale admin entry, dir missing.
-      //   2. `is not a working tree` — an orphan directory exists on disk but git never
-      //      registered it (e.g. a leaked worktree dir that outlived its admin entry). This
-      //      is the FN-6782 leak residue that collides with freshly generated worktree names.
-      //   3. `No such file or directory` / ENOENT — the path is already gone.
-      //
-      // Exclude spawn failures (e.g. `spawn git ENOENT` when the git binary is missing or not
-      // on PATH): those are environment errors, not "path is not a worktree" signals, and must
-      // not be misread as a successful stale-path cleanup.
-      const err = error as NodeJS.ErrnoException;
-      const isSpawnFailure = typeof err?.syscall === "string" && err.syscall.startsWith("spawn");
-      const staleConflictPath = !isSpawnFailure && (
-        /validation failed, cannot remove working tree/i.test(errorMessage) ||
-        /is not a working tree/i.test(errorMessage) ||
-        /no such file or directory|ENOENT/i.test(errorMessage)
-      );
-      if (staleConflictPath) {
-        // The error string alone is NOT authoritative — it can name an unrelated path, or fire
-        // on a live worktree under a racing/transient failure. Re-verify on disk before any
-        // destructive action and refuse to force-remove anything that is still a real worktree,
-        // out of bounds, reached through a symlink, or actively owned by a live session. Only a
-        // genuine orphan directory inside the configured worktrees tree is safe to delete.
-        const settings = await this.store.getSettings();
-        const stillRegistered = await isRegisteredGitWorktree(this.rootDir, worktreePath).catch(() => true);
-        const activeOwner = await this.findActiveWorktreeOwner(worktreePath, taskId).catch(() => "unknown");
-        let safeToRemove = isInsideWorktreesDir(this.rootDir, worktreePath, settings) && !stillRegistered && activeOwner === null;
-        if (safeToRemove && existsSync(worktreePath)) {
-          try {
-            if (lstatSync(worktreePath).isSymbolicLink()) {
-              safeToRemove = false;
-            } else if (!isInsideWorktreesDir(this.rootDir, realpathSync(worktreePath), settings)) {
-              safeToRemove = false;
-            }
-          } catch {
-            // Stat failed (path vanished mid-check) — nothing to remove; the prune/branch
-            // cleanup below is still safe to run.
-          }
-        }
-        if (!safeToRemove) {
-          // A real/registered/out-of-bounds/owned/symlinked path we must not touch. Surface as a
-          // cleanup failure so the operator-recovery path handles it instead of silently
-          // claiming success (and never `rm -rf`-ing something we shouldn't).
-          await this.store.logEntry(
-            taskId,
-            `Refused stale-path cleanup — path is not a safe orphan (registered=${stillRegistered}, owner=${activeOwner ?? "none"})`,
-            worktreePath,
-          );
-          return false;
-        }
-        try {
-          await execAsync("git worktree prune", {
-            cwd: this.rootDir,
-            timeout: 30_000,
-            maxBuffer: 10 * 1024 * 1024,
-          });
-        } catch (pruneErr: unknown) {
-          const pruneMsg = pruneErr instanceof Error ? pruneErr.message : String(pruneErr);
-          executorLog.warn(`${taskId}: git worktree prune failed during stale-path cleanup of ${worktreePath}: ${pruneMsg}`);
-        }
-        // An orphan directory ("is not a working tree") won't be removed by prune — git
-        // doesn't track it. Force-remove the leftover dir so the colliding name is free.
-        if (existsSync(worktreePath)) {
-          try {
-            await rm(worktreePath, { recursive: true, force: true });
-          } catch (rmErr: unknown) {
-            const rmMsg = rmErr instanceof Error ? rmErr.message : String(rmErr);
-            executorLog.warn(`${taskId}: failed to remove orphan worktree directory ${worktreePath}: ${rmMsg}`);
-          }
-        }
-        try {
-          await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
-          await this.store.clearStaleExecutionStartBranchReferences([branch], taskId);
-        } catch {
-          // best-effort — branch may not exist, which is fine for a stale-path cleanup
-        }
-        await this.store.logEntry(
-          taskId,
-          `Cleaned up stale conflicting worktree (no live worktree at path — pruned admin entry and removed orphan directory)`,
-          worktreePath,
-        );
-        return true;
-      }
-      await this.store.logEntry(
-        taskId,
-        `Failed to clean up conflicting worktree`,
-        `${worktreePath}: ${errorMessage}`,
-      );
-      return false;
-    }
-  }
 
   /**
    * Extract conflict information from git worktree error output.
