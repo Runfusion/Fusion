@@ -768,6 +768,8 @@ export {
   runCliAgentNode as runCliAgentNodeFree,
   reapCliTaskSessionForHandoff as reapCliTaskSessionForHandoffFree,
 } from "./executor/run-cli-agent-node.js";
+import { adoptColumnAgentForNode as adoptColumnAgentForNodeImpl } from "./executor/adopt-column-agent-for-node.js";
+export { adoptColumnAgentForNode as adoptColumnAgentForNodeFree } from "./executor/adopt-column-agent-for-node.js";
 
 
 
@@ -6345,45 +6347,17 @@ export class TaskExecutor {
     columnAgentId: string,
     mode: WorkflowColumnAgent["mode"] | undefined,
   ): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> {
-    try {
-      const agent = await this.options.agentStore?.getAgent(columnAgentId);
-      if (!agent) {
-        await this.store.logEntry(
-          live.id,
-          `Workflow node '${node.id}': column agent '${columnAgentId}' not found — falling back to node/default resolution`,
-          undefined,
-          this.getRunContextFor(live.id),
-        );
-        return undefined;
-      }
-      const rc = (agent.runtimeConfig ?? {}) as { executorProvider?: string; executorModelId?: string };
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}': running as column agent '${columnAgentId}' (${mode})`,
-        undefined,
-        this.getRunContextFor(live.id),
-      );
-      return {
-        modelProvider: rc.executorProvider,
-        modelId: rc.executorModelId,
-        persona: buildAgentPersona(agent),
-      };
-    } catch {
-      // Agent lookup is best-effort; fall back to node/default resolution (R8).
-      // A secondary logEntry failure (DB locked / mid-recovery) must NOT propagate
-      // out of this error handler and escalate the node to a hard failure.
-      try {
-        await this.store.logEntry(
-          live.id,
-          `Workflow node '${node.id}': column agent '${columnAgentId}' lookup failed — falling back to node/default resolution`,
-          undefined,
-          this.getRunContextFor(live.id),
-        );
-      } catch (logErr: unknown) {
-        executorLog.warn(`${live.id}: failed to log column-agent lookup failure: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
-      }
-      return undefined;
-    }
+    return adoptColumnAgentForNodeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        agentStore: this.options.agentStore,
+      },
+      node,
+      live,
+      columnAgentId,
+      mode,
+    );
   }
 
   /**
