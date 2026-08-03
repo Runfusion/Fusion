@@ -712,6 +712,8 @@ export {
 } from "./executor/required-artifact-recovery.js";
 import { performWorkflowRerunBounce as performWorkflowRerunBounceImpl } from "./executor/workflow-rerun-bounce.js";
 export { performWorkflowRerunBounce as performWorkflowRerunBounceFree } from "./executor/workflow-rerun-bounce.js";
+import { dispatchUnpauseResume as dispatchUnpauseResumeImpl } from "./executor/unpause-resume.js";
+export { dispatchUnpauseResume as dispatchUnpauseResumeFree } from "./executor/unpause-resume.js";
 
 
 
@@ -2489,93 +2491,26 @@ export class TaskExecutor {
   }
 
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
-    /*
-    FNXC:ExecutorResume 2026-07-14-15:31:
-    A terminal failed in-progress task must not be resurrected by an unrelated `task:updated` event. Planner oversight steering comments emit that event; treating it as an unpause cleared the failure and restarted the same missing-credential execution every 45 seconds. Explicit Retry/Unpause routes clear `status` before emitting their update, while startup orphan recovery has its own bounded path, so keep failed rows parked here for operator action.
-
-    FNXC:ExecutorResume 2026-07-21-22:56:
-    Claim resumingUnpaused BEFORE any await so concurrent task:updated handlers cannot both pass the gate, both await getExecutionPauseLabel, and both log "Resuming execution after unpause" (FN-8471 multi-resume race). Also treat process-wide graphRouting as already-owned work.
-    */
-    if (task.status === "failed") {
-      return false;
-    }
-
-    if (
-      this.executing.has(task.id)
-      || this.resumingUnpaused.has(task.id)
-      || this.recoveringCompleted.has(task.id)
-      || this.activeSessions.has(task.id)
-      || this.activeStepExecutors.has(task.id)
-      || this.activeWorkflowStepSessions.has(task.id)
-      || this.graphRouting.has(task.id)
-    ) {
-      return false;
-    }
-
-    // Synchronous single-flight claim before any await (TOCTOU fix).
-    this.resumingUnpaused.add(task.id);
-    let handoffOwnsClaim = false;
-    try {
-      const pauseLabel = await this.getExecutionPauseLabel();
-      if (pauseLabel) {
-        executorLog.debug(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
-        return false;
-      }
-
-      // Re-check after await: a concurrent graph claim may have won meanwhile.
-      if (
-        this.executing.has(task.id)
-        || this.recoveringCompleted.has(task.id)
-        || this.activeSessions.has(task.id)
-        || this.activeStepExecutors.has(task.id)
-        || this.activeWorkflowStepSessions.has(task.id)
-        || this.graphRouting.has(task.id)
-      ) {
-        return false;
-      }
-
-      this.approvalSuspended.delete(task.id);
-      if (isTaskWorkComplete(task) && !task.mergeDetails) {
-        /*
-        FNXC:ExecutorResume 2026-07-21-23:06:
-        recoverCompletedTask refuses when resumingUnpaused still holds the id.
-        Transfer ownership: clear the unpause claim before the recovery path runs,
-        then own the flight via recoveringCompleted (FN-8471 early-claim fix).
-        */
-        this.resumingUnpaused.delete(task.id);
-        this.recoveringCompleted.add(task.id);
-        handoffOwnsClaim = true; // prevent finally from double-deleting a already-cleared claim
-        executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
-        void this.recoverCompletedTask(task)
-          .catch((err) => executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err))
-          .finally(() => this.recoveringCompleted.delete(task.id));
-        return true;
-      }
-
-      executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
-      try {
-        await this.clearResumeFailureState(task);
-        await this.store.updateTask(task.id, {
-          resumeLimboCount: 0,
-          resumeLimboTipSha: null,
-          resumeLimboStepSignature: null,
-        });
-        await this.store.logEntry(task.id, "Resuming execution after unpause", undefined, this.getRunContextFor(task.id));
-        await this.recoverApprovedStepsOnResume(task.id);
-      } catch (clearErr) {
-        executorLog.warn(`${task.id} clearResumeFailureState failed during unpause: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`);
-      }
-      handoffOwnsClaim = true;
-      this.execute(task)
-        .catch((err) => executorLog.error(`Failed to resume unpaused ${task.id}:`, err))
-        .finally(() => this.resumingUnpaused.delete(task.id));
-      // execute().finally owns resumingUnpaused release from here.
-      return true;
-    } finally {
-      if (!handoffOwnsClaim) {
-        this.resumingUnpaused.delete(task.id);
-      }
-    }
+    return dispatchUnpauseResumeImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        executing: this.executing,
+        resumingUnpaused: this.resumingUnpaused,
+        recoveringCompleted: this.recoveringCompleted,
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        graphRouting: this.graphRouting,
+        approvalSuspended: this.approvalSuspended,
+        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
+        clearResumeFailureState: (t: Task) => this.clearResumeFailureState(t),
+        recoverApprovedStepsOnResume: (taskId: string) => this.recoverApprovedStepsOnResume(taskId),
+        recoverCompletedTask: (t: Task) => this.recoverCompletedTask(t),
+        execute: (t: Task) => this.execute(t),
+      },
+      task,
+    );
   }
 
   private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
