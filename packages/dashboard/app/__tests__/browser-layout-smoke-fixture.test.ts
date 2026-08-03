@@ -84,4 +84,9 @@ describe("browser layout smoke fixture", () => {
       expect(html).toContain(label);
     }
   });
+
+  it("marks the mobile List fixture as the production single-pane surface", () => {
+    const html = createSmokeHtml();
+    expect(html).toContain('class="list-view list-view--single-pane" data-smoke="list"');
+  });
 });
