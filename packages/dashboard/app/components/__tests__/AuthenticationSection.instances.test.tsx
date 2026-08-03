@@ -39,10 +39,12 @@ function renderSection(providers: AuthProvider[]) {
 }
 
 describe("AuthenticationSection credential instances", () => {
-  it("keeps a single account card free of instance chrome", () => {
+  it("keeps a single account card free of pending account field chrome", () => {
     renderSection([{ id: "brave", name: "Brave", authenticated: true, type: "api_key", instances: [{ instanceId: "default", authenticated: true, isDefault: true, type: "api_key" }] }]);
     expect(screen.queryByTestId("auth-instances-brave")).not.toBeInTheDocument();
     expect(screen.getByText("Add another account")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Account name")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("auth-pending-instance-brave")).not.toBeInTheDocument();
   });
 
   it("scopes every multi-instance API-key save to its account and pending row", () => {
@@ -58,12 +60,18 @@ describe("AuthenticationSection credential instances", () => {
 
     fireEvent.click(screen.getByText("Add another account"));
     const pending = screen.getByTestId("auth-pending-instance-brave");
+    const accountName = within(pending).getByLabelText("Account name");
+    expect(accountName).toHaveAttribute("id", "auth-pending-instance-brave-label");
+    expect(accountName.closest(".auth-pending-instance-field")).toBeInTheDocument();
+    fireEvent.change(accountName, { target: { value: "Work" } });
+    expect(accountName).toHaveValue("Work");
     fireEvent.change(within(pending).getByPlaceholderText("Enter API key"), { target: { value: "pending-key" } });
     fireEvent.click(within(pending).getByText("Save"));
-    expect(handlers.handleSaveApiKey).toHaveBeenLastCalledWith("brave", "acct-new", undefined);
+    expect(handlers.handleSaveApiKey).toHaveBeenLastCalledWith("brave", "acct-new", "Work");
+    expect(within(pending).getByText("Cancel")).toBeInTheDocument();
   });
 
-  it("binds OAuth instance actions to the selected instance", () => {
+  it("binds OAuth instance actions to the selected instance and labels pending accounts", () => {
     const handlers = renderSection([{ id: "github-copilot", name: "GitHub", authenticated: true, type: "oauth", instances: [
       { instanceId: "default", authenticated: true, isDefault: true, type: "oauth" },
       { instanceId: "acct-two", authenticated: true, isDefault: false, type: "oauth" },
@@ -71,5 +79,15 @@ describe("AuthenticationSection credential instances", () => {
     const row = within(screen.getByTestId("auth-instances-github-copilot")).getByText("acct-two").closest(".auth-instance-row") as HTMLElement;
     fireEvent.click(within(row).getByText("Logout"));
     expect(handlers.handleLogout).toHaveBeenCalledWith("github-copilot", "acct-two");
+
+    fireEvent.click(screen.getByText("Add another account"));
+    const pending = screen.getByTestId("auth-pending-instance-github-copilot");
+    const accountName = within(pending).getByLabelText("Account name");
+    expect(accountName).toHaveAttribute("id", "auth-pending-instance-github-copilot-label");
+    fireEvent.change(accountName, { target: { value: "Personal" } });
+    expect(accountName).toHaveValue("Personal");
+    expect(within(pending).getByText("Cancel")).toBeInTheDocument();
+    fireEvent.click(within(pending).getByText("Login"));
+    expect(handlers.handleLogin).toHaveBeenCalledWith("github-copilot", "acct-new", "Personal");
   });
 });

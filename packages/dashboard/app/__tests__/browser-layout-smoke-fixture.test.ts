@@ -25,6 +25,23 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("gm-modal--embedded");
   });
 
+  it("includes standalone, embedded, and detail GitHub Import shell fixtures", () => {
+    const html = createSmokeHtml();
+    for (const hook of [
+      "github-import-standalone", "github-import-standalone-body", "github-import-standalone-modal",
+      "github-import-standalone-header", "github-import-standalone-close", "github-import-standalone-controls",
+      "github-import-standalone-list", "github-import-standalone-pagination", "github-import-standalone-footer",
+      "github-import-embedded-host", "github-import-embedded-modal", "github-import-embedded-header",
+      "github-import-embedded-content", "github-import-detail", "github-import-detail-body",
+      "github-import-detail-panel", "github-import-detail-close",
+    ]) {
+      expect(html).toContain(`data-smoke="${hook}"`);
+    }
+    expect(html).toContain("floating-window--github-import");
+    expect(html).toContain("github-import-modal--embedded");
+    expect(html).toContain("floating-window--github-import-detail");
+  });
+
   it("includes PR flow fixture sections and class hooks", () => {
     const html = createSmokeHtml();
     expect(html).toContain('data-smoke="pr-create-modal"');

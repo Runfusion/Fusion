@@ -79,6 +79,7 @@
             "calm",
             "dawn",
             "sage",
+            "midnight",
             "factory-dark",
             "factory-light",
             "shadcn",
@@ -105,6 +106,7 @@
           ];
 
           // FNXC:DashboardTheming 2026-06-30-00:00: Desktop pre-hydration mirrors the full core theme union before falling back to Shadcn Ember, so every explicit legacy id stays valid on native startup.
+          // FNXC:MidnightTheme 2026-08-03-02:05: Electron first paint must accept persisted Midnight before React hydrates; invalid or unset values still fall back to Shadcn Ember.
           if (!validThemes.includes(colorTheme)) {
             colorTheme = "shadcn-ember";
           }

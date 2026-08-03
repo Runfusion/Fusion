@@ -254,7 +254,16 @@ export function AuthenticationSection({ auth, form, setForm }: AuthenticationSec
             })}
           </div>}
           {pending && <div className="auth-instance-pending" data-testid={`auth-pending-instance-${provider.id}`}>
-            <input className="input" aria-label={t("settings.auth.accountLabel", "Account name")} value={pending.label} onChange={(event) => setPendingInstances((current) => ({ ...current, [provider.id]: { ...pending, label: event.target.value } }))} />
+            {/*
+            FNXC:ProviderAuth 2026-08-02-05:27:
+            Each pending credential needs a visible Account name label associated with its provider-specific input. The padded field keeps its purpose separate from credential actions at desktop and mobile widths without changing instance identity or save/login payloads.
+            */}
+            <div className="auth-pending-instance-field">
+              <label className="auth-pending-instance-label" htmlFor={`auth-pending-instance-${provider.id}-label`}>
+                {t("settings.auth.accountLabel", "Account name")}
+              </label>
+              <input id={`auth-pending-instance-${provider.id}-label`} className="input" value={pending.label} onChange={(event) => setPendingInstances((current) => ({ ...current, [provider.id]: { ...pending, label: event.target.value } }))} />
+            </div>
             {providerSupportsApiKey(provider)
               ? renderApiKeySection(provider, pending.instanceId, pending.label, true)
               : renderAvailableOAuthActions(provider, pending.instanceId, pending.label || undefined)}

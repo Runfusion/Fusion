@@ -1,6 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect } from "react";
 
 export type ViewportMode = "mobile" | "tablet" | "desktop";
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Shell chrome (left sidebar, mobile tab bar, footer stacking above the tab bar) must follow the JS viewport mode, not pure CSS width. Tablet-class devices at ≤768 CSS px are mode=tablet (sidebar on, no bottom tab bar) while `@media (max-width: 768px)` still hid the sidebar and elevated the footer for a phantom mobile nav — missing tab bar + mid-page overlapping footer. Publish the mode on `document.documentElement` so co-located CSS can override width-only rules and keep left sidebar + footer-at-bottom on tablet.
+*/
+export const VIEWPORT_MODE_DATASET_KEY = "viewportMode";
+
+/** Mirrors the resolved viewport mode onto `<html data-viewport-mode="…">` for CSS chrome alignment. */
+export function publishViewportMode(mode: ViewportMode): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset[VIEWPORT_MODE_DATASET_KEY] = mode;
+}
 
 // `(max-height: 480px)` catches phones held in landscape, which can exceed
 // 768 CSS px wide but stay short. Without it, landscape phones fall out of
@@ -153,7 +165,23 @@ export function isTabletTouchViewport(mode = getViewportMode()): boolean {
 }
 
 export function useViewportMode(): ViewportMode {
-  const [mode, setMode] = useState<ViewportMode>(getViewportMode);
+  /*
+  FNXC:ViewportChrome 2026-08-03-00:17:
+  Lazy initial state still runs publishViewportMode during the first render so the first paint already has data-viewport-mode — useLayoutEffect alone still leaves a pre-hydration/SSR-empty frame where width-only CSS hides the tablet sidebar.
+  */
+  const [mode, setMode] = useState<ViewportMode>(() => {
+    const initial = getViewportMode();
+    publishViewportMode(initial);
+    return initial;
+  });
+
+  /*
+  FNXC:ViewportChrome 2026-08-03-00:13:
+  Re-publish on every mode change before paint so resize/orientation updates do not flash phone chrome (hidden sidebar + elevated footer) on a tablet-class narrow viewport.
+  */
+  useLayoutEffect(() => {
+    publishViewportMode(mode);
+  }, [mode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -144,6 +144,11 @@ export const COLOR_THEMES = [
   "dawn",
   // FNXC:DashboardTheming 2026-07-31-21:28: Sage must stay order-synchronized across core, selector metadata, and both first-paint validators so saved preferences survive pre-hydration validation.
   "sage",
+  /*
+  FNXC:MidnightTheme 2026-08-03-02:05:
+  Midnight is a persisted selectable dashboard theme. Keep its id and order synchronized with selector metadata and both web/Electron first-paint validators so saved choices survive before hydration, while shadcn-ember remains the unset default.
+  */
+  "midnight",
   // FNXC:DashboardTheming 2026-07-31-20:39: Factory Dark must stay order-synchronized across core, selector metadata, and both first-paint validators so saved preferences survive pre-hydration validation.
   "factory-dark",
   // FNXC:DashboardTheming 2026-07-31-23:51: Factory Light must stay order-synchronized across core, selector metadata, and both first-paint validators so saved preferences survive pre-hydration validation.

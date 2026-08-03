@@ -698,3 +698,24 @@
     display: none;
   }
 }
+
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+ProjectSelector.css loads after ExecutorStatusBar.css, so reassert the desktop footer token for tablet/desktop mode after the mobile width override above — otherwise mid-tablet still reserves the taller mobile footer while the bar sits at bottom:0. Also un-hide the project selector for tablet-class ≤768 CSS px (width media hid it with true phones).
+*/
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-content--with-footer,
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .dashboard-project-shell {
+  --executor-footer-height: 36px;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .project-selector {
+  display: inline-flex;
+}
+
+html[data-viewport-mode="mobile"] .project-content--with-footer {
+  --executor-footer-height: calc(var(--space-lg) * 2 + var(--space-xs));
+}
+
+html[data-viewport-mode="mobile"] .project-selector {
+  display: none;
+}

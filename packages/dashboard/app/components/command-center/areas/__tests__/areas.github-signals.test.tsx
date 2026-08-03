@@ -114,14 +114,15 @@ describe("GithubArea", () => {
     expect(within(repoChart).getByLabelText("acme/alpha: 4 filed / 1 fixed")).toBeTruthy();
   });
 
-  it("renders resolved issues with safe outbound links and approximation labels", async () => {
+  it("renders long resolved content with safe links, title fallback, and exact or approximate metadata", async () => {
+    const longTitle = "Resolve a deliberately long imported GitHub issue title without forcing the Command Center table beyond its responsive container";
     apiMock.mockResolvedValue({
       ...githubFixture(),
       resolved: [
         {
           taskId: "FN-100",
-          taskTitle: "Fix alpha crash",
-          repo: "acme/alpha",
+          taskTitle: longTitle,
+          repo: "acme/a-deliberately-long-repository-reference",
           issueNumber: 123,
           url: "https://github.com/acme/alpha/issues/123",
           resolvedAt: "2026-06-10T12:34:56.000Z",
@@ -129,7 +130,7 @@ describe("GithubArea", () => {
         },
         {
           taskId: "FN-101",
-          taskTitle: "Patch unknown import",
+          taskTitle: "",
           repo: "(unknown)",
           issueNumber: null,
           url: null,
@@ -142,20 +143,30 @@ describe("GithubArea", () => {
     render(<GithubArea range={range7d} />);
 
     const section = await screen.findByTestId("cc-github-resolved");
+    const table = within(section).getByTestId("cc-github-resolved-table");
     expect(section.textContent).toContain("Resolved issues");
-    expect(section.textContent).toContain("acme/alpha#123");
-    expect(section.textContent).toContain("Fix alpha crash");
+    expect(section.textContent).toContain("acme/a-deliberately-long-repository-reference#123");
+    expect(section.textContent).toContain(longTitle);
     expect(section.textContent).toContain("FN-100");
     expect(section.textContent).toContain("(unknown)");
-    expect(section.textContent).toContain("Patch unknown import");
     expect(section.textContent).toContain("approx");
     expect(section.textContent).toContain("2026");
+    expect(table.className).toContain("cc-github-resolved-table");
 
-    const linkedIssue = within(section).getByRole("link", { name: "Open GitHub issue acme/alpha#123" });
+    const linkedIssue = within(section).getByRole("link", { name: "Open GitHub issue acme/a-deliberately-long-repository-reference#123" });
+    expect(linkedIssue.className).toContain("cc-github-resolved-issue-link");
     expect(linkedIssue.getAttribute("href")).toBe("https://github.com/acme/alpha/issues/123");
     expect(linkedIssue.getAttribute("target")).toBe("_blank");
     expect(linkedIssue.getAttribute("rel")).toBe("noopener noreferrer");
     expect(within(section).queryByRole("link", { name: /unknown/i })).toBeNull();
+
+    const title = within(section).getByText(longTitle);
+    expect(title.className).toContain("cc-github-resolved-task-title");
+    expect(within(section).getByText("FN-100").className).toContain("cc-github-resolved-task-id");
+    const fallback = within(section).getByText("FN-101");
+    expect(fallback.className).toContain("cc-github-resolved-task-title");
+    expect(within(section).queryByText("(FN-101)")).toBeNull();
+    expect(within(section).getByText("approx").className).toContain("cc-github-resolved-date-approx");
   });
 
   it("omits the resolved issues section for an empty resolved list", async () => {

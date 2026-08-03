@@ -234,7 +234,6 @@ const AUDITED_TS_SITES: Readonly<Record<string, number>> = {
   "packages/core/src/task-store/async-comments-attachments.ts": 5,
   "packages/core/src/task-store/audit-ops.ts": 1,
   "packages/core/src/task-store/branch-and-pr-entities.ts": 1,
-  "packages/core/src/task-store/lifecycle-ops.ts": 1,
   "packages/core/src/task-store/moves.ts": 1,
   "packages/core/src/task-store/task-id-integrity.ts": 1,
   "packages/core/src/task-store/update-task-deps.ts": 1,

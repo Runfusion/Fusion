@@ -482,6 +482,18 @@ all floating affordances so persisted desktop geometry cannot imply a draggable 
     margin-inline-end: 0;
   }
 
+  /*
+  FNXC:GitHubImport 2026-08-02-02:47:
+  FN-8722 makes the standalone GitHub Import host follow the full width-or-height
+  sheet contract. Its shared body gutter exists only to clear desktop resize handles;
+  once this predicate hides those handles, retaining the gutter shifts every shell
+  region left. Do not broaden this rule to embedded Import Tasks or the independent
+  detail window, and keep non-short tablet/desktop resize clearance intact.
+  */
+  .floating-window--github-import .floating-window__body {
+    margin-inline-end: 0;
+  }
+
   .floating-window--task-detail .task-detail-content--embedded,
   .floating-window--task-detail .task-detail-content--embedded > .modal-header {
     border-radius: 0;

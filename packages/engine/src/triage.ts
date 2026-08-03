@@ -190,7 +190,10 @@ in-process `processing` set this engine cannot see. A genuinely stranded card wa
 long instead of until the next engine restart.
 */
 const STALE_PLANNING_STATUS_GRACE_MS = 20 * 60_000;
+
+
 import { exec } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -429,6 +432,8 @@ export class TriageProcessor {
   private unregisterAdmissionProvider: (() => void) | null = null;
   /** Timestamps when tasks entered the `processing` set, for staleness detection. */
   private processingSince = new Map<string, number>();
+  /** Monotonic provenance token for attempt-local planner fallback observation. */
+  private planningAttemptSequence = 0;
   private wasGlobalPaused = false;
   private wasEnginePaused = false;
   private idleSemaphoreLeakCandidateSince: number | null = null;
@@ -2804,7 +2809,42 @@ export class TriageProcessor {
           }
           await this.store.logEntry(task.id, `Planning session running in task worktree ${planningCwd}`).catch(() => undefined);
         }
-        const { session } = await createResolvedAgentSession({
+        /*
+        FNXC:TriagePlanningRetry 2026-08-03-00:02:
+        Plan Review may only receive evidence from a clean planner attempt. Capture the root
+        PROMPT.md before this attempt starts, and close the fallback callback over this record so a
+        delayed runtime callback cannot authorize the artifact it helped write or contaminate a
+        later retry. The post-prompt microtask checkpoint admits runtime/plugin callbacks already
+        scheduled by the originating attempt; their observer promises settle before the handoff
+        decision while the shared observer keeps its normal logs and notifications.
+        */
+        const authoritativePromptPath = join(this.rootDir, promptPath);
+        // FNXC:TriagePlanningRetry 2026-08-03-00:02: absent artifacts have an explicit baseline;
+        // avoid an asynchronous ENOENT probe so rate-limit retry scheduling remains synchronous.
+        const planningAttemptBaseline = existsSync(authoritativePromptPath)
+          ? await readFile(authoritativePromptPath, "utf-8").catch(() => undefined)
+          : undefined;
+        const planningAttempt = {
+          id: `${task.id}:${++this.planningAttemptSequence}`,
+          baseline: planningAttemptBaseline,
+          fallbackEngaged: false,
+          fallbackSettlements: [] as Array<Promise<void>>,
+        };
+        const fallbackObserver = createFallbackModelObserver({
+          agent: "triage",
+          label: "triage",
+          store: this.store,
+          taskId: task.id,
+          taskTitle: task.title,
+        });
+        const onFallbackModelUsed = (payload: Parameters<typeof fallbackObserver>[0]): Promise<void> => {
+          planningAttempt.fallbackEngaged = true;
+          const settlement = Promise.resolve(fallbackObserver(payload));
+          planningAttempt.fallbackSettlements.push(settlement);
+          return settlement;
+        };
+
+        const { session, settleFallbackDispatch, runtimeId } = await createResolvedAgentSession({
           sessionPurpose: "triage",
           runtimeHint: triageRuntimeHint,
           pluginRunner: this.options.pluginRunner,
@@ -2853,13 +2893,7 @@ export class TriageProcessor {
           taskTitle: task.title,
           actionGateContext: this.buildActionGateContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
           permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, triageRunContext.runId, assignedAgent, settings.defaultAgentPermissionPolicy),
-          onFallbackModelUsed: createFallbackModelObserver({
-            agent: "triage",
-            label: "triage",
-            store: this.store,
-            taskId: task.id,
-            taskTitle: task.title,
-          }),
+          onFallbackModelUsed,
         });
 
         const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.planningThinkingLevel ?? task.thinkingLevel));
@@ -3000,6 +3034,18 @@ export class TriageProcessor {
             agentPrompt,
             imageContents.length > 0 ? { images: imageContents } : undefined,
           );
+          /*
+          FNXC:TriagePlanningRetry 2026-08-03-01:01:
+          Plan Review needs a finite runtime-owned admission-close signal, not a global async-hooks
+          timer drain. Ordinary planner housekeeping can schedule arbitrary one-shot timers and must
+          not delay a clean plan. The originating runtime explicitly settles its fallback-dispatch
+          lifecycle; a runtime with no boundary fails closed into bounded planning recovery, then
+          triage observes every callback it admitted before accepting this attempt.
+          */
+          const fallbackDispatchBoundaryMissing = typeof settleFallbackDispatch !== "function";
+          if (!fallbackDispatchBoundaryMissing) {
+            await settleFallbackDispatch();
+          }
 
           // Re-raise errors that pi-coding-agent swallowed after exhausting retries.
           checkSessionError(session);
@@ -3147,14 +3193,50 @@ export class TriageProcessor {
             }
           }
 
-          // FN-5220: planning agents that emit a `DUPLICATE: FN-NNNN` redirect
-          // short-circuit normal spec finalization.
-          const duplicateReport: PlanningHandoffReport = { outcome: "parked" };
-          if (await this.tryFinalizeExplicitDuplicateMarker(task, written, settings, {
-            isReplan,
-            feedback,
-          }, duplicateReport)) {
-            this.options.onSpecifyComplete?.(task, duplicateReport);
+          // The runtime-owned dispatch lifecycle above has closed this attempt's callback admission;
+          // now await observer side effects registered by callbacks before the handoff decision.
+          let settledFallbackCount = 0;
+          while (settledFallbackCount < planningAttempt.fallbackSettlements.length) {
+            const pendingSettlements = planningAttempt.fallbackSettlements.slice(settledFallbackCount);
+            settledFallbackCount = planningAttempt.fallbackSettlements.length;
+            await Promise.all(pendingSettlements);
+          }
+          const artifactChangedByAttempt = planningAttempt.baseline !== written;
+          if (fallbackDispatchBoundaryMissing || planningAttempt.fallbackEngaged || !artifactChangedByAttempt) {
+            const failure = fallbackDispatchBoundaryMissing
+              ? `Planner runtime ${runtimeId} did not provide a fallback-dispatch settlement boundary for attempt ${planningAttempt.id}`
+              : planningAttempt.fallbackEngaged
+                ? `Planner fallback engaged during attempt ${planningAttempt.id}`
+                : `Planner did not update the authoritative PROMPT.md during attempt ${planningAttempt.id}`;
+            const decision = computeRecoveryDecision({
+              recoveryRetryCount: task.recoveryRetryCount,
+              nextRecoveryAt: task.nextRecoveryAt,
+            });
+
+            if (decision.shouldRetry) {
+              const retryMessage = `${failure} — retry ${decision.nextState.recoveryRetryCount}/${MAX_RECOVERY_RETRIES} in ${formatDelay(decision.delayMs)}.`;
+              planLog.warn(`${task.id} ${retryMessage}`);
+              await this.store.logEntry(task.id, retryMessage);
+              await this.updatePlanningStateIfStillCurrent(task, {
+                status: this.restoreStatusAfterInterruptedTriageWork(task),
+                error: null,
+                recoveryRetryCount: decision.nextState.recoveryRetryCount,
+                nextRecoveryAt: decision.nextState.nextRecoveryAt,
+              });
+              return;
+            }
+
+            const failureMessage = `${failure} after ${MAX_RECOVERY_RETRIES} retries. Retry after adjusting the task prompt or model.`;
+            planLog.error(`${task.id} clean planning attempt retry budget exhausted`);
+            await this.store.logEntry(task.id, failureMessage);
+            if (await this.updatePlanningStateIfStillCurrent(task, {
+              status: "failed",
+              error: failureMessage,
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
+            })) {
+              await this.backfillBlankTitleAfterTerminalTriageFailure(task);
+            }
             return;
           }
 
@@ -3201,6 +3283,27 @@ export class TriageProcessor {
               await this.backfillBlankTitleAfterTerminalTriageFailure(task);
             }
             return;
+          }
+
+          // FNXC:TriagePlanningRetry 2026-08-03-00:20: A duplicate remains a separate closure
+          // path, but fallback-authored or inherited markers cannot bypass clean-attempt admission.
+          const duplicateReport: PlanningHandoffReport = { outcome: "parked" };
+          if (await this.tryFinalizeExplicitDuplicateMarker(task, written, settings, {
+            isReplan,
+            feedback,
+          }, duplicateReport)) {
+            this.options.onSpecifyComplete?.(task, duplicateReport);
+            return;
+          }
+
+          // FNXC:TriagePlanningRetry 2026-08-03-00:02: a clean replacement consumed no
+          // recovery budget; clear it only after the finalization preconditions have passed.
+          if (task.recoveryRetryCount != null || task.nextRecoveryAt != null) {
+            await this.updatePlanningStateIfStillCurrent(task, {
+              error: null,
+              recoveryRetryCount: null,
+              nextRecoveryAt: null,
+            });
           }
 
           const finalizeReport = await this.finalizeApprovedTask(task, written, settings, {

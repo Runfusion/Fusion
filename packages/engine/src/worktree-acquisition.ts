@@ -59,7 +59,7 @@ export interface AcquireTaskWorktreeOptions {
   store: TaskStore;
   settings: Partial<Settings>;
   pool?: WorktreePool;
-  logger?: { log: (m: string) => void; warn: (m: string) => void; error?: (m: string) => void };
+  logger?: { log: (m: string) => void; warn: (m: string) => void; debug?: (m: string) => void; error?: (m: string) => void };
   audit?: Pick<RunAuditor, "git" | "filesystem">;
   runContext?: RunMutationContext;
   runInitCommand?: boolean;
@@ -556,7 +556,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
   /** Warm-reuse an existing, usable, branch-matched worktree (mirrors the resume path). */
   const reuseWarmWorktree = async (path: string, resumedBranch: string, source: "existing"): Promise<AcquireTaskWorktreeResult> => {
-    logger?.log(`Reusing existing worktree: ${path}`);
+    // FNXC:EngineDiagnostics 2026-08-03-05:54: warm reuse is the common healthy path; Worktree created stays info.
+    if (logger?.debug) logger.debug(`Reusing existing worktree: ${path}`);
     const cleanup = await removeDesktopBuildArtifacts(path, logger);
     if (cleanup.removed.length > 0) {
       await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);
@@ -679,7 +680,8 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
   }
 
   if (task.worktree && isResume) {
-    logger?.log(`Reusing existing worktree: ${worktreePath}`);
+    // FNXC:EngineDiagnostics 2026-08-03-05:54: resume reuses the pinned path — expected, not a default-visible event.
+    if (logger?.debug) logger.debug(`Reusing existing worktree: ${worktreePath}`);
     const cleanup = await removeDesktopBuildArtifacts(worktreePath, logger);
     if (cleanup.removed.length > 0) {
       await store.logEntry(task.id, `Removed desktop build artifacts from worktree: ${cleanup.removed.join(", ")}`, undefined, runContext);

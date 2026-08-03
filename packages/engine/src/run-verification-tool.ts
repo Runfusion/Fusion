@@ -769,9 +769,14 @@ async function runVerificationCommandUnlocked(
       const success = expectFailure ? true : zeroExit;
 
       if (!success && !timedOut) {
-        executorLog.warn(
-          `[fn_run_verification] command failed (exit=${exitCode}, signal=${signal ?? "none"}): ${command}`,
-        );
+        /*
+        FNXC:EngineDiagnostics 2026-08-03-05:54:
+        Agent verification fails routinely during implement/fix loops; the tool result already
+        returns exit code + summarized output to the agent. A warn here doubled every red run
+        (command failed + done success=false) and yellow-flagged normal work. Keep one failure
+        line at info on the done path; demote this detail to debug.
+        */
+        executorLog.debug(`[fn_run_verification] command failed (exit=${exitCode}, signal=${signal ?? "none"}): ${command}`);
       }
       if (!timedOut) {
         reapVerificationProcessGroup(supervised);

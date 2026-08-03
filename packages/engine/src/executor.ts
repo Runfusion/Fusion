@@ -22,7 +22,6 @@ import {
   buildExternalBlockMetadataPatch,
   classifyBlockedExit,
   countBlockedThrashHits,
-  isDurableBlockedError,
   isDurableBlockedTask,
   partitionBlockedByRefs,
 } from "./execution-block-classifier.js";
@@ -1415,7 +1414,7 @@ If you have just finished a step's work, immediately call \`fn_task_update\` to 
 
 The user is not watching this conversation in real-time. They will read the final result. Asking permission wastes a full retry cycle and may orphan committed work.
 
-**Cannot proceed — the honest blocked exit.** If the work genuinely cannot be finished (an upstream API break, a missing prerequisite task, an unresolvable external error, or a **file claim / open PR collision**), call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"] or ["pr:2398"])\`. File-claim reasons must name the PR (e.g. "actively claimed by PR #2398" + \`blockedBy:["pr:2398"]\`). That parks durable failed WITHOUT auto-replan so the engine does not thrash; task IDs requeue when those tasks complete; PR refs clear when the PR merges/closes. Do NOT skip remaining steps to fake completion.
+**Cannot proceed — the honest blocked exit.** If the work genuinely cannot be finished (an upstream API break, a missing prerequisite task, or an unresolvable external error), call \`fn_task_done(outcome="blocked", reason="<concrete blocker + what would unblock it>", blockedBy=["FN-XXXX"])\`. That parks durable failed WITHOUT auto-replan so the engine does not thrash; task IDs requeue when those tasks complete. Blockers must be Fusion board tasks — do NOT treat open GitHub PRs touching the same files as blockers; other PRs are not claims on your file scope. Do NOT skip remaining steps to fake completion.
 This is THE correct action when you are stuck — do NOT instead mark the remaining steps \`skipped\` and call \`fn_task_done\` to make the task look finished. Skipping steps to escape a blocker launders a failure into \`done\` and is never the right move. (\`skipped\` remains valid only for the stale-premise path below, when the requested work is already present on HEAD.) Never write the blocker as plain prose.
 
 ## How to work
@@ -9293,7 +9292,12 @@ export class TaskExecutor {
         await this.captureBaseCommitSha(task, acquisition.worktreePath, audit, { isResume: false });
       }
       this.options.onStart?.(task, acquisition.worktreePath);
-      executorLog.log(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
+      /*
+      FNXC:EngineDiagnostics 2026-08-03-05:54:
+      Per-node worktree acquisition is expected graph plumbing once the task has a worktree;
+      Worktree created / Starting lines remain the operator-visible lifecycle events.
+      */
+      executorLog.debug(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
       return await this.store.getTask(task.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -9872,9 +9876,8 @@ export class TaskExecutor {
     } else if (mode === "prompt") {
       const injected = await this.buildInjectedRuntimeEnv(live.id, worktreePath, executionTarget.branch ?? undefined);
       nodeEnv = injected.env;
-      executorLog.log(
-        `${live.id}: graph node '${node.id}' runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`,
-      );
+      // FNXC:EngineDiagnostics 2026-08-03-05:54: per-node PATH/key injection is plumbing, not a lifecycle event.
+      executorLog.debug(`${live.id}: graph node '${node.id}' runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`);
     }
 
     // (U3) Genuinely-unattended signal. `unattended` is an explicit opt-in
@@ -12288,70 +12291,6 @@ export class TaskExecutor {
     }
   }
 
-  /*
-  FNXC:HonestBlockedExit 2026-08-02-01:30:
-  Agents often log `BLOCKED: … actively claimed by PR #N` without calling fn_task_done.
-  Without promotion, incomplete-step graph resume requeues the card and thrash restarts
-  (FN-8700). Promote claim/external blocks to a durable failed park here.
-  */
-  private async parkDurableBlockedFromRecentLog(live: Task): Promise<boolean> {
-    const recent = [...(live.log ?? [])].reverse().find((entry) => {
-      const action = entry.action ?? "";
-      return action.startsWith("BLOCKED:") || action.includes("durable external block");
-    });
-    if (!recent?.action) return false;
-    const reason = recent.action.startsWith("BLOCKED:")
-      ? recent.action.slice("BLOCKED:".length).trim()
-      : recent.action;
-    const classification = classifyBlockedExit(reason, []);
-    if (classification.allowAutoReplan) return false;
-
-    const thrashCount = countBlockedThrashHits(live.log, classification.thrashSignature) + 1;
-    const thrashExhausted = thrashCount >= BLOCKED_THRASH_LIMIT;
-    const parkError = thrashExhausted
-      ? `BLOCKED: ${reason} [thrash-exhausted after ${thrashCount} identical durable blocks]`
-      : `BLOCKED: ${reason}`;
-    const metaPatch = buildExternalBlockMetadataPatch(classification, thrashCount);
-    await this.store.updateTask(live.id, {
-      status: "failed",
-      error: parkError,
-      paused: false,
-      pausedByAgentId: null,
-      sourceMetadataPatch: metaPatch,
-    }, this.getRunContextFor(live.id));
-    await this.store.logEntry(
-      live.id,
-      thrashExhausted
-        ? `${parkError} — promoted from session log; thrash-exhausted, no auto-requeue`
-        : `${parkError} — promoted from session log to durable external block park (class=${classification.class})`,
-      undefined,
-      this.getRunContextFor(live.id),
-    );
-    await this.store.recordRunAuditEvent?.({
-      taskId: live.id,
-      agentId: "executor",
-      runId: generateSyntheticRunId("execution-blocked-log-promote", live.id),
-      domain: "database",
-      mutationType: "task:execution-blocked-parked",
-      target: live.id,
-      metadata: {
-        taskId: live.id,
-        blockedBy: [],
-        hasReason: true,
-        parkedAs: "failed",
-        blockedClass: classification.class,
-        thrashCount,
-        thrashExhausted,
-        prNumbers: classification.prNumbers,
-        source: "session-log-promote",
-      },
-    });
-    executorLog.warn(
-      `${live.id}: promoted durable BLOCKED from session log (class=${classification.class}; thrash=${thrashCount})`,
-    );
-    return true;
-  }
-
   private async routeGraphFailureToExecutionResume(
     live: TaskDetail,
     failedNode: string,
@@ -12373,18 +12312,16 @@ export class TaskExecutor {
     if (live.paused || live.userPaused === true) return false;
     if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
     /*
-    FNXC:HonestBlockedExit 2026-08-02-01:30:
-    Durable file-claim / external BLOCKED parks must NOT bounce to todo for execution resume
-    (FN-8700). Incomplete steps after a claim block are expected — re-running re-hits the claim.
+    FNXC:HonestBlockedExit 2026-08-02-23:59:
+    Durable external (task-dependency) BLOCKED parks must NOT bounce to todo for execution
+    resume — the scheduler requeues them when the blocking tasks complete. PR/file-claim
+    parks and the session-log BLOCKED promotion are removed (operator decision, FN-8728):
+    open PRs are never blockers, so only metadata-classed task-dependency parks are honored.
     */
-    if (isDurableBlockedTask(live) || isDurableBlockedError(live.error)) {
+    if (isDurableBlockedTask(live)) {
       executorLog.log(
-        `${live.id}: graph failure resume skipped — durable BLOCKED park honored (class from error/metadata)`,
+        `${live.id}: graph failure resume skipped — durable BLOCKED park honored (task-dependency block)`,
       );
-      return false;
-    }
-    // Agent often logs BLOCKED: without fn_task_done; promote to durable park and do not requeue.
-    if (await this.parkDurableBlockedFromRecentLog(live)) {
       return false;
     }
     /*
@@ -13434,9 +13371,8 @@ export class TaskExecutor {
 
       const injected = await this.buildInjectedRuntimeEnv(task.id, worktreePath, acquisition.branch ?? undefined);
       taskEnv = injected.env;
-      executorLog.log(
-        `${task.id}: executor runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`,
-      );
+      // FNXC:EngineDiagnostics 2026-08-03-05:54: env injection counts are session setup, not operator state changes.
+      executorLog.debug(`${task.id}: executor runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`);
 
       this.options.onStart?.(task, worktreePath);
 
@@ -17412,10 +17348,10 @@ export class TaskExecutor {
           { description: "\"completed\" (default) finishes the task; \"blocked\" honestly parks it as failed because the work cannot proceed. Use \"blocked\" instead of skipping steps + completing when you are stuck." },
         )),
         blockedBy: Type.Optional(Type.Array(Type.String(), {
-          description: "When outcome=\"blocked\": task IDs (e.g. [\"FN-8145\"]) and/or PR refs (e.g. [\"pr:2398\"]) that must clear before this task can proceed. Task IDs become real dependency edges; PR refs are stored as external blockers (durable park until the PR merges/closes).",
+          description: "When outcome=\"blocked\": Fusion task IDs (e.g. [\"FN-8145\"]) that must complete before this task can proceed. Task IDs become real dependency edges. Open GitHub PRs are not valid blockers.",
         })),
         reason: Type.Optional(Type.String({
-          description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it. File-claim / open-PR collisions should name the PR (e.g. \"actively claimed by PR #2398\").",
+          description: "Required when outcome=\"blocked\": concrete explanation of what is blocking the work and what is needed to unblock it.",
         })),
       }),
       execute: async (_id: string, params: { summary?: string; outcome?: "completed" | "blocked"; blockedBy?: string[]; reason?: string }) => {
@@ -17441,14 +17377,14 @@ export class TaskExecutor {
             new Set((params.blockedBy ?? []).map((id) => id.trim()).filter((id) => id.length > 0)),
           );
           /*
-          FNXC:HonestBlockedExit 2026-08-02-01:30:
-          FN-8700: empty blockedBy + file-claim/PR reason is NOT a plan defect. Auto-replan re-ran the
-          same claimed paths forever. Classify the reason (and pr:N refs) so claim/external blocks
-          park durable failed; only pure plan defects keep the needs-replan path (FN-8634).
+          FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
+          Blocked exits classify on Fusion task dependencies ONLY. The FN-8700 file-claim/open-PR
+          classification is removed: open PRs are never blockers, legacy pr:N refs are discarded,
+          and reason prose never makes a block durable. Task deps → durable failed park (requeues
+          when deps complete); no deps → plan defect → needs-replan (FN-8634).
           */
           const classification = classifyBlockedExit(reason, rawBlockedBy);
           const { taskIds: blockedByIds } = partitionBlockedByRefs(rawBlockedBy);
-          // Prefer task IDs from blockedBy; classification may only carry PRs from reason text.
           const thrashCount = countBlockedThrashHits(
             blockedTask.log,
             classification.thrashSignature,
@@ -17458,16 +17394,14 @@ export class TaskExecutor {
           const parkError = thrashExhausted
             ? `BLOCKED: ${reason} [thrash-exhausted after ${thrashCount} identical durable blocks]`
             : `BLOCKED: ${reason}`;
-          // Record blockedBy TASK ids as real dependency edges (union with existing). PR refs stay in
-          // sourceMetadata.externalBlockers — they are not task rows and cannot go through assertTaskExists.
+          // Record blockedBy TASK ids as real dependency edges (union with existing).
           const mergedDependencies = blockedByIds.length > 0
             ? Array.from(new Set([...(blockedTask.dependencies ?? []), ...blockedByIds]))
             : undefined;
           /*
           FNXC:HonestBlockedExit 2026-08-01-01:40 (operator: FN-8634 "shouldn't show a failed badge"):
-          When `blockedBy` is EMPTY AND the reason is a plan defect, park needs-replan (auto-replan).
-          Durable external/file-claim blocks always park failed — even with empty task deps — so the
-          scheduler and graph-resume paths leave the card alone until an operator or PR-clear sweep acts.
+          When `blockedBy` is EMPTY, park needs-replan (auto-replan) — nothing external to wait for.
+          Task-dependency blocks park failed so the scheduler leaves the card alone until deps complete.
           */
           const autoReplanPark = classification.allowAutoReplan && blockedByIds.length === 0 && !thrashExhausted;
           const metaPatch = !autoReplanPark
@@ -17507,9 +17441,7 @@ export class TaskExecutor {
               taskId,
               thrashExhausted
                 ? `${parkError} — durable external block thrash-exhausted (signature=${classification.thrashSignature}); parked failed, no auto-requeue`
-                : classification.externalBlockers.length > 0
-                  ? `${parkError} — durable external block (${classification.class}; pr=${classification.prNumbers.join(",") || "none"}; tasks=${blockedByIds.join(",") || "none"}) — parked failed (honest blocked exit; steps preserved)`
-                  : `${parkError} — recorded dependencies: ${blockedByIds.join(", ")} — parked failed (honest blocked exit; steps preserved)`,
+                : `${parkError} — recorded dependencies: ${blockedByIds.join(", ")} — parked failed (honest blocked exit; steps preserved)`,
               undefined,
               this.getRunContextFor(taskId),
             );
@@ -17529,7 +17461,6 @@ export class TaskExecutor {
               blockedClass: classification.class,
               thrashCount,
               thrashExhausted,
-              prNumbers: classification.prNumbers,
             },
           });
           await this.persistTokenUsage(taskId);
@@ -17539,7 +17470,7 @@ export class TaskExecutor {
                 ? "parked for automatic replan via blocked exit (plan defect, no dependencies)"
                 : thrashExhausted
                   ? `parked failed via blocked thrash-exhaustion (class=${classification.class})`
-                  : `parked failed via durable blocked exit (class=${classification.class}; blockedBy tasks: ${blockedByIds.join(", ") || "none"}; pr: ${classification.prNumbers.join(",") || "none"})`
+                  : `parked failed via durable blocked exit (class=${classification.class}; blockedBy tasks: ${blockedByIds.join(", ") || "none"})`
             }`,
           );
 
@@ -17547,14 +17478,10 @@ export class TaskExecutor {
             content: [{
               type: "text" as const,
               text: autoReplanPark
-                ? "Task parked as blocked with no external/file-claim blocker — queued for automatic replan so the plan can resolve the conflict. Steps left in their true statuses; no completion recorded."
+                ? "Task parked as blocked with no blocking task dependencies — queued for automatic replan so the plan can resolve the conflict. Steps left in their true statuses; no completion recorded."
                 : thrashExhausted
-                  ? "Task parked as blocked (failed) after repeated identical durable blocks — no further automatic retries. Resolve the external claim/PR or replan manually."
-                  : blockedByIds.length > 0
-                    ? `Task parked as blocked (failed). Recorded ${blockedByIds.length} blocking task dependency(ies); it will requeue once they complete. Steps left in their true statuses; no completion recorded.`
-                    : classification.prNumbers.length > 0
-                      ? `Task parked as blocked (failed) on open PR #${classification.prNumbers.join(", #")}. It will not auto-replan or re-execute until that claim clears or an operator retries. Steps preserved.`
-                      : "Task parked as blocked (failed) on a durable external/file-claim blocker. No automatic replan. Steps preserved.",
+                  ? "Task parked as blocked (failed) after repeated identical durable blocks — no further automatic retries. Resolve the blocking tasks or replan manually."
+                  : `Task parked as blocked (failed). Recorded ${blockedByIds.length} blocking task dependency(ies); it will requeue once they complete. Steps left in their true statuses; no completion recorded.`,
             }],
             details: {},
           };
@@ -18459,7 +18386,11 @@ ${scopeGuard}
       }
 
       await this.store.updateTask(task.id, { baseCommitSha });
-      executorLog.log(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`);
+      /*
+      FNXC:EngineDiagnostics 2026-08-03-05:54:
+      Base-SHA capture is per-task setup bookkeeping (also in run-audit). Worktree created stays info.
+      */
+      executorLog.debug(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`);
       await audit.git({ type: "commit:create", target: baseCommitSha, metadata: { purpose: "base", preserved: false } });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -21684,9 +21615,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       const ir = await resolveWorkflowIrForTask(this.store, taskId);
       const stepSource = this.resolveTaskStepSource(ir);
       if (stepSource) {
-        executorLog.log(
-          `${taskId}: reconcile step source governed by parse-steps(artifact=${stepSource.artifact}, parser=${stepSource.parser})`,
-        );
+        // FNXC:EngineDiagnostics 2026-08-03-05:54: parse-steps source read-through is diagnostic only.
+        executorLog.debug(`${taskId}: reconcile step source governed by parse-steps(artifact=${stepSource.artifact}, parser=${stepSource.parser})`);
       }
     } catch {
       // Read-through is diagnostic only; never block reconcile on it.

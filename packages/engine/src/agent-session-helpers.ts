@@ -158,6 +158,8 @@ export interface ResolvedSessionResult {
   session: AgentSession;
   /** Path to the persisted session file (undefined for in-memory sessions) */
   sessionFile?: string;
+  /** Optional runtime-owned boundary for deferred fallback callback dispatch. */
+  settleFallbackDispatch?: () => Promise<void>;
   /** The runtime ID that was used */
   runtimeId: string;
   /** Whether the runtime was explicitly configured */
@@ -1178,6 +1180,7 @@ export async function createResolvedAgentSession(
   return {
     session: result.session,
     sessionFile: result.sessionFile,
+    settleFallbackDispatch: result.settleFallbackDispatch,
     runtimeId: resolved.runtimeId,
     wasConfigured: resolved.wasConfigured,
   };

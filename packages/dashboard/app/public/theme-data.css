@@ -8,7 +8,7 @@
    Theme token translucency uses color-mix(in srgb, var(--token) N%, transparent) or exact literal color-mix values for glass surfaces. Raw RGB alpha color functions are banned outside var() fallbacks by FN-6489.
    ============================================================ */
 
-/* Aurora, Calm, Dawn, Sage, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
+/* Aurora, Calm, Dawn, Sage, Midnight, Factory Dark, and Factory Light swatches stay globally resolvable while a different theme is active. */
 :root {
   --aurora-swatch-sample-1: #0a1022;
   --aurora-swatch-sample-2: #162044;
@@ -26,6 +26,10 @@
   --sage-swatch-sample-2: #27382e;
   --sage-swatch-sample-3: #9ab58a;
   --sage-swatch-sample-4: #8baaa0;
+  --midnight-swatch-sample-1: #0b1026;
+  --midnight-swatch-sample-2: #1b2450;
+  --midnight-swatch-sample-3: #a78bfa;
+  --midnight-swatch-sample-4: #67d4e8;
   --factory-dark-swatch-sample-1: #0d0f10;
   --factory-dark-swatch-sample-2: #1a1d1f;
   --factory-dark-swatch-sample-3: #e89532;
@@ -53,6 +57,10 @@
   --sage-swatch-sample-2: #e2eadf;
   --sage-swatch-sample-3: #55764d;
   --sage-swatch-sample-4: #46756b;
+  --midnight-swatch-sample-1: #f5f6ff;
+  --midnight-swatch-sample-2: #e2e6fa;
+  --midnight-swatch-sample-3: #5134a3;
+  --midnight-swatch-sample-4: #16778c;
   --factory-dark-swatch-sample-1: #eceef0;
   --factory-dark-swatch-sample-2: #d9dde0;
   --factory-dark-swatch-sample-3: #a95612;
@@ -7428,6 +7436,82 @@ FN-8151 adds Cobalt, Clay, and Moss with complete dark and light token ramps. Ke
 FNXC:DashboardTheming 2026-07-20-00:00:
 Aurora gives operators navy/teal/violet dark surfaces and misty light surfaces. Literal palette values stay in these canonical tokens, while globally defined swatch variables keep the unselected option accurate in either mode.
 */
+/*
+FNXC:MidnightTheme 2026-08-03-02:05:
+Midnight gives operators deep-navy surfaces with restrained violet/indigo accents in dark mode and a cool pale counterpart in light mode. These complete token blocks preserve distinct semantic statuses, AA-readable text and CTA pairs, and globally resolvable swatch previews for unselected selector options.
+*/
+[data-color-theme="midnight"] {
+  --bg: #0b1026;
+  --surface: #131a38;
+  --card: #1b2450;
+  --card-hover: #273164;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #3b477e;
+  --text: #f0f2ff;
+  --text-muted: #bdc5ea;
+  --text-dim: #8490bc;
+
+  --todo: #98adff;
+  --in-progress: #67d4e8;
+  --in-progress-rgb: 103, 212, 232;
+  --in-review: #b69cff;
+  --triage: #f3bd66;
+  --done: #8b9bc7;
+  --color-success: #72d6ad;
+  --color-warning: #f3bd66;
+  --color-error: #fa8499;
+  --color-info: #76b9ff;
+
+  --cta-bg: #6648c5;
+  --cta-border: #a78bfa;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #795dd5;
+  --cta-border-hover: #c4b4ff;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --accent: #a78bfa;
+  --accent-text: #171035;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 12px color-mix(in srgb, var(--accent) 28%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+[data-color-theme="midnight"][data-theme="light"] {
+  --bg: #f5f6ff;
+  --surface: #e9ecfa;
+  --card: #ffffff;
+  --card-hover: #dde2f6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #b9c2e2;
+  --text: #172044;
+  --text-muted: #4e5d87;
+  --text-dim: #7381a9;
+
+  --todo: #425cae;
+  --in-progress: #16778c;
+  --in-progress-rgb: 22, 119, 140;
+  --in-review: #6246ad;
+  --triage: #946015;
+  --done: #68789f;
+  --color-success: #247856;
+  --color-warning: #946015;
+  --color-error: #bd4058;
+  --color-info: #266eb1;
+
+  --cta-bg: #5134a3;
+  --cta-border: #412887;
+  --cta-text: #ffffff;
+  --cta-bg-hover: #432989;
+  --cta-border-hover: #341f70;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 24%, transparent);
+  --accent: #5134a3;
+  --accent-text: #ffffff;
+  --logo-accent: var(--accent);
+  --shadow-glow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 [data-color-theme="aurora"] {
   --bg: #0a1022;
   --surface: #101a35;

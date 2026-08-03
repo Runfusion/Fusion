@@ -11,6 +11,16 @@ import type { SettingsSearchEntry } from "../search/types";
 export const projectModelsSearchEntries: SettingsSearchEntry[] = [
   {
     sectionId: "project-models",
+    key: "executorEscalationModel",
+    labelKey: "settings.projectModels.executorEscalationModel",
+    labelFallback: "Executor Escalation Model",
+    helpKey: "settings.projectModels.executorEscalationModelHelp",
+    helpFallback:
+      "Alternate model used once tool-failure retries are exhausted. No default — unset means no alternate model; configure escalation policy and an optional node target in Scheduling.",
+    keywords: ["tool failure", "alternate model", "retry model", "provider", "executor"],
+  },
+  {
+    sectionId: "project-models",
     key: "tokenCap",
     labelKey: "settings.projectModels.tokenCap",
     labelFallback: "Token Cap",

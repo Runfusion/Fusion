@@ -69,6 +69,8 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 
+const floatingWindowCss = readFileSync(resolve(__dirname, "../FloatingWindow.css"), "utf8");
+
 const mockTask: Task = {
   id: "FN-001",
   title: "Test Issue",
@@ -117,6 +119,22 @@ const mockPulls = [
 describe("GitHubImportModal", () => {
   const onClose = vi.fn();
   const onImport = vi.fn();
+
+  /*
+  FNXC:GitHubImport 2026-08-02-02:47:
+  This stylesheet guard complements the emitted-CSS Chromium geometry regression: only the
+  standalone importer clears the shared gutter under FloatingWindow's canonical sheet predicate.
+  */
+  it("clears the standalone sheet gutter without changing embedded or detail presentations", () => {
+    const sheetStart = floatingWindowCss.indexOf("@media (max-width: 767.98px), (max-height: 480px)");
+    const sheetEnd = floatingWindowCss.indexOf("@media (max-width: 767.98px) {", sheetStart + 1);
+    const sheetStyles = floatingWindowCss.slice(sheetStart, sheetEnd);
+
+    expect(sheetStyles).toContain(".floating-window--github-import .floating-window__body {");
+    expect(sheetStyles).toContain("margin-inline-end: 0;");
+    expect(sheetStyles).not.toContain(".floating-window--github-import-detail .floating-window__body");
+    expect(sheetStyles).not.toContain(".github-import-embedded");
+  });
 
   it("uses color-mix tokens for focus and selection surfaces", () => {
     const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");

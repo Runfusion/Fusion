@@ -97,4 +97,29 @@ export const logSeverityManifest: SeverityManifestEntry[] = [
   { pkg: "engine", file: "executor.ts", anchor: "tokenCacheMetricsLog.debug(JSON.stringify({", priorSeverity: "log", severity: "debug" },
   { pkg: "engine", file: "runtimes/in-process-runtime.ts", anchor: "runtimeLog.debug(`Specifying ${t.id}...`)", priorSeverity: "log", severity: "debug" },
   { pkg: "engine", file: "triage.ts", anchor: "planLog.debug(`${taskId}: failed to read PROMPT.md during ${context} (${promptPath}): ${msg}`)", priorSeverity: "warn", severity: "debug" },
+  /*
+  FNXC:EngineDiagnostics 2026-08-03-05:54:
+  Operator TUI audit of a busy board: demote expected skips, schedule-trigger echoes,
+  session/setup bookkeeping, and routine verification command-fail detail so default
+  severity stays lifecycle transitions (Starting/Specifying/Worktree created/merge/move).
+  */
+  { pkg: "engine", file: "scheduler.ts", anchor: "No linked feature found for task ${taskId}", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "scheduler.ts", anchor: "Task created — triggering scheduling", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "scheduler.ts", anchor: "Task moved to ${to} — triggering scheduling", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "auto-claim-snapshot.ts", anchor: "invalidate reason=${reason}", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "agent-heartbeat.ts", anchor: "Assignment trigger skipped for ${agent.id} (ephemeral/internal)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "agent-heartbeat.ts", anchor: "Assignment trigger skipped for ${agent.id} (disabled)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "agent-heartbeat.ts", anchor: "Assignment trigger skipped for ${agent.id} (active run)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "runtimes/in-process-runtime.ts", anchor: "Scheduled task ${task.id}", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "runtimes/in-process-runtime.ts", anchor: "Started executing task ${task.id} in ${worktreePath}", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "executorLog.debug(`${task.id}: executor runtime env injected", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "executorLog.debug(`${live.id}: graph node '${node.id}' runtime env injected", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "executorLog.debug(`${task.id}: workflow node '${nodeId}' acquired worktree", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "executorLog.debug(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "executor.ts", anchor: "executorLog.debug(`${taskId}: reconcile step source governed by parse-steps", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "run-verification-tool.ts", anchor: "executorLog.debug(`[fn_run_verification] command failed (exit=", priorSeverity: "warn", severity: "debug" },
+  { pkg: "engine", file: "worktree-acquisition.ts", anchor: "logger.debug(`Reusing existing worktree: ${path}`)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "worktree-acquisition.ts", anchor: "logger.debug(`Reusing existing worktree: ${worktreePath}`)", priorSeverity: "log", severity: "debug" },
+  { pkg: "engine", file: "ephemeral-worker-manager.ts", anchor: "this.log.debug(`Skipping task-worker creation for ${task.id}: task already has execution owner`)", priorSeverity: "warn", severity: "debug" },
+  { pkg: "core", file: "postgres/embedded-lifecycle.ts", anchor: "log.debug(`embedded postgres: already running on port", priorSeverity: "log", severity: "debug" },
 ];

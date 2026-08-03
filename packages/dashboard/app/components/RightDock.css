@@ -258,8 +258,20 @@ wide child cannot collapse the flex line.
   min-block-size: 0;
 }
 
+/*
+FNXC:ViewportChrome 2026-08-03-00:13:
+Right dock hide follows JS viewport mode (authoritative mobile gate) rather than width alone, matching LeftSidebarNav/MobileNavBar so tablet-class narrow viewports keep the dock when mode=tablet. Width media remains a no-JS/first-paint fallback for true phones.
+*/
 @media (max-width: 768px) {
   .right-dock {
     display: none;
   }
+}
+
+html[data-viewport-mode="mobile"] .right-dock {
+  display: none;
+}
+
+html:is([data-viewport-mode="tablet"], [data-viewport-mode="desktop"]) .right-dock {
+  display: flex;
 }

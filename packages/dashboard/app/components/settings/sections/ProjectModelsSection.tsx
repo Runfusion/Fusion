@@ -7,6 +7,7 @@ import { SettingsToggleRow } from "../SettingsToggleRow";
 import { SettingsSelectRow } from "../SettingsSelectRow";
 import { SettingsNumberRow } from "../SettingsNumberRow";
 import { SettingsTextareaRow } from "../SettingsTextareaRow";
+import { SettingsFieldRow } from "../SettingsFieldRow";
 import { SettingsHelpTip } from "../SettingsHelpTip";
 import { applyPresetToSelection } from "../../../utils/modelPresets";
 import type { ToastType } from "../../../hooks/useToast";
@@ -547,6 +548,44 @@ export function ProjectModelsSection({ form, setForm, models, projectId, onOpenW
       />
 
       {/* --- Project Model Lanes --- */}
+      {/*
+      FNXC:ExecutorEscalation 2026-08-03-05:43:
+      The alternate executor target is a project model choice, while Scheduling owns only the retry policy and optional node routing. Use the shared provider-aware dropdown so complete persisted pairs hydrate together, selecting a model updates both existing keys, and the default choice clears both without accepting arbitrary text.
+      */}
+      <SettingsFieldRow
+        htmlFor="executorEscalationModel"
+        label={t("settings.projectModels.executorEscalationModel", "Executor Escalation Model")}
+        help={t("settings.projectModels.executorEscalationModelHelp", "Alternate model used once tool-failure retries are exhausted. No default — unset means no alternate model; configure escalation policy and an optional node target in Scheduling.")}
+        scope="project"
+      >
+        <CustomModelDropdown
+          id="executorEscalationModel"
+          label={t("settings.projectModels.executorEscalationModel", "Executor Escalation Model")}
+          models={availableModels}
+          disabled={modelsLoading || availableModels.length === 0}
+          value={form.executorEscalationProvider && form.executorEscalationModelId ? `${form.executorEscalationProvider}/${form.executorEscalationModelId}` : ""}
+          onChange={(value) => {
+            if (!value) {
+              setForm((current) => ({ ...current, executorEscalationProvider: undefined, executorEscalationModelId: undefined } as SettingsFormState));
+              return;
+            }
+            const slashIdx = value.indexOf("/");
+            if (slashIdx <= 0) return;
+            setForm((current) => ({
+              ...current,
+              executorEscalationProvider: value.slice(0, slashIdx),
+              executorEscalationModelId: value.slice(slashIdx + 1),
+            } as SettingsFormState));
+          }}
+          placeholder={t("settings.projectModels.selectExecutorEscalationModel", "Select an escalation model")}
+          defaultOptionLabel={t("settings.projectModels.noExecutorEscalationModel", "No escalation model")}
+          favoriteProviders={favoriteProviders}
+          onToggleFavorite={onToggleFavorite}
+          favoriteModels={favoriteModels}
+          onToggleModelFavorite={onToggleModelFavorite}
+          menuWidth="readable"
+        />
+      </SettingsFieldRow>
       {/* FNXC:SettingsHelp 2026-07-16-12:45: Section description moved behind the shared "?" affordance beside the heading — operator requirement: no inline description paragraphs in Settings. */}
       <div className="settings-field-label-row">
         <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.projectModels.modelLanes", "Model Lanes")}</h4>

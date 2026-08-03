@@ -102,6 +102,17 @@ const ACTIVITY_VIEW_MENU_MIN_WIDTH = 160;
 const ACTIVITY_VIEW_MENU_MIN_HEIGHT = 120;
 const ACTIVITY_VIEW_MENU_MAX_HEIGHT = 320;
 const ACTIVITY_VIEW_MENU_OPEN_VIEWPORT_GUARD_MS = 350;
+const PROMPT_REFRESH_INTERVAL_MS = 5_000;
+
+function isPromptRefreshLifecycleActive(task: Pick<Task, "status" | "workflowStepResults">): boolean {
+  if (task.status === "planning" || task.status === "needs-replan") return true;
+  return task.workflowStepResults?.some((result) =>
+    (result.workflowStepId === "plan-review" || result.workflowStepId === "plan-replan")
+    && result.startedAt != null
+    && result.completedAt == null,
+  ) ?? false;
+}
+
 // FNXC:TaskDetailSwipeBack 2026-07-05-12:30: FN-7587 — mobile-mode gating the presentation-only predictive-back slide/fade transition on the modal/list/nested task-detail surface uses the shared viewport classifier, so known 768px tablets do not receive phone-only presentation.
 // FNXC:PlannerOversight 2026-07-05-00:00: FN-7604 — the OVERSIGHT_MENU_MOBILE_BREAKPOINT constant (formerly used to branch the oversight controls between an inline cluster and this overflow menu) was removed; the overflow-menu dropdown is now the single universal surface at every viewport, so no breakpoint gates it.
 
@@ -828,6 +839,27 @@ export function TaskDetailContent({
     !("prompt" in task),
   );
   const [verificationRequest, setVerificationRequest] = useState<TaskVerificationRequest | null>(null);
+  const detailRequestGenerationRef = useRef(0);
+  const detailRequestRef = useRef<{ key: string; promise: Promise<TaskDetail> } | null>(null);
+
+  /*
+  FNXC:TaskDetailPlan 2026-08-03-02:24:
+  A slim task can need its initial detail and its visible Definition refresh in the same commit.
+  Share that project-scoped request so opening Definition produces one authoritative fetch rather
+  than invalidating the initial load and issuing duplicate traffic.
+  */
+  const requestTaskDetail = useCallback((taskId: string, requestProjectId?: string) => {
+    const key = `${requestProjectId ?? ""}:${taskId}`;
+    if (detailRequestRef.current?.key === key) return detailRequestRef.current.promise;
+
+    const promise = fetchTaskDetail(taskId, requestProjectId);
+    detailRequestRef.current = { key, promise };
+    void promise.then(
+      () => { if (detailRequestRef.current?.promise === promise) detailRequestRef.current = null; },
+      () => { if (detailRequestRef.current?.promise === promise) detailRequestRef.current = null; },
+    );
+    return promise;
+  }, []);
 
   /*
   FNXC:TaskPopupViewGating 2026-07-23-10:20:
@@ -848,6 +880,8 @@ export function TaskDetailContent({
   }, [task.id, projectId, active]);
 
   useEffect(() => {
+    // FNXC:TaskDetailPlan 2026-08-03-02:06: hidden kept-alive hosts defer their initial detail request until reveal.
+    if (!active) return;
     // If the prop already has a prompt field, it's a full TaskDetail
     if ("prompt" in task) {
       setFullDetail(task as TaskDetail);
@@ -856,24 +890,25 @@ export function TaskDetailContent({
     }
 
     let cancelled = false;
+    const requestGeneration = ++detailRequestGenerationRef.current;
     setDetailLoading(true);
     setFullDetail(null);
 
-    fetchTaskDetail(task.id, projectId)
+    requestTaskDetail(task.id, projectId)
       .then((detail) => {
-        if (!cancelled) {
+        if (!cancelled && detailRequestGenerationRef.current === requestGeneration) {
           setFullDetail(detail);
           setDetailLoading(false);
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && detailRequestGenerationRef.current === requestGeneration) {
           setDetailLoading(false);
         }
       });
 
     return () => { cancelled = true; };
-  }, [task.id, projectId]);
+  }, [task.id, projectId, active, requestTaskDetail]);
 
   // Derive a working task that always has all available fields.
   // Falls back to the optimistic Task while loading, uses fullDetail once loaded.
@@ -1167,6 +1202,52 @@ export function TaskDetailContent({
   const [specEditContent, setSpecEditContent] = useState(workingTask.prompt || "");
   const [specFeedback, setSpecFeedback] = useState("");
   const [showRefineModal, setShowRefineModal] = useState(false);
+
+  /*
+  FNXC:TaskDetailPlan 2026-08-03-02:06:
+  Definition is the authoritative PROMPT.md view while planning or graph Plan Review may rewrite it.
+  Refresh on every visible show/re-show, then keep one bounded chain only for planning, replan, or a
+  running plan-review gate. The request generation prevents a late task/project response from
+  replacing current detail, and intentionally updates only the authoritative prompt so active edits
+  retain their local textarea buffer.
+  */
+  const promptRefreshLifecycleActive = isPromptRefreshLifecycleActive(task);
+  useEffect(() => {
+    if (!active || activeTab !== "definition") return;
+
+    let cancelled = false;
+    let inFlight = false;
+    const requestGeneration = ++detailRequestGenerationRef.current;
+    const refreshPrompt = () => {
+      if (inFlight) return;
+      inFlight = true;
+      void requestTaskDetail(task.id, projectId)
+        .then((detail) => {
+          if (cancelled || detailRequestGenerationRef.current !== requestGeneration || detail.id !== task.id) return;
+          setFullDetail((previous) => previous ? { ...previous, prompt: detail.prompt } : detail);
+          setDetailLoading(false);
+        })
+        .catch(() => {
+          // FNXC:TaskDetailPlan 2026-08-03-02:06: retain the last good prompt; a later eligible tick may recover.
+        })
+        .finally(() => { inFlight = false; });
+    };
+
+    refreshPrompt();
+    if (!promptRefreshLifecycleActive) {
+      return () => {
+        cancelled = true;
+        if (detailRequestGenerationRef.current === requestGeneration) detailRequestGenerationRef.current++;
+      };
+    }
+
+    const timer = window.setInterval(refreshPrompt, PROMPT_REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (detailRequestGenerationRef.current === requestGeneration) detailRequestGenerationRef.current++;
+    };
+  }, [active, activeTab, projectId, promptRefreshLifecycleActive, requestTaskDetail, task.id]);
   const [prCreateOpen, setPrCreateOpen] = useState(false);
 
   useLayoutEffect(() => {
@@ -1956,12 +2037,17 @@ export function TaskDetailContent({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [showMoveMenu, showActionsMenu, showActivityViewMenu, showOversightMenu, showInlinePriorityPicker]);
 
-  // Reset spec edit state when task changes
+  /*
+  FNXC:TaskDetailPlan 2026-08-03-02:32:
+  A visible Definition poll may update the authoritative prompt while an operator is editing it.
+  Reset edit state only for a different task; reacting to prompt revisions would discard the active
+  local draft and replace its textarea.
+  */
   useEffect(() => {
     setIsEditingSpec(false);
     setSpecEditContent(workingTask.prompt || "");
     setSpecFeedback("");
-  }, [task.id, workingTask.prompt]);
+  }, [task.id]);
 
   // Note: TaskForm handles auto-focus internally via isActive prop
 
@@ -3687,17 +3773,15 @@ export function TaskDetailContent({
     try {
       await updateTask(workingTask.id, { prompt: newContent }, projectId);
       addToast(t("taskDetail.spec.updated", "Spec updated"), "success");
-      // Update local detail data
-      if (fullDetail) {
-        fullDetail.prompt = newContent;
-      }
+      // FNXC:TaskDetailPlan 2026-08-03-02:06: update immutably so the preview reflects an explicit save.
+      setFullDetail((previous) => previous ? { ...previous, prompt: newContent } : previous);
     } catch (err) {
       addToast(getErrorMessage(err), "error");
       throw err;
     } finally {
       setIsSavingSpec(false);
     }
-  }, [workingTask, fullDetail, addToast]);
+  }, [workingTask, addToast]);
 
   const handleRequestSpecRevision = useCallback(async (feedback: string) => {
     setIsRequestingRevision(true);

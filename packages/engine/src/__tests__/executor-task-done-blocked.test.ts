@@ -183,10 +183,12 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
     );
   });
 
-  it("parks file-claim / open-PR blocks as durable failed even with empty task blockedBy (FN-8700)", async () => {
+  it("ignores file-claim / open-PR blocks — PR refs are discarded and the exit auto-replans (board-only blockers)", async () => {
     /*
-    FNXC:HonestBlockedExit 2026-08-02-01:30:
-    Empty blockedBy + claim language must NOT auto-replan — that re-ran claimed paths forever.
+    FNXC:HonestBlockedExit 2026-08-02-23:59 (operator decision — FN-8728 vs PR #2398):
+    Open PRs are never blockers. A blocked exit citing only a PR claim carries no real
+    task dependency, so it parks needs-replan (auto-replan) instead of the removed
+    FN-8700 durable file-claim park, and no PR data lands in dependencies or metadata.
     */
     const { store, tool } = await setup();
 
@@ -196,20 +198,16 @@ describe("FN-8141 fn_task_done honest blocked exit", () => {
       blockedBy: ["pr:2398"],
     });
 
-    const patch = store.updateTask.mock.calls.find(([, p]: [string, Record<string, unknown>]) => p?.status === "failed")?.[1] as Record<string, unknown>;
-    expect(patch).toBeDefined();
-    expect(String(patch.error)).toMatch(/^BLOCKED:/);
-    expect(String(patch.error)).toContain("2398");
-    expect(patch.sourceMetadataPatch).toEqual(
-      expect.objectContaining({
-        blockedClass: "file-claim",
-        externalBlockers: expect.arrayContaining([expect.objectContaining({ kind: "github-pr", number: 2398 })]),
-      }),
-    );
+    const patch = store.updateTask.mock.calls.find(([, p]: [string, Record<string, unknown>]) => "status" in p)?.[1] as Record<string, unknown>;
+    expect(patch.status).toBe("needs-replan");
+    expect(patch.error).toBeNull();
+    // The discarded PR ref must not become a dependency edge or metadata blocker.
+    const depCall = store.updateTask.mock.calls.find(([, p]: [string, Record<string, unknown>]) => Array.isArray(p?.dependencies));
+    expect(depCall).toBeUndefined();
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         mutationType: "task:execution-blocked-parked",
-        metadata: expect.objectContaining({ parkedAs: "failed", blockedClass: "file-claim" }),
+        metadata: expect.objectContaining({ parkedAs: "auto-replan", blockedBy: [], blockedClass: "plan-defect" }),
       }),
     );
   });

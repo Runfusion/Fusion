@@ -174,6 +174,157 @@ FN-6680 keeps table-heavy chart areas on the same --border-width/--border-subtle
   color: var(--text);
 }
 
+/*
+FNXC:CommandCenterGithub 2026-08-03-04:08:
+FN-8750 scopes the resolved-issues redesign below its GitHub-specific classes so Team, Workflow, and Tokens retain their compact analytics-table contract. A fixed table layout and wrapping task title preserve readable rows without page-level overflow; issue links stay visibly actionable with the shared accent and focus ring in every theme.
+*/
+.cc-github-resolved-table-wrap {
+  box-shadow: var(--shadow-sm);
+}
+
+.cc-github-resolved-table {
+  table-layout: fixed;
+}
+
+.cc-github-resolved-table th,
+.cc-github-resolved-table td {
+  border-color: var(--border-subtle);
+  white-space: normal;
+}
+
+.cc-github-resolved-table thead th {
+  background: var(--surface-2);
+}
+
+.cc-github-resolved-table th:first-child,
+.cc-github-resolved-table td:first-child {
+  inline-size: 28%;
+}
+
+.cc-github-resolved-table th:nth-child(2),
+.cc-github-resolved-table td:nth-child(2) {
+  inline-size: 48%;
+  text-align: left;
+}
+
+.cc-github-resolved-table th:last-child,
+.cc-github-resolved-table td:last-child {
+  inline-size: 24%;
+}
+
+.cc-github-resolved-table tbody tr {
+  cursor: default;
+  transition: background-color var(--duration-fast) ease;
+}
+
+.cc-github-resolved-table tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+}
+
+.cc-github-resolved-table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.cc-github-resolved-issue-cell,
+.cc-github-resolved-task-cell,
+.cc-github-resolved-date-cell {
+  vertical-align: top;
+}
+
+.cc-github-resolved-issue-link {
+  color: var(--accent);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  text-underline-offset: var(--space-xs);
+  transition: color var(--duration-fast) ease, text-decoration-color var(--duration-fast) ease;
+}
+
+.cc-github-resolved-issue-link:hover {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.cc-github-resolved-issue-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cc-github-resolved-issue-ref {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.cc-github-resolved-task {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  min-inline-size: 0;
+}
+
+.cc-github-resolved-task-title {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cc-github-resolved-task-id {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cc-github-resolved-date {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  color: var(--text);
+}
+
+.cc-github-resolved-date-approx {
+  white-space: nowrap;
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .cc-github-resolved-table th:first-child,
+  .cc-github-resolved-table td:first-child {
+    inline-size: 32%;
+  }
+
+  .cc-github-resolved-table th:nth-child(2),
+  .cc-github-resolved-table td:nth-child(2) {
+    inline-size: 44%;
+  }
+}
+
+@media (max-width: 768px) {
+  .cc-github-resolved-table th,
+  .cc-github-resolved-table td {
+    padding: var(--space-sm);
+  }
+
+  .cc-github-resolved-table th:first-child,
+  .cc-github-resolved-table td:first-child {
+    inline-size: 31%;
+  }
+
+  .cc-github-resolved-table th:nth-child(2),
+  .cc-github-resolved-table td:nth-child(2) {
+    inline-size: 45%;
+  }
+
+  .cc-github-resolved-table th:last-child,
+  .cc-github-resolved-table td:last-child {
+    inline-size: 24%;
+  }
+
+  .cc-github-resolved-date {
+    justify-content: flex-start;
+  }
+}
+
 .cc-sort-caret {
   margin-inline-start: var(--space-xs);
   font-size: 0.7em;

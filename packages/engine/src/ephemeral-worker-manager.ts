@@ -42,6 +42,8 @@ export interface TaskOwner {
 export interface EphemeralWorkerLogger {
   log: (msg: string, ...rest: unknown[]) => void;
   warn: (msg: string, ...rest: unknown[]) => void;
+  /** Optional; demoted steady-state skips use debug when present (FUSION_DEBUG). */
+  debug?: (msg: string, ...rest: unknown[]) => void;
 }
 
 export interface EphemeralWorkerManagerOptions {
@@ -114,7 +116,14 @@ export class EphemeralWorkerManager {
       // Already-tracked in this session: leave alone.
       const cached = this.taskAgentMap.get(task.id);
       if (cached) {
-        this.log.warn(`Skipping task-worker creation for ${task.id}: task already has execution owner`);
+        /*
+        FNXC:EngineDiagnostics 2026-08-03-05:54:
+        Already-owned tasks (assigned permanent agent or prior onTaskStart) hit this on every
+        start — expected re-entrance, not degradation. Was warn and yellow-flagged the TUI.
+        */
+        if (this.log.debug) {
+          this.log.debug(`Skipping task-worker creation for ${task.id}: task already has execution owner`);
+        }
         return cached;
       }
 

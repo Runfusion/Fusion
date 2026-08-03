@@ -171,6 +171,8 @@ export interface AgentResult {
   session: AgentSession;
   /** Path to the persisted session file (undefined for in-memory sessions). */
   sessionFile?: string;
+  /** Optional runtime-owned boundary for deferred fallback callback dispatch. */
+  settleFallbackDispatch?: () => Promise<void>;
 }
 
 /**
@@ -3113,5 +3115,15 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   */
   attachSessionIdentity(promptableSession as PromptableSession & { dispose?: () => void | Promise<void> });
 
-  return { session: promptableSession, sessionFile: promptableSession.sessionFile };
+  /*
+  FNXC:TriagePlanningRetry 2026-08-03-01:01:
+  Pi awaits `emitFallbackUsed` inside its prompt dispatcher, so prompt settlement already closes
+  fallback dispatch. Expose that explicit finite boundary rather than asking triage to inspect
+  unrelated Node timer resources created by tools or plugin housekeeping.
+  */
+  return {
+    session: promptableSession,
+    sessionFile: promptableSession.sessionFile,
+    settleFallbackDispatch: async () => undefined,
+  };
 }

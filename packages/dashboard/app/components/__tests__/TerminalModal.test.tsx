@@ -47,6 +47,22 @@ function defineMetric(element: Element, property: "clientWidth" | "scrollWidth",
   Object.defineProperty(element, property, { configurable: true, value });
 }
 
+function expectTerminalCloseAfterNewTerminal(newTerminalTestId: string): void {
+  const header = document.querySelector<HTMLElement>(".terminal-header");
+  expect(header).not.toBeNull();
+
+  const closeButtons = screen.getAllByTestId("terminal-close-btn");
+  expect(closeButtons).toHaveLength(1);
+  const closeButton = closeButtons[0];
+  const newTerminalButton = screen.getByTestId(newTerminalTestId);
+
+  expect(header).toContainElement(closeButton);
+  expect(newTerminalButton.compareDocumentPosition(closeButton) & Node.DOCUMENT_POSITION_FOLLOWING)
+    .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(Array.from(header!.querySelectorAll("button")).at(-1)).toBe(closeButton);
+  expect(header!.querySelector(".terminal-actions")).toBeNull();
+}
+
 // Mock hooks and API
 vi.mock("../../hooks/useTerminal", () => ({
   useTerminal: vi.fn(),
@@ -2026,6 +2042,7 @@ describe("TerminalModal", () => {
       expect(mockSetActiveTab).toHaveBeenCalledWith("tab-2");
       fireEvent.click(screen.getByTestId("terminal-mobile-new-tab"));
       expect(mockCreateTab).toHaveBeenCalledWith();
+      expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
       fireEvent.click(screen.getByTestId("terminal-mobile-close-tab"));
       expect(mockCloseTab).toHaveBeenCalledWith("tab-1");
 
@@ -4674,7 +4691,37 @@ describe("TerminalModal — mobile layout contract", () => {
         expect(footer.contains(closeBtn)).toBe(false);
         const mobileTabs = screen.getByTestId("terminal-mobile-tabs");
         expect(header?.contains(mobileTabs)).toBe(true);
+        expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
       });
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    }
+  });
+
+  it("keeps the populated-workspace mobile close control after the new-terminal action", async () => {
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-8729", label: "FN-8729", title: "Terminal toolbar ordering", worktree: "/repo/.worktrees/FN-8729", kind: "task" },
+      ],
+      loading: false,
+      error: null,
+    });
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-workspace-picker")).toBeInTheDocument();
+        expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
+      });
+
+      fireEvent.click(screen.getByTestId("terminal-mobile-new-tab"));
+      fireEvent.click(screen.getByTestId("terminal-close-btn"));
+      expect(manyTabsSessionState.createTab).toHaveBeenCalledWith();
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
     }
@@ -4740,6 +4787,7 @@ describe("TerminalModal — mobile layout contract", () => {
         if (workspacePicker) {
           expect(header?.contains(workspacePicker)).toBe(true);
         }
+        expectTerminalCloseAfterNewTerminal("terminal-new-tab");
       });
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
@@ -4793,6 +4841,7 @@ describe("TerminalModal — mobile layout contract", () => {
         const closeBtn = screen.getByTestId("terminal-close-btn");
         expect(closeBtn.parentElement).toBe(header);
         expect(closeBtn.className).toContain("terminal-close--corner");
+        expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
         // Reconnect control lives in the footer, not the header, so it cannot
         // crowd the corner-pinned close button.
         expect(screen.getByTestId("terminal-reconnect-btn").closest(".terminal-header")).toBeNull();
@@ -4820,6 +4869,7 @@ describe("TerminalModal — mobile layout contract", () => {
         const closeBtn = screen.getByTestId("terminal-close-btn");
         expect(closeBtn.parentElement).toBe(header);
         expect(closeBtn.className).toContain("terminal-close--corner");
+        expectTerminalCloseAfterNewTerminal("terminal-mobile-new-tab");
         // Restart control + exit code live in the footer, not the header.
         expect(screen.getByTestId("terminal-restart-btn").closest(".terminal-header")).toBeNull();
       });
@@ -4844,6 +4894,7 @@ describe("TerminalModal — mobile layout contract", () => {
         expect(header?.contains(closeBtn)).toBe(true);
         expect(screen.queryByTestId("terminal-actions")).toBeNull();
         expect(closeBtn.className).not.toContain("terminal-close--corner");
+        expectTerminalCloseAfterNewTerminal("terminal-new-tab");
       });
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });

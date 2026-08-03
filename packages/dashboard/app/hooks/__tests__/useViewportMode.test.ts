@@ -1,6 +1,15 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getViewportMode, isFullScreenSheetViewport, isMobileViewport, isTabletTouchViewport, MOBILE_MEDIA_QUERY, useViewportMode } from "../useViewportMode";
+import {
+  getViewportMode,
+  isFullScreenSheetViewport,
+  isMobileViewport,
+  isTabletTouchViewport,
+  MOBILE_MEDIA_QUERY,
+  publishViewportMode,
+  useViewportMode,
+  VIEWPORT_MODE_DATASET_KEY,
+} from "../useViewportMode";
 
 const TABLET_MEDIA_QUERY = "(min-width: 769px) and (max-width: 1024px)";
 const MOBILE_WIDTH_MEDIA_QUERY = "(max-width: 768px)";
@@ -110,9 +119,27 @@ function createViewportMediaMock(initial: { mobile: boolean; tablet: boolean }) 
 describe("useViewportMode", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete document.documentElement.dataset[VIEWPORT_MODE_DATASET_KEY];
     if (originalScreenDescriptor) {
       Object.defineProperty(window, "screen", originalScreenDescriptor);
     }
+  });
+
+  it("publishViewportMode mirrors mode onto documentElement dataset", () => {
+    publishViewportMode("tablet");
+    expect(document.documentElement.dataset[VIEWPORT_MODE_DATASET_KEY]).toBe("tablet");
+    publishViewportMode("mobile");
+    expect(document.documentElement.dataset[VIEWPORT_MODE_DATASET_KEY]).toBe("mobile");
+  });
+
+  it("useViewportMode publishes data-viewport-mode for CSS chrome alignment", () => {
+    stubScreen(1024, 768);
+    installViewportMedia({ width: false, height: false, tablet: true });
+
+    const { result, unmount } = renderHook(() => useViewportMode());
+    expect(result.current).toBe("tablet");
+    expect(document.documentElement.dataset[VIEWPORT_MODE_DATASET_KEY]).toBe("tablet");
+    unmount();
   });
 
   it("treats short landscape phones as mobile", () => {

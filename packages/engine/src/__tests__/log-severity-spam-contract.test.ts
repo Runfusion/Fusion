@@ -264,6 +264,9 @@ describe("log severity spam contract (source)", () => {
     expect(tool).toMatch(/executorLog\.debug\(\s*`\[fn_run_verification\] command quiet for/);
     expect(tool).toMatch(/\(log\.debug \?\? log\.info\)\(/);
     expect(tool).toMatch(/if \(result\.success\) \{\s*\(log\.debug \?\? log\.info\)\(/);
+    // Non-timeout command failures are routine agent loops; keep one done-line at info, detail at debug.
+    expect(tool).toMatch(/executorLog\.debug\(`\[fn_run_verification\] command failed \(exit=/);
+    expect(tool).not.toMatch(/executorLog\.warn\(`\[fn_run_verification\] command failed \(exit=/);
     expect(utils).toMatch(/debugLog\(`\$\{taskId\}: running \$\{type\} command:/);
     expect(utils).toMatch(/debugLog\(`\$\{taskId\}: \$\{type\} command succeeded in/);
     expect(utils).toMatch(/logger\.error\(`\$\{taskId\}: \$\{type\} command failed/);
@@ -272,6 +275,51 @@ describe("log severity spam contract (source)", () => {
     expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: \[verification\] running deterministic verification/);
     expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: \[verification\] passed`\)/);
     expect(exec).toMatch(/executorLog\.log\(`\$\{task\.id\}: \[verification\] test failed/);
+  });
+
+  /*
+  FNXC:EngineDiagnostics 2026-08-03-05:54:
+  Screenshot audit: keep default TUI for lifecycle transitions; demote expected skips,
+  schedule-trigger echoes, and session/setup bookkeeping.
+  */
+  it("busy-board lifecycle noise stays debug-gated; starts and creates stay log", () => {
+    const scheduler = readSrc("scheduler.ts");
+    const runtime = readSrc("runtimes/in-process-runtime.ts");
+    const exec = readSrc("executor.ts");
+    const heartbeat = readSrc("agent-heartbeat.ts");
+    const autoClaim = readSrc("auto-claim-snapshot.ts");
+    const ephemeral = readSrc("ephemeral-worker-manager.ts");
+    const worktree = readSrc("worktree-acquisition.ts");
+
+    expect(scheduler).toMatch(/schedulerLog\.debug\(`No linked feature found for task/);
+    expect(scheduler).toMatch(/schedulerLog\.debug\("Task created — triggering scheduling"\)/);
+    expect(scheduler).toMatch(/schedulerLog\.debug\(`Task moved to \$\{to\} — triggering scheduling`\)/);
+    expect(scheduler).toMatch(/schedulerLog\.log\(`Starting \$\{taskId\}:/);
+    expect(scheduler).not.toMatch(/schedulerLog\.log\(`No linked feature found for task/);
+
+    expect(runtime).toMatch(/runtimeLog\.debug\(`Scheduled task \$\{task\.id\}`\)/);
+    expect(runtime).toMatch(/runtimeLog\.debug\(`Started executing task \$\{task\.id\} in \$\{worktreePath\}`\)/);
+    expect(runtime).not.toMatch(/runtimeLog\.log\(`Scheduled task \$\{task\.id\}`\)/);
+
+    expect(exec).toMatch(/executorLog\.log\(`Starting \$\{task\.id\}:/);
+    expect(exec).toMatch(/executorLog\.log\(`Worktree created:/);
+    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: executor runtime env injected/);
+    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: captured baseCommitSha/);
+    expect(exec).toMatch(/executorLog\.debug\(`\$\{task\.id\}: workflow node '\$\{nodeId\}' acquired worktree/);
+    expect(exec).not.toMatch(/executorLog\.log\(`\$\{task\.id\}: executor runtime env injected/);
+
+    expect(heartbeat).toMatch(/heartbeatLog\.debug\(`Assignment trigger skipped for \$\{agent\.id\} \(ephemeral\/internal\)`\)/);
+    expect(heartbeat).not.toMatch(/heartbeatLog\.log\(`Assignment trigger skipped for \$\{agent\.id\} \(ephemeral\/internal\)`\)/);
+
+    expect(autoClaim).toMatch(/this\.logger\.debug\(`invalidate reason=\$\{reason\}`\)/);
+    expect(autoClaim).not.toMatch(/this\.logger\.log\(`invalidate reason=\$\{reason\}`\)/);
+
+    expect(ephemeral).toMatch(/this\.log\.debug\(`Skipping task-worker creation for \$\{task\.id\}: task already has execution owner`\)/);
+    expect(ephemeral).not.toMatch(/this\.log\.warn\(`Skipping task-worker creation for \$\{task\.id\}: task already has execution owner`\)/);
+
+    expect(worktree).toMatch(/logger\.debug\(`Reusing existing worktree: \$\{path\}`\)/);
+    expect(worktree).toMatch(/logger\.debug\(`Reusing existing worktree: \$\{worktreePath\}`\)/);
+    expect(worktree).not.toMatch(/logger\?\.log\(`Reusing existing worktree:/);
   });
 });
 

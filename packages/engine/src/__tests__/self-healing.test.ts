@@ -11197,6 +11197,75 @@ describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
     expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed FN-1001"));
   });
 
+  /*
+  FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+  Done/complete-lane squash leftovers used to emit rescue-needed forever (unique tip SHAs vs main).
+  Complete columns must force-delete after the no-worktree gates pass, and must NOT warn rescue-needed.
+  */
+  it("force-deletes complete-lane branch with unique commits and does not warn rescue-needed", async () => {
+    getSelfHealingLogger().warn.mockClear();
+    mockedIsUsableTaskWorktree.mockResolvedValue(false);
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "done", checkedOutBy: null, userPaused: false, worktree: null, branch: "fusion/fn-1001", lineageId: "lin-done" },
+    ]);
+
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123def456\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("2\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(1);
+    expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+    expect(getSelfHealingLogger().warn).not.toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed FN-1001"));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-1001",
+      expect.stringContaining("reason=complete-column-unique-commits-force"),
+    );
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      domain: "git",
+      mutationType: "branch:stale-active-reclaim",
+      target: "fusion/fn-1001",
+    }));
+  });
+
+  it("force-deletes unique-commit branches for RENAMED complete lanes (role-resolved)", async () => {
+    /* Role resolution, not the literal id "done": a custom complete column must take the force path. */
+    getSelfHealingLogger().warn.mockClear();
+    mockedIsUsableTaskWorktree.mockResolvedValue(false);
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "shipped", checkedOutBy: null, userPaused: false, worktree: null, branch: null, lineageId: "lin-1" },
+    ]);
+    (store as unknown as { listWorkflowDefinitions: unknown }).listWorkflowDefinitions = vi.fn(async () => [{
+      ir: {
+        version: "v2",
+        id: "custom:renamed-complete",
+        nodes: [],
+        edges: [],
+        columns: [
+          { id: "building", name: "building", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+          { id: "shipped", name: "shipped", traits: [{ trait: "complete" }] },
+        ],
+      },
+    }]);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123def456\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("2\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(1);
+    expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+    expect(getSelfHealingLogger().warn).not.toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed"));
+  });
+
   it("skips task with active heartbeat run", async () => {
     const agentStore = {
       listActiveHeartbeatRuns: vi.fn().mockResolvedValue([{ startedAt: new Date().toISOString(), contextSnapshot: { taskId: "FN-1001" } }]),

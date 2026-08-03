@@ -260,7 +260,7 @@ Target state:
 2. Run CLI pre-release tests and binary build smoke.
 3. Run tarball contract test.
 4. Run plugin loader integration.
-5. Use the repository release script for real releases: `pnpm release --yes`.
+5. Use the repository release script for real releases: `pnpm release` (interactive confirmation required).
 
 ## Governance Rules
 

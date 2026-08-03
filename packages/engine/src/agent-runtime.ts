@@ -187,6 +187,14 @@ export interface AgentSessionResult {
   session: AgentSession;
   /** Path to the persisted session file (undefined for in-memory sessions) */
   sessionFile?: string;
+  /*
+  FNXC:TriagePlanningRetry 2026-08-03-01:01:
+  A runtime that can dispatch fallback notifications after its prompt promise resolves must expose
+  this finite, per-prompt lifecycle boundary. Triage awaits it before Plan Review; it must resolve
+  after all callbacks attributable to that prompt have started, without waiting for unrelated
+  runtime housekeeping timers. Runtimes without deferred fallback dispatch may omit it.
+  */
+  settleFallbackDispatch?: () => Promise<void>;
 }
 
 /**

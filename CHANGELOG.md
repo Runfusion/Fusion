@@ -2,6 +2,163 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.74.0
+
+### Highlights
+
+- Machine-wide concurrency cap is gone — capacity is now two per-project numbers
+- Spawned child agents count against Max Concurrent Tasks, not a hidden spawn budget
+- Renamed and custom board columns now work across engine, CLI, self-healing and analytics
+- Plan Review runs in the planning lane before a task takes an implementation slot
+- Approval and permission hardening: no self-approval, bash containment, fn serve auth by default
+
+### Breaking
+
+- The machine-wide concurrency cap is removed. Capacity is now two numbers per project, and Scheduling · Global and Scheduling · Project merge back into a single Scheduling section. A stored global cap is ignored.
+- Spawned child agents now count against Max Concurrent Tasks instead of the hidden per-parent (5) and global (20) spawn budgets, which are deleted. Children each take a git worktree and were previously counted by neither capacity gate.
+
+### Security
+
+- Full approval and permission hardening pass: the dashboard derives the decider server-side and blocks self-approval and forged actors, same-verdict replays and races return 409, pending requests expire after 24h and approved grants after a configurable TTL (default 1h).
+- Unclassified tools now fail closed to policy-governed command execution, an unconditional bash containment floor denies daemon-token and credential-store reads and shell calls to the approvals API at every preset, and bash approvals bind to the exact command hash.
+- `fn serve` mints and reuses a daemon token by default; `--no-auth` opts out.
+- Extension tools resolve the acting principal through a session identity registry: destructive tools are withheld from agent principals, secret-get approvals redeem execute-once, and plugin task stores block destructive methods unless the manifest declares the permission.
+- Deny now withholds task-creating tools from agent sessions, and the deterministic duplicate-create window widens from 60s to 10 minutes.
+
+### New
+
+- Plan Review now runs in the planning lane before a task takes an implementation slot, with a "Plan Review" badge on the card. Code Review and Browser Verification run with the card in In review, releasing the work slot during review.
+- Multiple named credential accounts per AI provider: configure several, pick one per model, and the board keeps moving on a second account when a provider hits its limit instead of pausing.
+- Choose whether Anthropic lanes use your API key or your Claude subscription, with an "In use" marker in Settings → Authentication.
+- Opt-in auto-update and restart, and the post-update Restart button now reports why a restart was refused instead of sitting disabled.
+- New "Limit concurrent worktrees" toggle — turn it off and Max Concurrent Tasks becomes the only limit.
+- Opt-in voice dictation across dashboard composers, with Parakeet v3 model download and lifecycle management in Settings.
+- Chat sessions now expose the full permission-mapped task toolset for gated agents, and Direct chat conversations can be organized with reusable tags and sidebar filtering.
+- Pick the workflow used for CLI/agent-created and refinement tasks; refinement cards are titled by your own feedback and carry a "Refines" chip.
+- Promote on a held card now explains why it was refused and can force execution past a pending replan.
+- Task cards show creation and completion dates; Quick Add gets a visible Start button on workflows with a waiting column.
+- Core, workflow, Git, agent, onboarding and utility dialogs are draggable and resizable on tablets with saved geometry.
+- New Midnight, Sage, Factory Dark and Factory Light dashboard themes.
+- A Settings control for the agent tool-output limit, including a no-limit option, and a quiet CLI mode that hides informational stdout.
+- Project admission ranks review and execution work ahead of planning when a slot opens.
+- Linked GitHub and GitLab issues are closed and explained when triage splits imported work or a task is deleted, and you get a mailbox notice whenever a task is deleted by someone other than you.
+- Missions can override the project task prefix for triaged task IDs, and repeated mission validator runs are bounded by content-addressed memoization.
+
+### Fixed
+
+- Boards with renamed or custom columns now work end to end: merges, retries, PR merges, review stalls, replan targets, duplicate archiving, dependency unblocking, mission roadmaps, analytics, CLI task list and dashboard badges all resolve lanes from each task's own workflow instead of the legacy column ids.
+- Dozens of self-healing repairs — stuck merges, ghost review cards, missing worktrees, contaminated branches, orphaned executions, stale dependency blocks — now run on renamed boards instead of silently finding nothing.
+- Execution starts as soon as planning finishes, and starting a task begins planning immediately, instead of waiting out the 15s engine poll.
+- Planning admission no longer freezes for the duration of every merge, the cause of 5–10 minute "Queued to plan" stalls; hung scheduler, merge and continuation passes now recover loudly with a warning instead of dying silently.
+- Planning admission respects the worktree cap, so a 4-worktree board no longer runs 8 planners, and planning and review sessions run in the task's own worktree instead of the shared checkout.
+- Column WIP limits are actually enforced — a move into a full column is refused instead of silently allowed.
+- Worktrees are no longer deleted while a planning agent is still working in them, and leaked verification checkouts are reaped so planning stops queueing behind exhausted slots.
+- Duplicate tasks no longer re-plan in a loop; a duplicate verdict is parked for your keep-or-delete decision even if the planner only states it in its reply, and GitHub imports are duplicate-checked before planning rather than after.
+- Cards rejected by Plan Review are re-planned instead of stranding in Planning, and replan bounces keep the task worktree instead of re-cutting the branch.
+- Tasks awaiting manual plan approval are no longer planned, reviewed or started before you approve them, and plan approval actions appear alongside the approval message.
+- Plans written inside a task worktree are saved back to the main project and stored in the database.
+- AI helper lanes (milestone interviews, subtask breakdown, agent generation, text refine, goal drafting, reflection, Planning Mode) run on your configured model instead of silently falling back to a default Anthropic model and returning a 401.
+- Planning Mode and Settings no longer drop typed text after the first character, and expanded Mailbox reply rows stay open.
+- Terminals, planning sessions and popped-out task windows survive view and tab switches; the dashboard survives mobile tab discards, resyncs on reconnect and stops caching API responses offline.
+- Test mode tasks complete again — the mock executor was marking 1-based steps against a 0-based step model.
+- Approval reuse and wedge resolution work on PostgreSQL projects instead of failing or minting duplicate requests.
+- Waiting badges name their wait: "Queued to plan", "Ready" and "Revising" now match what the engine will actually do, and lane counts and card glow never exceed the number of running agents.
+- Restore an archived card to the lane it was archived from, and archived-task document rules work on renamed archive lanes.
+- Restarting during an AI merge no longer auto-pauses the task, and a paused engine reads "Paused" in the footer instead of "Idle".
+- Tasks no longer park blocked on open GitHub PRs touching their files — blockers are board tasks only.
+- Auto-archiving of tasks and auto-filing of recovery cards is removed; failures now stay on the task that failed.
+- Compound Engineering code review parks after two unsuccessful remediation attempts instead of retrying forever, and reviews stalled by an engine restart recover in one self-healing cycle instead of ~36 minutes.
+- Task API endpoints return 404 for an unknown task id instead of a 500, and task deletions record who asked.
+- Mobile board swipes page immediately instead of coasting, edge swipes advance one column, and the bottom nav bar returns on large phones.
+- Duplicate-warning "Open" buttons work, GitLab and Linear imports land on real board lanes, and switching projects fully resets Planning, Chat, Missions, import and open modals.
+- Terminals no longer open blank until a keypress, and Windows direct-chat agent selection switches reliably.
+
+### Performance
+
+- Board scrolling is faster: desktop no longer snaps, phone swipes page immediately, and collapsing Archived or changing Done sort no longer re-renders every column and card.
+- Agent tool output is bounded to a 16,000-character budget so large reads preserve context capacity, and verification results are trimmed to high-signal diagnostics.
+
+### Internal
+
+- Workflow-owned lifecycle: the legacy board and list rendering path, the pre-graph cutover machinery, and lossy column coercion helpers are deleted; review-gate leases record the node that holds them so a restarted engine can tell its own dead leases from a peer's.
+- The unused cross-project concurrency table is dropped from the central database.
+
+## 0.74.0-beta.9
+
+### Highlights
+
+- Midnight deep-navy dashboard theme lands with both light and dark modes
+- Task Detail keeps Plan content current while planning and Plan Review run
+- Done-task squash branches stop spamming reclaim logs and get deleted after completion
+- Main full-suite is green again after schema, Missions hooks, and re-spec event fixes
+
+### New
+
+- Dashboard: Midnight, a deep-navy theme available in both light and dark modes, persisted across the dashboard and validated on Electron first paint.
+
+### Fixed
+
+- Task detail: the Definition/Plan prompt now refreshes while planning and Plan Review are running, so you are not reading a stale plan.
+- Engine: stale-active-branch reclaim no longer floods the log for done-task squash leftovers, and those completion branches are deleted once the task finishes.
+- Engine: Missions lifecycle hooks fire correctly, task updates only emit real lane moves instead of phantom dependency re-spec events, and schema/ledger bookkeeping tracks the current migrations and worktree capacity readers.
+
+## 0.74.0-beta.8
+
+### Highlights
+
+- Tasks no longer park blocked on open GitHub PRs touching their files
+- Board blockers are now other board tasks only, and legacy PR-blocked cards recover on their own
+- Requeued task deleted at the same moment no longer strands without re-dispatch
+- Planner retries fallback or unchanged output before handing off to Plan Review
+- Terminal close control stays put after New terminal at every screen size
+
+### Fixed
+
+- Tasks are no longer parked as blocked because an open GitHub PR touches the same files. Blocking references are board tasks only, and rows previously parked by a file claim recover through the normal paths.
+- Fixed a rare stall where a task requeued and deleted in the same moment never re-dispatched.
+- Planning finalization now retries when the planner falls back or returns unchanged output, instead of sending that attempt straight to Plan Review.
+- The terminal close control stays in place after New terminal at every screen size.
+
+## 0.74.0-beta.7
+
+### Highlights
+
+- Multiple credential accounts per provider, selectable from every model picker
+- Board keeps running on a second account when a provider hits its rate limit
+- Review and execution work outranks planning when a project slot opens
+- Reverted tasks leave Done and get Delete or Revise recovery actions
+- Board lane counts and card glow match the number of actually running agents
+
+### New
+
+- Manage multiple credential accounts per provider from Authentication settings.
+- When a provider hits its limit, work rotates to another configured account for that provider instead of pausing the board.
+- Pick which configured credential account a model uses; the selector appears only for providers with more than one account.
+- AI sessions start on the credential account you selected, and executor steps can switch to a rotated account without interrupting active work.
+- Project admission ranks review first, then execution, then planning, with age and task ID breaking ties within a lane.
+- When triage splits imported work into subtasks, the linked GitHub or GitLab issue is closed with an explanation of the split.
+- Linked GitLab issues close when their Fusion task is deleted.
+- Repeated mission validator runs are bounded by content-addressed memoization of validated inputs, with a durable per-project validation budget.
+- PostgreSQL projects get durable, transactional task-deletion lifecycle events delivered to cross-process consumers with per-consumer cursors, receipts, leases, retries, and bounded retention.
+
+### Fixed
+
+- Reverted tasks no longer sit in Done; they move out with Delete or Revise actions, and Revise opens a draft prefilled with the original description.
+- Lane counts and card glow no longer exceed the number of agents actually running; idle replans now read "Queued to revise".
+- Manual merges waiting in renamed workflow review lanes now notify operators, and scheduler and planning reactions keep working on renamed lanes.
+- Repeat task-wedge alerts stop flooding inboxes; each reason gets a six-hour cooldown that survives resolve/re-wedge flaps.
+- Mission validators no longer reject passing feature assertion results, and valid validator JSON is recovered from ordinary response formatting noise.
+- Mission assertion status edits and deletes no longer fail with invalid assertion IDs, and delete failures are surfaced.
+- Milestone validation badges stay current after assertion repairs or removals.
+- Reused execution worktrees refresh against merged dependency changes while keeping rebased task commits.
+- Expanding a chat, Activity entry, or agent log now shows the complete tool-call details.
+- Named Authentication actions stay targeted to the selected account, and auth status stays available when credential-instance data is missing.
+- Registered projects show immediately while dashboard health metrics load.
+- Task links opened from mail land in the active dashboard view.
+- Upward Quick Add model and priority menus stay anchored to their trigger.
+- Mobile: Summary token and cost tables scroll again, and Git Manager and GitHub Import sheets no longer leave dead space at the right edge on phones and short viewports.
+- Translated dashboard catalogs cover the new reverted-task resolution actions.
+
 ## 0.74.0-beta.6
 
 ### Highlights

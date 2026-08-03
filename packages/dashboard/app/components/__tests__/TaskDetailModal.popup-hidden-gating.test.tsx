@@ -22,9 +22,9 @@ true): paste re-registers, polling refreshes immediately and re-arms the interva
 */
 setupTaskDetailModalHooks();
 
-function renderContent(active: boolean) {
+function renderContent(active: boolean, task = makeTask({ id: "FN-9001" })) {
   const props = {
-    task: makeTask({ id: "FN-9001" }),
+    task,
     onMoveTask: noopMove,
     onDeleteTask: noopDelete,
     onMergeTask: noopMerge,
@@ -83,6 +83,27 @@ describe("TaskDetailContent hidden-popup gating (active=false)", () => {
     await waitFor(() => {
       expect(mockUpload).toHaveBeenCalledWith("FN-9001", imageFile, undefined);
     });
+  });
+
+  it("keeps Definition prompt refresh request-free while hidden and resumes one planning chain on reveal", async () => {
+    vi.useFakeTimers();
+    const mockDetail = vi.mocked(dashboardApi.fetchTaskDetail);
+    mockDetail.mockReset();
+    mockDetail.mockResolvedValue(makeTask({ id: "FN-9001", column: "triage", status: "planning", prompt: "# Fresh plan" }));
+
+    const { rerenderWithActive } = renderContent(false, makeTask({ id: "FN-9001", column: "triage", status: "planning" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(mockDetail).not.toHaveBeenCalled();
+
+    rerenderWithActive(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(mockDetail).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(mockDetail).toHaveBeenCalledTimes(2);
+
+    rerenderWithActive(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(16_000); });
+    expect(mockDetail).toHaveBeenCalledTimes(2);
   });
 
   it("suspends the 5s verification polling while hidden and resumes it on reveal", async () => {

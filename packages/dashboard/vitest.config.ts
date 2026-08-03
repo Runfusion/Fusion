@@ -345,14 +345,6 @@ required responsive acceptance lane, so the test must not remain excluded from d
 */
 const quarantinedDashboardTests: string[] = [
   /*
-  FNXC:DashboardTestQuarantine 2026-07-30-12:30:
-  Wall-clock off-by-one-millisecond: the freshness clock case asserts exact epoch equality against a
-  value derived from a second real-clock read. 1 failure in 3 identical runs, with the change under
-  test (PR #2731) living in a different hook and provably unrelated — stashing it did not stop the
-  variance. Quarantined on sight rather than appeased; the fix is fake timers, not a tolerance.
-  */
-  "app/hooks/__tests__/useTasks-hydration-freshness.test.ts",
-  /*
   FNXC:DashboardTestQuarantine 2026-08-01-05:17:
   FN-8647 observed the real Pi ModelRuntime Kimi K3 catalog test timing out in 2/6
   loaded CI samples. Quarantine it with the ledger row rather than widen its 15s

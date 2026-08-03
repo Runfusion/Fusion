@@ -1,5 +1,29 @@
 # @fusion/i18n
 
+## 0.39.32
+
+### Patch Changes
+
+- @fusion/core@0.74.0
+
+## 0.39.32-beta.9
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.9
+
+## 0.39.32-beta.8
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.8
+
+## 0.39.32-beta.7
+
+### Patch Changes
+
+- @fusion/core@0.74.0-beta.7
+
 ## 0.39.32-beta.6
 
 ### Patch Changes

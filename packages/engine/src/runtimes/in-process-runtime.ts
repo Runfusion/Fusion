@@ -1165,7 +1165,11 @@ export class InProcessRuntime
         },
         onSchedule: (task) => {
           this.recordActivity();
-          runtimeLog.log(`Scheduled task ${task.id}`);
+          /*
+          FNXC:EngineDiagnostics 2026-08-03-05:54:
+          Redundant with scheduler `Starting ${id}` — keep the dispatch side-effect silent by default.
+          */
+          runtimeLog.debug(`Scheduled task ${task.id}`);
         },
         onBlocked: () => {},
         validateNodeDispatch: async (nodeId) => {
@@ -1306,7 +1310,12 @@ export class InProcessRuntime
         },
         onStart: (task, worktreePath) => {
           this.recordActivity();
-          runtimeLog.log(`Started executing task ${task.id} in ${worktreePath}`);
+          /*
+          FNXC:EngineDiagnostics 2026-08-03-05:54:
+          Executor already emits `Starting ${id}` at dispatch; worktree path is also on
+          worktree-created / node-acquired lines. Demote this echo to debug.
+          */
+          runtimeLog.debug(`Started executing task ${task.id} in ${worktreePath}`);
           // Legacy invariant (implemented in EphemeralWorkerManager):
           // if (this.taskAgentMap.has(task.id)) { ... "Skipping task-worker creation for" ... }
           void this.workerManager?.onTaskStart(task);

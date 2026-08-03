@@ -1000,7 +1000,12 @@ export class Scheduler {
     this.store.on("task:created", (task) => {
       this.lastAutoClaimFingerprint.set(task.id, computeAutoClaimFingerprint(task));
       this.options.snapshotManager?.invalidate("task:created");
-      schedulerLog.log("Task created — triggering scheduling");
+      /*
+      FNXC:EngineDiagnostics 2026-08-03-05:54:
+      Event-driven schedule triggers fire on every create/done; the card transition is already
+      visible on the board and via task:moved logs. Keep the trigger line debug-only.
+      */
+      schedulerLog.debug("Task created — triggering scheduling");
       this.schedule();
     });
 
@@ -1103,6 +1108,42 @@ export class Scheduler {
         }
       }
 
+      /*
+      FNXC:SchedulerDispatchOscillation 2026-08-02-17:20:
+      The settle-window ledger (`recentEngineTodoRequeues`) and the dispatch-oscillation reset are
+      CONSUMED SYNCHRONOUSLY, so they must stay in the emitter tick with the rest of the synchronous
+      prologue — reading the sync, emitter-lane-aware `parked`, never the async `resolvedParked`.
+      FN-8656 moved these two arms behind `await resolveTaskParkedColumns` while converting lane
+      lookups; that broke the ordering against the synchronous `task:deleted`/`task:updated`
+      handlers, which also mutate `recentEngineTodoRequeues`/oscillation state. Concretely: a card
+      requeued to hold then deleted in the same tick had its settle-window SET run a microtask AFTER
+      the delete's synchronous CLEAR, so the guard survived deletion and the card never re-dispatched
+      (todo-inprogress-flapping.test.ts "clears the settle-window guard when the task is deleted" and
+      "resets dispatch oscillation state on forward transition to in-review"). This obeys FN-8656's
+      own stated rule: convert to the async resolver ONLY where the answer is consumed asynchronously.
+      Production emitters carry lanes, so `parked` resolves renamed hold/wip/review columns here too;
+      the lane-less SQLite polling emitters retain the legacy fallback exactly as before.
+      */
+      if (from === parked.wip && to === parked.hold) {
+        if (source === "engine") {
+          this.recentEngineTodoRequeues.set(task.id, task.columnMovedAt ?? new Date().toISOString());
+        } else {
+          this.recentEngineTodoRequeues.delete(task.id);
+        }
+      } else if (to === parked.review || parked.terminal.has(to)) {
+        this.recentEngineTodoRequeues.delete(task.id);
+        if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
+          void this.store.updateTask(task.id, {
+            dispatchStormCount: null,
+            lastDispatchAt: null,
+            executeRequeueLoopCount: null,
+            executeRequeueLoopSignature: null,
+          }).catch((error) => {
+            schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on move to ${to}: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
+      }
+
       const resolvedParked = mergeParkedColumns(await resolveTaskParkedColumns(this.store, task.id), lanes);
 
       // FN-3895/FN-3924: complement periodic stale-blockedBy self-healing with immediate
@@ -1181,31 +1222,15 @@ export class Scheduler {
         }
       }
 
-      if (from === resolvedParked.wip && to === resolvedParked.hold) {
-        if (source === "engine") {
-          this.recentEngineTodoRequeues.set(task.id, task.columnMovedAt ?? new Date().toISOString());
-        } else {
-          this.recentEngineTodoRequeues.delete(task.id);
-        }
-      } else if (to === resolvedParked.review || resolvedParked.terminal.has(to)) {
-        this.recentEngineTodoRequeues.delete(task.id);
-        if (task.dispatchStormCount != null || task.lastDispatchAt != null || task.executeRequeueLoopCount != null || task.executeRequeueLoopSignature != null) {
-          void this.store.updateTask(task.id, {
-            dispatchStormCount: null,
-            lastDispatchAt: null,
-            executeRequeueLoopCount: null,
-            executeRequeueLoopSignature: null,
-          }).catch((error) => {
-            schedulerLog.warn(`Failed to reset dispatch oscillation state for ${task.id} on move to ${to}: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }
-      }
-
       // Event-driven scheduling: when a task moves to "done" (completion) or "todo" (retry/manual move),
       // trigger scheduling immediately so waiting tasks can start without waiting
       // for the next poll interval (up to 15 seconds).
       if (resolvedParked.terminal.has(to) || to === resolvedParked.hold) {
-        schedulerLog.log(`Task moved to ${to} — triggering scheduling`);
+        /*
+        FNXC:EngineDiagnostics 2026-08-03-05:54:
+        Duplicate of the column-move lifecycle line; schedule side-effect is not operator-facing.
+        */
+        schedulerLog.debug(`Task moved to ${to} — triggering scheduling`);
         this.schedule();
       }
     });
@@ -3076,7 +3101,12 @@ export class Scheduler {
 
       const feature = await this.resolveMissionFeatureForTask(missionStore, task);
       if (!feature) {
-        schedulerLog.log(`No linked feature found for task ${taskId} (sliceId=${task.sliceId ?? "none"}) — skipping mission status update`);
+        /*
+        FNXC:EngineDiagnostics 2026-08-03-05:54:
+        Most tasks are not mission-linked. Skipping mission status is the expected steady-state path,
+        not an operator-visible event — keep it off the default TUI unless FUSION_DEBUG=scheduler.
+        */
+        schedulerLog.debug(`No linked feature found for task ${taskId} (sliceId=${task.sliceId ?? "none"}) — skipping mission status update`);
         return;
       }
 

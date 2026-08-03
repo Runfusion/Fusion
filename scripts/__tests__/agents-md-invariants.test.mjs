@@ -11,7 +11,7 @@ const agents = readFileSync(agentsPath, "utf8");
 
 const requiredAnchors = [
   "Port 4040",
-  "pnpm release --yes",
+  "pnpm release",
   "@runfusion/fusion",
   'engineModule = "@fusion/engine"',
   "superviseSpawn",

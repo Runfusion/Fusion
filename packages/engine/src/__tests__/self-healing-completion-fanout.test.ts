@@ -145,7 +145,29 @@ describe("self-healing completion fan-out", () => {
     expect(execMock.mock.calls.some((c) => String(c[0]).includes("git worktree remove --force") && String(c[0]).includes("/wt/fn-c"))).toBe(true);
     expect((await store.getTask("FN-C"))?.worktree).toBeNull();
     expect((await store.getTask("FN-C"))?.branch).toBeNull();
-    expect(out.branchRemoved).toBe(false);
+    /*
+    FNXC:StaleActiveBranchDoneSpam 2026-08-03-01:47:
+    Post-completion branch cleanup force-deletes even when the tip still has unique commits vs main
+    (squash/AI-merge shape). Previously this case expected branchRemoved=false and left fusion/* forever.
+    */
+    expect(out.branchRemoved).toBe(true);
+    expect(execMock.mock.calls.some((c) => String(c[0]).includes("git branch -D") && String(c[0]).includes("fusion/fn-c"))).toBe(true);
+  });
+
+  it("force-deletes completion branch when unique commits remain after squash", async () => {
+    uniqueCommitsMock.mockResolvedValue({
+      commits: [{ sha: "deadbeef", subject: "feat: pre-squash tip" }] as any,
+      mainRef: "main",
+      degraded: false,
+    });
+    const blocker = makeTask("FN-SQUASH", { column: "done", branch: "fusion/fn-squash" });
+    const store = createStore([blocker]);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    const out = await mgr.reconcileCompletedTask("FN-SQUASH");
+    expect(out.branchRemoved).toBe(true);
+    expect(execMock.mock.calls.some((c) => String(c[0]).includes("git branch -D") && String(c[0]).includes("fusion/fn-squash"))).toBe(true);
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("force-deleting post-completion"));
   });
 
   it("globalPause short-circuits", async () => {
