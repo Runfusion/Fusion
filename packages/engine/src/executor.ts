@@ -742,6 +742,8 @@ import { parkPlanReviewReplanCapExhausted as parkPlanReviewReplanCapExhaustedImp
 export { parkPlanReviewReplanCapExhausted as parkPlanReviewReplanCapExhaustedFree } from "./executor/park-plan-review-replan-cap.js";
 import { resumeTaskForAgent as resumeTaskForAgentImpl } from "./executor/resume-task-for-agent.js";
 export { resumeTaskForAgent as resumeTaskForAgentFree } from "./executor/resume-task-for-agent.js";
+import { buildActionGateContext as buildActionGateContextImpl } from "./executor/build-action-gate-context.js";
+export { buildActionGateContext as buildActionGateContextFree } from "./executor/build-action-gate-context.js";
 
 
 
@@ -1759,120 +1761,19 @@ export class TaskExecutor {
   }
 
   private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
-    /*
-    FNXC:AgentPermissions 2026-07-02-00:00:
-    FN-7413 requires task-scoped runtime gates for permanent identity agents, stored ephemeral agents, and fallback executor-FN task workers. Use a stable synthetic actor for fallback workers so category/exact-tool rules and approval dedupe keys apply even when no agent row exists.
-    */
-    const actorId = agent?.id ?? `executor-${taskId ?? "unknown"}`;
-    const actorName = agent?.name ?? `Task worker ${taskId ?? "unknown"}`;
-    const isEphemeral = !agent || isEphemeralAgent(agent);
-    const policy = resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy);
-    return {
-      agentId: actorId,
-      agentName: actorName,
-      isEphemeral,
+    return buildActionGateContextImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        approvalSuspended: this.approvalSuspended,
+        awaitAbortInFlightTaskWork: (id, reason) => this.awaitAbortInFlightTaskWork(id, reason),
+        agentStore: this.options.agentStore,
+        approvalRequestStore: this.approvalRequestStore,
+      },
       taskId,
-      runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
-      permissionPolicy: policy,
-      createApprovalRequest: async (decision, args) => await this.approvalRequestStore.create({
-        requester: {
-          actorId,
-          actorType: "agent",
-          actorName,
-        },
-        taskId,
-        runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
-        targetAction: {
-          category: decision.category === "exempt" ? "command_execution" : decision.category,
-          action: decision.operation,
-          summary: decision.summary,
-          resourceType: decision.resourceType,
-          resourceId: decision.resourceId ?? "",
-          context: {
-            ...decision.metadata,
-            approvalDedupeKey: decision.approvalDedupeKey,
-            toolName: decision.toolName,
-            toolArgs: args,
-          },
-        },
-      }),
-      findApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
-        // FNXC:ApprovalRedemption 2026-07-26-14:30: decidedAt lets resolveGateOutcome apply the approval-grant TTL at redemption.
-        return latest ? { id: latest.id, status: latest.status, decidedAt: latest.decidedAt } : null;
-      },
-      findPendingApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
-        return latest?.status === "pending" ? { id: latest.id } : null;
-      },
-      pauseForApproval: async ({ approvalRequestId, decision }) => {
-        if (taskId) {
-          /*
-          FNXC:ApprovalHold 2026-07-09-00:10:
-          FN-7736: stamp the canonical AWAITING_APPROVAL_PAUSE_REASON on the
-          task (not just the agent) so recovery/oversight code can durably
-          recognize this hold via isTaskBlockedOnApproval -- previously only
-          `paused: true` was set with no reason, which self-healing's
-          autoReboundPausedScopeDecay could rebound before the operator ever
-          decided.
-
-          FNXC:ApprovalResume 2026-07-12-17:02:
-          MAIN-008: record the approval-specific suspension before pauseTask emits its
-          task:updated event so every abort branch can preserve the in-progress row
-          for a deterministic fresh resume. Clear the mark if pauseTask fails so a
-          failed pause does not leave a sticky suspended marker.
-          */
-          this.approvalSuspended.add(taskId);
-          try {
-            await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
-          } catch (error) {
-            this.approvalSuspended.delete(taskId);
-            throw error;
-          }
-          await this.store.logEntry(
-            taskId,
-            `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
-            undefined,
-            this.getRunContextFor(taskId),
-          );
-          /*
-          FNXC:AgentGating 2026-07-05-00:10:
-          FN-7608: pauseTask() alone does not stop the in-flight LLM turn -- the
-          gated tool call only returns a soft rejection, and the executor system
-          prompt forbids ending a turn without another tool call, so the agent
-          kept hunting for ungated workarounds (re-issuing the same bash, probing
-          read-only tools, fn_web_fetch/fn_task_attach bypasses) while the task
-          sat "paused" only in the store. Make wait-for-approval a REAL
-          session-suspending state by aborting the in-flight session here, using
-          the same synchronous abort surface hard-cancel uses
-          (awaitAbortInFlightTaskWork). This call is deliberately NOT awaited:
-          awaitAbortInFlightTaskWork's agent-session branch awaits
-          session.abort(), which internally awaits agent.waitForIdle() -- since
-          pauseForApproval runs from inside this very tool call, the agent
-          cannot become idle until our own execute() resolves, so awaiting the
-          abort inline here would deadlock. Firing it (fire-and-forget, errors
-          swallowed to a warn per the FN-7335 best-effort-breadcrumb pattern)
-          lets the abort proceed the moment this tool's rejection unwinds back
-          to the agent loop.
-          */
-          void this.awaitAbortInFlightTaskWork(taskId, `awaiting-approval:${decision.toolName}`).catch((error) => {
-            executorLog.warn(`${taskId}: failed to suspend in-flight session while awaiting approval: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }
-        if (agent && this.options.agentStore) {
-          await this.options.agentStore.updateAgentState(agent.id, "paused");
-          await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
-        }
-      },
-      markApprovalCompleted: async (approvalRequestId) => {
-        await this.approvalRequestStore.markCompleted(approvalRequestId, {
-          actor: { actorId, actorType: "agent", actorName },
-          note: "Tool executed after approval",
-          // FNXC:ApprovalRedemption 2026-07-26-14:35: ownership guard — an agent must not be able to burn another agent's approval by id.
-          expectedRequesterActorId: actorId,
-        });
-      },
-    };
+      agent,
+      projectDefaultPolicy,
+    );
   }
 
   private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
