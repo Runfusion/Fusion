@@ -17,7 +17,6 @@ import { moveTaskToReplanColumn, resolvePlannerLanes } from "./execution/replan-
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
-import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflows/workflow-graph-branches.js";
 import type {
@@ -48,13 +47,11 @@ import {
   ApprovalRequestStore,
   getTaskMergeBlocker,
   isEphemeralAgent,
-  isMergeRequestContractShadowEnabled,
   resolvePersistAgentThinkingLog,
   loadWorkspaceConfig,
   type WorkspaceConfig,
   type RunCommandResult,
 } from "@fusion/core";
-import { findWorktreeUser } from "./merger.js";
 import {
   summarizeVerificationOutput,
   type VerificationResult,
@@ -745,6 +742,14 @@ import { handleGraphFailure as handleGraphFailureImpl } from "./executor/handle-
 export { handleGraphFailure as handleGraphFailureFree } from "./executor/handle-graph-failure.js";
 import { executeWorkflowStep as executeWorkflowStepImpl, type ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
 export { executeWorkflowStep as executeWorkflowStepFree } from "./executor/execute-workflow-step.js";
+import { handoffTaskToReview as handoffTaskToReviewImpl } from "./executor/handoff-task-to-review.js";
+export { handoffTaskToReview as handoffTaskToReviewFree } from "./executor/handoff-task-to-review.js";
+import { cleanupTaskWorktree as cleanupTaskWorktreeImpl } from "./executor/cleanup-task-worktree.js";
+export { cleanupTaskWorktree as cleanupTaskWorktreeFree } from "./executor/cleanup-task-worktree.js";
+import { getAssignedAgentRuntimeConfig as getAssignedAgentRuntimeConfigImpl } from "./executor/get-assigned-agent-runtime-config.js";
+export { getAssignedAgentRuntimeConfig as getAssignedAgentRuntimeConfigFree } from "./executor/get-assigned-agent-runtime-config.js";
+import { runImplementationPhase as runImplementationPhaseImpl } from "./executor/run-implementation-phase.js";
+export { runImplementationPhase as runImplementationPhaseFree } from "./executor/run-implementation-phase.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -1569,37 +1574,20 @@ export class TaskExecutor {
    * clean completion handoffs.
    */
   private async handoffTaskToReview(task: Task, reason: string, runId = this.getRunContextFor(task.id)?.runId): Promise<Task> {
-    const agentId = this.getRunContextFor(task.id)?.agentId;
-    await this.generateCompletionFeatureVideo(task);
-    if (reason.startsWith("workflow-")) {
-      await ensureWorkflowCompletionSummary(this.store, task as TaskDetail, {
-        reason,
-        runId,
-      }).catch((error: unknown) => {
-        executorLog.warn(`${task.id}: failed to record workflow completion summary: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
-    const handedOff = await this.store.handoffToReview(task.id, {
-      ownerAgentId: agentId ?? null,
-      evidence: {
-        reason,
-        runId,
-        agentId,
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
+    return handoffTaskToReviewImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        generateCompletionFeatureVideo: (...args: unknown[]) => (this as any).generateCompletionFeatureVideo(...args),
       },
-    });
-
-    const settings = await this.store.getSettings();
-    if (isMergeRequestContractShadowEnabled(settings)) {
-      this.store.setCompletionHandoffAcceptedMarker(task.id, {
-        source: `executor:${reason}`,
-      });
-      await this.store.upsertMergeRequestRecord(task.id, {
-        state: handedOff.autoMerge === false ? "manual-required" : "queued",
-      });
-    }
-
-    return handedOff;
+      task,
+      reason,
+      runId,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
+
 
   /*
   FNXC:ReviewArtifacts 2026-07-19-10:00:
@@ -3378,9 +3366,16 @@ export class TaskExecutor {
   private async getAssignedAgentRuntimeConfig(
     assignedAgentId: string | null | undefined,
   ): Promise<Record<string, unknown> | undefined> {
-    const agent = await this.getAuthoritativeAssignedAgent(assignedAgentId);
-    return (agent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined;
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
+    return getAssignedAgentRuntimeConfigImpl(
+      {
+        getAuthoritativeAssignedAgent: (...args: unknown[]) => (this as any).getAuthoritativeAssignedAgent(...args),
+      },
+      assignedAgentId,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
+
 
   /**
    * Re-dispatch execute() for any unstarted in-progress task whose EFFECTIVE
@@ -3939,23 +3934,15 @@ export class TaskExecutor {
     task: Task,
     prepared?: PreparedWorktree,
   ): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> {
-    let captured: { taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit } = { taskDone: false, modifiedFiles: [] };
-    const graphCompletion: GraphCompletionCallback = (info) => {
-      captured = { ...captured, taskDone: true, modifiedFiles: info.modifiedFiles };
-    };
-    /* Recorded independently of `graphCompletion`: the out-of-band exits never call it. */
-    const reportExit: ImplementationExitReporter = (exit) => {
-      captured = { ...captured, exit };
-    };
-    const executionTask = prepared
-      ? {
-          ...task,
-          worktree: prepared.worktreePath || task.worktree,
-          branch: prepared.branchName || task.branch,
-        }
-      : task;
-    await this.runImplementation(executionTask, graphCompletion, reportExit);
-    return captured;
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
+    return runImplementationPhaseImpl(
+      {
+        runImplementation: (...args: unknown[]) => (this as any).runImplementation(...args),
+      },
+      task,
+      prepared,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
   /**
@@ -9585,48 +9572,21 @@ export class TaskExecutor {
 
 
 
-  /**
-   * Extract conflict information from git worktree error output.
-   * Handles multiple error patterns:
-   * - "already used by worktree at '...'"
-   * - "invalid reference" / "unable to resolve reference" / "stale file handle"
-   * - "could not create leading directories"
-   * - "working tree already exists"
-   */
   async cleanup(taskId: string): Promise<void> {
-    const worktreePaths = this.getActiveWorktreePaths(taskId);
-    if (worktreePaths.length === 0) return;
-
-    this.activeWorktrees.delete(taskId);
-
-    // FNXC:Workspace 2026-06-21-12:00: KTD1 — in workspace mode the tracked path is the non-git workspace root (browse-only), never a removable worktree. Drop the in-memory tracking above but never remove the root. Per-repo worktree teardown returns in Phase B.
-    if (this.workspaceConfig) {
-      return;
-    }
-    // Non-workspace tasks hold a one-element set — preserve the original single-path removal semantics.
-    const worktreePath = worktreePaths[0];
-
-    // Check if another task still needs this worktree
-    const otherUser = await findWorktreeUser(this.store, worktreePath, taskId);
-    if (otherUser) {
-      executorLog.log(`Worktree retained for ${taskId} — still needed by ${otherUser}`);
-      return;
-    }
-
-    try {
-      const settings = await this.store.getSettings();
-      await this.removeOwnWorktreeWithReconcile({
-        worktreePath,
-        settings,
-        taskId,
-        reason: RemovalReason.ExecutorDispose,
-      });
-      executorLog.log(`Cleaned up worktree for ${taskId}`);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.error(`Failed to clean up worktree for ${taskId}:`, errorMessage);
-    }
+    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
+    return cleanupTaskWorktreeImpl(
+      {
+        store: this.store,
+        workspaceConfig: this.workspaceConfig,
+        activeWorktrees: this.activeWorktrees,
+        getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
+        removeOwnWorktreeWithReconcile: (...args: unknown[]) => (this as any).removeOwnWorktreeWithReconcile(...args),
+      },
+      taskId,
+    );
+    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
+
 
   /**
    * When the engine restarts mid-step, an `in-progress` step may have already
