@@ -143,18 +143,12 @@ export function inferWorkflowStepVerdictFromProse(rawOutput: string): { verdict:
  * FNXC:WorkflowGates 2026-06-17-18:22:
  * Gate-class workflow steps must emit a parseable JSON or prose verdict before they can approve pre-merge completion. A fully malformed response is surfaced explicitly so blocking gates fail while advisory gates can record a non-blocking advisory failure.
  */
-export function parseWorkflowStepOutput(rawOutput: string): {
-  output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  notes?: string;
-  malformed?: boolean;
-};
-export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict: false }): {
-  output: string;
-  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
-  notes?: string;
-  malformed?: boolean;
-};
+/*
+FNXC:CodeOrganization 2026-08-03-12:15:
+PR #3317 nit: drop the incomplete overload set. The prior pair covered no-options and
+{ requireVerdict: false } only, so { requireVerdict: true } failed to typecheck despite
+being supported by the implementation. One optional-options signature is enough.
+*/
 export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean } = {}): {
   output: string;
   verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";

@@ -21,7 +21,8 @@ describe("FN-4946 shared task_done refusal helper invariant", () => {
     );
     const helperDecl = helper.match(/\bexport function evaluateTaskDoneRefusal\b/g) ?? [];
 
-    expect(callLines.length).toBeGreaterThanOrEqual(2);
+    // Exact count: two facade call sites (explicit + implicit task_done paths). Lower bounds hide drift.
+    expect(callLines.length).toBe(2);
     expect(helperDecl).toHaveLength(1);
   });
 

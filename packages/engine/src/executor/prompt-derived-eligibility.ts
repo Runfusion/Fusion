@@ -58,6 +58,11 @@ function isNoSourceScopeEntry(entry: string): boolean {
   );
 }
 
+/*
+FNXC:CodeOrganization 2026-08-03-12:15:
+PR #3317 nit: the read-only/no-source branch and the final fallback both returned false;
+keep a single fallback after positive source-path / extension checks.
+*/
 function hasSourceChangingScopeEntry(entry: string): boolean {
   const normalized = entry.toLowerCase();
   if (!normalized) return false;
@@ -65,7 +70,6 @@ function hasSourceChangingScopeEntry(entry: string): boolean {
   const sourcePathPattern = /(?:^|[\s`'"(])(?:packages|src|source|sources|app|apps|lib|libs|components|scripts|docs|\.github|config|test|tests|__tests__|\.changeset)\//m;
   if (sourcePathPattern.test(normalized)) return true;
   if (/\.(ts|tsx|js|jsx|mjs|cjs|swift|kt|java|py|rs|go|rb|md|json|ya?ml|toml|css|scss|html)\b/.test(normalized)) return true;
-  if (normalized.includes("read-only") || isNoSourceScopeEntry(normalized)) return false;
   return false;
 }
 

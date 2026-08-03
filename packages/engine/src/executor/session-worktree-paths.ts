@@ -17,10 +17,16 @@ export function canonicalizePath(path: string): string {
   }
 }
 
+/*
+FNXC:CodeOrganization 2026-08-03-12:15:
+PR #3317 security feedback: do not interpolate rootDir into the copy-paste safe.directory remedy.
+A path with quotes/metacharacters can alter the command if pasted into a shell. Keep the real path
+in the descriptive sentence only; use a fixed <project-directory> placeholder in the shell command.
+*/
 export function formatGitRepositoryDetectionError(rootDir: string, detection: Extract<GitRepoDetection, { status: "error" }>): string {
   const stderr = detection.stderr.trim() || "git rev-parse --git-dir failed without stderr";
   const remedy = detection.reason === "dubious-ownership"
-    ? ` Resolve Git safe-directory ownership with: git config --global --add safe.directory "${rootDir}"`
+    ? " Resolve Git safe-directory ownership with: git config --global --add safe.directory <project-directory>"
     : "";
   return `Git repository detection failed for project directory "${rootDir}". Fusion could not verify worktree support because git reported: ${stderr}.${remedy}`;
 }

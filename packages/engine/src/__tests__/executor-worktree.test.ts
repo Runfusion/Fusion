@@ -791,7 +791,7 @@ describe("TaskExecutor worktree recovery", () => {
       "FN-050",
       expect.objectContaining({
         status: "failed",
-        error: expect.stringContaining(`git config --global --add safe.directory "${rootDir}"`),
+        error: expect.stringContaining("git config --global --add safe.directory <project-directory>"),
       }),
     );
     const failedPatch = store.updateTask.mock.calls.find(
