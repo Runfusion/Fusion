@@ -1,6 +1,11 @@
+// port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor system prompt.
 /**
  * FNXC:CodeOrganization 2026-08-03-07:45:
  * Executor system prompt constant + resolver peeled from executor.ts.
+ *
+ * FNXC:CodeOrganization 2026-08-03-12:30:
+ * Gate check-no-kill-4040 flagged this peel because the prompt documents the port-4040 rule.
+ * Marker matches executor.ts / agent-prompts.ts documentation allowlist pattern.
  */
 import type { Settings } from "@fusion/core";
 import {
