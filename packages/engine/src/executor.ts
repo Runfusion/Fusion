@@ -1,7 +1,6 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { setImmediate as setImmediateCb } from "node:timers";
 
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execAsync = promisify(exec);
@@ -320,9 +319,6 @@ import {
   isWorkflowStepSkillDiscoverable,
 } from "./executor/skill-path-helpers.js";
 
-const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
-
-import { getResumeOrphanDelayMs } from "./executor/resume-orphan-delay.js";
 
 
 
@@ -374,7 +370,6 @@ export type { PendingReviewBlockResult } from "./executor/pending-review-block.j
 import { detectPendingReviewBlock } from "./executor/pending-review-block.js";
 import {
   isTaskWorkComplete,
-  isNoProgressNoTaskDoneFailure,
   createSeenSteeringIds,
   createConfiguredCommandAbortError,
   graphActiveContextKey,
@@ -756,6 +751,8 @@ import { listWipLaneTasks as listWipLaneTasksImpl } from "./executor/list-wip-la
 export { listWipLaneTasks as listWipLaneTasksFree } from "./executor/list-wip-lane-tasks.js";
 import { resolveSeamColumnAgent as resolveSeamColumnAgentImpl } from "./executor/resolve-seam-column-agent.js";
 export { resolveSeamColumnAgent as resolveSeamColumnAgentFree } from "./executor/resolve-seam-column-agent.js";
+import { resumeOrphaned as resumeOrphanedImpl } from "./executor/resume-orphaned.js";
+export { resumeOrphaned as resumeOrphanedFree } from "./executor/resume-orphaned.js";
 
 
 
@@ -4194,98 +4191,17 @@ export class TaskExecutor {
    * directly to in-review without spawning a new agent session.
    */
   async resumeOrphaned(): Promise<void> {
-    const settings = await this.store.getSettings();
-    if (settings.globalPause || settings.enginePaused) {
-      executorLog.log(
-        `resumeOrphaned skipped — ${
-          settings.globalPause ? "global pause" : "engine pause"
-        } is active`,
-      );
-      return;
-    }
-
-    /*
-    FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (a MISSED PAIR, the class #2879 ratcheted):
-    `listWipLaneTasks()` above already resolves the wip lane by role. This filter did not — it re-asserted
-    the literal `in-progress` on the rows that read returned, so on a renamed board the read found the
-    orphans and the filter dropped every one.
-
-    That is the worse half of the pattern: the read looks converted, the census counts only the
-    comparison, and the sweep silently does nothing. Here it means orphaned tasks are NEVER resumed after
-    a crash or restart — the one path that recovers them.
-
-    The rows come from a `listTasks({ column })` per resolved column, so a row is in that column by
-    definition; the re-assert only ever had value as a stale-snapshot guard, which membership preserves.
-    */
-    const wipColumns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
-    const tasks = await this.listWipLaneTasks();
-    const inProgress = tasks.filter(
-      (t) => wipColumns.has(t.column) && !t.deletedAt && !this.executing.has(t.id) && !t.paused,
-    );
-
-    if (inProgress.length === 0) return;
-
-    executorLog.log(`Found ${inProgress.length} orphaned in-progress task(s)`);
-    const resumeDelayMs = getResumeOrphanDelayMs();
-    if (resumeDelayMs > 0) {
-      executorLog.log(
-        `Deferring orphan task resumption for ${resumeDelayMs}ms to keep dashboard responsive during cold start`,
-      );
-    }
-    // When the delay is zero (default in tests and when explicitly disabled),
-    // skip the setTimeout indirection so the spawn happens on the current
-    // microtask — matching the legacy behavior callers may rely on.
-    const scheduleResume = resumeDelayMs > 0
-      ? (fn: () => void) => { setTimeout(fn, resumeDelayMs); }
-      : (fn: () => void) => { fn(); };
-    let yieldNext = false;
-    for (const task of inProgress) {
-      if (yieldNext) await yieldEventLoop();
-      yieldNext = true;
-      // Fast-path: if the task already completed its work (all steps done),
-      // move it directly to in-review instead of re-executing from scratch.
-      if (isTaskWorkComplete(task) && !task.mergeDetails) {
-        if (this.recoveringCompleted.has(task.id)) {
-          executorLog.debug(`${task.id} completed-task recovery already running - skipping duplicate startup recovery`);
-          continue;
-        }
-        if (TaskExecutor.processWideGraphRouting.has(task.id)) {
-          executorLog.debug(`${task.id} owned by the workflow graph interpreter — skipping completed-task fast-path`);
-          continue;
-        }
-        executorLog.log(`${task.id} is already complete — fast-pathing to in-review`);
-        this.recoveringCompleted.add(task.id);
-        scheduleResume(() => {
-          void this.recoverCompletedTask(task)
-            .catch((err) =>
-              executorLog.error(`Failed to recover completed orphan ${task.id}:`, err),
-            )
-            .finally(() => {
-              this.recoveringCompleted.delete(task.id);
-            });
-        });
-        continue;
-      }
-
-      if (isNoProgressNoTaskDoneFailure(task)) {
-        executorLog.log(`${task.id} failed without fn_task_done and has no step progress — leaving for self-healing requeue`);
-        continue;
-      }
-
-      executorLog.log(`Resuming ${task.id}: ${task.title || task.description.slice(0, 60)}`);
-      try {
-        await this.clearResumeFailureState(task);
-        await this.store.logEntry(task.id, "Resumed after engine restart");
-        await this.recoverApprovedStepsOnResume(task.id);
-      } catch (err) {
-        executorLog.error(`Failed to write resume log for ${task.id}:`, err);
-      }
-      scheduleResume(() => {
-        this.execute(task).catch((err) =>
-          executorLog.error(`Failed to resume ${task.id}:`, err),
-        );
-      });
-    }
+    return resumeOrphanedImpl({
+      store: this.store,
+      executing: this.executing,
+      recoveringCompleted: this.recoveringCompleted,
+      processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+      listWipLaneTasks: () => this.listWipLaneTasks(),
+      clearResumeFailureState: (t) => this.clearResumeFailureState(t),
+      recoverApprovedStepsOnResume: (id) => this.recoverApprovedStepsOnResume(id),
+      recoverCompletedTask: (t) => this.recoverCompletedTask(t),
+      execute: (t) => this.execute(t),
+    });
   }
 
   /**

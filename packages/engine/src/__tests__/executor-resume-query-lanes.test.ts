@@ -47,7 +47,11 @@ const listWipLaneTasksSource = readFileSync(
   new URL("../executor/list-wip-lane-tasks.ts", import.meta.url),
   "utf8",
 );
-const combined = `${source}\n${resumeTaskForAgentSource}\n${listWipLaneTasksSource}`;
+const resumeOrphanedSource = readFileSync(
+  new URL("../executor/resume-orphaned.ts", import.meta.url),
+  "utf8",
+);
+const combined = `${source}\n${resumeTaskForAgentSource}\n${listWipLaneTasksSource}\n${resumeOrphanedSource}`;
 
 describe("the resume sweeps read the resolved wip lane", () => {
   it("resolves project wip columns instead of querying the literal", () => {
