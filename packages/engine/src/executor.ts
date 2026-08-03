@@ -353,8 +353,6 @@ const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"
 const MAX_WORKFLOW_STEP_RETRIES = 3;
 /** Maximum in-session retries when an agent exits without calling fn_task_done(). */
 const MAX_TASK_DONE_SESSION_RETRIES = 3;
-/** Maximum todo requeues after exhausting in-session fn_task_done retries. */
-const MAX_TASK_DONE_REQUEUE_RETRIES = 3;
 export {
   MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
   EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
@@ -652,6 +650,15 @@ export {
 } from "./executor/non-continuable-session.js";
 import { createTaskAddDepTool as createTaskAddDepToolImpl } from "./executor/task-add-dep-tool.js";
 export { createTaskAddDepTool as createTaskAddDepToolFree } from "./executor/task-add-dep-tool.js";
+import {
+  handleImplicitTaskDoneRefusal as handleImplicitTaskDoneRefusalImpl,
+  MAX_TASK_DONE_REQUEUE_RETRIES,
+} from "./executor/task-done-refusal-handler.js";
+export {
+  handleImplicitTaskDoneRefusal as handleImplicitTaskDoneRefusalFree,
+  MAX_TASK_DONE_REQUEUE_RETRIES,
+} from "./executor/task-done-refusal-handler.js";
+
 
 
 
@@ -15074,50 +15081,18 @@ export class TaskExecutor {
     task: Task,
     refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
   ): Promise<void> {
-
-    await this.store.logEntry(task.id, refusal.message, undefined, this.getRunContextFor(task.id));
-    executorLog.error(`${task.id}: fn_task_done refused (${refusal.refusalClass}) — ${refusal.reason} (implicit completion)`);
-
-    const taintUpdate = skipBypassTaintUpdateForRefusal(refusal);
-    const priorRequeues = task.taskDoneRetryCount ?? 0;
-    const nextRequeueCount = priorRequeues + 1;
-    if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
-      await this.store.updateTask(task.id, {
-        status: "queued",
-        error: null,
-        taskDoneRetryCount: nextRequeueCount,
-        ...taintUpdate,
-        paused: false,
-        pausedByAgentId: null,
-        worktree: null,
-        branch: null,
-        sessionFile: null,
-      });
-      await this.store.logEntry(
-        task.id,
-        `${refusal.message} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-      this.markGraphExecuteSelfRequeued(task.id);
-      await this.store.moveTask(task.id, await resolveReboundColumnFor(this.store, task.id), { preserveProgress: true });
-    } else {
-      await this.store.updateTask(task.id, {
-        status: "failed",
-        error: refusal.message,
-        ...taintUpdate,
-        paused: false,
-        pausedByAgentId: null,
-        worktree: null,
-        branch: null,
-        sessionFile: null,
-      });
-      await this.store.logEntry(task.id, `${refusal.message} — execution failed because implicit fn_task_done was refused`, undefined, this.getRunContextFor(task.id));
-      await this.persistTokenUsage(task.id);
-    }
-
-    this.deleteActiveSession(task.id);
-    this.tokenUsageBaselines.delete(task.id);
+    return handleImplicitTaskDoneRefusalImpl(
+      {
+        store: this.store,
+        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
+        persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
+        deleteActiveSession: (taskId: string) => this.deleteActiveSession(taskId),
+        clearTokenUsageBaseline: (taskId: string) => { this.tokenUsageBaselines.delete(taskId); },
+      },
+      task,
+      refusal,
+    );
   }
 
   private createTaskDoneTool(
