@@ -60,12 +60,21 @@ handleGraphFailure's junction-box body lives in executor/handle-graph-failure.ts
 function; the class method is a thin deps-bag facade. The U8 ownership ledger must measure the
 real disposition sites (deps.store.moveTask / deps.handoffTaskToReview / status:"failed"), not
 the facade, or every count collapses to zero while nothing about ownership changed.
+
+FNXC:CodeOrganization 2026-08-03-16:15 (U4 runImplementation peel):
+Same for runImplementation — the ~3.4k-line junction box is executor/run-implementation.ts.
 */
 const HANDLE_GRAPH_FAILURE_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "executor",
   "handle-graph-failure.ts",
+);
+const RUN_IMPLEMENTATION_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "executor",
+  "run-implementation.ts",
 );
 
 const SOURCE_FILE = ts.createSourceFile(
@@ -78,6 +87,13 @@ const SOURCE_FILE = ts.createSourceFile(
 const HANDLE_GRAPH_FAILURE_SOURCE = ts.createSourceFile(
   HANDLE_GRAPH_FAILURE_PATH,
   readFileSync(HANDLE_GRAPH_FAILURE_PATH, "utf8"),
+  ts.ScriptTarget.ESNext,
+  /* setParentNodes */ true,
+);
+
+const RUN_IMPLEMENTATION_SOURCE = ts.createSourceFile(
+  RUN_IMPLEMENTATION_PATH,
+  readFileSync(RUN_IMPLEMENTATION_PATH, "utf8"),
   ts.ScriptTarget.ESNext,
   /* setParentNodes */ true,
 );
@@ -179,7 +195,7 @@ function countTerminalParks(body: ts.Block): number {
   return total;
 }
 
-const RUN_IMPLEMENTATION = methodBody("runImplementation");
+const RUN_IMPLEMENTATION = freeFunctionBody(RUN_IMPLEMENTATION_SOURCE, "runImplementation");
 const HANDLE_GRAPH_FAILURE = freeFunctionBody(HANDLE_GRAPH_FAILURE_SOURCE, "handleGraphFailure");
 
 /** The three ways the executor performs a lifecycle disposition itself. */
@@ -249,9 +265,9 @@ describe("U8 execution-lifecycle ownership ledger", () => {
   something else while still reporting a comfortable pass.
   */
   it("extracts both junction-box method bodies at their real size", () => {
-    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeGreaterThan(2000);
-    expect(bodyLineCount(RUN_IMPLEMENTATION)).toBeLessThan(4500);
-    // Free-function body after U4 peel — still the ~1k-line junction box, not the facade.
+    // Free-function bodies after U4 peels — still the multi-k junction boxes, not facades.
+    expect(bodyLineCount(RUN_IMPLEMENTATION, RUN_IMPLEMENTATION_SOURCE)).toBeGreaterThan(2000);
+    expect(bodyLineCount(RUN_IMPLEMENTATION, RUN_IMPLEMENTATION_SOURCE)).toBeLessThan(4500);
     expect(bodyLineCount(HANDLE_GRAPH_FAILURE, HANDLE_GRAPH_FAILURE_SOURCE)).toBeGreaterThan(500);
     expect(bodyLineCount(HANDLE_GRAPH_FAILURE, HANDLE_GRAPH_FAILURE_SOURCE)).toBeLessThan(1600);
   });

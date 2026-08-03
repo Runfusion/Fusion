@@ -29,3 +29,37 @@ export function configuredCommandErrorMessage(result: RunCommandResult): string 
 export function getConfiguredCommandSandboxBackend(auditor?: RunAuditor): SandboxBackend {
   return resolveSandboxBackend({ auditor });
 }
+
+/**
+ * FNXC:CodeOrganization 2026-08-03-16:00:
+ * Shared sandbox-backed command runner used by runImplementation and test hooks.
+ * Lives with configured-command peels so U4 free functions do not re-open executor.ts locals.
+ */
+export async function runConfiguredCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  extraEnv?: NodeJS.ProcessEnv,
+  auditor?: RunAuditor,
+  signal?: AbortSignal,
+): Promise<RunCommandResult> {
+  const backend = getConfiguredCommandSandboxBackend(auditor);
+  const result = await backend.run(command, {
+    cwd,
+    timeoutMs,
+    maxBuffer: 10 * 1024 * 1024,
+    encoding: "utf-8",
+    ...(extraEnv !== undefined && { env: extraEnv }),
+    ...(signal !== undefined && { signal }),
+  });
+
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    signal: result.signal,
+    bufferExceeded: result.bufferExceeded,
+    timedOut: result.timedOut,
+    spawnError: result.spawnError,
+  };
+}
