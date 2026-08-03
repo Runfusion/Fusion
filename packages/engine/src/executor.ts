@@ -658,6 +658,9 @@ export {
   handleImplicitTaskDoneRefusal as handleImplicitTaskDoneRefusalFree,
   MAX_TASK_DONE_REQUEUE_RETRIES,
 } from "./executor/task-done-refusal-handler.js";
+import { handleDepAbortCleanup as handleDepAbortCleanupImpl } from "./executor/dep-abort-cleanup.js";
+export { handleDepAbortCleanup as handleDepAbortCleanupFree } from "./executor/dep-abort-cleanup.js";
+
 
 
 
@@ -15564,58 +15567,16 @@ export class TaskExecutor {
    * Shared between the try-block (graceful return) and catch-block (error) paths.
    */
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
-    executorLog.log(`${taskId} dependency added — work discarded, moved to triage for re-planning`);
-
-    // Remove worktree
-    try {
-      const settings = await this.store.getSettings();
-      await this.removeOwnWorktreeWithReconcile({
-        worktreePath,
-        settings,
-        taskId,
-        reason: RemovalReason.ExecutorDispose,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: failed to remove worktree during dep-abort cleanup (${worktreePath}): ${msg}`);
-    }
-
-    // Delete the branch — use stored branch name if available, fall back to convention
-    const task = await this.store.getTask(taskId);
-    const branch = resolveTaskWorkingBranch(task);
-    let branchDeleted = false;
-    try {
-      await execAsync(`git branch -D "${branch}"`, { cwd: this.rootDir });
-      branchDeleted = true;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`${taskId}: failed to delete branch during dep-abort cleanup (${branch}): ${msg}`);
-    }
-    if (branchDeleted) {
-      // FN-2165 regression guard: null baseBranch on any task that stored this branch
-      try { await this.store.clearStaleExecutionStartBranchReferences([branch], taskId); } catch { /* best-effort */ }
-    }
-
-    // Clear worktree tracking
-    this.activeWorktrees.delete(taskId);
-
-    // Update task: clear worktree and status, move to triage
-    await this.store.updateTask(taskId, { worktree: null, status: null });
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-29-15:10 (P0 audit after the Planning-column merge):
-    This wrote the LITERAL `triage`. The default coding lineage no longer declares that column —
-    it has one pre-implementation column, id `todo` — so a card that gained a dependency
-    mid-execution had its work discarded and was then parked in a column its own workflow does
-    not define. Nothing in the graph routes a card out of an undeclared column, and the only
-    rescue is `reconcileUndeclaredTaskColumns` on the NEXT ENGINE START, so between the abort and
-    a restart the card is stalled with no automatic recovery. It does not throw, which is why it
-    would have surfaced as a user report rather than a red test.
-
-    Resolve the rebound target from the task's own workflow (hold -> intake -> first declared
-    column), the same helper the other ~16 executor rebounds already use.
-    */
-    await this.store.moveTask(taskId, await resolveReboundColumnFor(this.store, taskId));
-    await this.store.logEntry(taskId, "Execution stopped — work discarded, requeued for re-planning");
+    return handleDepAbortCleanupImpl(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        activeWorktrees: this.activeWorktrees,
+        removeOwnWorktreeWithReconcile: (input) => this.removeOwnWorktreeWithReconcile(input),
+      },
+      taskId,
+      worktreePath,
+    );
   }
 
   /**
