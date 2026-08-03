@@ -1,5 +1,5 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
-import { exec, execFile, execSync } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { setImmediate as setImmediateCb } from "node:timers";
 
@@ -217,7 +217,7 @@ import {
 } from "./execution/step-runner.js";
 // FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
 import { acquireTaskWorktree, type AcquireTaskWorktreeResult } from "./worktree/worktree-acquisition.js";
-import { resolveCapturedBaseCommitSha } from "./execution/base-commit-capture.js";
+
 import { installTaskWorktreeIdentityGuard } from "./worktree/worktree-hooks.js";
 import {
   resolveAgentInstructions,
@@ -502,6 +502,19 @@ export {
 } from "./executor/graph-resume-predicates.js";
 import { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
 export { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
+import {
+  preExecutionWorktreeHasWork,
+  resolveContaminationBaseRef,
+  resolveDiffBaseRef,
+  captureBaseCommitSha,
+} from "./executor/worktree-git-refs.js";
+export {
+  preExecutionWorktreeHasWork,
+  resolveContaminationBaseRef,
+  resolveDiffBaseRef,
+  captureBaseCommitSha,
+} from "./executor/worktree-git-refs.js";
+
 
 export { quoteShellArg } from "./executor/shell-quote.js";
 import { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
@@ -8048,7 +8061,7 @@ export class TaskExecutor {
       });
       this.addActiveWorktree(task.id, acquisition.worktreePath);
       if (!acquisition.isResume) {
-        await this.captureBaseCommitSha(task, acquisition.worktreePath, audit, { isResume: false });
+        await captureBaseCommitSha(this.store, task, acquisition.worktreePath, audit, { isResume: false });
       }
       this.options.onStart?.(task, acquisition.worktreePath);
       /*
@@ -8103,7 +8116,7 @@ export class TaskExecutor {
       if (this.hasLiveTaskSessionSurface(taskId) || executingTaskLock.has(taskId)) return false;
 
       if (existsSync(live.worktree)) {
-        if (await this.preExecutionWorktreeHasWork(live.worktree)) {
+        if (await preExecutionWorktreeHasWork(live.worktree)) {
           executorLog.log(`${taskId}: keeping pre-execution worktree ${live.worktree} — it carries commits or uncommitted changes`);
           return false;
         }
@@ -8124,20 +8137,6 @@ export class TaskExecutor {
     } catch (error) {
       executorLog.warn(`${taskId}: could not release the pre-execution worktree: ${formatError(error).message}`);
       return false;
-    }
-  }
-
-  /** True when a pre-execution worktree holds commits past its base or any uncommitted change. */
-  private async preExecutionWorktreeHasWork(worktreePath: string): Promise<boolean> {
-    try {
-      const { stdout: dirty } = await execFileAsync("git", ["status", "--porcelain"], { cwd: worktreePath, timeout: 30_000 });
-      if (dirty.trim()) return true;
-      const { stdout: ahead } = await execFileAsync("git", ["log", "--oneline", "@{upstream}..HEAD"], { cwd: worktreePath, timeout: 30_000 })
-        .catch(async () => await execFileAsync("git", ["log", "--oneline", "-1", "HEAD", "--not", "--remotes", "--branches=main", "--branches=master"], { cwd: worktreePath, timeout: 30_000 }));
-      return Boolean(ahead.trim());
-    } catch {
-      // Cannot prove the worktree is clean → treat it as holding work and keep it.
-      return true;
     }
   }
 
@@ -11636,7 +11635,7 @@ export class TaskExecutor {
       // Capture the base commit SHA for diff computation whenever a task
       // starts with a newly assigned worktree.
       if (!acquisition.isResume) {
-        await this.captureBaseCommitSha(task, worktreePath, audit, { isResume: false });
+        await captureBaseCommitSha(this.store, task, worktreePath, audit, { isResume: false });
       }
 
       // Contamination check must use a FRESH merge-base with the integration
@@ -11647,7 +11646,7 @@ export class TaskExecutor {
       // "foreign contamination" (see FN-4417). The real signal we want is:
       // does the branch contain commits past its current merge-base with main
       // that are attributed to OTHER tasks? Compute the merge-base fresh.
-      const contaminationBaseRef = await this.resolveContaminationBaseRef(worktreePath);
+      const contaminationBaseRef = await resolveContaminationBaseRef(worktreePath);
       if (contaminationBaseRef) {
         try {
           await assertCleanBranchAtBase(this.rootDir, acquisition.branch, contaminationBaseRef, task.id);
@@ -12126,7 +12125,7 @@ export class TaskExecutor {
               for (const [repoRel, repo] of Object.entries(workspaceWorktrees)) {
                 // Per-repo branch-attribution audit (cwd = sub-repo). Run against repo.worktreePath/repo.branch, NOT the non-git root (a root call would fail and surface nothing). The contamination signal already rides on captureWorkspaceModifiedFiles above; this is the supplementary commit-attribution surface (FN-5233 pattern).
                 try {
-                  const attributionBase = await this.resolveContaminationBaseRef(repo.worktreePath);
+                  const attributionBase = await resolveContaminationBaseRef(repo.worktreePath);
                   if (attributionBase && repo.branch) {
                     const attribution = await reportBranchAttribution(repo.worktreePath, repo.branch, attributionBase, task.id);
                     const hasAnomaly = attribution.foreign.length > 0 || attribution.unattributed.length > 0 || attribution.ownUntrailed.length > 0;
@@ -12175,7 +12174,7 @@ export class TaskExecutor {
             // gets caught within minutes of happening rather than days later at
             // merge time (FN-5233 was this pattern).
             try {
-              const attributionBase = await this.resolveContaminationBaseRef(worktreePath);
+              const attributionBase = await resolveContaminationBaseRef(worktreePath);
               if (attributionBase && updatedTask.branch) {
                 const attribution = await reportBranchAttribution(this.rootDir, updatedTask.branch, attributionBase, task.id);
                 const hasAnomaly = attribution.foreign.length > 0 || attribution.unattributed.length > 0 || attribution.ownUntrailed.length > 0;
@@ -15261,7 +15260,7 @@ export class TaskExecutor {
         // gated by the SAME task-wide no-commit eligibility below so Plan-Only / no-op-sentinel tasks stay exempt.
         // The first sub-repo with zero commits fails with reason:'no_commits' (consumer-stable union).
         if (!workspaceNoCommitEligibilityReason) {
-          const repoBaseRef = await this.resolveDiffBaseRef(repo.worktreePath, repo.baseCommitSha);
+          const repoBaseRef = await resolveDiffBaseRef(repo.worktreePath, repo.baseCommitSha);
           if (repoBaseRef) {
             try {
               const { stdout } = await execAsync(`git rev-list --count ${repoBaseRef}..HEAD`, {
@@ -15461,7 +15460,7 @@ export class TaskExecutor {
       return { ok: true };
     }
 
-    const baseRef = await this.resolveDiffBaseRef(worktreePath, task.baseCommitSha);
+    const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
     if (!baseRef) {
       executorLog.warn(`${task.id}: unable to resolve diff base for invariant commit-count check; skipping no_commits guard`);
       return { ok: true };
@@ -16723,127 +16722,6 @@ ${scopeGuard}
     }
   }
 
-
-  private async captureBaseCommitSha(
-    task: Task,
-    worktreePath: string,
-    audit: { git: (event: { type: "commit:create"; target: string; metadata: Record<string, unknown> }) => Promise<void> },
-    options: { isResume: boolean } = { isResume: false },
-  ): Promise<void> {
-    try {
-      // Preserve an existing baseCommitSha only on RESUME of the same
-      // worktree, where diff-base stability across sessions of the same task
-      // matters. On fresh/pooled acquisitions the branch was just
-      // force-reset to current main, so any stored baseCommitSha is by
-      // definition behind the new merge-base — preserving it would yield
-      // stale diff math and (when reused as a contamination reference) the
-      // FN-4417 false-positive cascade. Always recapture on non-resume.
-      if (options.isResume && task.baseCommitSha) {
-        try {
-          execSync(`git merge-base --is-ancestor ${task.baseCommitSha} HEAD`, {
-            cwd: worktreePath,
-            stdio: "pipe",
-          });
-          executorLog.log(`${task.id}: preserved baseCommitSha ${task.baseCommitSha.slice(0, 7)} (resume)`);
-          await audit.git({
-            type: "commit:create",
-            target: task.baseCommitSha,
-            metadata: { purpose: "base", preserved: true },
-          });
-          return;
-        } catch {
-          // Existing baseCommitSha is stale or invalid. Recapture below.
-        }
-      }
-
-      const baseCommitSha = await resolveCapturedBaseCommitSha(worktreePath, {
-        warn: (msg) => executorLog.warn(`${task.id}: ${msg}`),
-      });
-      if (!baseCommitSha) {
-        throw new Error("could not resolve base commit SHA");
-      }
-
-      await this.store.updateTask(task.id, { baseCommitSha });
-      /*
-      FNXC:EngineDiagnostics 2026-08-03-05:54:
-      Base-SHA capture is per-task setup bookkeeping (also in run-audit). Worktree created stays info.
-      */
-      executorLog.debug(`${task.id}: captured baseCommitSha ${baseCommitSha.slice(0, 7)}`);
-      await audit.git({ type: "commit:create", target: baseCommitSha, metadata: { purpose: "base", preserved: false } });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.debug(`Failed to capture baseCommitSha for ${task.id}: ${errorMessage}`);
-      // Non-fatal: task can continue without baseCommitSha
-    }
-  }
-
-  /**
-   * Resolve a fresh merge-base against the integration branch for use as a
-   * contamination check reference. Unlike {@link resolveDiffBaseRef}, this
-   * NEVER falls back to `task.baseCommitSha`, because a stale stored base
-   * would make the contamination check flag every legitimately-merged commit
-   * since that snapshot as "foreign" (FN-4417). It also never falls back to
-   * `HEAD~1`, because for a newly force-reset pooled branch HEAD~1 is a
-   * commit on main itself, which would yield the same false positive on a
-   * smaller scale.
-   *
-   * Returns `undefined` when neither `origin/main` nor `main` is resolvable;
-   * the caller is expected to treat that as "contamination check skipped".
-   */
-  private async resolveContaminationBaseRef(worktreePath: string): Promise<string | undefined> {
-    // Prefer LOCAL main over origin/main. origin/main is a tracking ref that
-    // is only as fresh as the last `git fetch` — on dev machines that haven't
-    // pushed in a while it can lag local main by hundreds of commits, which
-    // re-introduces the FN-4417 false positive at a smaller scale (the
-    // merge-base falls back to the last common ancestor between HEAD and the
-    // stale origin/main, and every commit on local main since then looks
-    // "foreign"). Local main is the canonical integration target for Fusion.
-    try {
-      const { stdout } = await execAsync(
-        "git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main",
-        { cwd: worktreePath, encoding: "utf-8" },
-      );
-      const ref = stdout.trim();
-      return ref || undefined;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`Failed merge-base lookup for contamination check in ${worktreePath}: ${errorMessage}`);
-      return undefined;
-    }
-  }
-
-  /**
-   * Capture the list of files modified during agent execution.
-   * Uses git diff against the stored baseCommitSha to determine what changed.
-   * Returns an empty array if no changes or if git commands fail.
-   */
-  private async resolveDiffBaseRef(worktreePath: string, baseCommitSha?: string): Promise<string | undefined> {
-    if (baseCommitSha) return baseCommitSha;
-
-    try {
-      const { stdout } = await execAsync(
-        "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
-        { cwd: worktreePath, encoding: "utf-8" },
-      );
-      const ref = stdout.trim();
-      if (ref) return ref;
-    } catch (mergeBaseErr: unknown) {
-      const mergeBaseMsg = mergeBaseErr instanceof Error ? mergeBaseErr.message : String(mergeBaseErr);
-      executorLog.warn(`Failed merge-base lookup for diff base in ${worktreePath}, trying HEAD~1 fallback: ${mergeBaseMsg}`);
-    }
-
-    try {
-      const { stdout } = await execAsync("git rev-parse HEAD~1", {
-        cwd: worktreePath,
-        encoding: "utf-8",
-      });
-      return stdout.trim() || undefined;
-    } catch {
-      executorLog.debug(`Could not determine base commit for diff in ${worktreePath}`);
-      return undefined;
-    }
-  }
-
   private async captureModifiedFiles(
     worktreePath: string,
     baseCommitSha: string | undefined,
@@ -16852,7 +16730,7 @@ ${scopeGuard}
     source = "unspecified",
   ): Promise<string[]> {
     try {
-      const baseRef = await this.resolveDiffBaseRef(worktreePath, baseCommitSha);
+      const baseRef = await resolveDiffBaseRef(worktreePath, baseCommitSha);
       if (!baseRef) {
         return [];
       }
@@ -17258,7 +17136,7 @@ ${scopeGuard}
     const scopedFiles = await this.captureModifiedFiles(worktreePath, task.baseCommitSha, task.id, undefined, "workflow-step-handler");
     let diffShortstat: string | undefined;
     try {
-      const baseRef = await this.resolveDiffBaseRef(worktreePath, task.baseCommitSha);
+      const baseRef = await resolveDiffBaseRef(worktreePath, task.baseCommitSha);
       if (baseRef) {
         const { stdout } = await execAsync(`git diff --shortstat ${baseRef}..HEAD`, {
           cwd: worktreePath,
@@ -17967,7 +17845,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const normalizedPath = await this.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
     await this.store.updateTask(task.id, { worktree: normalizedPath, branch });
     const latestTask = await this.store.getTask(task.id);
-    const baseRef = await this.resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
+    const baseRef = await resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
     if (baseRef) {
       await assertCleanBranchAtBase(this.rootDir, branch, baseRef, task.id);
     }
