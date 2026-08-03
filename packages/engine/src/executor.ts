@@ -759,6 +759,8 @@ import { markStuckAborted as markStuckAbortedImpl } from "./executor/mark-stuck-
 export { markStuckAborted as markStuckAbortedFree } from "./executor/mark-stuck-aborted.js";
 import { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl } from "./executor/await-abort-in-flight.js";
 export { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkFree } from "./executor/await-abort-in-flight.js";
+import { abortAllInFlight as abortAllInFlightImpl } from "./executor/abort-all-in-flight.js";
+export { abortAllInFlight as abortAllInFlightFree } from "./executor/abort-all-in-flight.js";
 
 
 
@@ -2118,44 +2120,22 @@ export class TaskExecutor {
   }
 
   async abortAllInFlight(reason: string): Promise<void> {
-    const taskIds = new Set<string>([
-      ...this.activeSessions.keys(),
-      ...this.activeStepExecutors.keys(),
-      ...this.activeWorkflowStepSessions.keys(),
-      ...this.activeConfiguredCommandControllers.keys(),
-      ...this.activeWorkflowGraphAbortControllers.keys(),
-      ...this.activeSubagentSessions.keys(),
-      ...this.activeCliTaskSessions.keys(),
-    ]);
-
-    for (const taskId of taskIds) {
-      try {
-        await this.awaitAbortInFlightTaskWork(taskId, reason);
-      } catch (err) {
-        executorLog.warn(`abortAllInFlight: failed to abort task ${taskId} — ${reason}: ${err}`);
-      }
-    }
-
-    for (const [agentId, session] of this.childSessions) {
-      try {
-        const sessionWithAbort = session as AgentSession & { abort?: () => Promise<void> };
-        if (typeof sessionWithAbort.abort === "function") {
-          await sessionWithAbort.abort();
-        }
-      } catch (err) {
-        executorLog.warn(`abortAllInFlight: failed to abort child session ${agentId} — ${reason}: ${err}`);
-      }
-
-      try {
-        session.dispose();
-      } catch (err) {
-        executorLog.warn(`abortAllInFlight: failed to dispose child session ${agentId} — ${reason}: ${err}`);
-      }
-    }
-    this.childSessions.clear();
-
-    executorLog.log(`abortAllInFlight: aborted ${taskIds.size} task surface(s) — ${reason}`);
+    return abortAllInFlightImpl(
+      {
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        activeConfiguredCommandControllers: this.activeConfiguredCommandControllers,
+        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        activeSubagentSessions: this.activeSubagentSessions,
+        activeCliTaskSessions: this.activeCliTaskSessions,
+        childSessions: this.childSessions,
+        awaitAbortInFlightTaskWork: (id, r) => this.awaitAbortInFlightTaskWork(id, r),
+      },
+      reason,
+    );
   }
+
 
   abortAllSessionBash(): void {
     for (const [taskId, { session }] of this.activeSessions) {
