@@ -6539,7 +6539,11 @@
       "selectChatDefaultAgent": "Select a chat default agent",
       "chatDefaultAgentEmpty": "No agents are available for this project yet.",
       "chatDefaultAgentHelp": "Agent-mode New Chat starts a Direct chat with the selected durable agent.",
-      "chatDefaultReset": "Reset Chat default"
+      "chatDefaultReset": "Reset Chat default",
+      "executorEscalationModel": "",
+      "executorEscalationModelHelp": "",
+      "selectExecutorEscalationModel": "",
+      "noExecutorEscalationModel": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6923,7 +6927,13 @@
       "notInstalled": "Not installed",
       "download": "Download",
       "remove": "Remove",
-      "error": "Model error: {{message}}"
+      "error": "Model error: {{message}}",
+      "modelRequired": "",
+      "modelPreparing": "",
+      "modelFailed": "",
+      "runtimeModuleMissing": "",
+      "runtimePlatformLoadFailed": "",
+      "runtimeIncompatible": ""
     }
   },
   "setup": {
