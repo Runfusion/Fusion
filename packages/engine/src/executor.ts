@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, getWorkflowExtensionRegistry, getBuiltinWorkflow, allowsAutoMergeProcessing, isLiveSharedBranchGroupMemberIntegration, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
@@ -44,7 +44,7 @@ import {
   MERGE_REGION_KINDS,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
-  WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
+
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
 } from "./workflows/workflow-graph-executor.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
@@ -248,7 +248,7 @@ import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 export type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
 import {
   type PausedAbortProvenance,
-  isGenericAbortProvenance,
+
 } from "./executor/paused-abort-provenance.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
@@ -346,7 +346,6 @@ import {
   createSeenSteeringIds,
   createConfiguredCommandAbortError,
   graphActiveContextKey,
-  isRetryableMergePauseAbortStatus,
   isTerminalMergeGraphFailureValue,
   isAwaitingGraphFailureValue,
 } from "./executor/task-predicates.js";
@@ -364,7 +363,7 @@ import {
   graphFailureValue,
   extractUnusableWorktreeGraphFailure,
   isMergeGraphFailure,
-  isStalePauseAbortParkFailure,
+
   isSessionContentionGraphFailure,
   isWorktreeBaseRefreshGraphFailure,
   graphRunReportedPendingReview,
@@ -799,6 +798,18 @@ import { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResum
 export { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeFree } from "./executor/route-graph-failure-to-execution-resume.js";
 import { reenterPausedAbortedWorkflowNode as reenterPausedAbortedWorkflowNodeImpl } from "./executor/reenter-paused-aborted-workflow-node.js";
 export { reenterPausedAbortedWorkflowNode as reenterPausedAbortedWorkflowNodeFree } from "./executor/reenter-paused-aborted-workflow-node.js";
+import { isRetryableBenignMergePauseAbort as isRetryableBenignMergePauseAbortImpl } from "./executor/is-retryable-benign-merge-pause-abort.js";
+export { isRetryableBenignMergePauseAbort as isRetryableBenignMergePauseAbortFree } from "./executor/is-retryable-benign-merge-pause-abort.js";
+import { isBenignManualMergeHoldPauseAbort as isBenignManualMergeHoldPauseAbortImpl } from "./executor/is-benign-manual-merge-hold-pause-abort.js";
+export { isBenignManualMergeHoldPauseAbort as isBenignManualMergeHoldPauseAbortFree } from "./executor/is-benign-manual-merge-hold-pause-abort.js";
+import { handleStaleInReviewPlanPauseAbortReplay as handleStaleInReviewPlanPauseAbortReplayImpl } from "./executor/handle-stale-in-review-plan-pause-abort-replay.js";
+export { handleStaleInReviewPlanPauseAbortReplay as handleStaleInReviewPlanPauseAbortReplayFree } from "./executor/handle-stale-in-review-plan-pause-abort-replay.js";
+import { handleStaleInReviewParsePauseAbortReplay as handleStaleInReviewParsePauseAbortReplayImpl } from "./executor/handle-stale-in-review-parse-pause-abort-replay.js";
+export { handleStaleInReviewParsePauseAbortReplay as handleStaleInReviewParsePauseAbortReplayFree } from "./executor/handle-stale-in-review-parse-pause-abort-replay.js";
+import { routeGraphMergeFailureToRetry as routeGraphMergeFailureToRetryImpl } from "./executor/route-graph-merge-failure-to-retry.js";
+export { routeGraphMergeFailureToRetry as routeGraphMergeFailureToRetryFree } from "./executor/route-graph-merge-failure-to-retry.js";
+import { routeImplementationIncompleteMergeGraphFailure as routeImplementationIncompleteMergeGraphFailureImpl } from "./executor/route-implementation-incomplete-merge-graph-failure.js";
+export { routeImplementationIncompleteMergeGraphFailure as routeImplementationIncompleteMergeGraphFailureFree } from "./executor/route-implementation-incomplete-merge-graph-failure.js";
 
 
 
@@ -6582,42 +6593,19 @@ export class TaskExecutor {
      *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-19-00:05:
-    FN-6735 treats a generic engine pause/resume abort at the merge seam as transient only when the row is still a clean in-review auto-merge candidate: no user/global pause, no pre-existing failure, no merge-confirmed partial landing, no terminal conflict/contamination value, within mergeRetries budget, and still eligible for auto-merge or shared-branch local integration. Anything outside those guards keeps the existing terminal operator-action park.
-    */
-    if (!pausedAborted) return false;
-    if (abortProvenance === "global-pause" || live.userPaused === true) return false;
-    if (abortProvenance === "completion-finalize") return false;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet: executor.ts review-lane classifiers, on top of #2689):
-    "IS THIS CARD IN THE REVIEW LANE?" from the task's own workflow. Five pause-abort classifiers asked it
-    as the default lineage's literal, and each refusal drops the card through to the operator-action park
-    these paths exist to avoid (FN-6796's benign in-review abort, the manual-merge-hold abort, the two
-    stale-replay handlers, this retryable merge abort). The literal made the recovery inert, silently.
-    */
-    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review
-      || !isRetryableMergePauseAbortStatus(live.status) || live.error != null) return false;
-    if (live.mergeDetails?.mergeConfirmed === true) return false;
-    const failureValue = graphFailureValue(result);
-    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
-    /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 / Runfusion#1991 — missing implementation proof is not a transient merge pause. Let the implementation-incomplete classifier fail closed or requeue resumable parsed steps before any requester can mint a no-branch no-op merge proof. */
-    if (failureValue === "implementation-incomplete") return false;
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!isMergeGraphFailure(failedNode)) return false;
-    let settings: Settings | undefined;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return false;
-    }
-    const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
-    if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
-    if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
-    if ((live.mergeRetries ?? 0) >= resolveMaxAutoMergeRetries(settings)) return false;
-    return true;
+    return isRetryableBenignMergePauseAbortImpl(
+      {
+        store: this.store,
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+      },
+      live,
+      result,
+      abortProvenance,
+      pausedAborted,
+      resumeLanesMemo,
+    );
   }
-
 
   private async isBenignManualMergeHoldPauseAbort(
     live: TaskDetail,
@@ -6628,30 +6616,18 @@ export class TaskExecutor {
      *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowLifecycle 2026-07-09-14:54:
-    FN-7749 / Runfusion#1979: with auto-merge off, a manual merge hold is the healthy `in-review` resting state for Merge & Close. A benign generic (`hard-cancel`/`engine-abort`, KB-PROV 2026-07-26) pause/resume abort at any merge-region node must not park the task failed; FN-5147 forbids moving, failing, or re-enqueueing the row, so this classifier only permits preserving `in-review` and clearing a stale pause-abort status/error.
-    */
-    if (!pausedAborted) return false;
-    if (!isGenericAbortProvenance(abortProvenance)) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
-    if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (isTerminalMergeGraphFailureValue(graphFailureValue(result))) return false;
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (!isMergeGraphFailure(failedNode)) return false;
-    const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = isStalePauseAbortParkFailure(live, failedNode);
-    if (!cleanRow && !staleParkedFailure) return false;
-    let settings: Settings | undefined;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return false;
-    }
-    /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
-    if (await this.isLiveSharedBranchGroupMember(live)) return false;
-    return !allowsAutoMergeProcessing(live, settings) || resolveEffectiveAutoMerge(live, settings) === false;
+    return isBenignManualMergeHoldPauseAbortImpl(
+      {
+        store: this.store,
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+      },
+      live,
+      result,
+      abortProvenance,
+      pausedAborted,
+      resumeLanesMemo,
+    );
   }
 
   private async handleStaleInReviewPlanPauseAbortReplay(
@@ -6664,69 +6640,23 @@ export class TaskExecutor {
      *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-28-21:05:
-    FN-7143 showed that a stale graph lifecycle replay can surface at `plan` after an in-review pause/resume even though planning is not actually running anymore. Plan is not a safe re-entry point for review rows, typed or generic, so this classifier is clear/log-only: preserve in-review, never route to triage/todo, and keep genuine user/global pauses plus real plan failures on the operator-action path.
-    */
-    if (!pausedAborted) return false;
-    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
-    if (userCanceled) return false;
-    if (live.column !== (await this.resolveResumeLanes(live.id, resumeLanesMemo)).review) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if (live.autoMerge === false) return false;
-    if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (result.interruptedAbortKind && result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
-    const failedNode = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (failedNode !== "plan") return false;
-    if (isMergeGraphFailure(failedNode)) return false;
-    const failureValue = typeof result.context?.[`node:${failedNode}:value`] === "string"
-      ? result.context[`node:${failedNode}:value`] as string
-      : graphFailureValue(result);
-    if (failureValue !== "aborted") return false;
-    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
-    const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = isStalePauseAbortParkFailure(live, "plan");
-    if (!cleanRow && !staleParkedFailure) return false;
-    let settings: Settings;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return false;
-    }
-    if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
-
-    this.clearPausedAborted(live.id);
-    this.activeWorktrees.delete(live.id);
-    const message = "Workflow graph plan node pause/resume replay surfaced after task was already in-review — stale replay ignored, in-review state preserved";
-    executorLog.log(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    if (staleParkedFailure) {
-      await this.store.updateTask(live.id, { status: null, error: null }, this.getRunContextFor(live.id));
-      await this.store.logEntry(live.id, "Auto-recovered: cleared stale in-review plan pause/resume replay failure — failure notification suppressed", undefined, this.getRunContextFor(live.id));
-    }
-    try {
-      await this.store.recordRunAuditEvent?.({
-        taskId: live.id,
-        agentId: "executor",
-        runId: generateSyntheticRunId("workflow-stale-plan-replay", live.id),
-        domain: "database",
-        mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
-        target: live.id,
-        metadata: {
-          nodeId: failedNode,
-          fromColumn: live.column,
-          abortProvenance,
-          clearedStaleFailure: staleParkedFailure,
-          graphResumeRetryCount: live.graphResumeRetryCount ?? 0,
-          mode: "preserved-in-review",
-        },
-      });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record stale plan replay audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    await this.persistTokenUsage(live.id);
-    return true;
+    return handleStaleInReviewPlanPauseAbortReplayImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        activeWorktrees: this.activeWorktrees,
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+      result,
+      abortProvenance,
+      pausedAborted,
+      userCanceled,
+      resumeLanesMemo,
+    );
   }
 
   private async handleStaleInReviewParsePauseAbortReplay(
@@ -6739,110 +6669,29 @@ export class TaskExecutor {
      *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowLifecycle 2026-06-29-01:18:
-    A stale in-review pause/resume replay at `parse` is not an operator action. Unlike `plan`, parse is a safe workflow re-entry point for review rows, so auto-retry the graph with the shared transient resume budget and suppress the parked failure notification.
-    */
-    if (!pausedAborted) return false;
-    if (!isGenericAbortProvenance(abortProvenance) && abortProvenance !== "global-pause") return false;
-    if (userCanceled) return false;
-    /*
-    FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (fleet): ONE SNAPSHOT for the entry gate AND the deferred
-    recheck inside `scheduleRetry` below — the recheck is the second half of THIS decision ("is the card
-    still where it was when we admitted it?"), so resolving the board again inside the timeout callback
-    would let a workflow edit make the two halves disagree.
-    */
-    const replayLanes = await this.resolveResumeLanes(live.id, resumeLanesMemo);
-    if (live.column !== replayLanes.review) return false;
-    if (live.paused || live.userPaused === true) return false;
-    if (live.autoMerge === false) return false;
-    if (live.mergeDetails?.mergeConfirmed === true) return false;
-    if (result.interruptedAbortKind && result.interruptedAbortKind !== WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND) return false;
-    const failedNode = result.interruptedNodeId ?? result.visitedNodeIds[result.visitedNodeIds.length - 1];
-    if (failedNode !== "parse") return false;
-    const failureValue = typeof result.context?.[`node:${failedNode}:value`] === "string"
-      ? result.context[`node:${failedNode}:value`] as string
-      : graphFailureValue(result);
-    if (failureValue !== "aborted") return false;
-    if (isTerminalMergeGraphFailureValue(failureValue)) return false;
-    const cleanRow = live.status == null && live.error == null;
-    const staleParkedFailure = isStalePauseAbortParkFailure(live, "parse");
-    if (!cleanRow && !staleParkedFailure) return false;
-    const priorRetries = live.graphResumeRetryCount ?? 0;
-    if (priorRetries >= MAX_TRANSIENT_GRAPH_RESUME_RETRIES) return false;
-    let settings: Settings;
-    try {
-      settings = await this.store.getSettings();
-    } catch {
-      return false;
-    }
-    if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
-
-    const nextRetries = priorRetries + 1;
-    this.clearPausedAborted(live.id);
-    this.activeWorktrees.delete(live.id);
-    const message = `Workflow graph parse node pause/resume replay surfaced after task was already in-review — auto-retrying workflow graph (${nextRetries}/${MAX_TRANSIENT_GRAPH_RESUME_RETRIES})`;
-    executorLog.log(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    await this.store.logEntry(live.id, "Auto-recovered: retrying stale in-review parse pause/resume replay — failure notification suppressed", undefined, this.getRunContextFor(live.id));
-    await this.store.updateTask(live.id, { graphResumeRetryCount: nextRetries, status: null, error: null }, this.getRunContextFor(live.id));
-    try {
-      await this.store.recordRunAuditEvent?.({
-        taskId: live.id,
-        agentId: "executor",
-        runId: generateSyntheticRunId("workflow-stale-parse-retry", live.id),
-        domain: "database",
-        mutationType: "task:retry-stale-in-review-parse-pause-abort-replay",
-        target: live.id,
-        metadata: {
-          nodeId: failedNode,
-          fromColumn: live.column,
-          attempt: nextRetries,
-          maxAttempts: MAX_TRANSIENT_GRAPH_RESUME_RETRIES,
-          abortProvenance: abortProvenance ?? "unknown",
-          clearedStaleFailure: staleParkedFailure,
-          mode: "preserved-in-review-retry-graph",
-        },
-      });
-    } catch (error) {
-      executorLog.warn(`${live.id}: failed to record stale parse replay retry audit: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    await this.persistTokenUsage(live.id);
-
-    const scheduleRetry = () => {
-      void (async () => {
-        try {
-          const resumeTask = await this.store.getTask(live.id);
-          if (
-            resumeTask.deletedAt
-            || resumeTask.paused
-            || resumeTask.userPaused
-            || resumeTask.status != null
-            || resumeTask.error != null
-            || resumeTask.column !== replayLanes.review
-            || this.activeSessions.has(live.id)
-            || this.activeStepExecutors.has(live.id)
-            || this.activeWorkflowStepSessions.has(live.id)
-            || this.activeWorkflowGraphAbortControllers.has(live.id)
-            || TaskExecutor.processWideGraphRouting.has(live.id)
-          ) {
-            executorLog.debug(`${live.id}: skipping stale parse graph retry — task is no longer in a safe in-review resume state`);
-            return;
-          }
-          await this.executeWorkflowGraph(resumeTask);
-        } catch (err) {
-          executorLog.error(`Failed stale parse graph retry for ${live.id}:`, err);
-        }
-      })();
-    };
-    if (TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS > 0) {
-      const handle = setTimeout(scheduleRetry, TRANSIENT_GRAPH_RESUME_RETRY_BACKOFF_MS);
-      handle.unref?.();
-    } else {
-      setTimeout(scheduleRetry, 0).unref?.();
-    }
-    return true;
+    return handleStaleInReviewParsePauseAbortReplayImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        activeWorktrees: this.activeWorktrees,
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
+      },
+      live,
+      result,
+      abortProvenance,
+      pausedAborted,
+      userCanceled,
+      resumeLanesMemo,
+    );
   }
 
   private async isReentrantPausedAbortedInFlightNode(
@@ -6932,60 +6781,33 @@ export class TaskExecutor {
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
   ): Promise<boolean> {
-    if (!this.mergeRequester) return false;
-    /* FNXC:WorkflowMerge 2026-07-12-17:38: FN-1165 defense in depth — implementation-incomplete merge graph failures must never reach the merge requester, because a no-branch task can otherwise be finalized as an intentional no-op. */
-    if (graphFailureValue(result) === "implementation-incomplete") return false;
-    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
-    const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
-    executorLog.warn(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    try {
-      const mergeTask = await this.ensureWorkflowMergeBoundaryTask(live, {
-        reason: "workflow-merge-retry-boundary",
-        nodeId: failedNode,
-        workflowId: result.context?.["workflow:id"] as string | undefined ?? "workflow-graph",
-        runId: this.getRunContextFor(live.id)?.runId ?? "graph-merge-retry",
-      });
-      await this.mergeRequester(mergeTask.id);
-    } catch (error) {
-      executorLog.warn(`${live.id}: bounded auto-merge retry request failed after graph merge failure: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    await this.persistTokenUsage(live.id);
-    return true;
+    return routeGraphMergeFailureToRetryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        mergeRequester: this.mergeRequester,
+        ensureWorkflowMergeBoundaryTask: (liveTask, opts) => this.ensureWorkflowMergeBoundaryTask(liveTask, opts),
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+      result,
+      abortProvenance,
+    );
   }
 
   private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
-    /*
-    FNXC:WorkflowMerge 2026-07-14-18:20:
-    FN-1165 greptile P1s: (1) system-paused implementation-incomplete merge failures must still classify —
-    clear only non-user pause parks so incomplete steps can requeue; real global/user pauses never enter this method.
-    (2) Do not drop activeWorktrees until we know the outcome is terminal fail-closed. Resumable requeue preserves
-    progress (and often the persisted worktree); releasing tracking early leaves that worktree uncounted while a later
-    dispatch can allocate a second one. Keep the active registration on the resumable path; release only on fail-closed.
-    */
-    this.clearPausedAborted(live.id);
-    let resumeLive = live;
-    if (live.paused === true && live.userPaused !== true) {
-      // FNXC:WorkflowMerge 2026-07-14-18:35: TaskDetail.pausedReason is string|undefined (not null). Persist clear via updateTask (store accepts null); in-memory resume snapshot uses undefined to satisfy the type.
-      await this.store.updateTask(live.id, {
-        paused: false,
-        pausedReason: null,
-      }, this.getRunContextFor(live.id));
-      resumeLive = { ...live, paused: false, pausedReason: undefined };
-    }
-    if (hasNonTerminalWorkflowSteps(resumeLive) && await this.routeGraphFailureToExecutionResume(resumeLive, failedNode, "implementation-incomplete")) {
-      return true;
-    }
-    // Fail-closed terminal path — release active worktree tracking now that no resume will reuse it.
-    this.activeWorktrees.delete(live.id);
-    const message = `Workflow graph merge blocked at node '${failedNode}': implementation incomplete with no executable proof to resume — failing instead of retrying merge`;
-    executorLog.warn(`${live.id}: ${message}`);
-    await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
-    if (!(await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column) && live.error == null) {
-      await this.store.updateTask(live.id, { error: message, status: "failed" }, this.getRunContextFor(live.id));
-    }
-    await this.persistTokenUsage(live.id);
-    return true;
+    return routeImplementationIncompleteMergeGraphFailureImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        activeWorktrees: this.activeWorktrees,
+        routeGraphFailureToExecutionResume: (t, node, value) => this.routeGraphFailureToExecutionResume(t, node, value),
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+      failedNode,
+    );
   }
 
   private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): Promise<boolean> {
