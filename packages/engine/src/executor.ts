@@ -298,25 +298,11 @@ import { createFallbackModelObserver } from "./auth/fallback-model-observer.js";
 import { recordRetry } from "./errors/retry-burned-logger.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
-/*
-FNXC:WorkflowLifecycle 2026-07-26-11:20:
-KB-PROV: Provenance of a pause/abort marker, in one named union so the ~10 signatures that pass it around cannot drift apart.
-
-- `hard-cancel` — OPERATOR withdrawal only. AGENTS.md "Move-Task contract": user `moveTask(in-progress -> todo)`, task soft-delete, and a user-sourced move out of a planning lane. These carry `userCanceled: true` into `awaitAbortInFlightTaskWork`.
-- `engine-abort` — ENGINE/lifecycle teardown with no operator intent: workflow rerun bounces, archive disposal, approval-gate suspension, engine-sourced moves, `abortAllInFlight` (shutdown/global stop), stuck-kill force-requeue. Before KB-PROV these were mislabeled `hard-cancel`.
-- `global-pause` / `merge-seam` / `completion-finalize` — unchanged FN-6568/FN-6625 seams.
-
-`hard-cancel` and `engine-abort` are the two "generic" aborts; test them together with `isGenericAbortProvenance()`.
-*/
-export type PausedAbortProvenance = "global-pause" | "merge-seam" | "hard-cancel" | "engine-abort" | "completion-finalize";
-
-/*
-FNXC:WorkflowLifecycle 2026-07-26-11:20:
-KB-PROV: The benign-abort classifiers in handleGraphFailure were written against the pre-split `hard-cancel` catch-all and exist PRECISELY to recover engine-initiated aborts (FN-6796, FN-6735, FN-7143, FN-7214, FN-7749). Splitting the label must not narrow them, so every former `=== "hard-cancel"` test routes through this predicate. Operator intent is still discriminated where it matters by `userCanceledTaskIds` / `live.userPaused`, never by the label alone.
-*/
-function isGenericAbortProvenance(provenance: PausedAbortProvenance | undefined): boolean {
-  return provenance === "hard-cancel" || provenance === "engine-abort";
-}
+export type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
+import {
+  type PausedAbortProvenance,
+  isGenericAbortProvenance,
+} from "./executor/paused-abort-provenance.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agents/agent-logger.js";
@@ -758,88 +744,20 @@ clears. The move TARGET was converted here in U5b; the guards in front of it wer
 which is the half-conversion shape: the correct target reached through a check that could
 not see it. Each site now resolves once and uses the same value for both.
 */
-/**
- * The task's terminal column pair, fail-soft to the legacy ids. Mirrors
- * `resolveReboundColumnFor` below: one IR resolution on a rare guard path, and a
- * resolution failure must keep today's behaviour rather than answer "not terminal".
- */
-/** The terminal ids from before workflows owned the vocabulary. */
-const LEGACY_TERMINAL_COLUMNS: readonly string[] = ["done", "archived"];
+export {
+  LEGACY_TERMINAL_COLUMNS,
+  resolveTerminalColumnsFor,
+  resolveCompleteColumnFor,
+  resolveReboundColumnFor,
+  declaresAnyLifecycleRole,
+} from "./executor/lifecycle-columns.js";
+import {
+  resolveTerminalColumnsFor,
+  resolveCompleteColumnFor,
+  resolveReboundColumnFor,
+  declaresAnyLifecycleRole,
+} from "./executor/lifecycle-columns.js";
 
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-19:10 (exported for the follow-up dedup paths):
-EXPORTED rather than copied. `eval-followups.ts` and `pr-comment-handler.ts` each carried their own
-`CLOSED_FOLLOWUP_COLUMNS = new Set(["done", "archived"])` for the same question this answers, and a third
-and fourth copy of the union-with-legacy reasoning is exactly the drift this program exists to remove.
-Nothing else about the function changes.
-*/
-export async function resolveTerminalColumnsFor(
-  store: TaskStore,
-  taskId: string,
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (#2787 review — greptile P2):
-  Optional CALLER-OWNED IR cache, matching the contract on `resolveTaskLifecycleColumns`. Sweeps that
-  call this once per card on a whole board must read one IR per WORKFLOW, not one per task; callers
-  resolving a single task pass nothing and are unaffected.
-  */
-  irCache?: Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>,
-): Promise<readonly string[]> {
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40 (PR #2568 review — greptile):
-  THE UNION IS DELIBERATE, and the `catch` alone was not enough.
-
-  `resolveWorkflowIrForTask` does NOT throw when a custom workflow definition is
-  missing, corrupt or unavailable — it returns the BUILT-IN IR. So the catch below
-  only covers hard failures, while the common degraded case hands back a
-  valid-looking default whose terminals are `done`/`archived`. A renamed board in
-  that state would resolve terminals that do not include its own terminal column,
-  and this guard would go inert exactly as it did before the conversion.
-
-  Unioning with the legacy pair closes that: a resolvable board contributes its real
-  terminals, and the legacy ids remain recognised whether they came from a genuine
-  default workflow or from a silent substitution.
-
-  Over-inclusion is the SAFE direction here, and that is why a union is acceptable
-  rather than sloppy. This guard answers "is the card already finished, so skip
-  parking?" — being too inclusive occasionally skips parking a card that was not
-  really terminal; being too exclusive MOVES a finished card out of its terminal
-  column, which is the failure the conversion exists to prevent.
-  */
-  try {
-    const resolved = resolveTerminalColumns(await resolveWorkflowIrForTask(store, taskId, irCache));
-    return [...new Set([...resolved, ...LEGACY_TERMINAL_COLUMNS])];
-  } catch {
-    return LEGACY_TERMINAL_COLUMNS;
-  }
-}
-
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-30-15:20 (fleet — executor.ts cluster):
-The workflow's COMPLETE column, for the guards that ask "has this card finished?" and mean
-completion specifically — not the terminal PAIR. `resolveTerminalColumnsFor` above answers
-"done or archived"; these sites deliberately exclude archived, because an archived card is
-finished but not newly-completed, and treating the two alike would fire merge-confirmation
-handling for cards that were archived rather than merged.
-
-Same shape as the two helpers beside it: resolve from the task's own workflow, fall back to
-the legacy id. `resolveWorkflowIrForTask` does not throw on a missing definition — it returns
-the built-in default — so the catch covers hard failures only.
-*/
-async function resolveCompleteColumnFor(store: TaskStore, taskId: string): Promise<string> {
-  try {
-    return resolveCompleteColumn(await resolveWorkflowIrForTask(store, taskId)) ?? "done";
-  } catch {
-    return "done";
-  }
-}
-
-async function resolveReboundColumnFor(store: TaskStore, taskId: string): Promise<string> {
-  try {
-    return resolveReboundTarget(await resolveWorkflowIrForTask(store, taskId)) ?? "todo";
-  } catch {
-    return "todo";
-  }
-}
 
 /*
 FNXC:WorkflowExecution 2026-07-19-01:30:
@@ -862,27 +780,6 @@ graph-owned, at which point this type disappears in favor of a returned outcome.
 docs/plans/2026-07-19-002-u5e-remaining-deletions-handoff.md.
 */
 export type GraphCompletionCallback = (info: { modifiedFiles: string[] }) => void;
-
-/*
-FNXC:WorkflowLifecycleColumns 2026-07-30-18:10 (tightening my own rule against #2765):
-Does this IR express ANY lifecycle intent? #2765 published the general form of the distinction I hit
-in the no-wip fix: an empty role result means either DECLARED AND EMPTY (a v2 board the operator
-wrote that genuinely lacks the lane — a guard should act on it) or SYNTHESIZED (a v1 graph upgraded
-in place; `synthesizeDefaultColumns` emits `{ id, name: id, traits: [] }` for the five default ids,
-so every role resolves undefined even though those columns ARE the legacy lanes).
-
-My first discriminator proxied this with "hold and review are both undefined". That is right for the
-boards under test and wrong in general: a v2 workflow declaring, say, intake and complete but no
-hold/wip/review would read as SYNTHESIZED and the resume router would proceed into a wip lane the
-board does not have — the same failure the guard exists to stop, one case narrower.
-
-`resolveLifecycleColumns` returns all six roles, so the honest question is whether ANY of them
-resolved. Checking two of six was a proxy for that; this checks the thing.
-*/
-function declaresAnyLifecycleRole(lifecycle: ReturnType<typeof resolveLifecycleColumns>): boolean {
-  if (!lifecycle) return false;
-  return Object.values(lifecycle).some((columnId) => columnId !== undefined);
-}
 
 export class TaskExecutor {
   /*
