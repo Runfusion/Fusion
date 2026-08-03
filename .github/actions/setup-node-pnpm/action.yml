@@ -39,6 +39,13 @@ runs:
     # "Path Validation Error: Path(s) specified in the action for caching do(es)
     # not exist" and marks an otherwise-successful pack job failed. Only enable
     # the pnpm store cache when this composite will actually install.
+    #
+    # FNXC:CI 2026-08-03-06:26:
+    # Omitting `cache: pnpm` is NOT enough on actions/setup-node@v5+: the default
+    # `package-manager-cache: true` still auto-detects the workspace lockfile, registers
+    # the pnpm store path for post-job save, and red-X's skip-install jobs after a green
+    # pack (agent-browser-install pack-fixture on PR #3307). Explicitly disable it on the
+    # no-install path; keep the install path on the explicit `cache: pnpm` contract.
     - name: Setup Node.js
       if: ${{ inputs.skip-install != 'true' }}
       uses: actions/setup-node@v5
@@ -52,6 +59,7 @@ runs:
       uses: actions/setup-node@v5
       with:
         node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
         registry-url: ${{ inputs.registry-url }}
 
     - name: Install dependencies

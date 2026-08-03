@@ -1009,8 +1009,10 @@ itself reuses the board's `.btn.btn-secondary.btn-sm` primitive so List and Boar
 }
 
 /* === List View Single-Pane Responsive ===
-FNXC:ListView 2026-07-10-00:00 (FN-7809):
-Tablet-width List view shares the mobile single-pane scaffolding so the full-width toolbar and QuickEntryBox are not clipped by the desktop split sidebar. Mobile behavior stays unchanged; desktop split rules remain active above the tablet tier.
+FNXC:ListView 2026-08-03-05:47 (FN-8754):
+The component now decides split capability from measured List width. Keep these compact rules available
+at tablet widths, but do not hide split chrome with a viewport-only media rule: a tablet List surface
+can have sufficient room after dashboard chrome is accounted for.
 */
 @media (max-width: 1024px) {
   .list-toolbar {
@@ -1041,21 +1043,6 @@ Tablet-width List view shares the mobile single-pane scaffolding so the full-wid
     overflow-x: auto;
   }
 
-  .list-split-layout {
-    display: block;
-  }
-
-  .list-split-sidebar,
-  .list-split-detail {
-    overflow: visible;
-    border: none;
-    padding: 0;
-  }
-
-  .list-split-resize-handle,
-  .list-split-detail {
-    display: none;
-  }
 
   .list-table {
     min-width: auto;
@@ -1077,8 +1064,8 @@ Tablet-width List view shares the mobile single-pane scaffolding so the full-wid
 
 /* === List View Single-Pane Cards (FN-1140, FN-7809) === */
 @media (max-width: 1024px) {
-  /* Hide the table on mobile — card layout is rendered via JS */
-  .list-table {
+  /* The JS-measured single-pane route renders cards; a wide tablet keeps its table and split detail. */
+  .list-view--single-pane .list-table {
     display: none;
   }
 
