@@ -602,6 +602,9 @@ import { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-pa
 export { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
 import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
 export { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
+import { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
+export { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
+
 
 
 
@@ -18842,51 +18845,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     return null;
   }
 
-
-  private async tryFreshWorktreeAfterLiveConflict(input: {
-    conflictPath: string;
-    branch: string;
-    taskId: string;
-    startPoint?: string;
-    attemptNumber?: number;
-    allowSiblingBranchRename: boolean;
-    settings: Partial<Settings>;
-  }): Promise<{ path: string; branch: string }> {
-    const { conflictPath, branch, taskId, attemptNumber, allowSiblingBranchRename, settings } = input;
-    if (!allowSiblingBranchRename) {
-      throw new Error(`Branch ${branch} conflict could not be auto-resolved`);
-    }
-
-    const conflictStartPoint = branch;
-    for (let suffix = 2; suffix <= 6; suffix++) {
-      const suffixedBranch = `${branch}-${suffix}`;
-      const newPath = resolveTaskWorktreePath(this.rootDir, settings, generateWorktreeName(this.rootDir, settings));
-      try {
-        await this.store.logEntry(
-          taskId,
-          `Preserved active conflicting worktree and retrying with fresh worktree branch ${suffixedBranch}`,
-          `${conflictPath} -> ${newPath}`,
-        );
-        /*
-         * FNXC:ExecutorWorktree 2026-07-01-00:00:
-         * Active-session cleanup refusal must allocate a fresh worktree/branch instead of bubbling automatic cleanup failure. Removing the live conflicting path violates the FN-4811 invariant, so bounded sibling branches preserve the owner while letting the requesting task continue.
-         */
-        return await this.tryCreateWorktree(suffixedBranch, newPath, taskId, conflictStartPoint, attemptNumber, 0, true, settings);
-      } catch (suffixErr: unknown) {
-        const info = extractWorktreeConflictInfo(suffixErr);
-        if (info.type === "already-used") {
-          continue;
-        }
-        throw suffixErr;
-      }
-    }
-    throw new Error(
-      `Cannot create branch for task: "${branch}"; live conflicting worktree ${conflictPath} was preserved and suffixes -2 through -6 are all in use by other worktrees`,
-    );
-  }
-
-
-
   /**
    * FN-6782 leaked-slot reaper support: expose a read-only snapshot of the
    * in-memory `activeWorktrees` holders so SelfHealingManager can cross-check
@@ -19000,6 +18958,30 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       settings,
     );
   }
+
+  private async tryFreshWorktreeAfterLiveConflict(input: {
+    conflictPath: string;
+    branch: string;
+    taskId: string;
+    startPoint?: string;
+    attemptNumber?: number;
+    allowSiblingBranchRename: boolean;
+    settings: Partial<Settings>;
+  }): Promise<{ path: string; branch: string }> {
+    return tryFreshWorktreeAfterLiveConflict(
+      {
+        rootDir: this.rootDir,
+        store: this.store,
+        tryCreateWorktree: (
+          branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
+        ) => this.tryCreateWorktree(
+          branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename ?? false, settings ?? {},
+        ),
+      },
+      input,
+    );
+  }
+
 
   private async removeOwnWorktreeWithReconcile(input: {
     worktreePath: string;
