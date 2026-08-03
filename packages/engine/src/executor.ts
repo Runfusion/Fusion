@@ -11,7 +11,7 @@ const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS
 import { delimiter, join, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type Agent, type ProjectSettings, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type StepStatus, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type AgentState, type AgentCapability, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
 import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, RetryStormError, serializeRetryStormError, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
@@ -203,10 +203,7 @@ import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import {
   extractMissingWorktreePathFromSessionStartFailure,
 } from "./healing/restart-recovery-coordinator.js";
-import { BranchWorktreeAutoRecoveryHandler } from "./auto-recovery-handlers/branch-worktree.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER, PAUSE_ABORT_PARK_OPERATOR_MARKER } from "./self-healing.js";
-import { ContaminationAutoRecoveryHandler } from "./auto-recovery-handlers/contamination.js";
-import { createFileScopeAutoRecoveryHandler } from "./auto-recovery-handlers/file-scope.js";
 import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflows/workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./execution/spec-staleness.js";
 import { resolveDedicatedPlannerColumnsForTask } from "./planner-lane-resolution.js";
@@ -770,6 +767,14 @@ export {
 } from "./executor/run-cli-agent-node.js";
 import { adoptColumnAgentForNode as adoptColumnAgentForNodeImpl } from "./executor/adopt-column-agent-for-node.js";
 export { adoptColumnAgentForNode as adoptColumnAgentForNodeFree } from "./executor/adopt-column-agent-for-node.js";
+import { runSpawnedChild as runSpawnedChildImpl } from "./executor/run-spawned-child.js";
+export { runSpawnedChild as runSpawnedChildFree } from "./executor/run-spawned-child.js";
+import { getAutoRecoveryDispatcher as getAutoRecoveryDispatcherImpl } from "./executor/get-auto-recovery-dispatcher.js";
+export { getAutoRecoveryDispatcher as getAutoRecoveryDispatcherFree } from "./executor/get-auto-recovery-dispatcher.js";
+import { prepareGraphNodeExecution as prepareGraphNodeExecutionImpl } from "./executor/prepare-graph-node-execution.js";
+export { prepareGraphNodeExecution as prepareGraphNodeExecutionFree } from "./executor/prepare-graph-node-execution.js";
+import { transitionReviewAddressing as transitionReviewAddressingImpl } from "./executor/transition-review-addressing.js";
+export { transitionReviewAddressing as transitionReviewAddressingFree } from "./executor/transition-review-addressing.js";
 
 
 
@@ -1506,47 +1511,14 @@ export class TaskExecutor {
   }
 
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
-    if (this.options.autoRecoveryDispatcher) return this.options.autoRecoveryDispatcher;
-    const fileScopeHandler = createFileScopeAutoRecoveryHandler({
-      taskStore: this.store,
-      runAudit: audit,
-      logger: executorLog,
-      spawnAgent: async () => ({ agentId: "unavailable" }),
-      classifyPatchIds: async () => ({ unique: [], alreadyUpstream: [] }),
-      settings: () => ({ autoRecovery: { mode: "deterministic-only", maxRetries: 3 } } as ProjectSettings),
-    });
-    const branchWorktreeHandler = new BranchWorktreeAutoRecoveryHandler({
-      taskStore: this.store,
-      runAudit: audit,
-      logger: executorLog,
-    });
-    const contaminationHandler = new ContaminationAutoRecoveryHandler({
-      taskStore: this.store,
-      runAudit: audit,
-      logger: executorLog,
-      repoDir: this.rootDir,
-    });
-    return new AutoRecoveryDispatcher({
-      taskStore: this.store,
-      auditEmitter: audit,
-      handlers: {
-        issueRetry: async (failure, decision, ctx) => {
-          if (failure.class === "branch-cross-contamination") {
-            return contaminationHandler.issueRetry(failure, decision, ctx);
-          }
-          if (failure.class === "branch-conflict-unrecoverable") {
-            return branchWorktreeHandler.issueRetry(failure, decision, ctx);
-          }
-          return fileScopeHandler.issueRetry(failure, decision, ctx);
-        },
-        spawnAiRecovery: async (failure, decision, ctx) => {
-          if (failure.class === "branch-conflict-unrecoverable") {
-            return branchWorktreeHandler.spawnAiRecovery(failure, decision, ctx);
-          }
-          return fileScopeHandler.spawnAiRecovery(failure, decision, ctx);
-        },
+    return getAutoRecoveryDispatcherImpl(
+      {
+        store: this.store,
+        rootDir: this.rootDir,
+        autoRecoveryDispatcher: this.options.autoRecoveryDispatcher,
       },
-    });
+      audit,
+    );
   }
 
   private async renewTaskLease(
@@ -6647,41 +6619,17 @@ export class TaskExecutor {
     settings: Settings,
     requirement: WorkflowNodePreparationRequirement,
   ): Promise<void> {
-    if (!requirement.requiresWorktree) return;
-    const live = await this.store.getTask(nodeTask.id);
-    const executionCodeNode = node.kind === "code";
-    if (live.worktree && existsSync(live.worktree) && !executionCodeNode) return;
-    /*
-    FNXC:WorktreeBaseRefresh 2026-08-01-16:32:
-    An existing code-node checkout must remain attached to the acquisition input so it takes the
-    guarded reuse/refresh path. Only a missing recorded path is cleared to permit fresh creation.
-    */
-    const taskForAcquisition = live.worktree && !existsSync(live.worktree)
-      ? ({ ...live, worktree: undefined, sessionFile: undefined } as TaskDetail)
-      : live;
-    if (live.worktree) {
-      /*
-      FNXC:WorkflowExecution 2026-06-29-15:28:
-      A graph-native skill node such as Compound Engineering `plan` may be the first write-capable node. A stale task row can still point at a removed checkout after reset/retry/self-healing; a truthy `worktree` field is not proof of node readiness. Fall through to fresh acquisition when the directory is missing so the graph starts a session instead of failing immediately at the first CE node.
-      */
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}' assigned worktree is missing — reacquiring before node execution`,
-        live.worktree,
-        this.getRunContextFor(live.id),
-      );
-    }
-    /*
-    FNXC:WorkflowExecution 2026-06-29-09:50:
-    The workflow graph decides which nodes require pre-execution lifecycle resources. This adapter only fulfills a graph-declared worktree requirement with executor-owned git mechanics; custom-node handlers remain ordinary node execution and no longer decide when to bootstrap task isolation.
-    */
-    /*
-    FNXC:WorktreeBaseRefresh 2026-08-01-16:04:
-    Code nodes are the sole graph implementation boundary. They reacquire an existing planning
-    worktree with refresh enabled before a model session can start; planning and review nodes keep
-    their C0 checkout so lane isolation does not become an implicit rebase policy.
-    */
-    await this.ensureGraphCustomNodeWorktree(taskForAcquisition, settings, node.id, executionCodeNode);
+    return prepareGraphNodeExecutionImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
+      },
+      node,
+      nodeTask,
+      settings,
+      requirement,
+    );
   }
 
   private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
@@ -13168,45 +13116,7 @@ export class TaskExecutor {
   }
 
   private async transitionReviewAddressing(taskId: string, from: Array<"queued" | "in-progress" | "addressed" | "failed">, to: "queued" | "in-progress" | "addressed" | "failed"): Promise<void> {
-    const task = await this.store.getTask(taskId);
-    const reviewState = task.reviewState;
-    if (!reviewState || reviewState.addressing.length === 0) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    let changed = false;
-    const addressing = reviewState.addressing.map((record) => {
-      if (!from.includes(record.status)) {
-        return record;
-      }
-      changed = true;
-      /*
-      FNXC:ReviewAddressing 2026-07-30-16:40 DELIBERATE-LITERAL:
-      `to` here is a review-addressing RECORD STATUS (`"queued" | "in-progress" | "addressed" | "failed"`,
-      see this method's signature), NOT a board column — the very next lines test it against `"addressed"`
-      and `"failed"`, which are not columns at all. The lifecycle-column census matches the bare string
-      and counted it; resolving it to a workflow role would be nonsense.
-      */
-      return {
-        ...record,
-        status: to,
-        startedAt: to === "in-progress" ? now : record.startedAt,
-        completedAt: to === "addressed" || to === "failed" ? now : record.completedAt,
-        error: to === "addressed" ? undefined : record.error,
-      };
-    });
-
-    if (!changed) {
-      return;
-    }
-
-    await this.store.updateTask(taskId, {
-      reviewState: {
-        ...reviewState,
-        addressing,
-      },
-    });
+    return transitionReviewAddressingImpl(this.store, taskId, from, to);
   }
 
   /*
@@ -15570,45 +15480,18 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     childSession: AgentSession,
     taskPrompt: string,
   ): Promise<void> {
-    try {
-      await this.options.agentStore?.updateAgentState(agentId, "running");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`Failed to update spawned child ${agentId} state to 'running': ${msg}`);
-    }
-
-    try {
-      await promptWithFallback(childSession, taskPrompt);
-      // Normal completion — mark as active (available)
-      try {
-        await this.options.agentStore?.updateAgentState(agentId, "active");
-      } catch (markActiveErr) {
-        executorLog.warn(`Child agent ${agentId} updateAgentState(active) failed: ${markActiveErr instanceof Error ? markActiveErr.message : String(markActiveErr)}`);
-      }
-    } catch (err: unknown) {
-      // Error during execution — mark as error
-      try {
-        await this.options.agentStore?.updateAgentState(agentId, "error");
-      } catch (markErrorErr) {
-        executorLog.warn(`Child agent ${agentId} updateAgentState(error) failed: ${markErrorErr instanceof Error ? markErrorErr.message : String(markErrorErr)}`);
-      }
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`Child agent ${agentId} failed: ${errorMessage}`);
-    } finally {
-      /*
-      FNXC:AgentSpawning 2026-06-23-12:25:
-      Server memory must return to baseline after spawned child execution. A normally completed child session owns provider/runtime state until disposed; deleting it from childSessions first makes later parent cleanup unable to reach it.
-      */
-      if (this.childSessions.get(agentId) === childSession) {
-        try {
-          await childSession.dispose();
-        } catch (disposeErr) {
-          executorLog.warn(`Child agent ${agentId} session dispose failed: ${disposeErr instanceof Error ? disposeErr.message : String(disposeErr)}`);
-        }
-        this.childSessions.delete(agentId);
-      }
-      this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
-    }
+    return runSpawnedChildImpl(
+      {
+        agentStore: this.options.agentStore,
+        childSessions: this.childSessions,
+        adjustSpawnedCount: (delta) => {
+          this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount + delta);
+        },
+      },
+      agentId,
+      childSession,
+      taskPrompt,
+    );
   }
 
   /**
