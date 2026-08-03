@@ -264,6 +264,11 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
   skip-install pack jobs never create a pnpm store; setup-node must not enable
   cache: pnpm on that path or post-job cache save fails the whole job after a
   successful pack (agent-browser-install pack-fixture).
+
+  FNXC:CI 2026-08-03-06:26:
+  setup-node@v5+ also defaults package-manager-cache:true, which reintroduces the
+  same Path Validation Error even when cache is omitted — pin it false on the
+  no-install path (PR #3307 agent-browser pack fixture post-step).
   */
   it("disables pnpm store cache when skip-install is true", () => {
     const setupSteps = (compositeAction.runs?.steps ?? []).filter(
@@ -276,6 +281,7 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
     expect(withoutCache?.if).toContain("skip-install");
     expect(withoutCache?.if).toContain("==");
     expect(withoutCache?.with?.cache).toBeUndefined();
+    expect(withoutCache?.with?.["package-manager-cache"]).toBe(false);
   });
 
   it("keeps lint as install + lint only, without Bun/setup build coupling", () => {
