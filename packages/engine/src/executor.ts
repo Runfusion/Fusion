@@ -8,7 +8,7 @@ const execFileAsync = promisify(execFile);
 import { delimiter } from "node:path";
 import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { resolveWorkflowIrForTask, resolveEffectiveAgent, AgentStore } from "@fusion/core";
+import { resolveEffectiveAgent, AgentStore } from "@fusion/core";
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import type { GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
@@ -80,7 +80,6 @@ import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { createArtifactListTool as sharedCreateArtifactListTool, createArtifactRegisterTool as sharedCreateArtifactRegisterTool, createArtifactViewTool as sharedCreateArtifactViewTool, createTaskCreateTool as sharedCreateTaskCreateTool, createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool, createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool, createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool, createTaskFileScopeAddTool as sharedCreateTaskFileScopeAddTool, createTaskLogTool as sharedCreateTaskLogTool, createTaskLogsReadTool as sharedCreateTaskLogsReadTool, createWorkflowListTool as sharedCreateWorkflowListTool, createWorkflowGetTool as sharedCreateWorkflowGetTool, createWorkflowValidateTool as sharedCreateWorkflowValidateTool, createWorkflowSelectTool as sharedCreateWorkflowSelectTool, createTaskPromoteTool as sharedCreateTaskPromoteTool, createWorkflowCreateTool as sharedCreateWorkflowCreateTool, createWorkflowUpdateTool as sharedCreateWorkflowUpdateTool, createWorkflowDeleteTool as sharedCreateWorkflowDeleteTool, createWorkflowSettingsTool as sharedCreateWorkflowSettingsTool, createTraitListTool as sharedCreateTraitListTool } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
-import { createFusionAuthStorage, createFusionModelRegistry } from "./auth/auth-storage.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
 export type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
@@ -742,6 +741,21 @@ export { awaitFeatureVideoBounded as awaitFeatureVideoBoundedFree, generateCompl
 export { getExecutingTaskIds as getExecutingTaskIdsFree, hasActivePlanningWorkflowSession as hasActivePlanningWorkflowSessionFree, isTaskActive as isTaskActiveFree } from "./executor/task-liveness.js";
 export { clearCompletedTaskWatchdog as clearCompletedTaskWatchdogFree } from "./executor/clear-completed-task-watchdog.js";
 export { terminateAllChildren as terminateAllChildrenFree } from "./executor/terminate-all-children.js";
+import { clearTerminalStepFailuresForRetry as clearTerminalStepFailuresForRetryImpl } from "./executor/clear-terminal-step-failures-for-retry.js";
+export { clearTerminalStepFailuresForRetry as clearTerminalStepFailuresForRetryFree } from "./executor/clear-terminal-step-failures-for-retry.js";
+import { resolveTaskCustomFieldDefs as resolveTaskCustomFieldDefsImpl } from "./executor/resolve-task-custom-field-defs.js";
+export { resolveTaskCustomFieldDefs as resolveTaskCustomFieldDefsFree } from "./executor/resolve-task-custom-field-defs.js";
+import { disposeStoreLifecycleDisposers as disposeStoreLifecycleDisposersImpl } from "./executor/dispose-store-lifecycle-disposers.js";
+export { disposeStoreLifecycleDisposers as disposeStoreLifecycleDisposersFree } from "./executor/dispose-store-lifecycle-disposers.js";
+import {
+  registerSubagentSession as registerSubagentSessionImpl,
+  unregisterSubagentSession as unregisterSubagentSessionImpl,
+} from "./executor/subagent-session-registry.js";
+export { registerSubagentSession as registerSubagentSessionFree, unregisterSubagentSession as unregisterSubagentSessionFree } from "./executor/subagent-session-registry.js";
+import { clearWorkflowRerunWatchdog as clearWorkflowRerunWatchdogImpl } from "./executor/clear-workflow-rerun-watchdog.js";
+export { clearWorkflowRerunWatchdog as clearWorkflowRerunWatchdogFree } from "./executor/clear-workflow-rerun-watchdog.js";
+import { getModelRegistry as getModelRegistryImpl } from "./executor/get-model-registry.js";
+export { getModelRegistry as getModelRegistryFree } from "./executor/get-model-registry.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
@@ -1471,11 +1485,10 @@ export class TaskExecutor {
   }
 
   private getModelRegistry(): Promise<ModelRegistry> {
-    if (!this._modelRegistry) {
-      const authStorage = createFusionAuthStorage();
-      this._modelRegistry = createFusionModelRegistry(authStorage);
-    }
-    return this._modelRegistry;
+    return getModelRegistryImpl({
+      getModelRegistryCache: () => this._modelRegistry,
+      setModelRegistryCache: (value) => { this._modelRegistry = value; },
+    });
   }
 
   private get approvalRequestStore(): ApprovalRequestStore {
@@ -1643,12 +1656,7 @@ export class TaskExecutor {
    * callback passed to `reviewStep`.
    */
   private registerSubagentSession(taskId: string, session: AgentSession): void {
-    let set = this.activeSubagentSessions.get(taskId);
-    if (!set) {
-      set = new Set();
-      this.activeSubagentSessions.set(taskId, set);
-    }
-    set.add(session);
+    registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session);
   }
 
   /**
@@ -1657,10 +1665,7 @@ export class TaskExecutor {
    * map.
    */
   private unregisterSubagentSession(taskId: string, session: AgentSession): void {
-    const set = this.activeSubagentSessions.get(taskId);
-    if (!set) return;
-    set.delete(session);
-    if (set.size === 0) this.activeSubagentSessions.delete(taskId);
+    unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session);
   }
 
   /**
@@ -2752,10 +2757,7 @@ export class TaskExecutor {
   }
 
   private clearWorkflowRerunWatchdog(taskId: string): void {
-    const handle = this.workflowRerunWatchdogs.get(taskId);
-    if (!handle) return;
-    clearTimeout(handle);
-    this.workflowRerunWatchdogs.delete(taskId);
+    clearWorkflowRerunWatchdogImpl(this.workflowRerunWatchdogs, taskId);
   }
 
   private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
@@ -2795,12 +2797,13 @@ export class TaskExecutor {
   Clear prior terminal failure results (failed/advisory_failure — incl. optional gate nodes like code-review) so a retry starts clean. Call this ONLY once the task has left the mergeable in-review column (i.e. it is in `todo`): clearing while still in-review drops the merge blocker during the rerun-bounce window and could let a concurrent auto-merge sweep merge an empty-`steps` graph-native task with its gate failure unaddressed. `moveTask(in-review→todo)` already clears ALL results (applyReopenFieldClears), so this is chiefly for the in-progress→todo bounce path where the move does not. Passed/skipped/pending evidence is kept.
   */
   private async clearTerminalStepFailuresForRetry(taskId: string): Promise<void> {
-    const live = await this.store.getTask(taskId).catch(() => null);
-    if (!live) return;
-    const cleared = clearTerminalWorkflowStepFailures(live.workflowStepResults);
-    if (cleared !== live.workflowStepResults) {
-      await this.store.updateTask(taskId, { workflowStepResults: cleared }, this.getRunContextFor(taskId));
-    }
+    return clearTerminalStepFailuresForRetryImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+      },
+      taskId,
+    );
   }
 
   private async performWorkflowRerunBounce(
@@ -3582,13 +3585,7 @@ export class TaskExecutor {
    * throws and legacy tasks see no custom-fields section.
    */
   private async resolveTaskCustomFieldDefs(taskId: string): Promise<WorkflowFieldDefinition[] | undefined> {
-    try {
-      const ir = await resolveWorkflowIrForTask(this.store, taskId);
-      const fields = ir.version === "v2" ? ir.fields : undefined;
-      return fields && fields.length > 0 ? fields : undefined;
-    } catch {
-      return undefined;
-    }
+    return resolveTaskCustomFieldDefsImpl({ store: this.store }, taskId);
   }
 
   /**
@@ -5848,12 +5845,11 @@ export class TaskExecutor {
 
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
   disposeStoreLifecycleDisposers(): void {
-    this.unregisterTaskMoveDisposer?.();
-    this.unregisterTaskMoveDisposer = undefined;
-    this.unregisterArchiveWorktreeDisposer?.();
-    this.unregisterArchiveWorktreeDisposer = undefined;
-    this.unregisterArchiveWorkspaceWorktreeDisposer?.();
-    this.unregisterArchiveWorkspaceWorktreeDisposer = undefined;
+    disposeStoreLifecycleDisposersImpl({
+      clearTaskMoveDisposer: () => { this.unregisterTaskMoveDisposer?.(); this.unregisterTaskMoveDisposer = undefined; },
+      clearArchiveWorktreeDisposer: () => { this.unregisterArchiveWorktreeDisposer?.(); this.unregisterArchiveWorktreeDisposer = undefined; },
+      clearArchiveWorkspaceWorktreeDisposer: () => { this.unregisterArchiveWorkspaceWorktreeDisposer?.(); this.unregisterArchiveWorkspaceWorktreeDisposer = undefined; },
+    });
   }
 
 
@@ -6099,7 +6095,6 @@ export {
 import { formatCommentForInjection } from "./executor/execution-prompt.js";
 
 export { clearTerminalWorkflowStepFailures } from "./executor/workflow-step-failures.js";
-import { clearTerminalWorkflowStepFailures } from "./executor/workflow-step-failures.js";
 
 export {
   hasNonTerminalWorkflowSteps,
