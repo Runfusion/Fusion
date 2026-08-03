@@ -1155,7 +1155,7 @@ The Files modal provides a workspace-aware file browser and editor.
 
 ## Memory View
 
-Memory view provides a multi-file editor for project and daily memory files. Its file editors share the same highlighted-text **Add comment** affordance as the Files modal, so memory snippets can seed a New Task with file path, snippet, and comment context.
+Memory view provides a multi-file editor for project and daily memory files. Its file editors share the same highlighted-text **Add comment** affordance as the Files modal, so memory snippets can seed a New Task with file path, snippet, and comment context. Editable file editors also provide localized **Undo** and **Redo** toolbar controls and the standard platform shortcuts: <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Z</kbd> to undo, plus <kbd>Ctrl</kbd>+<kbd>Y</kbd> or <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to redo.
 
 > Available when the `experimentalFeatures.memoryView` toggle is enabled.
 

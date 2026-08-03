@@ -2496,10 +2496,12 @@ export default interface Resources {
       "lineNumber": "Line #",
       "preview": "Preview",
       "previewMode": "Preview mode",
+      "redo": "Redo",
       "toggleAutoSave": "Toggle auto-save",
       "toggleLineNumbers": "Toggle line numbers",
       "toggleOptions": "Toggle editor options",
       "toggleWordWrap": "Toggle word wrap",
+      "undo": "Undo",
       "wrap": "Wrap"
     },
     "fileMention": {

@@ -2494,6 +2494,8 @@
     "lineNumber": "Line #",
     "preview": "Preview",
     "previewMode": "Preview mode",
+    "redo": "Redo",
+    "undo": "Undo",
     "toggleAutoSave": "Toggle auto-save",
     "toggleLineNumbers": "Toggle line numbers",
     "toggleOptions": "Toggle editor options",

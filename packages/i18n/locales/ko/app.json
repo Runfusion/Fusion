@@ -2484,6 +2484,8 @@
     "lineNumber": "줄 번호",
     "preview": "미리보기",
     "previewMode": "미리보기 모드",
+    "redo": "다시 실행",
+    "undo": "실행 취소",
     "toggleAutoSave": "",
     "toggleLineNumbers": "줄 번호 표시 토글",
     "toggleOptions": "편집기 옵션 토글",
@@ -6054,9 +6056,7 @@
       "agentToolOutputLimit": "",
       "agentToolOutputLimitHint": "",
       "noLimitOnAgentToolOutput": "",
-      "noLimitOnAgentToolOutputHint": "",
-      "autoUpdateAndRestart": "",
-      "autoUpdateAndRestartHelp": ""
+      "noLimitOnAgentToolOutputHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6539,7 +6539,11 @@
       "selectChatDefaultAgent": "Select a chat default agent",
       "chatDefaultAgentEmpty": "No agents are available for this project yet.",
       "chatDefaultAgentHelp": "Agent-mode New Chat starts a Direct chat with the selected durable agent.",
-      "chatDefaultReset": "Reset Chat default"
+      "chatDefaultReset": "Reset Chat default",
+      "executorEscalationModel": "",
+      "executorEscalationModelHelp": "",
+      "selectExecutorEscalationModel": "",
+      "noExecutorEscalationModel": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6923,7 +6927,13 @@
       "notInstalled": "Not installed",
       "download": "Download",
       "remove": "Remove",
-      "error": "Model error: {{message}}"
+      "error": "Model error: {{message}}",
+      "modelRequired": "",
+      "modelPreparing": "",
+      "modelFailed": "",
+      "runtimeModuleMissing": "",
+      "runtimePlatformLoadFailed": "",
+      "runtimeIncompatible": ""
     }
   },
   "setup": {

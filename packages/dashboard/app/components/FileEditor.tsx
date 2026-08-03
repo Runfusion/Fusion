@@ -2,9 +2,10 @@ import { useState, useCallback, useMemo, useRef, useId, useEffect } from "react"
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileEdit, Eye, ListOrdered, WrapText, ChevronDown, ChevronUp, Save } from "lucide-react";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { FileEdit, Eye, ListOrdered, WrapText, ChevronDown, ChevronUp, Save, Undo2, Redo2 } from "lucide-react";
+import { EditorView, lineNumbers, keymap } from "@codemirror/view";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
+import { history, historyKeymap, redo, redoDepth, undo, undoDepth } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle } from "@codemirror/language";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { useSelectionComment } from "../hooks/useSelectionComment";
@@ -99,6 +100,7 @@ export function FileEditor({
   const editorHostRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const editorViewRef = useRef<EditorView | null>(null);
+  const createEditorStateRef = useRef<((doc: string, selection?: { anchor: number; head: number }) => EditorState) | null>(null);
   const syncingFromPropsRef = useRef(false);
   const localEditVersionRef = useRef(0);
   const contentEditVersionsRef = useRef<Map<string, number>>(new Map([[content, 0]]));
@@ -111,6 +113,7 @@ export function FileEditor({
   const readOnlyCompartmentRef = useRef(new Compartment());
   const languageCompartmentRef = useRef(new Compartment());
   const themeCompartmentRef = useRef(new Compartment());
+  const [historyAvailability, setHistoryAvailability] = useState({ undo: false, redo: false });
 
   const isMarkdown = isMarkdownFile(filePath);
   const generatedToolbarActionsId = useId();
@@ -121,8 +124,11 @@ export function FileEditor({
   const shouldRenderLineNumbers = showLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowLineNumbersToggle = Boolean(onToggleLineNumbers) && canToggleLineNumbers && !readOnly && !effectiveShowPreview;
   const shouldShowAutoSaveToggle = Boolean(onToggleAutoSave) && canToggleAutoSave && !readOnly && !effectiveShowPreview;
+  const shouldShowHistoryControls = !readOnly && !effectiveShowPreview;
   const hasToolbarActions = isMarkdown || !readOnly || shouldShowLineNumbersToggle || shouldShowAutoSaveToggle;
   const languageExtension = useMemo(() => resolveCodeMirrorLanguage(filePath), [filePath]);
+  const editorStateConfigRef = useRef({ shouldRenderLineNumbers, wordWrap, readOnly, languageExtension, darkThemeActive });
+  editorStateConfigRef.current = { shouldRenderLineNumbers, wordWrap, readOnly, languageExtension, darkThemeActive };
 
   const handleEditClick = useCallback(() => setShowPreview(false), []);
   const handlePreviewClick = useCallback(() => setShowPreview(true), []);
@@ -132,6 +138,11 @@ export function FileEditor({
       setInternalExpanded((prev) => !prev);
     }
   }, [isControlled]);
+  const handleHistoryCommand = useCallback((command: typeof undo | typeof redo) => {
+    const view = editorViewRef.current;
+    if (!view || !command(view)) return;
+    view.focus();
+  }, []);
 
   const [selectionCommentOpen, setSelectionCommentOpen] = useState(false);
   const getCodeMirrorLineRange = useCallback(() => {
@@ -175,28 +186,39 @@ export function FileEditor({
       "&.cm-focused": { outline: "none" },
     });
 
-    const state = EditorState.create({
-      doc: content,
-      extensions: [
-        lineNumbersCompartmentRef.current.of(shouldRenderLineNumbers ? lineNumbers() : []),
-        wordWrapCompartmentRef.current.of(wordWrap ? EditorView.lineWrapping : []),
-        readOnlyCompartmentRef.current.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
-        languageCompartmentRef.current.of(languageExtension ?? []),
-        themeCompartmentRef.current.of(buildThemeExtension(darkThemeActive)),
-        themeOverlay,
-        EditorView.updateListener.of((update) => {
-          if (!update.docChanged || syncingFromPropsRef.current) return;
-          const nextContent = update.state.doc.toString();
-          localEditVersionRef.current += 1;
-          contentEditVersionsRef.current.set(nextContent, localEditVersionRef.current);
-          onChangeRef.current(nextContent);
-        }),
-      ],
-    });
+    const createEditorState = (doc: string, selection?: { anchor: number; head: number }) => {
+      const { shouldRenderLineNumbers, wordWrap, readOnly, languageExtension, darkThemeActive } = editorStateConfigRef.current;
+      return EditorState.create({
+        doc,
+        selection,
+        extensions: [
+          history(),
+          keymap.of(historyKeymap),
+          lineNumbersCompartmentRef.current.of(shouldRenderLineNumbers ? lineNumbers() : []),
+          wordWrapCompartmentRef.current.of(wordWrap ? EditorView.lineWrapping : []),
+          readOnlyCompartmentRef.current.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
+          languageCompartmentRef.current.of(languageExtension ?? []),
+          themeCompartmentRef.current.of(buildThemeExtension(darkThemeActive)),
+          themeOverlay,
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged || update.transactions.some((transaction) => transaction.effects.length > 0)) {
+              setHistoryAvailability({ undo: undoDepth(update.state) > 0, redo: redoDepth(update.state) > 0 });
+            }
+            if (!update.docChanged || syncingFromPropsRef.current) return;
+            const nextContent = update.state.doc.toString();
+            localEditVersionRef.current += 1;
+            contentEditVersionsRef.current.set(nextContent, localEditVersionRef.current);
+            onChangeRef.current(nextContent);
+          }),
+        ],
+      });
+    };
 
-    const view = new EditorView({ state, parent: editorHostRef.current });
+    createEditorStateRef.current = createEditorState;
+    const view = new EditorView({ state: createEditorState(content), parent: editorHostRef.current });
     editorViewRef.current = view;
     return () => {
+      createEditorStateRef.current = null;
       editorViewRef.current = null;
       view.destroy();
     };
@@ -256,6 +278,14 @@ export function FileEditor({
   }, [darkThemeActive]);
 
   /*
+   * FNXC:FileEditor 2026-08-03-06:15:
+   * Editable editors expose native CodeMirror undo/redo through localized controls and platform shortcuts, while read-only and markdown preview presentations expose no editing affordances. A stale controlled self-echo preserves its local history, but an accepted external replacement resets the native editor state so it becomes a non-undoable baseline and cannot restore stale content.
+   *
+   * FNXC:FileEditor 2026-08-03-06:41:
+   * External content and read-only mode may change in the same render. Build replacement states from the current render configuration rather than the initial editor mount so the reset never reverses the caller's editability choice.
+   */
+
+  /*
    * FNXC:FileViewer 2026-07-10-22:52:
    * FN-7810 found that the bounded self-echo Set could evict a stale value during long sessions, and it could miss end-of-file Enter flows where a trailing header newline raced an older prop. Use monotonic edit versions for every local CodeMirror emission instead: any prop whose known version is older than the live editor or last accepted prop is a stale self-echo at any session length, while never-emitted external reload/save-normalization content still replaces the document with the caret clamped into range.
    */
@@ -280,13 +310,13 @@ export function FileEditor({
     const clampPosition = (position: number) => Math.max(0, Math.min(position, nextLength));
     syncingFromPropsRef.current = true;
     try {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: content },
-        selection: {
-          anchor: clampPosition(previousSelection.anchor),
-          head: clampPosition(previousSelection.head),
-        },
-      });
+      const createEditorState = createEditorStateRef.current;
+      if (!createEditorState) return;
+      view.setState(createEditorState(content, {
+        anchor: clampPosition(previousSelection.anchor),
+        head: clampPosition(previousSelection.head),
+      }));
+      setHistoryAvailability({ undo: false, redo: false });
       const externalContentVersion = localEditVersionRef.current;
       contentEditVersionsRef.current.set(content, externalContentVersion);
       lastPropEditVersionRef.current = Math.max(lastPropEditVersionRef.current, externalContentVersion);
@@ -319,6 +349,16 @@ export function FileEditor({
                 </button>
               </>
             ) : null}
+            {shouldShowHistoryControls && (
+              <>
+                <button className="btn btn-sm btn-icon file-editor-toolbar-button" onClick={() => handleHistoryCommand(undo)} disabled={!historyAvailability.undo} aria-label={t("fileEditor.undo", "Undo")} title={t("fileEditor.undo", "Undo")}>
+                  <Undo2 />
+                </button>
+                <button className="btn btn-sm btn-icon file-editor-toolbar-button" onClick={() => handleHistoryCommand(redo)} disabled={!historyAvailability.redo} aria-label={t("fileEditor.redo", "Redo")} title={t("fileEditor.redo", "Redo")}>
+                  <Redo2 />
+                </button>
+              </>
+            )}
             {shouldShowAutoSaveToggle && (
               <button className={`btn btn-sm file-editor-toolbar-button ${autoSaveEnabled ? "btn-primary" : ""}`} onClick={onToggleAutoSave} aria-label={t("fileEditor.toggleAutoSave", "Toggle auto-save")} aria-pressed={autoSaveEnabled} title={t("fileEditor.toggleAutoSave", "Toggle auto-save")} data-testid="file-editor-auto-save-toggle">
                 <Save size={14} />

@@ -2484,6 +2484,8 @@
     "lineNumber": "行号",
     "preview": "预览",
     "previewMode": "预览模式",
+    "redo": "重做",
+    "undo": "撤销",
     "toggleAutoSave": "",
     "toggleLineNumbers": "切换行号",
     "toggleOptions": "切换编辑器选项",
@@ -6054,9 +6056,7 @@
       "agentToolOutputLimit": "",
       "agentToolOutputLimitHint": "",
       "noLimitOnAgentToolOutput": "",
-      "noLimitOnAgentToolOutputHint": "",
-      "autoUpdateAndRestart": "",
-      "autoUpdateAndRestartHelp": ""
+      "noLimitOnAgentToolOutputHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -6539,7 +6539,11 @@
       "selectChatDefaultAgent": "Select a chat default agent",
       "chatDefaultAgentEmpty": "No agents are available for this project yet.",
       "chatDefaultAgentHelp": "Agent-mode New Chat starts a Direct chat with the selected durable agent.",
-      "chatDefaultReset": "Reset Chat default"
+      "chatDefaultReset": "Reset Chat default",
+      "executorEscalationModel": "",
+      "executorEscalationModelHelp": "",
+      "selectExecutorEscalationModel": "",
+      "noExecutorEscalationModel": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6923,7 +6927,13 @@
       "notInstalled": "Not installed",
       "download": "Download",
       "remove": "Remove",
-      "error": "Model error: {{message}}"
+      "error": "Model error: {{message}}",
+      "modelRequired": "",
+      "modelPreparing": "",
+      "modelFailed": "",
+      "runtimeModuleMissing": "",
+      "runtimePlatformLoadFailed": "",
+      "runtimeIncompatible": ""
     }
   },
   "setup": {

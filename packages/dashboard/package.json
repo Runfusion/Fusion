@@ -99,12 +99,13 @@
     "test:quality:api:backfill-2": "node scripts/run-vitest-with-heap.mjs --heap=6144 run --project dashboard-api-quality-backfill --silent=passed-only --reporter=dot --shard=2/2"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/lang-json": "^6.0.1",
     "@codemirror/lang-markdown": "^6.3.2",
     "@codemirror/language": "^6.12.3",
-    "@codemirror/state": "^6.5.2",
+    "@codemirror/state": "^6.7.1",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@codemirror/view": "^6.36.4",
     "@earendil-works/pi-coding-agent": "0.82.1",

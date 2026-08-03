@@ -2,6 +2,8 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+import i18next from "i18next";
+import esApp from "../../../../i18n/locales/es/app.json";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { FileEditor } from "../FileEditor";
 
@@ -90,6 +92,94 @@ describe("FileEditor", () => {
     const view = getEditorView();
     view.dispatch({ changes: { from: 0, insert: "new content" } });
     expect(onChange).toHaveBeenCalledWith("new content");
+  });
+
+  it("undoes and redoes local edits through toolbar and standard keyboard commands", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    render(<FileEditor content="start" onChange={onChange} filePath="a.ts" />);
+    const view = getEditorView();
+
+    act(() => {
+      view.dispatch({ changes: { from: 5, insert: " one" } });
+      view.dispatch({ changes: { from: 0, insert: "two " } });
+    });
+    expect(view.state.doc.toString()).toBe("two start one");
+
+    expandEditorOptions();
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    const redoButton = screen.getByRole("button", { name: "Redo" });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    expect(redoButton).toBeDisabled();
+
+    fireEvent.click(undoButton);
+    expect(view.state.doc.toString()).toBe("start one");
+    expect(onChange).toHaveBeenLastCalledWith("start one");
+    expect(redoButton).toBeEnabled();
+
+    fireEvent.keyDown(view.contentDOM, { key: "y", ctrlKey: true });
+    expect(view.state.doc.toString()).toBe("two start one");
+    expect(onChange).toHaveBeenLastCalledWith("two start one");
+
+    fireEvent.click(undoButton);
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: "branch " } });
+    });
+    expect(view.state.doc.toString()).toBe("branch start one");
+    expect(redoButton).toBeDisabled();
+  });
+
+  it("clears history for accepted external replacements but preserves it for stale self-echoes", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="start" onChange={onChange} filePath="a.ts" />);
+    const view = getEditorView();
+
+    act(() => {
+      view.dispatch({ changes: { from: 5, insert: " local" } });
+    });
+    rerender(<FileEditor content="start local" onChange={onChange} filePath="a.ts" />);
+    act(() => {
+      view.dispatch({ changes: { from: 11, insert: " latest" } });
+    });
+    rerender(<FileEditor content="start local" onChange={onChange} filePath="a.ts" />);
+
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe("start local latest"));
+    expandEditorOptions();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled());
+
+    rerender(<FileEditor content="replacement" onChange={onChange} filePath="a.ts" />);
+    await waitFor(() => expect(getEditorView().state.doc.toString()).toBe("replacement"));
+    const undoButton = screen.getByRole("button", { name: "Undo" });
+    const redoButton = screen.getByRole("button", { name: "Redo" });
+    expect(undoButton).toBeDisabled();
+    expect(redoButton).toBeDisabled();
+    fireEvent.click(undoButton);
+    fireEvent.click(redoButton);
+    expect(getEditorView().state.doc.toString()).toBe("replacement");
+    expect(onChange).not.toHaveBeenLastCalledWith("replacement");
+
+    act(() => {
+      getEditorView().dispatch({ changes: { from: 11, insert: " edited" } });
+    });
+    fireEvent.click(undoButton);
+    expect(getEditorView().state.doc.toString()).toBe("replacement");
+  });
+
+  it("uses translated undo and redo accessible names without falling back to English", async () => {
+    await i18next.addResourceBundle("es", "app", esApp, true, true);
+    await i18next.changeLanguage("es");
+    try {
+      render(<FileEditor content="start" onChange={vi.fn()} filePath="a.ts" />);
+      act(() => {
+        getEditorView().dispatch({ changes: { from: 5, insert: " edit" } });
+      });
+      fireEvent.click(document.querySelector(".file-editor-toolbar-button")!);
+      expect(screen.getByRole("button", { name: "Deshacer" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Rehacer" })).toBeDisabled();
+    } finally {
+      await i18next.changeLanguage("en");
+    }
   });
 
   it("preserves the editor instance across content prop updates", async () => {
@@ -251,6 +341,24 @@ describe("FileEditor", () => {
     document.documentElement.dataset.theme = "dark";
     render(<FileEditor content="readonly" onChange={vi.fn()} readOnly filePath="a.ts" />);
     expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
+  });
+
+  it("keeps current read-only mode when external content resets editor history", async () => {
+    document.documentElement.dataset.theme = "dark";
+    const onChange = vi.fn();
+    const { rerender } = render(<FileEditor content="editable" onChange={onChange} filePath="a.ts" />);
+
+    rerender(<FileEditor content="locked replacement" onChange={onChange} readOnly filePath="a.ts" />);
+    await waitFor(() => {
+      expect(getEditorView().state.doc.toString()).toBe("locked replacement");
+      expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("false");
+    });
+
+    rerender(<FileEditor content="editable replacement" onChange={onChange} filePath="a.ts" />);
+    await waitFor(() => {
+      expect(getEditorView().state.doc.toString()).toBe("editable replacement");
+      expect(document.querySelector(".cm-content")?.getAttribute("contenteditable")).toBe("true");
+    });
   });
 
   it("uses fallback aria-label when filePath missing", () => {
