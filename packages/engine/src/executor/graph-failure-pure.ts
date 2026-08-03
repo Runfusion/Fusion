@@ -6,8 +6,12 @@
  */
 import type { Task, TaskDetail, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
-import { MERGE_REGION_KINDS } from "../workflows/workflow-graph-executor.js";
+import {
+  MERGE_REGION_KINDS,
+  SESSION_CONTENTION_HOLD_VALUE,
+} from "../workflows/workflow-graph-executor.js";
 import { isMissingWorktreeSessionStartFailure } from "../healing/restart-recovery-coordinator.js";
+import { isSessionContentionError } from "../errors/transient-error-detector.js";
 import { PAUSE_ABORT_PARK_ERROR_MARKER } from "../self-healing.js";
 
 
@@ -149,7 +153,9 @@ export function isMergeGraphFailure(failedNode: string | undefined): boolean {
   return failedNode === "merge-manual-hold" || failedNode === "merge-retry";
 }
 
-export function latestFailedPreMergeWorkflowStep(task: Pick<Task, "workflowStepResults">): CoreWorkflowStepResult | undefined {
+export function latestFailedPreMergeWorkflowStep(
+  task: Pick<Task, "workflowStepResults"> | Pick<TaskDetail, "workflowStepResults">,
+): CoreWorkflowStepResult | undefined {
   return (task.workflowStepResults ?? [])
     .filter((r) => (r.phase || "pre-merge") === "pre-merge" && r.status === "failed")
     .sort((a, b) => {
@@ -165,4 +171,62 @@ export function isStalePauseAbortParkFailure(live: TaskDetail, nodeId = "plan"):
     && live.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER)
     && live.error.includes("engine abort during pause/resume")
     && live.error.includes(`at node '${nodeId}'`);
+}
+
+export function isSessionContentionGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
+  if (graphFailureValue(result) === SESSION_CONTENTION_HOLD_VALUE) return true;
+  return graphFailureErrorTexts(result).some((text) => isSessionContentionError(text));
+}
+
+/** True only for the pre-session refresh refusal values emitted by graph preparation. */
+export function isWorktreeBaseRefreshGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
+  return new Set([
+    "stale-base-conflict",
+    "dirty-worktree",
+    "base-unresolvable",
+    "worktrunk-refresh-unsupported",
+    "git-refresh-failed",
+    "base-persistence-failed-compensated",
+    "base-reconciliation-required",
+  ]).has(graphFailureValue(result) ?? "");
+}
+
+/*
+FNXC:WorkflowExecutionOwnership 2026-07-29-20:10 (U8 / R4, PR #2590 review — greptile):
+The compat classifier keyed on `graphFailureValue`, which reads only the LAST visited node's
+value. That is correct when the generic `failure` edge goes straight to `end` — the built-in
+shape — but a user-authored graph may route its generic failure THROUGH another node, and that
+node's value then becomes the terminal one. The classifier would miss the pending-review ending
+entirely and the card would fall to the terminal park: `status: failed` on work that was only
+WAITING for a reviewer, which is the deadlock the inline handoff existed to avoid. A guard that
+cannot fire for the exact shape it was written for.
+
+The ending is durable in the run context — the graph publishes `node:<id>:value` for every node
+it runs — so detect it there rather than trusting whichever node happened to end the walk.
+*/
+export function graphRunReportedPendingReview(
+  result: WorkflowGraphTaskRunResult,
+  failureValue: string | undefined,
+): boolean {
+  if (failureValue === "review-pending") return true;
+  const context = result.context;
+  if (!context) return false;
+  /*
+  FNXC:WorkflowExecutionOwnership 2026-07-29-21:40 (U8 / R4, PR #2590 review — greptile, 2nd):
+  Scanning EVERY `node:*:value` was too broad in the opposite direction. The run context is
+  shared for the whole walk, so a graph that continues past a pending-review node and then dies
+  on a genuine downstream failure still carries the earlier value — and a blanket scan would
+  park that card in review, hiding a real failure behind a wait. Trading a guard that misses for
+  one that over-claims is not a fix.
+
+  The narrow rule: the pending-review ending counts only when nothing AFTER it produced its own
+  verdict. Walk the visited nodes backwards and take the first recorded value — that is the
+  run's actual last word. If it is `review-pending`, the ending stands; if a later node spoke,
+  that node's outcome is the run's, and this classifier stays out of the way.
+  */
+  for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
+    const value = recordedNodeValue(context, result.visitedNodeIds[i]);
+    if (typeof value === "string") return value === "review-pending";
+  }
+  return false;
 }

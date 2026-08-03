@@ -29,12 +29,12 @@ import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js"
 import { mergeEffectiveSettings } from "./project/effective-settings.js";
 import { generateFeatureVideo, type GenerateFeatureVideoOptions } from "./review-artifacts/feature-video.js";
 import { moveTaskToReplanColumn, resolvePlannerLanes, resolvePlannerLanesForTaskAsync, resolveReplanTargetColumn } from "./execution/replan-target.js";
-import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult, WorkflowWorkItem, TaskMoveLanes } from "@fusion/core";
+import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, WorkflowWorkEngineDispatchResult, WorkflowWorkItem, TaskMoveLanes } from "@fusion/core";
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import { createExecutorColumnBoundaryHooks } from "./workflow-column-boundary-hooks.js";
 import { ensureWorkflowCompletionSummary } from "./workflows/workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./execution/code-node-runner.js";
-import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
+import { resolveReviewCheckoutCwd } from "./execution/review-checkout.js";
 import { getActiveNotificationService } from "./util/notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflows/workflow-graph-branches.js";
@@ -54,7 +54,6 @@ import {
 import {
   MERGE_REGION_KINDS,
   PLAN_REVIEW_PROVIDER_FAILURE_HOLD_VALUE,
-  SESSION_CONTENTION_HOLD_VALUE,
   WORKFLOW_DRIFT_PARK_CONTEXT_KEY,
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
@@ -104,7 +103,7 @@ import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktre
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
-import { accumulateSessionTokenUsage, captureSessionTokenBaseline, mergeTokenUsagePerModel, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
+import { accumulateSessionTokenUsage, captureSessionTokenBaseline, resetSessionTokenBaseline } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment, resolveEphemeralTaskCreationPolicy } from "@fusion/core";
 import { enforceTaskTokenBudgetForPersist } from "./concurrency/token-budget-enforcer.js";
 import {
@@ -154,8 +153,7 @@ import {
   launchCliTaskSession,
   killLiveTaskSessions,
   type CliTaskOutcome,
-  type ResolvedCliExecutorConfig,
-} from "./cli-agent/task-session.js";
+  } from "./cli-agent/task-session.js";
 import type { CliSessionManager } from "./cli-agent/session-manager.js";
 import { CliConcurrencyLimitError } from "./cli-agent/session-manager.js";
 import type { TelemetryHub } from "./cli-agent/telemetry-hub.js";
@@ -434,12 +432,14 @@ export {
 } from "./executor/task-predicates.js";
 import {
   graphFailureErrorTexts,
-  recordedNodeValue,
   graphFailureValue,
   extractUnusableWorktreeGraphFailure,
   isMergeGraphFailure,
   latestFailedPreMergeWorkflowStep,
   isStalePauseAbortParkFailure,
+  isSessionContentionGraphFailure,
+  isWorktreeBaseRefreshGraphFailure,
+  graphRunReportedPendingReview,
 } from "./executor/graph-failure-pure.js";
 export {
   graphFailureErrorTexts,
@@ -449,7 +449,45 @@ export {
   isMergeGraphFailure,
   latestFailedPreMergeWorkflowStep,
   isStalePauseAbortParkFailure,
+  isSessionContentionGraphFailure,
+  isWorktreeBaseRefreshGraphFailure,
+  graphRunReportedPendingReview,
 } from "./executor/graph-failure-pure.js";
+import {
+  accumulateTokenUsage,
+  tokenUsageWithModelSnapshot,
+  extractSessionTokenUsage,
+} from "./executor/token-usage-pure.js";
+export {
+  accumulateTokenUsage,
+  tokenUsageWithModelSnapshot,
+  extractSessionTokenUsage,
+} from "./executor/token-usage-pure.js";
+import {
+  formatBranchConflictLifecycleLog,
+  formatBranchConflictAgentLog,
+} from "./executor/branch-conflict-format.js";
+export {
+  formatBranchConflictLifecycleLog,
+  formatBranchConflictAgentLog,
+} from "./executor/branch-conflict-format.js";
+import {
+  extractOwnSettings,
+  buildAgentPersona,
+} from "./executor/agent-binding-pure.js";
+export {
+  extractOwnSettings,
+  buildAgentPersona,
+} from "./executor/agent-binding-pure.js";
+import { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
+export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
+import { quoteShellArg } from "./executor/shell-quote.js";
+export { quoteShellArg } from "./executor/shell-quote.js";
+import { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
+export { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
+import { logReviewCheckoutRouting } from "./executor/review-checkout-routing.js";
+export { logReviewCheckoutRouting } from "./executor/review-checkout-routing.js";
+
 
 
 export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
@@ -1013,26 +1051,6 @@ export class TaskExecutor {
         taskId,
         `Pause abort marked: provenance=${provenance} source=${source}${previousProvenance && previousProvenance !== provenance ? ` previous=${previousProvenance}` : ""}`,
       );
-    }
-  }
-
-  /**
-   * FNXC:ReviewRouting 2026-07-01-16:36:
-   * Review routing must expose whether the reviewer is using an explicit external checkout or the task worktree, but the invalid-sourceMetadata warning is only valid when sourceMetadata supplied the selected candidate. Higher-priority metadata can fail closed before sourceMetadata is considered, so centralize the logging to keep both review seams consistent and avoid false invalid-path warnings.
-   */
-  private logReviewCheckoutRouting(taskId: string, task: unknown, reviewCwd: string, worktreePath: string): void {
-    if (reviewCwd !== worktreePath) {
-      reviewerLog.log(`${taskId}: review routed to external checkout ${reviewCwd} (task worktree: ${worktreePath})`);
-      return;
-    }
-
-    const selectedCandidate = getTaskReviewCheckoutPath(task);
-    const sourceMetadata = task && typeof task === "object" ? (task as Record<string, unknown>).sourceMetadata : undefined;
-    const sourceRecord = sourceMetadata && typeof sourceMetadata === "object" ? sourceMetadata as Record<string, unknown> : undefined;
-    const sourceExternalReviewCheckout = sourceRecord?.externalReviewCheckout;
-    const sourceExternalReviewCheckoutPath = typeof sourceExternalReviewCheckout === "string" ? sourceExternalReviewCheckout.trim() : undefined;
-    if (sourceExternalReviewCheckoutPath && selectedCandidate === sourceExternalReviewCheckoutPath) {
-      reviewerLog.warn(`${taskId}: external review checkout metadata present (${sourceExternalReviewCheckoutPath}) but invalid — reviewing task worktree ${worktreePath}`);
     }
   }
 
@@ -1865,15 +1883,6 @@ export class TaskExecutor {
     this.pendingEphemeralDeletions.clear();
   }
 
-  private isBenignEphemeralDeleteRaceError(agentId: string, err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
-    const lower = msg.toLowerCase();
-    if (lower.includes("not found") || lower.includes("already deleted") || lower.includes("does not exist")) {
-      executorLog.debug(`Skip spawned-agent cleanup for ${agentId}: already deleted by another pathway`);
-      return true;
-    }
-    return false;
-  }
 
   /**
    * Abort the in-flight bash subprocess (if any) on every active agent session.
@@ -2798,7 +2807,7 @@ export class TaskExecutor {
           const resolveBinding = this.graphColumnAgentResolver.get(task.id)!;
           const binding = resolveBinding(governingNodeId);
           const effective = binding
-            ? resolveEffectiveAgent({ binding, ...this.extractOwnSettings(task) })
+            ? resolveEffectiveAgent({ binding, ...extractOwnSettings(task) })
             : undefined;
           if (!effective || effective.source !== "column-agent") {
             // Binding RELEASED (PR #1432 review): a workflow edit removed the
@@ -3880,102 +3889,6 @@ export class TaskExecutor {
     return getTaskCompletionBlockerForStore(this.store, task);
   }
 
-  private accumulateTokenUsage(
-    existing: TaskTokenUsage | undefined,
-    delta: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens"> | undefined,
-    timestamp = new Date().toISOString(),
-  ): TaskTokenUsage | undefined {
-    if (!delta) return existing;
-
-    const merged: TaskTokenUsage = {
-      inputTokens: (existing?.inputTokens ?? 0) + delta.inputTokens,
-      outputTokens: (existing?.outputTokens ?? 0) + delta.outputTokens,
-      cachedTokens: (existing?.cachedTokens ?? 0) + delta.cachedTokens,
-      cacheWriteTokens: (existing?.cacheWriteTokens ?? 0) + delta.cacheWriteTokens,
-      totalTokens: (existing?.totalTokens ?? 0) + delta.totalTokens,
-      firstUsedAt: existing?.firstUsedAt ?? timestamp,
-      lastUsedAt: timestamp,
-      perModel: existing?.perModel,
-    };
-
-    return merged;
-  }
-
-  private tokenUsageWithModelSnapshot(
-    tokenUsage: TaskTokenUsage,
-    session: AgentSession | undefined,
-    existing: TaskTokenUsage | undefined,
-    delta?: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens">,
-    timestamp = tokenUsage.lastUsedAt,
-    modelOverride?: { provider?: string; id?: string },
-  ): TaskTokenUsage {
-    const model = modelOverride ?? (session as { model?: { provider?: string; id?: string } } | undefined)?.model;
-    return {
-      ...tokenUsage,
-      /*
-       * FNXC:TokenAnalytics 2026-06-18-16:23:
-       * Persist the actually-used session model as an analytics snapshot while leaving task.modelProvider/task.modelId untouched so normal model-resolution hierarchy is not pinned by usage bookkeeping.
-       *
-       * FNXC:TokenAnalytics 2026-06-19-15:53:
-       * Per-model buckets must merge only the just-produced delta. The sum of buckets stays equal to the task aggregate, while analytics grand totals and nTasks remain based on the task row rather than expanded buckets.
-       */
-      modelProvider: model?.provider ?? existing?.modelProvider,
-      modelId: model?.id ?? existing?.modelId,
-      perModel: delta ? mergeTokenUsagePerModel(existing?.perModel, delta, model, timestamp) : tokenUsage.perModel,
-    };
-  }
-
-  private async extractSessionTokenUsage(
-    session: AgentSession | undefined,
-  ): Promise<Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens"> | undefined> {
-    if (!session) return undefined;
-
-    try {
-      const statsResult = (session as AgentSession & {
-        getSessionStats?: () =>
-          | {
-              tokens?: {
-                input?: number;
-                output?: number;
-                cacheRead?: number;
-                cacheWrite?: number;
-                total?: number;
-              };
-            }
-          | Promise<{
-              tokens?: {
-                input?: number;
-                output?: number;
-                cacheRead?: number;
-                cacheWrite?: number;
-                total?: number;
-              };
-            }>;
-      }).getSessionStats?.();
-      const stats = await Promise.resolve(statsResult);
-      const tokens = stats?.tokens;
-      if (!tokens) return undefined;
-
-      const inputTokens = tokens.input ?? 0;
-      const outputTokens = tokens.output ?? 0;
-      const cachedTokens = tokens.cacheRead ?? 0;
-      const cacheWriteTokens = tokens.cacheWrite ?? 0;
-      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens + cacheWriteTokens);
-
-      return {
-        inputTokens,
-        outputTokens,
-        cachedTokens,
-        cacheWriteTokens,
-        totalTokens,
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      executorLog.warn(`Failed to read session stats for token usage: ${message}`);
-      return undefined;
-    }
-  }
-
   /**
    * FNXC:TokenBudget 2026-07-16-00:00:
    * Step-session token usage bypasses the shared session helper, so all executor
@@ -3992,7 +3905,7 @@ export class TaskExecutor {
    * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
    */
   private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
-    this.tokenUsageBaselines.set(taskId, (await this.extractSessionTokenUsage(session)) ?? {
+    this.tokenUsageBaselines.set(taskId, (await extractSessionTokenUsage(session)) ?? {
       inputTokens: 0,
       outputTokens: 0,
       cachedTokens: 0,
@@ -4003,7 +3916,7 @@ export class TaskExecutor {
 
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
     const activeSession = session ?? this.activeSessions.get(taskId)?.session;
-    const currentUsage = await this.extractSessionTokenUsage(activeSession);
+    const currentUsage = await extractSessionTokenUsage(activeSession);
     if (!currentUsage) return;
 
     const baseline = this.tokenUsageBaselines.get(taskId);
@@ -4030,9 +3943,9 @@ export class TaskExecutor {
     }
 
     const task = await this.store.getTask(taskId);
-    const merged = this.accumulateTokenUsage(task.tokenUsage, delta);
+    const merged = accumulateTokenUsage(task.tokenUsage, delta);
     if (!merged) return;
-    const tokenUsage = this.tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage, delta);
+    const tokenUsage = tokenUsageWithModelSnapshot(merged, activeSession, task.tokenUsage, delta);
 
     /*
     FNXC:EngineDiagnostics 2026-08-01-18:11:
@@ -4973,7 +4886,7 @@ export class TaskExecutor {
     const ir = await resolveWorkflowIrForTask(this.store, task.id);
     if (!ir || ir.version !== "v2") return false;
 
-    const ownSettings = this.extractOwnSettings(task);
+    const ownSettings = extractOwnSettings(task);
     const matchesNodeId = (nodeId: string): boolean => {
       const binding = resolveColumnAgentBinding(ir, nodeId);
       if (!binding) return false;
@@ -7571,7 +7484,7 @@ export class TaskExecutor {
         // Worktree isolation (KTD-11): review the instance's OWN worktree when set.
         const worktreePath = active.worktreePath || detail.worktree || this.rootDir;
         const reviewCwd = resolveReviewCheckoutCwd(detail, worktreePath);
-        this.logReviewCheckoutRouting(seamTask.id, detail, reviewCwd, worktreePath);
+        logReviewCheckoutRouting(seamTask.id, detail, reviewCwd, worktreePath);
         const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex}`;
         const promptContent = detail.prompt ?? "";
         const userComments = selectUserCommentsForAgentContext(detail, { limit: null });
@@ -7862,39 +7775,6 @@ export class TaskExecutor {
     }
   }
 
-  /** Build the persona prefix for an agent from its TYPED identity fields (KTD-6).
-   *  Reads `soul` and `instructionsText` — the fields the `Agent` type actually
-   *  exposes (`packages/core/src/types.ts`) — and joins them. The custom-node
-   *  `"agent"` branch historically read a non-existent `customInstructions`
-   *  field (silently undefined); this is the single consistent source used by
-   *  both the node-agent and column-agent paths. */
-  /** Extract a task's OWN settings for the effective-agent resolver: its assigned
-   *  agent identity (trimmed, non-empty) and a COMPLETE model pair (an incomplete
-   *  pair does not count — KTD-5, mirrors resolveExecutorSessionModel's both-present
-   *  rule). Centralizes the previously-duplicated extraction so the four call sites
-   *  (restart watcher, taskEffectiveAgentMatches, resolveSeamColumnAgent,
-   *  resolveEffectivePrincipalId) share one normalized idiom. */
-  private extractOwnSettings(
-    task: Pick<Task, "assignedAgentId" | "modelProvider" | "modelId">,
-  ): Pick<EffectiveAgentInput, "ownAgentId" | "ownModelProvider" | "ownModelId"> {
-    const ownAgentId = typeof task.assignedAgentId === "string" && task.assignedAgentId.trim()
-      ? task.assignedAgentId.trim()
-      : undefined;
-    const ownModelComplete = Boolean(task.modelProvider && task.modelId);
-    return {
-      ownAgentId,
-      ownModelProvider: ownModelComplete ? task.modelProvider : undefined,
-      ownModelId: ownModelComplete ? task.modelId : undefined,
-    };
-  }
-
-  private buildAgentPersona(agent: Agent): string | undefined {
-    const parts = [agent.soul, agent.instructionsText]
-      .map((p) => (typeof p === "string" ? p.trim() : ""))
-      .filter((p) => p.length > 0);
-    return parts.length > 0 ? parts.join("\n\n") : undefined;
-  }
-
   /** Fetch the column agent and surface its model + persona for adoption by a
    *  custom node (plan U3). Best-effort, mirroring the node-agent posture at the
    *  `"agent"` branch: on null/throw, log and return undefined so the caller
@@ -7927,7 +7807,7 @@ export class TaskExecutor {
       return {
         modelProvider: rc.executorProvider,
         modelId: rc.executorModelId,
-        persona: this.buildAgentPersona(agent),
+        persona: buildAgentPersona(agent),
       };
     } catch {
       // Agent lookup is best-effort; fall back to node/default resolution (R8).
@@ -7981,7 +7861,7 @@ export class TaskExecutor {
     // resolveExecutorSessionModel's both-present rule).
     const effective = resolveEffectiveAgent({
       binding,
-      ...this.extractOwnSettings(detail),
+      ...extractOwnSettings(detail),
     });
     if (effective.source !== "column-agent") return undefined;
 
@@ -8037,7 +7917,7 @@ export class TaskExecutor {
     task: Task,
     detail: Task,
   ): string | undefined {
-    const ownSettings = this.extractOwnSettings(detail);
+    const ownSettings = extractOwnSettings(detail);
     const assignedAgentId = ownSettings.ownAgentId;
 
     const governingNodeId = this.graphSeamGoverningNodeId.get(task.id);
@@ -8627,7 +8507,7 @@ export class TaskExecutor {
           // the non-existent `customInstructions` (which was silently undefined,
           // so node-agent persona injection never actually fired). Same fields
           // the column-agent path uses — one consistent persona source.
-          const persona = this.buildAgentPersona(agent);
+          const persona = buildAgentPersona(agent);
           if (persona) prompt = `${persona}\n\n${prompt}`;
         } else {
           await this.store.logEntry(live.id, `Workflow node '${node.id}': agent '${cfg.agentId}' not found — using default model`, undefined, this.getRunContextFor(live.id));
@@ -8835,31 +8715,6 @@ export class TaskExecutor {
   }
 
   /**
-   * Resolve the cli-agent executor config off a workflow node (U7), snapshotting
-   * the launch-time values. A mid-run node-config edit therefore applies to the
-   * NEXT run only. Per-task overrides follow the existing per-task settings
-   * precedent: when reachable cheaply we read a task field; otherwise the node
-   * config is authoritative (documented hook point — `task.cliAdapterId` etc. are
-   * not modeled on TaskDetail in v1, so node config is the sole source here).
-   */
-  private resolveCliExecutorConfig(cfg: Record<string, unknown>): ResolvedCliExecutorConfig | null {
-    const cliAdapterId = typeof cfg.cliAdapterId === "string" && cfg.cliAdapterId.trim()
-      ? cfg.cliAdapterId.trim()
-      : undefined;
-    if (!cliAdapterId) return null;
-    const cliAutonomy = cfg.cliAutonomy && typeof cfg.cliAutonomy === "object"
-      ? (cfg.cliAutonomy as ResolvedCliExecutorConfig["cliAutonomy"])
-      : null;
-    const cliNotify = cfg.cliNotify && typeof cfg.cliNotify === "object"
-      ? (cfg.cliNotify as Record<string, unknown>)
-      : null;
-    const settings = cfg.cliSettings && typeof cfg.cliSettings === "object"
-      ? (cfg.cliSettings as Record<string, unknown>)
-      : undefined;
-    return { cliAdapterId, cliAutonomy, cliNotify, settings };
-  }
-
-  /**
    * CLI Agent Executor seam (U7): run a `cli-agent` workflow node by driving an
    * engine-owned CLI session through the task-session orchestration.
    *
@@ -8902,7 +8757,7 @@ export class TaskExecutor {
       );
       return { outcome: "failure", value: "no-worktree-for-write-node" };
     }
-    const config = this.resolveCliExecutorConfig(cfg);
+    const config = resolveCliExecutorConfig(cfg);
     if (!config) {
       await this.store.logEntry(
         live.id,
@@ -9010,24 +8865,6 @@ export class TaskExecutor {
       || latestAction === "Resuming execution after unpause";
   }
 
-  private isSessionContentionGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
-    if (graphFailureValue(result) === SESSION_CONTENTION_HOLD_VALUE) return true;
-    return graphFailureErrorTexts(result).some((text) => isSessionContentionError(text));
-  }
-
-  /** True only for the pre-session refresh refusal values emitted by graph preparation. */
-  private isWorktreeBaseRefreshGraphFailure(result: WorkflowGraphTaskRunResult): boolean {
-    return new Set([
-      "stale-base-conflict",
-      "dirty-worktree",
-      "base-unresolvable",
-      "worktrunk-refresh-unsupported",
-      "git-refresh-failed",
-      "base-persistence-failed-compensated",
-      "base-reconciliation-required",
-    ]).has(graphFailureValue(result) ?? "");
-  }
-
   /*
   FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
   Retry the graph in place on an exponential backoff while the holder finishes. The counter is
@@ -9092,46 +8929,6 @@ export class TaskExecutor {
       })();
     };
     setTimeout(scheduleRetry, delayMs).unref?.();
-  }
-
-  /*
-  FNXC:WorkflowExecutionOwnership 2026-07-29-20:10 (U8 / R4, PR #2590 review — greptile):
-  The compat classifier keyed on `graphFailureValue`, which reads only the LAST visited node's
-  value. That is correct when the generic `failure` edge goes straight to `end` — the built-in
-  shape — but a user-authored graph may route its generic failure THROUGH another node, and that
-  node's value then becomes the terminal one. The classifier would miss the pending-review ending
-  entirely and the card would fall to the terminal park: `status: failed` on work that was only
-  WAITING for a reviewer, which is the deadlock the inline handoff existed to avoid. A guard that
-  cannot fire for the exact shape it was written for.
-
-  The ending is durable in the run context — the graph publishes `node:<id>:value` for every node
-  it runs — so detect it there rather than trusting whichever node happened to end the walk.
-  */
-  private graphRunReportedPendingReview(
-    result: WorkflowGraphTaskRunResult,
-    failureValue: string | undefined,
-  ): boolean {
-    if (failureValue === "review-pending") return true;
-    const context = result.context;
-    if (!context) return false;
-    /*
-    FNXC:WorkflowExecutionOwnership 2026-07-29-21:40 (U8 / R4, PR #2590 review — greptile, 2nd):
-    Scanning EVERY `node:*:value` was too broad in the opposite direction. The run context is
-    shared for the whole walk, so a graph that continues past a pending-review node and then dies
-    on a genuine downstream failure still carries the earlier value — and a blanket scan would
-    park that card in review, hiding a real failure behind a wait. Trading a guard that misses for
-    one that over-claims is not a fix.
-
-    The narrow rule: the pending-review ending counts only when nothing AFTER it produced its own
-    verdict. Walk the visited nodes backwards and take the first recorded value — that is the
-    run's actual last word. If it is `review-pending`, the ending stands; if a later node spoke,
-    that node's outcome is the run's, and this classifier stays out of the way.
-    */
-    for (let i = result.visitedNodeIds.length - 1; i >= 0; i--) {
-      const value = recordedNodeValue(context, result.visitedNodeIds[i]);
-      if (typeof value === "string") return value === "review-pending";
-    }
-    return false;
   }
 
 
@@ -10039,7 +9836,7 @@ export class TaskExecutor {
       a terminal failure — it is a wait. Route it to the self-recovering backoff hold, which never parks
       the task and never consumes the provider/artifact retry budgets.
       */
-      if (this.isSessionContentionGraphFailure(result)) {
+      if (isSessionContentionGraphFailure(result)) {
         await this.holdForSessionContention(task, live, result);
         await this.persistTokenUsage(task.id);
         return;
@@ -10051,7 +9848,7 @@ export class TaskExecutor {
       no handler runs, no failure edge mislabels it as a plan defect, and its exact reason survives
       in the task log. Exhaustion deliberately leaves the task held for a later clean acquisition.
       */
-      if (this.isWorktreeBaseRefreshGraphFailure(result)) {
+      if (isWorktreeBaseRefreshGraphFailure(result)) {
         const refreshKind = graphFailureValue(result)!;
         const priorRetries = live.graphResumeRetryCount ?? 0;
         if (priorRetries < MAX_TRANSIENT_GRAPH_RESUME_RETRIES) {
@@ -10649,7 +10446,7 @@ export class TaskExecutor {
       still executor-performed. What changes is that it is one named classifier in the failure
       ladder rather than a call buried two thousand lines into a session loop.
       */
-      if (this.graphRunReportedPendingReview(result, failureValue)) {
+      if (graphRunReportedPendingReview(result, failureValue)) {
         const compatMessage = "Implementation stopped on a pending review — parking in review (this workflow does not route the review-pending outcome)";
         executorLog.log(`${task.id}: ${compatMessage}`);
         await this.store.logEntry(task.id, compatMessage, undefined, this.getRunContextFor(task.id));
@@ -12325,10 +12122,10 @@ export class TaskExecutor {
             }
 
             const previousStepTokenUsage = accumulatedStepTokenUsage;
-            accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+            accumulatedStepTokenUsage = accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
               // FNXC:TokenAnalytics 2026-06-19-15:55: Step-scoped token writes now carry the producing session model so workflow-step sessions contribute their exact deltas to per-model analytics instead of relying on the last central session snapshot.
-              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
+              accumulatedStepTokenUsage = tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
             tokenUsageRecordedSteps.add(stepIndex);
             if (!accumulatedStepTokenUsage) {
@@ -12378,9 +12175,9 @@ export class TaskExecutor {
               continue;
             }
             const previousStepTokenUsage = accumulatedStepTokenUsage;
-            accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+            accumulatedStepTokenUsage = accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
             if (accumulatedStepTokenUsage) {
-              accumulatedStepTokenUsage = this.tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
+              accumulatedStepTokenUsage = tokenUsageWithModelSnapshot(accumulatedStepTokenUsage, undefined, previousStepTokenUsage, result.tokenUsage, accumulatedStepTokenUsage.lastUsedAt, { provider: result.tokenUsage.modelProvider, id: result.tokenUsage.modelId });
             }
           }
 
@@ -13176,7 +12973,7 @@ export class TaskExecutor {
         // source the custom-node path uses) supersedes the role-resolved executor
         // instructions, so the coding session speaks AS the column agent. No binding
         // → role instructions unchanged (characterization parity).
-        const columnAgentPersona = columnAgentSeam ? this.buildAgentPersona(columnAgentSeam.agent) : undefined;
+        const columnAgentPersona = columnAgentSeam ? buildAgentPersona(columnAgentSeam.agent) : undefined;
         const executorInstructions = columnAgentPersona
           ?? (await this.resolveInstructionsForRole("executor", settings));
 
@@ -18223,48 +18020,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
   private MAX_WORKTREE_RETRIES = 3;
   private WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
 
-  /**
-   * Create a git worktree with automatic recovery from conflicts.
-   * Implements retry logic with exponential backoff for transient failures.
-   * 
-   * @param branch - The branch name to create (e.g., "fusion/fn-123")
-   * @param path - The desired worktree path
-   * @param taskId - The task ID for logging
-   * @param startPoint - Optional base branch/commit for new branch
-   * @returns The actual worktree path (may differ if recovery generated new name)
-   */
-  private formatBranchConflictLifecycleLog(taskId: string, error: BranchConflictError): string {
-    const strandedSummary = error.strandedCommits.length > 0
-      ? error.strandedCommits.map((commit) => `${commit.sha.slice(0, 12)} ${commit.subject}`).join("; ")
-      : "none";
-    const recommendation = "Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.";
-    return [
-      `Branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}`,
-      `Existing tip: ${error.existingTipSha}`,
-      `Stranded commits since ${error.startPoint}: ${strandedSummary}`,
-      recommendation,
-    ].join("\n");
-  }
-
-  private formatBranchConflictAgentLog(taskId: string, error: BranchConflictError): string {
-    const lines = [
-      `branch=${error.branchName}`,
-      `worktree=${error.conflictingWorktreePath}`,
-      `existingTipSha=${error.existingTipSha}`,
-      `startPoint=${error.startPoint}`,
-    ];
-    if (error.strandedCommits.length > 0) {
-      lines.push(
-        ...error.strandedCommits.map((commit) => `stranded=${commit.sha.slice(0, 12)} ${commit.subject}`),
-      );
-    } else {
-      lines.push("stranded=none");
-    }
-    lines.push(
-      `recommendation=Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.`,
-    );
-    return lines.join("\n");
-  }
 
   private readonly MAX_AUTO_RECOVERY_ATTEMPTS = 3;
   private readonly BRANCH_CONFLICT_TRIPWIRE_THRESHOLD = 5;
@@ -18447,8 +18202,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
     const conflictMessage = `Task branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}. ` +
       `Resolve the local branch/worktree conflict with git tooling (inspect/reclaim or discard) before retrying.`;
-    await this.store.logEntry(task.id, this.formatBranchConflictLifecycleLog(task.id, error), undefined, this.getRunContextFor(task.id));
-    await this.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", this.formatBranchConflictAgentLog(task.id, error), "executor");
+    await this.store.logEntry(task.id, formatBranchConflictLifecycleLog(task.id, error), undefined, this.getRunContextFor(task.id));
+    await this.store.appendAgentLog(task.id, "Branch conflict recovery required", "tool_error", formatBranchConflictAgentLog(task.id, error), "executor");
     const autoRecoveryDispatcher = this.getAutoRecoveryDispatcher(createRunAuditor(this.store, this.getRunContextFor(task.id)));
     const decision = await autoRecoveryDispatcher.dispatch({
       class: "branch-conflict-unrecoverable",
@@ -18606,9 +18361,6 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     throw new Error("Unexpected exit from worktree creation retry loop");
   }
 
-  private quoteShellArg(value: string): string {
-    return `'${value.replace(/'/g, "'\\''")}'`;
-  }
 
   /**
    * Decide whether a task's declared dep base should be squash-imported
@@ -18657,7 +18409,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         let defaultBranch = "";
         try {
           const { stdout } = await execAsync(
-            `git rev-parse --abbrev-ref ${this.quoteShellArg(remote)}/HEAD`,
+            `git rev-parse --abbrev-ref ${quoteShellArg(remote)}/HEAD`,
             { cwd: this.rootDir },
           );
           defaultBranch = stdout.trim().replace(new RegExp(`^${remote}/`), "");
@@ -18667,7 +18419,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         if (defaultBranch && defaultBranch !== "HEAD") {
           // Fetch best-effort so the remote ref reflects upstream tip.
           await execAsync(
-            `git fetch ${this.quoteShellArg(remote)} ${this.quoteShellArg(defaultBranch)}`,
+            `git fetch ${quoteShellArg(remote)} ${quoteShellArg(defaultBranch)}`,
             { cwd: this.rootDir },
           ).catch(() => undefined);
           try {
@@ -18700,7 +18452,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     // needed — the dep's content is already represented in main.
     try {
       await execAsync(
-        `git merge-base --is-ancestor ${this.quoteShellArg(depTip)} ${this.quoteShellArg(mainBase)}`,
+        `git merge-base --is-ancestor ${quoteShellArg(depTip)} ${quoteShellArg(mainBase)}`,
         { cwd: this.rootDir },
       );
       // Exit code 0 → ancestor → no import needed; legacy fork-from-main is fine.
@@ -18733,7 +18485,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     // No-op when dep is already represented in the worktree's history.
     try {
       await execAsync(
-        `git merge-base --is-ancestor ${this.quoteShellArg(depTip)} HEAD`,
+        `git merge-base --is-ancestor ${quoteShellArg(depTip)} HEAD`,
         { cwd: worktreePath },
       );
       return;
@@ -18745,7 +18497,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     // either stages the dep's diff or fails (conflicts / unrelated histories).
     try {
       await execAsync(
-        `git merge --squash --allow-unrelated-histories ${this.quoteShellArg(depTip)}`,
+        `git merge --squash --allow-unrelated-histories ${quoteShellArg(depTip)}`,
         { cwd: worktreePath },
       );
     } catch (err) {
@@ -18779,7 +18531,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       `match the merge and rebase cleanly.`;
     try {
       await execAsync(
-        `git commit -m ${this.quoteShellArg(subject)} -m ${this.quoteShellArg(body)}`,
+        `git commit -m ${quoteShellArg(subject)} -m ${quoteShellArg(body)}`,
         { cwd: worktreePath },
       );
     } catch (commitErr) {
@@ -18852,7 +18604,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const remoteRef = `${remote}/${defaultBranch}`;
 
     try {
-      await execAsync(`git fetch ${this.quoteShellArg(remote)} ${this.quoteShellArg(defaultBranch)}`, { cwd: this.rootDir });
+      await execAsync(`git fetch ${quoteShellArg(remote)} ${quoteShellArg(defaultBranch)}`, { cwd: this.rootDir });
     } catch (err) {
       executorLog.warn(
         `Worktree rebase: fetch ${remote} ${defaultBranch} failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -18861,7 +18613,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     }
 
     try {
-      await execAsync(`git rebase ${this.quoteShellArg(remoteRef)}`, { cwd: worktreePath });
+      await execAsync(`git rebase ${quoteShellArg(remoteRef)}`, { cwd: worktreePath });
       await this.store.logEntry(
         taskId,
         `Rebased new worktree branch ${branch} onto ${remoteRef}`,
@@ -20726,7 +20478,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     try {
       await this.options.agentStore?.deleteAgent(childId);
     } catch (err: unknown) {
-      if (!this.isBenignEphemeralDeleteRaceError(childId, err)) {
+      if (!isBenignEphemeralDeleteRaceError(childId, err)) {
         const msg = err instanceof Error ? err.message : String(err);
         executorLog.warn(`Failed to delete spawned agent ${childId}: ${msg}`);
       }
