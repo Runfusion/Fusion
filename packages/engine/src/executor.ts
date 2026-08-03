@@ -752,6 +752,10 @@ export {
   signalTaskComplete as signalTaskCompleteFree,
   triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureFree,
 } from "./executor/signal-task-complete.js";
+import { listWipLaneTasks as listWipLaneTasksImpl } from "./executor/list-wip-lane-tasks.js";
+export { listWipLaneTasks as listWipLaneTasksFree } from "./executor/list-wip-lane-tasks.js";
+import { resolveSeamColumnAgent as resolveSeamColumnAgentImpl } from "./executor/resolve-seam-column-agent.js";
+export { resolveSeamColumnAgent as resolveSeamColumnAgentFree } from "./executor/resolve-seam-column-agent.js";
 
 
 
@@ -4118,12 +4122,7 @@ export class TaskExecutor {
   finds rows under the old one, deduped by id because one column can carry two roles.
   */
   private async listWipLaneTasks(): Promise<Task[]> {
-    const columns = await resolveProjectColumnsForRoles(this.store, ["countsTowardWip"]);
-    const byId = new Map<string, Task>();
-    for (const column of columns) {
-      for (const task of await this.store.listTasks({ slim: true, column })) byId.set(task.id, task as Task);
-    }
-    return [...byId.values()];
+    return listWipLaneTasksImpl(this.store);
   }
 
   async resumeTaskForAgent(agentId: string): Promise<void> {
@@ -6847,55 +6846,17 @@ export class TaskExecutor {
     task: Task,
     detail: TaskDetail,
   ): Promise<{ agent: Agent; mode: WorkflowColumnAgent["mode"] | undefined } | undefined> {
-    const governingNodeId = this.graphSeamGoverningNodeId.get(task.id);
-    const resolveBinding = this.graphColumnAgentResolver.get(task.id);
-    if (!governingNodeId || !resolveBinding) return undefined;
-
-    const binding = resolveBinding(governingNodeId);
-    if (!binding) return undefined;
-
-    // The task's OWN settings: its assigned agent identity and a COMPLETE model
-    // pair (an incomplete pair does not count — KTD-5, mirrors
-    // resolveExecutorSessionModel's both-present rule).
-    const effective = resolveEffectiveAgent({
-      binding,
-      ...extractOwnSettings(detail),
-    });
-    if (effective.source !== "column-agent") return undefined;
-
-    // Column agent governs: fetch the full Agent (best-effort, R8 fallback).
-    let agent: Agent | null = null;
-    try {
-      agent = (await this.options.agentStore?.getAgent(effective.agentId)) ?? null;
-    } catch {
-      agent = null;
-    }
-    if (!agent) {
-      // Best-effort audit: a logEntry failure (DB locked / mid-recovery) must NOT
-      // escalate this graceful fallback into a hard session failure (R8).
-      try {
-        await this.store.logEntry(
-          task.id,
-          `Workflow seam node '${governingNodeId}': column agent '${effective.agentId}' not found — falling back to assigned-agent resolution`,
-          undefined,
-          this.getRunContextFor(task.id),
-        );
-      } catch (logErr: unknown) {
-        executorLog.warn(`${task.id}: failed to log column-agent fallback: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
-      }
-      return undefined;
-    }
-    try {
-      await this.store.logEntry(
-        task.id,
-        `Workflow seam node '${governingNodeId}': running as column agent '${effective.agentId}' (${binding.mode})`,
-        undefined,
-        this.getRunContextFor(task.id),
-      );
-    } catch (logErr: unknown) {
-      executorLog.warn(`${task.id}: failed to log column-agent adoption: ${logErr instanceof Error ? logErr.message : String(logErr)}`);
-    }
-    return { agent, mode: binding.mode };
+    return resolveSeamColumnAgentImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        agentStore: this.options.agentStore,
+        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
+        graphColumnAgentResolver: this.graphColumnAgentResolver,
+      },
+      task,
+      detail,
+    );
   }
 
   /**

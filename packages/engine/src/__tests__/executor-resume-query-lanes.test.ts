@@ -34,16 +34,24 @@ FNXC:CodeOrganization 2026-08-03-09:55:
 resumeTaskForAgent peeled into executor/resume-task-for-agent.ts (U4). The structural
 count must include the free module so both resume sweeps still pin listWipLaneTasks.
 */
+/*
+FNXC:CodeOrganization 2026-08-03-10:25:
+listWipLaneTasks body also peeled to executor/list-wip-lane-tasks.ts; role resolution lives there.
+*/
 const source = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
 const resumeTaskForAgentSource = readFileSync(
   new URL("../executor/resume-task-for-agent.ts", import.meta.url),
   "utf8",
 );
-const combined = `${source}\n${resumeTaskForAgentSource}`;
+const listWipLaneTasksSource = readFileSync(
+  new URL("../executor/list-wip-lane-tasks.ts", import.meta.url),
+  "utf8",
+);
+const combined = `${source}\n${resumeTaskForAgentSource}\n${listWipLaneTasksSource}`;
 
 describe("the resume sweeps read the resolved wip lane", () => {
   it("resolves project wip columns instead of querying the literal", () => {
-    expect(source).toContain('resolveProjectColumnsForRoles(this.store, ["countsTowardWip"])');
+    expect(listWipLaneTasksSource).toContain('resolveProjectColumnsForRoles(store, ["countsTowardWip"])');
     expect(combined).not.toContain('listTasks({ slim: true, column: "in-progress" })');
   });
 
