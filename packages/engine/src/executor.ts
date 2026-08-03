@@ -379,7 +379,6 @@ import {
   graphFailureValue,
   extractUnusableWorktreeGraphFailure,
   isMergeGraphFailure,
-  latestFailedPreMergeWorkflowStep,
   isStalePauseAbortParkFailure,
   isSessionContentionGraphFailure,
   isWorktreeBaseRefreshGraphFailure,
@@ -792,6 +791,8 @@ import { runRawCliCommand as runRawCliCommandImpl } from "./executor/run-raw-cli
 export { runRawCliCommand as runRawCliCommandFree } from "./executor/run-raw-cli-command.js";
 import { resetStepsIfWorkLost as resetStepsIfWorkLostImpl } from "./executor/reset-steps-if-work-lost.js";
 export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./executor/reset-steps-if-work-lost.js";
+import { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixImpl } from "./executor/route-retryable-remediation.js";
+export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixFree } from "./executor/route-retryable-remediation.js";
 
 
 
@@ -7015,37 +7016,20 @@ export class TaskExecutor {
     failedNode: string | undefined,
     failureValue: string | undefined,
   ): Promise<boolean> {
-    /*
-    FNXC:WorkflowRemediation 2026-07-03-20:10:
-    A failed `pre-merge-remediation` node is retryable when the durable blocking Code Review/optional-step result is still present and its revision budget remains. Route that parked graph failure through the same pre-merge fix handoff as live review REVISE handling; manual retry remains an escape hatch, not the primary recovery. Built-in Code Review defaults to an unbounded budget, so do not apply the legacy `postReviewFixCount` cap unless workflow settings or node config provide a numeric cap.
-    */
-    if (!await this.isPreMergeRemediationGraphNode(live.id, failedNode)) return false;
-    if (live.deletedAt || live.paused || live.userPaused === true) return false;
-    if ((await resolveTerminalColumnsFor(this.store, live.id)).includes(live.column)) return false;
-    if (!live.worktree) return false;
-    const settings = await this.store.getSettings().catch(() => undefined);
-    if (!settings || settings.globalPause === true || settings.enginePaused === true) return false;
-    /* FNXC:AutoMergeHold 2026-07-09-17:04: FN-7750 requires retryable pre-merge remediation to treat stale shared-group members as standalone manual-hold rows when global auto-merge is off; only live/open groups retain the shared-member exemption. */
-    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
-    const target = latestFailedPreMergeWorkflowStep(live);
-    if (!target) return false;
-    const budget = await this.resolveFailedPreMergeWorkflowStepBudget(live, target);
-    if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-    if (!budget.unbounded && budget.attempts >= budget.max) return false;
-
-    const nextCount = budget.attempts + 1;
-    const totalFixCount = (live.postReviewFixCount ?? 0) + 1;
-    await this.store.updateTask(live.id, { postReviewFixCount: totalFixCount }, this.getRunContextFor(live.id));
-    await this.store.logEntry(
-      live.id,
-      `Auto-recovered retryable remediation node '${failedNode ?? "unknown"}' for failed pre-merge workflow step (attempt ${nextCount}/${budget.label})`,
-      optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}${failureValue ? `\nGraph value: ${failureValue}` : ""}`, budget.key),
-      this.getRunContextFor(live.id),
+    return routeRetryableRemediationGraphFailureToPreMergeFixImpl(
+      {
+        store: this.store,
+        getRunContextFor: (id) => this.getRunContextFor(id),
+        isPreMergeRemediationGraphNode: (id, node) => this.isPreMergeRemediationGraphNode(id, node),
+        isLiveSharedBranchGroupMember: (live) => this.isLiveSharedBranchGroupMember(live),
+        resolveFailedPreMergeWorkflowStepBudget: (t, target) => this.resolveFailedPreMergeWorkflowStepBudget(t, target),
+        recoverFailedPreMergeWorkflowStep: (t) => this.recoverFailedPreMergeWorkflowStep(t),
+        persistTokenUsage: (id) => this.persistTokenUsage(id),
+      },
+      live,
+      failedNode,
+      failureValue,
     );
-    const sentBack = await this.recoverFailedPreMergeWorkflowStep(live);
-    if (!sentBack) return false;
-    await this.persistTokenUsage(live.id);
-    return true;
   }
 
   private async isRetryableBenignMergePauseAbort(
