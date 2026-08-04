@@ -336,11 +336,9 @@ export class TaskExecutor {
   }
 
   private markPausedAborted(
-    taskId: string,
-    provenance: PausedAbortProvenance = "hard-cancel",
-    source = "unspecified",
+    ...args: FacadeRestArgs<typeof markPausedAbortedImpl>
   ): void {
-    markPausedAbortedImpl(buildMarkPausedAbortedDeps(this), taskId, provenance, source);
+    markPausedAbortedImpl(buildMarkPausedAbortedDeps(this), ...args);
   }
 
   private pauseAbortMarkerDeps() {
@@ -1227,8 +1225,10 @@ export class TaskExecutor {
     this.mergeRequester = requestMerge;
   }
 
-  private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
-    return executeWorkflowGraphImpl(buildExecuteWorkflowGraphDeps(this), task, opts);
+  private async executeWorkflowGraph(
+    ...args: FacadeRestArgs<typeof executeWorkflowGraphImpl>
+  ): Promise<void> {
+    return executeWorkflowGraphImpl(buildExecuteWorkflowGraphDeps(this), ...args);
   }
 
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
@@ -1888,35 +1888,15 @@ export class TaskExecutor {
   }
 
   private async verifyWorktreeInvariants(
-    task: Task,
-    worktreePathOverride?: string,
-    allowReanchor = true,
-    options?: { noOpCompletion?: boolean; noOpCompletionReason?: string },
-  ): Promise<{ ok: true } | { ok: false; reason: "wrong_toplevel" | "wrong_branch" | "no_commits"; observed: string; expected: string; repo?: string }> {
-    return verifyWorktreeInvariantsImpl(
-      this.worktreeInvariantDeps(),
-      task,
-      worktreePathOverride,
-      allowReanchor,
-      options,
-    );
+    ...args: FacadeRestArgs<typeof verifyWorktreeInvariantsImpl>
+  ): Promise<ReturnType<typeof verifyWorktreeInvariantsImpl>> {
+    return verifyWorktreeInvariantsImpl(this.worktreeInvariantDeps(), ...args);
   }
 
   private async evaluateTaskDoneScopeLeak(
-    task: Task,
-    worktreePath: string,
-    promptContent: string,
-    settings: Settings,
-    audit?: RunAuditor,
-  ): Promise<{ blocked: false } | { blocked: true; message: string }> {
-    return evaluateTaskDoneScopeLeakImpl(
-      buildEvaluateTaskDoneScopeLeakDeps(this),
-      task,
-      worktreePath,
-      promptContent,
-      settings,
-      audit,
-    );
+    ...args: FacadeRestArgs<typeof evaluateTaskDoneScopeLeakImpl>
+  ): Promise<ReturnType<typeof evaluateTaskDoneScopeLeakImpl>> {
+    return evaluateTaskDoneScopeLeakImpl(buildEvaluateTaskDoneScopeLeakDeps(this), ...args);
   }
 
   private async handleImplicitTaskDoneRefusal(
@@ -2171,11 +2151,9 @@ export class TaskExecutor {
   }
 
   private async planSquashImportFromDep(
-    taskId: string,
-    depTip: string,
-    originalStartPoint: string | undefined,
-  ): Promise<{ depTip: string; mainBase: string; label: string } | null> {
-    return planSquashImportFromDep(this.rootDir, this.store, taskId, depTip, originalStartPoint);
+    ...args: FacadeAfterSecond<typeof planSquashImportFromDep>
+  ): Promise<ReturnType<typeof planSquashImportFromDep>> {
+    return planSquashImportFromDep(this.rootDir, this.store, ...args);
   }
 
   private async reconcileSelfOwnedBeforeRemove(worktreePath: string, taskId: string): Promise<void> {
@@ -2199,12 +2177,9 @@ export class TaskExecutor {
   }
 
   private async emitStaleLockAudit(
-    taskId: string,
-    event: import("./executor/worktree-stale-lock-recovery.js").StaleLockAuditEvent,
-    targetPath: string,
-    metadata: Record<string, unknown>,
+    ...args: FacadeRestArgs<typeof emitStaleLockAudit>
   ): Promise<void> {
-    return emitStaleLockAudit(this.staleLockRecoveryDeps(), taskId, event, targetPath, metadata);
+    return emitStaleLockAudit(this.staleLockRecoveryDeps(), ...args);
   }
 
   private async recoverIndexLockIfStale(taskId: string, path: string, conflictInfo: { lockPath?: string; message?: string }): Promise<boolean> {
