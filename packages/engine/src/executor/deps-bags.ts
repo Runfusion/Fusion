@@ -924,4 +924,36 @@ export function buildWorktreeCreateConflictFacadeDeps(
     ]),
   };
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-04:10:
+Shared recovery-lane classifier bag for handleGraphFailure pause-abort helpers.
+One store + resolveResumeLanes + isLiveSharedBranchGroupMember surface for
+isRetryableBenignMergePauseAbort / isBenignManualMergeHoldPauseAbort /
+isReentrantPausedAbortedInFlightNode so the three facades stay one-liners.
+*/
+export function buildResumeLaneClassifierDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
+  };
+}
+
+export function buildMarkPausedAbortedDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["pausedAborted", "pausedAbortProvenance"]),
+    ...facadeMethods(host, ["safeLogEntry"]),
+  };
+}
+
+export function buildResumeOrphanedDeps(host: any, processWideGraphRouting: Set<string>): any {
+  return {
+    ...facadeFields(host, ["store", "executing", "recoveringCompleted"]),
+    processWideGraphRouting,
+    ...facadeMethods(host, [
+      "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
+      "recoverCompletedTask", "execute",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

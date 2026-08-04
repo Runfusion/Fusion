@@ -203,6 +203,9 @@ import {
   buildRunSpawnedChildDeps,
   buildTryFreshWorktreeAfterLiveConflictDeps,
   buildWorktreeCreateConflictFacadeDeps,
+  buildResumeLaneClassifierDeps,
+  buildMarkPausedAbortedDeps,
+  buildResumeOrphanedDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -329,13 +332,7 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:15: safeLogEntry FN-7335 breadcrumb FNXC lives on safe-log-entry.ts. */
   private safeLogEntry(taskId: string, message: string): void {
-    safeLogEntryImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      taskId,
-      message,
-    );
+    safeLogEntryImpl(this.storeRunContextDeps(), taskId, message);
   }
 
   private markPausedAborted(
@@ -343,16 +340,7 @@ export class TaskExecutor {
     provenance: PausedAbortProvenance = "hard-cancel",
     source = "unspecified",
   ): void {
-    markPausedAbortedImpl(
-      {
-        pausedAborted: this.pausedAborted,
-        pausedAbortProvenance: this.pausedAbortProvenance,
-        safeLogEntry: (id, message) => this.safeLogEntry(id, message),
-      },
-      taskId,
-      provenance,
-      source,
-    );
+    markPausedAbortedImpl(buildMarkPausedAbortedDeps(this), taskId, provenance, source);
   }
 
   private pauseAbortMarkerDeps() {
@@ -546,12 +534,7 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-  /*
-  FNXC:ReviewArtifacts 2026-07-19-10:00:
-  A successful executor handoff may offer reviewers a short local feature-video, but
-  capture is strictly best-effort. Bound and swallow this optional work before the
-  review transition so browser, scenario, and artifact failures never delay or fail it.
-  */
+  /* FNXC:ReviewArtifacts 2026-07-19-10:00: best-effort feature-video before review handoff (never delays transition). */
   private async generateCompletionFeatureVideo(task: Task): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reviewArtifactGenerator is optional TaskExecutorOptions field
     return generateCompletionFeatureVideoImpl({ store: this.store, options: this.options as any }, task);
@@ -1241,16 +1224,7 @@ export class TaskExecutor {
 
   /** Resume orphaned in-progress tasks after crash/restart (complete → in-review fast path). */
   async resumeOrphaned(): Promise<void> {
-    return resumeOrphanedImpl({
-      ...facadeFields(this, [
-        "store", "executing", "recoveringCompleted",
-      ]),
-      processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-      ...facadeMethods(this, [
-        "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
-        "recoverCompletedTask", "execute",
-      ]),
-    });
+    return resumeOrphanedImpl(buildResumeOrphanedDeps(this, TaskExecutor.processWideGraphRouting));
   }
 
   private async resolveInstructionsForRole(role: string, settings?: Settings): Promise<string> {
@@ -1871,10 +1845,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return isRetryableBenignMergePauseAbortImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
-      },
+      buildResumeLaneClassifierDeps(this),
       live,
       result,
       abortProvenance,
@@ -1891,10 +1862,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return isBenignManualMergeHoldPauseAbortImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
-      },
+      buildResumeLaneClassifierDeps(this),
       live,
       result,
       abortProvenance,
@@ -1950,10 +1918,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return isReentrantPausedAbortedInFlightNodeImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
-      },
+      buildResumeLaneClassifierDeps(this),
       live,
       result,
       abortProvenance,
