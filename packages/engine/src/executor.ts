@@ -4,34 +4,22 @@ import {
   type Agent, type MergeResult, type WorkflowIrNode, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes,
   type ApprovalRequestStore,
 } from "@fusion/core";
-import { resolvePlannerLanes } from "./execution/replan-target.js";
-import type { WorkflowGraphTaskRunResult } from "./workflows/workflow-graph-task-runner.js";
-import type { WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
-import type { WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
-import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
-import { ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
-import { activeSessionRegistry } from "./agents/active-session-registry.js";
-import { CliTaskSession } from "./cli-agent/task-session.js";
-import { StepSessionExecutor } from "./execution/step-session-executor.js";
-import type { RunAuditor } from "./util/run-audit.js";
-import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
+/* FNXC:CodeOrganization 2026-08-04-07:20: facade imports via task-executor-imports barrel (U4). */
 export * from "./executor/public-reexports.js";
-import * as constants from "./executor/executor-constants.js";
-import * as pure from "./executor/pure-bindings.js";
-import * as impl from "./executor/impl-bindings.js";
 export * from "./executor/free-reexports.js";
-import type { ActiveSessionBookkeepingDeps } from "./executor/active-session-bookkeeping.js";
-import type { TaskLivenessDeps } from "./executor/task-liveness.js";
-import * as bags from "./executor/deps-bags.js";
-import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
-import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
-import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
+export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-imports.js";
+import {
+  resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider, ModelRegistry, type AgentSession,
+  dropPreHeldExecutorSlot, activeSessionRegistry, CliTaskSession, StepSessionExecutor, type RunAuditor,
+  getTaskCompletionBlockerForStore, constants, pure, impl, bags, facadeFields, facadeMethods,
+  type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
+  bindHandleWorktreeConflict, bindTryCreateWorktree, buildWireExecutorLifecycleDeps, wireExecutorLifecycle,
+  type WorkflowGraphTaskRunResult, type WorkflowLegacySeams, type WorkflowRuntimePrimitives,
+  type ActiveSessionBookkeepingDeps, type TaskLivenessDeps, type TaskExecutorOptions, type ActiveExecutorSessionState,
+  TaskExecutorState,
+} from "./executor/task-executor-imports.js";
 /* FNXC:CodeOrganization 2026-08-04-07:15: FNXC/doc hosts via executor-side-effect-hosts (isBackward body stays here). */
 import "./executor/executor-side-effect-hosts.js";
-export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-options.js";
-import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./executor/task-executor-options.js";
-import { TaskExecutorState } from "./executor/task-executor-state.js";
 export class TaskExecutor extends TaskExecutorState {
   private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
   private getActiveWorktreePaths(taskId: string): ReturnType<typeof impl.getActiveWorktreePathsImpl> { return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId); }
@@ -85,8 +73,7 @@ export class TaskExecutor extends TaskExecutorState {
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" };
-    if (from !== lanes.hold && from !== lanes.intake) return false;
-    return ![lanes.wip, lanes.review, lanes.complete].filter((c): c is string => typeof c === "string").includes(to);
+    return (from === lanes.hold || from === lanes.intake) && ![lanes.wip, lanes.review, lanes.complete].filter((c): c is string => typeof c === "string").includes(to);
   }
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
