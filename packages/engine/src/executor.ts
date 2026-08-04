@@ -193,7 +193,7 @@ import {
   isAgentEffectivelyExecutingImpl, getWorktreePathImpl, buildInjectedRuntimeEnvImpl,
   getApprovalRequestStoreImpl, buildStepInstancePersistenceImpl, resolveMcpServersImpl,
   isRemediationGraphNodeImpl, isPreMergeRemediationGraphNodeImpl, executeWorkflowStepImpl,
-  isEphemeralDeletionPendingImpl, disposeEphemeralTimersImpl,
+  isEphemeralDeletionPendingImpl, disposeEphemeralTimersImpl, resolveTaskStepSourceImpl,
 } from "./executor/impl-bindings.js";
 
 
@@ -2839,16 +2839,7 @@ export class TaskExecutor {
    * Used by reconcile read-through to know which artifact backs the step source.
    */
   private resolveTaskStepSource(ir: WorkflowIr | undefined): { artifact: string; parser: string } | undefined {
-    if (!ir) return undefined;
-    for (const node of ir.nodes) {
-      if (node.kind !== "parse-steps") continue;
-      const cfg = (node.config ?? {}) as { artifact?: unknown; parser?: unknown };
-      const parser = typeof cfg.parser === "string" ? cfg.parser : undefined;
-      if (!parser) continue;
-      const artifact = typeof cfg.artifact === "string" && cfg.artifact.trim() !== "" ? cfg.artifact : "PROMPT.md";
-      return { artifact, parser };
-    }
-    return undefined;
+    return resolveTaskStepSourceImpl(ir);
   }
 
   /**
