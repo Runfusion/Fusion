@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execFileAsync = promisify(execFile);
 
-import { delimiter } from "node:path";
 import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep, type MissionStore, type AsyncMissionStore, type Slice, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { resolveEffectiveAgent, AgentStore } from "@fusion/core";
@@ -21,9 +20,6 @@ import type {
 } from "./workflows/workflow-graph-foreach.js";
 import {
 
-
-
-
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflows/workflow-node-handlers.js";
@@ -33,7 +29,7 @@ import type {
   WorkflowRuntimePrimitives,
 } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
-import { ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult } from "@fusion/core";
+import { type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult } from "@fusion/core";
 import { type VerificationResult } from "./execution/verification-utils.js";
 import { resolveExecutorSessionModel } from "./agents/agent-session-helpers.js";
 import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
@@ -119,14 +115,6 @@ export {
   formatAgentBrowserAvailabilityLog,
 } from "./executor/browser-probe.js";
 export type { AgentBrowserAvailabilityProbeResult } from "./executor/browser-probe.js";
-
-
-
-
-
-
-
-
 
 /** Maximum retry attempts for workflow step hard failures before giving up */
 const MAX_WORKFLOW_STEP_RETRIES = 3;
@@ -216,13 +204,9 @@ export {
   getWorktreeBranchMap,
 } from "./executor/worktree-registry-helpers.js";
 
-
-
 export { quoteShellArg } from "./executor/shell-quote.js";
 export { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
 export { logReviewCheckoutRouting } from "./executor/review-checkout-routing.js";
-
-
 
 export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 export type { WorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
@@ -235,8 +219,6 @@ import {
   evaluateTaskDoneRefusal,
 } from "./executor/task-done-refusal.js";
 
-
-
 export {
   extractReferencedPathsFromWorkflowFeedback,
   isAlwaysAllowedScopeLeakPath,
@@ -244,14 +226,12 @@ export {
 } from "./executor/workflow-feedback-paths.js";
 export type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
 
-
 export {
   parseReviewLevelFromPrompt,
   evaluatePromptDerivedNoCommitEligibility,
   extractPromptSection,
   extractPromptListEntries,
 } from "./executor/prompt-derived-eligibility.js";
-
 
 export { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
 import {
@@ -756,52 +736,27 @@ import { clearWorkflowRerunWatchdog as clearWorkflowRerunWatchdogImpl } from "./
 export { clearWorkflowRerunWatchdog as clearWorkflowRerunWatchdogFree } from "./executor/clear-workflow-rerun-watchdog.js";
 import { getModelRegistry as getModelRegistryImpl } from "./executor/get-model-registry.js";
 export { getModelRegistry as getModelRegistryFree } from "./executor/get-model-registry.js";
+import { hasLiveSessionSurface as hasLiveSessionSurfaceImpl } from "./executor/has-live-session-surface.js";
+export { hasLiveSessionSurface as hasLiveSessionSurfaceFree } from "./executor/has-live-session-surface.js";
+import { listWorktreeHolders as listWorktreeHoldersImpl } from "./executor/list-worktree-holders.js";
+export { listWorktreeHolders as listWorktreeHoldersFree } from "./executor/list-worktree-holders.js";
+import { isAgentEffectivelyExecuting as isAgentEffectivelyExecutingImpl } from "./executor/is-agent-effectively-executing.js";
+export { isAgentEffectivelyExecuting as isAgentEffectivelyExecutingFree } from "./executor/is-agent-effectively-executing.js";
+import { getWorktreePath as getWorktreePathImpl } from "./executor/get-worktree-path.js";
+export { getWorktreePath as getWorktreePathFree } from "./executor/get-worktree-path.js";
+import { buildInjectedRuntimeEnv as buildInjectedRuntimeEnvImpl } from "./executor/build-injected-runtime-env.js";
+export { buildInjectedRuntimeEnv as buildInjectedRuntimeEnvFree } from "./executor/build-injected-runtime-env.js";
+import { getApprovalRequestStore as getApprovalRequestStoreImpl } from "./executor/get-approval-request-store.js";
+export { getApprovalRequestStore as getApprovalRequestStoreFree } from "./executor/get-approval-request-store.js";
+import { isEphemeralDeletionPending as isEphemeralDeletionPendingImpl, disposeEphemeralTimers as disposeEphemeralTimersImpl } from "./executor/ephemeral-deletion-pending.js";
+export { isEphemeralDeletionPending as isEphemeralDeletionPendingFree, disposeEphemeralTimers as disposeEphemeralTimersFree } from "./executor/ephemeral-deletion-pending.js";
 import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
 export { buildStepInstancePersistence as buildStepInstancePersistenceFree } from "./executor/build-step-instance-persistence.js";
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
 export { resolveMcpServers as resolveMcpServersFree } from "./executor/resolve-mcp-servers.js";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import { runConfiguredCommand } from "./executor/configured-command.js";
 export { truncateWorkflowScriptOutput, runConfiguredCommand } from "./executor/configured-command.js";
-
 
 export async function __runConfiguredCommandForTests(
   command: string,
@@ -818,7 +773,6 @@ export async function __runConfiguredCommandForTests(
 
 // taskLogParams and taskCreateParams are imported from agent-tools.ts
 
-
 /**
  * Sentinel a skill running in a Fusion workflow step emits when it needs to ask
  * the user a blocking question (it has no synchronous question tool — see the CE
@@ -831,7 +785,6 @@ export {
   parseAwaitInputSentinel,
   parseAwaitInputQuestionToolCall,
 } from "./executor/await-input-parse.js";
-
 
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
@@ -863,7 +816,6 @@ import type {
 } from "./executor/workflow-step-verdict.js";
 
 export { getExecutorSystemPrompt } from "./executor/system-prompt.js";
-
 
 export interface TaskExecutorOptions {
   /*
@@ -996,7 +948,6 @@ export {
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
 } from "./executor/lifecycle-columns.js";
-
 
 /*
 FNXC:WorkflowExecution 2026-07-19-01:30:
@@ -1271,7 +1222,6 @@ export class TaskExecutor {
     return sessionRegistryPathImpl(this.rootDir, taskId, worktreePath);
   }
 
-
   private activeSessionBookkeepingDeps(): ActiveSessionBookkeepingDeps {
     return {
       rootDir: this.rootDir, activeSessions: this.activeSessions, activeStepExecutors: this.activeStepExecutors,
@@ -1388,7 +1338,6 @@ export class TaskExecutor {
     );
   }
 
-
   private async getExecutionPauseLabel(): Promise<"global pause" | "engine pause" | null> {
     return getExecutionPauseLabelImpl({ store: this.store });
   }
@@ -1468,7 +1417,6 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-
   /*
   FNXC:ReviewArtifacts 2026-07-19-10:00:
   A successful executor handoff may offer reviewers a short local feature-video, but
@@ -1492,13 +1440,11 @@ export class TaskExecutor {
   }
 
   private get approvalRequestStore(): ApprovalRequestStore {
-    if (!this._approvalRequestStore) {
-      const layer = this.store.getAsyncLayer();
-      if (!layer) throw new Error("Executor TaskStore is missing its PostgreSQL AsyncDataLayer");
-      /* FNXC:PostgresSatelliteCutover 2026-07-14-17:30: Runtime approval persistence is PostgreSQL-only; never reopen the removed project SQLite database when backend wiring is incomplete. */
-      this._approvalRequestStore = new ApprovalRequestStore(null, { asyncLayer: layer });
-    }
-    return this._approvalRequestStore;
+    return getApprovalRequestStoreImpl({
+      getCache: () => this._approvalRequestStore,
+      setCache: (value) => { this._approvalRequestStore = value; },
+      store: this.store,
+    });
   }
 
   private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
@@ -1575,7 +1521,6 @@ export class TaskExecutor {
     );
   }
 
-
   /**
    * FNXC:ExecutorBinding 2026-06-19-00:00:
    * FN-6736 gives self-healing a narrow escape hatch for phantom in-memory executor bindings after the liveness gate proves the owner is dead. Never use this as a general task stopper: it refuses to detach observable live session surfaces, then clears only stale bookkeeping (`executing`, resume/recovery sets, process-wide graph routing, activeWorktrees, activeSessionRegistry paths, and executingTaskLock) so the scheduler can re-dispatch the preserved worktree.
@@ -1603,11 +1548,16 @@ export class TaskExecutor {
   appears in NONE of the four executor-owned maps; it registers here instead.
   */
   hasLiveSessionSurface(taskId: string): boolean {
-    return this.activeSessions.has(taskId)
-      || this.activeStepExecutors.has(taskId)
-      || this.activeWorkflowStepSessions.has(taskId)
-      || this.activeCliTaskSessions.has(taskId)
-      || activeSessionRegistry.pathsForTask(taskId).length > 0;
+    return hasLiveSessionSurfaceImpl(
+      {
+        activeSessions: this.activeSessions,
+        activeStepExecutors: this.activeStepExecutors,
+        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        activeCliTaskSessions: this.activeCliTaskSessions,
+        pathsForTask: (id) => activeSessionRegistry.pathsForTask(id),
+      },
+      taskId,
+    );
   }
 
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
@@ -1629,14 +1579,13 @@ export class TaskExecutor {
     );
   }
 
-    isEphemeralDeletionPending(agentId: string): boolean {
-    return this.pendingEphemeralDeletions.has(agentId);
+  isEphemeralDeletionPending(agentId: string): boolean {
+    return isEphemeralDeletionPendingImpl(this.pendingEphemeralDeletions, agentId);
   }
 
   disposeEphemeralTimers(): void {
-    this.pendingEphemeralDeletions.clear();
+    disposeEphemeralTimersImpl(this.pendingEphemeralDeletions);
   }
-
 
   /**
    * Abort the in-flight bash subprocess (if any) on every active agent session.
@@ -1841,7 +1790,6 @@ export class TaskExecutor {
     );
   }
 
-
   abortAllSessionBash(): void {
     /* eslint-disable @typescript-eslint/no-explicit-any -- session map value shapes */
     abortAllSessionBashImpl({
@@ -1851,7 +1799,6 @@ export class TaskExecutor {
     });
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
-
 
   /**
    * @param store — Task store instance (also used to listen for events)
@@ -1937,7 +1884,6 @@ export class TaskExecutor {
       work,
     );
   }
-
 
   /**
    * FNXC:PlannerOversight 2026-07-13-23:05:
@@ -3012,7 +2958,6 @@ export class TaskExecutor {
     );
   }
 
-
   /*
    * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
    * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
@@ -3178,7 +3123,6 @@ export class TaskExecutor {
     );
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
-
 
   /**
    * Re-dispatch execute() for any unstarted in-progress task whose EFFECTIVE
@@ -3615,7 +3559,6 @@ export class TaskExecutor {
     );
   }
 
-
   /**
    * Build the code node runner (KTD-15, U14): worktree cwd resolution, pre-read of
    * declared artifacts into the harness ctx, and customFields writes through the
@@ -3870,7 +3813,6 @@ export class TaskExecutor {
     );
   }
 
-
   /*
   FNXC:WorkflowMerge 2026-07-27-12:00:
   FN-8601 gates checklist projection and foreach merge admission on required node-result
@@ -4072,11 +4014,7 @@ export class TaskExecutor {
    * legacy/no-binding path (the map is empty), preserving prior behavior exactly.
    */
   isAgentEffectivelyExecuting(agentId: string): boolean {
-    if (!agentId) return false;
-    for (const effectiveId of this.effectiveColumnAgentByTask.values()) {
-      if (effectiveId === agentId) return true;
-    }
-    return false;
+    return isAgentEffectivelyExecutingImpl(this.effectiveColumnAgentByTask, agentId);
   }
 
   /** Build the task-scoped runtime env that carries plugin-injected keys
@@ -4091,23 +4029,17 @@ export class TaskExecutor {
     worktreePath: string,
     branch: string | undefined,
   ): Promise<{ env: NodeJS.ProcessEnv; injectedKeyCount: number; pathEntryCount: number }> {
-    const runtimeEnvContribution = await this.options.pluginRunner?.collectExecutorRuntimeEnv({
+    return buildInjectedRuntimeEnvImpl(
+      {
+        rootDir: this.rootDir,
+        collectExecutorRuntimeEnv: this.options.pluginRunner
+          ? (input) => this.options.pluginRunner!.collectExecutorRuntimeEnv(input)
+          : undefined,
+      },
       taskId,
       worktreePath,
-      rootDir: this.rootDir,
       branch,
-    });
-    const pathPrepend = runtimeEnvContribution?.pathPrepend ?? [];
-    const injectedEnv = runtimeEnvContribution?.env ?? {};
-    return {
-      env: {
-        ...process.env,
-        ...injectedEnv,
-        PATH: [...pathPrepend, process.env.PATH ?? ""].filter(Boolean).join(delimiter),
-      },
-      injectedKeyCount: Object.keys(injectedEnv).length,
-      pathEntryCount: pathPrepend.length,
-    };
+    );
   }
 
   private async ensureGraphCustomNodeWorktree(
@@ -4163,7 +4095,6 @@ export class TaskExecutor {
       reason,
     );
   }
-
 
   public async ensureTaskWorktreeForPlanning(taskId: string): Promise<string | null> {
     return ensureTaskWorktreeForPlanningImpl(
@@ -4279,7 +4210,6 @@ export class TaskExecutor {
   private async reapCliTaskSessionForHandoff(session: CliTaskSession, taskId: string): Promise<void> {
     return reapCliTaskSessionForHandoffImpl(session, taskId);
   }
-
 
   /*
   FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
@@ -4687,7 +4617,6 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-
   private async routeGraphFailureToExecutionResume(
     live: TaskDetail,
     failedNode: string,
@@ -4956,7 +4885,6 @@ export class TaskExecutor {
     );
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
-
 
   // ── Custom tools for the worker agent ──────────────────────────────
 
@@ -5444,10 +5372,8 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-
   private MAX_WORKTREE_RETRIES = 3;
   private WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
-
 
   private readonly MAX_AUTO_RECOVERY_ATTEMPTS = 3;
   private readonly BRANCH_CONFLICT_TRIPWIRE_THRESHOLD = 5;
@@ -5554,14 +5480,8 @@ export class TaskExecutor {
   }
 
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
-    const holders: Array<{ taskId: string; worktreePath: string }> = [];
     // FNXC:Workspace 2026-06-21-12:00: KTD2 — flat-map each task's Set into one holder row per worktree path. A workspace task emits N rows; the FN-6782 reaper (self-healing.ts) and in-process-runtime adapter key purely off taskId (verified) and are idempotent across duplicate-task rows, so multi-row holders do not mis-count maxWorktrees slots.
-    for (const [taskId, worktreePaths] of this.activeWorktrees) {
-      for (const worktreePath of worktreePaths) {
-        holders.push({ taskId, worktreePath });
-      }
-    }
-    return holders;
+    return listWorktreeHoldersImpl(this.activeWorktrees);
   }
 
   /*
@@ -5588,7 +5508,6 @@ export class TaskExecutor {
   private async cleanupStaleBranch(branch: string, taskId: string): Promise<boolean> {
     return cleanupStaleBranch(this.rootDir, this.store, branch, taskId);
   }
-
 
   private async planSquashImportFromDep(
     taskId: string,
@@ -5819,9 +5738,6 @@ export class TaskExecutor {
     );
   }
 
-
-
-
   private async removeOwnWorktreeWithReconcile(input: {
     worktreePath: string;
     settings: Settings;
@@ -5840,9 +5756,6 @@ export class TaskExecutor {
     );
   }
 
-
-
-
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
   disposeStoreLifecycleDisposers(): void {
     disposeStoreLifecycleDisposersImpl({
@@ -5851,8 +5764,6 @@ export class TaskExecutor {
       clearArchiveWorkspaceWorktreeDisposer: () => { this.unregisterArchiveWorkspaceWorktreeDisposer?.(); this.unregisterArchiveWorkspaceWorktreeDisposer = undefined; },
     });
   }
-
-
 
   async cleanup(taskId: string): Promise<void> {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
@@ -5868,7 +5779,6 @@ export class TaskExecutor {
     );
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
-
 
   /**
    * When the engine restarts mid-step, an `in-progress` step may have already
@@ -5956,7 +5866,6 @@ export class TaskExecutor {
     );
   }
 
-
   /**
    * Handle a loop-detected event from the stuck task detector.
    * Attempts an in-process compact-and-resume before falling back to kill/requeue.
@@ -5989,10 +5898,11 @@ export class TaskExecutor {
    * FNXC:Workspace 2026-06-21-12:00: KTD2 single-path-getter contract. Returns the task's sole worktree path for single-repo tasks (one-element set). For a multi-worktree workspace task there is no single answer — callers must read the per-repo `task.workspaceWorktrees` entry instead — so this returns undefined. A workspace task tracked only at the browse-only root also returns undefined, matching the "no removable single worktree" semantics.
    */
   getWorktreePath(taskId: string): string | undefined {
-    if (this.workspaceConfig) {
-      return undefined;
-    }
-    return this.getActiveWorktreePaths(taskId)[0];
+    return getWorktreePathImpl(
+      this.workspaceConfig,
+      (id) => this.getActiveWorktreePaths(id),
+      taskId,
+    );
   }
 
   // ── Agent Spawning ─────────────────────────────────────────────────────
@@ -6028,7 +5938,6 @@ export class TaskExecutor {
       childId,
     );
   }
-
 
   /**
    * Run a spawned child agent's task to completion.
