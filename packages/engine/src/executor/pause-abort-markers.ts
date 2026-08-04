@@ -2,6 +2,9 @@
  * FNXC:CodeOrganization 2026-08-03-18:00:
  * clearPausedAborted + markCompletionFinalized peeled from TaskExecutor (U4).
  * Companion markers to markPausedAborted (already free).
+ *
+ * FNXC:WorkflowLifecycle 2026-06-18-10:56:
+ * FN-6644 makes completed/no-commit finalize-to-review state durable beyond volatile pause provenance. FN-6641 showed FN-6625 was incomplete because teardown can re-mark `completion-finalize` as `hard-cancel`; the completionFinalizedTaskIds marker keeps the already-finalized handoff from being re-parked as an operator-action pause abort while preserving genuine live pauses and active hard-cancels.
  */
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 

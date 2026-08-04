@@ -263,22 +263,13 @@ import type {
 /* FNXC:CodeOrganization 2026-08-04-03:10: Rebound/guard Phase C FNXC lives on lifecycle-columns.ts; GraphCompletionCallback U5d/U5e on task-executor-options.ts. */
 
 export class TaskExecutor {
-  /*
-  FNXC:Workspace 2026-06-21-12:00:
-  activeWorktrees tracks the worktree paths a task currently holds for liveness/owner checks. In workspace mode a single task acquires N sub-repo worktrees (foundation `task.workspaceWorktrees`), so the value is a SET of paths, not one path. A non-workspace (single-repo) task holds a one-element set — every consumer is converted to membership semantics so the single-repo path is byte-for-byte unchanged (KTD2). Helpers below add/remove/iterate the set.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: activeWorktrees SET semantics FNXC lives on active-worktrees.ts. */
   private activeWorktrees = new Map<string, Set<string>>();
 
-  /**
-   * FNXC:Workspace 2026-06-21-12:00: Register a worktree path under a task's active set, creating the set on first add (KTD2). Single-repo tasks call this once → one-element set.
-   */
   private addActiveWorktree(taskId: string, worktreePath: string): void {
     addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath);
   }
 
-  /**
-   * FNXC:Workspace 2026-06-21-12:00: Read-only snapshot of every worktree path a task currently holds (KTD2). Empty when the task holds none.
-   */
   private getActiveWorktreePaths(taskId: string): string[] {
     return getActiveWorktreePathsImpl(this.activeWorktrees, taskId);
   }
@@ -370,23 +361,9 @@ export class TaskExecutor {
   private activeSubagentSessions = new Map<string, Set<AgentSession>>();
   /** Tasks that were paused mid-execution (to avoid marking them as "failed"). */
   private pausedAborted = new Set<string>();
-  /**
-   * FNXC:WorkflowLifecycle 2026-06-17-03:42:
-   * FN-6568 separates pause provenance from the legacy pausedAborted hard-cancel bit. Merge-seam/internal aborts caused FN-6528/FN-6531/FN-6534/FN-6537 to look like pause/resume aborts and left mergeRetries=NULL, so handleGraphFailure must know whether the abort came from global pause, the merge seam, or a generic hard cancel before choosing operator-action parking.
-   *
-   * FNXC:WorkflowLifecycle 2026-06-17-23:31:
-   * FN-6625 adds completion-finalize provenance for the FN-6614 symptom where a completed/no-commit execution already handed off to in-review, then a trailing graph abort looked like a pause/resume engine abort and re-parked the task failed. Completion-finalize is sibling provenance to FN-6568 merge-seam, not operator pause intent.
-   *
-   * FNXC:WorkflowLifecycle 2026-07-26-11:20:
-   * KB-PROV: `hard-cancel` had become a catch-all bucket: `awaitAbortInFlightTaskWork` stamped it unconditionally, so an ENGINE-initiated teardown was labeled with the provenance AGENTS.md reserves for the operator Move-Task hard cancel ("User moveTask(in-progress -> todo) is a hard cancel ... Engine rebounds must not set userPaused"). Observed on FN-8596: the graph's own `performWorkflowRerunBounce` (in-progress -> todo -> in-progress re-dispatch, moveSource "engine") logged `provenance=hard-cancel source=abort-in-flight:parent moved from in-progress to todo` even though `userCanceled` was correctly false and `userPaused` was never set. Behaviour was right, the LABEL lied.
-   *
-   * `engine-abort` splits that bucket: `hard-cancel` now means ONLY an operator withdrawal (`options.userCanceled === true`), `engine-abort` means an engine/lifecycle teardown. Both are "generic" (non-global-pause, non-merge-seam, non-completion-finalize) aborts, so every downstream classifier that used to accept `hard-cancel` must accept BOTH via `isGenericAbortProvenance()` — those classifiers exist FOR the engine case (see FN-6796's note that "an engine restart/pause-resume abort reaches graph-failure handling as `hard-cancel` provenance even when no user canceled the task") and discriminate real user intent through `userCanceledTaskIds`, not through the provenance label. Narrowing them to `hard-cancel` alone would strand benign engine aborts as operator-action failures.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: Pause/abort provenance FNXC lives on paused-abort-provenance.ts. */
   private pausedAbortProvenance = new Map<string, PausedAbortProvenance>();
-  /**
-   * FNXC:WorkflowLifecycle 2026-06-18-10:56:
-   * FN-6644 makes completed/no-commit finalize-to-review state durable beyond volatile pause provenance. FN-6641 showed FN-6625 was incomplete because teardown can re-mark `completion-finalize` as `hard-cancel`; this marker keeps the already-finalized handoff from being re-parked as an operator-action pause abort while preserving genuine live pauses and active hard-cancels.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: completionFinalizedTaskIds FNXC lives on pause-abort-markers.ts. */
   private completionFinalizedTaskIds = new Set<string>();
   /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
   private depAborted = new Set<string>();
@@ -394,10 +371,7 @@ export class TaskExecutor {
   private stuckAborted = new Map<string, boolean>();
   /** Tasks explicitly canceled by user move (in-progress → todo). */
   private userCanceledTaskIds = new Set<string>();
-  /*
-  FNXC:WorkflowLifecycle 2026-06-23-21:16:
-  During graph-owned execute nodes, the inner executor may intentionally self-requeue a task to `todo` for recoverable worktree/session repair. Persisted rows can be stale in tests or during store races, so keep a run-local marker that tells the outer graph failure sink not to overwrite that recovery with an in-review handoff.
-  */
+  /** Run-local marker: graph execute self-requeued for recoverable repair (outer failure sink must not overwrite). */
   private graphExecuteSelfRequeued = new Set<string>();
   /** In-memory loop recovery state per task. Keyed by taskId, not persisted.
    *  Tracks compact-and-resume attempt count per execute() lifecycle.
@@ -417,10 +391,7 @@ export class TaskExecutor {
   private pendingEphemeralDeletions = new Set<string>();
   private workspaceConfig: WorkspaceConfig | null | undefined = undefined;
 
-  /*
-  FNXC:WorkflowLifecycle 2026-07-01-16:20:
-  Breadcrumb task-log writes on the abort/pause/finalize paths are best-effort diagnostics and must NEVER break control flow. FN-7335 wired store.logEntry() straight into the SYNCHRONOUS markPausedAborted() as `void this.store.logEntry(...).catch(...)`; when store.logEntry is absent/throws synchronously (undefined method, store closed mid-abort, corrupted pager) the call throws a TypeError BEFORE the promise exists, so the trailing .catch() never runs and the exception unwinds out of markPausedAborted — aborting hard-cancel/pause and stranding the in-review handoff. Route every breadcrumb write through safeLogEntry() so both synchronous throws and async rejections are swallowed into a warn.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: safeLogEntry FN-7335 breadcrumb FNXC lives on safe-log-entry.ts. */
   private safeLogEntry(taskId: string, message: string): void {
     safeLogEntryImpl(
       {
@@ -740,32 +711,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * FNXC:ExecutorBinding 2026-06-19-00:00:
-   * FN-6736 gives self-healing a narrow escape hatch for phantom in-memory executor bindings after the liveness gate proves the owner is dead. Never use this as a general task stopper: it refuses to detach observable live session surfaces, then clears only stale bookkeeping (`executing`, resume/recovery sets, process-wide graph routing, activeWorktrees, activeSessionRegistry paths, and executingTaskLock) so the scheduler can re-dispatch the preserved worktree.
-   *
-   * FNXC:ExecutorBinding 2026-06-30-00:00:
-   * `preserveWorktrees: true` is the FN-6736 self-healing path. When the caller has already committed to `moveTask(..., { preserveWorktree: true })`, unregistering the held worktree path from `activeSessionRegistry` defeats the preserve: re-dispatch then sees the path as free and re-acquires a brand-new worktree (observed on FN-7249: gentle-peach orphaned, rosy-thorn rebuilt ~20s after reclaim). The preserve variant clears only the in-memory executor/lock bookkeeping and leaves the session-registry path entry intact so the re-dispatch reattaches to the same worktree. Non-self-healing callers (leaked-slot reaper, pause-abort recovery) keep the default full-clear behavior.
-   */
-  /*
-  FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756 — one liveness predicate, PR #2531 review):
-  READ-ONLY liveness probe, extracted so callers can ASK before they mutate.
-
-  `clearPhantomExecutorBinding` both answers "is this live?" and performs a
-  destructive release, which forced every caller into a false choice: check first
-  and release ownership before their own fallible writes (a torn write — ownership
-  gone, task un-repaired, nobody owning the repair), or write first and discover the
-  refusal too late. Splitting the question from the act lets a caller gate on
-  liveness with no side effect and release only after its writes have committed.
-
-  Deliberately the SAME expression the destructive path uses, not a copy: a probe
-  that could disagree with the guard it stands in for is worse than no probe, and
-  independent re-derivation of "liveness" at each call site is precisely how this
-  bug reached users three times (reclaim sweep -> leaked-slot reaper -> pause-abort).
-
-  Registry paths count. A triage PLANNING session is owned by TriageProcessor and
-  appears in NONE of the four executor-owned maps; it registers here instead.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: hasLiveSessionSurface / clearPhantom FNXC on has-live-session-surface.ts + clear-phantom-executor-binding.ts. */
   hasLiveSessionSurface(taskId: string): boolean {
     return hasLiveSessionSurfaceImpl(
       buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)),
@@ -1506,39 +1452,7 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-  /**
-   * Re-dispatch execute() for any unstarted in-progress task whose EFFECTIVE
-   * principal is the given agent. Called after a heartbeat run completes to unblock
-   * tasks that were deferred by the allowParallelExecution=false gate.
-   *
-   * TWO-PASS (plan U5, R6) — the `assignedAgentId`-only filter alone misses tasks an
-   * override/defer column binding re-keys to the column agent:
-   *   1. Tasks directly `assignedAgentId === agentId` (legacy, byte-identical).
-   *   2. Tasks whose effective column agent resolves to `agentId` for their
-   *      governing execute / step-execute seam — resolved per candidate via the core
-   *      column-agent resolver against the task's workflow IR. Bounded: only
-   *      not-already-executing in-progress tasks are probed, and the IR resolution is
-   *      best-effort (failure → skip, never strands resume).
-   * A task re-dispatched by pass 1 is not re-dispatched by pass 2 (dedupe set).
-   */
-  /*
-  FNXC:WorkflowLifecycleColumns 2026-07-30-21:40:
-  The wip-lane read for the two resume sweeps, resolved at PROJECT level.
-
-  `listTasks`' `column` option filters in the store, so both sweeps returned an EMPTY array on a
-  renamed board and neither resume ran:
-
-    - `resumeTaskForAgent` — a durable agent coming back up adopted nothing, so its in-flight task
-      stayed orphaned;
-    - `resumeOrphaned` — the engine-wide sweep found no orphans to re-dispatch after a restart.
-
-  Both are recovery paths, which is the expensive place to be silently inert: the failure only shows
-  up after a crash or a restart, when the operator is already looking at something else. The census
-  cannot see either — it scores comparisons, and a query filter is not one.
-
-  Project-level because a read has no task in hand, legacy ids unioned so a board mid-rename still
-  finds rows under the old one, deduped by id because one column can carry two roles.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: listWipLaneTasks resume-sweep FNXC lives on list-wip-lane-tasks.ts. */
   private async listWipLaneTasks(): Promise<Task[]> {
     return listWipLaneTasksImpl(this.store);
   }
@@ -1757,69 +1671,12 @@ export class TaskExecutor {
     return buildStepInstancePersistenceImpl({ store: this.store });
   }
 
-  /*
-  FNXC:WorkflowLifecycle 2026-07-18-14:20 (U5c / U1 KTD-1/2/3/12):
-  Build the PRODUCTION column-boundary hooks for one graph run. This is the piece
-  that makes the graph the single source of truth for lifecycle MOVES: as the
-  interpreter enters each node, the controller (createWorkflowColumnBoundary) moves
-  the card to the node's trait column via these hooks. All the move-safety lives in
-  the controller (same-column no-op, KTD-2 hold→wip parked for the scheduler,
-  rejected-move leaves the card in place), so the executor only supplies the raw
-  seams:
-    - moveTask   → real store.moveTask, engine-sourced with workflowMoveSource so
-                   the move is attributed to the graph; bypassGuards (KTD-9: the
-                   graph IS the lifecycle owner, so its own moves must not be
-                   re-vetoed by the same trait guards it implements — capacity
-                   KTD-10 is still enforced by moveTask).
-    - emitAudit  → ids/counts-only run-audit (KTD-12) for column-transition/drift.
-    - onWarn     → executor log sink; diagnostics never affect the run.
-
-  FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
-  The KTD-3 durable IR pin is WIRED: the U9b store schema landed the pin as task-row
-  fields (workflowIrPin/workflowIrPinNodeId/workflowIrPinColumnId, migration 0026), so
-  pinNodeEntry/loadPriorPin bind to that row via createStoreIrPinPersistence. Each real
-  node entry persists the resolved IR's content hash (change-only writes); on restart/
-  re-entry the runner loads the prior pin and detectDrift parks the run with
-  task:reconcile-workflow-drift when the pinned node/column is gone or the hash no longer
-  resolves, instead of traversing a mutated graph. Stores without the fields (in-memory
-  fakes, pre-U9b DBs) degrade to the previous inert no-pin posture.
-  */
-  /*
-  FNXC:WorkflowNoMergeCompletion 2026-07-19-12:40:
-  A workflow with NO merge region had no way to reach its `complete` column.
-
-  `end` is a graph terminal, never a column destination (KTD-1 — the boundary
-  deliberately does not fire on it), so a card only lands in the complete column
-  when a REAL node lives there. Every merge-bearing built-in gets that for free
-  from `post-merge-verification`; a no-merge workflow does not. The two existing
-  movers to the complete column (merger.completeTask, finalizeProvenAutoMergeTask)
-  are both merge-proof-gated and unreachable without a merge, and the merge queue
-  is only fed on entry to `in-review` — a column a no-merge workflow need not even
-  declare. Net effect before this: a `builtin:lead-generation` card completed its
-  whole graph and then sat in `outreach` forever, and its dependents never
-  released because `complete` never became true for it.
-
-  This is the trait-keyed completion mover for exactly that class. It is
-  deliberately narrow:
-   - it fires ONLY when the IR declares no merge-orchestration column, so every
-     merge-bearing workflow (builtin:coding included) is byte-identical — the
-     merge path keeps sole ownership of complete-column entry and the
-     done-only-on-confirmed-merge invariant is untouched;
-   - it does NOT reintroduce a move on `end`; KTD-1 stands;
-   - an IR with no complete-trait column is a legal shape and no-ops here;
-   - a task with no worktree (the normal case for a no-merge workflow) is not an
-     error — nothing about the move depends on one.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: no-merge complete-column + IR pin FNXC lives on no-merge-complete-column.ts. */
   private async advanceNoMergeWorkflowToCompleteColumn(task: TaskDetail): Promise<void> {
     return advanceNoMergeWorkflowToCompleteColumnImpl(this.store, task);
   }
 
-  /*
-  FNXC:WorkflowColumnBoundary 2026-07-27-16:40 (PR #2475 review, P2):
-  The wiring itself now lives in `createExecutorColumnBoundaryHooks` so the E2E suite can drive the
-  REAL hooks instead of rebuilding them (a hand copy had already diverged in three places). What
-  stays here is only genuine Executor state: the in-flight graph-move marker and the logger.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:15: column-boundary hooks FNXC lives on build-column-boundary-hooks.ts. */
   private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): WorkflowColumnBoundaryHooks {
     return buildColumnBoundaryHooksImpl(
       {

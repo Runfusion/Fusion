@@ -3,8 +3,14 @@
  * safeLogEntry peeled from TaskExecutor (U4).
  *
  * FNXC:WorkflowLifecycle 2026-07-01-16:20:
- * Breadcrumb task-log writes on abort/pause/finalize paths are best-effort diagnostics and must
- * NEVER break control flow. Swallow both synchronous throws and async rejections into a warn.
+ * Breadcrumb task-log writes on the abort/pause/finalize paths are best-effort diagnostics and must
+ * NEVER break control flow. FN-7335 wired store.logEntry() straight into the SYNCHRONOUS
+ * markPausedAborted() as `void this.store.logEntry(...).catch(...)`; when store.logEntry is
+ * absent/throws synchronously (undefined method, store closed mid-abort, corrupted pager) the call
+ * throws a TypeError BEFORE the promise exists, so the trailing .catch() never runs and the
+ * exception unwinds out of markPausedAborted — aborting hard-cancel/pause and stranding the
+ * in-review handoff. Route every breadcrumb write through safeLogEntry() so both synchronous throws
+ * and async rejections are swallowed into a warn.
  */
 import type { TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";

@@ -2,6 +2,29 @@
  * FNXC:CodeOrganization 2026-08-03-20:25:
  * advanceNoMergeWorkflowToCompleteColumn peeled from TaskExecutor (U4).
  * After a no-merge workflow finishes, advance the card into the workflow complete column.
+ *
+ * FNXC:WorkflowLifecycle 2026-07-18-14:20 (U5c / U1 KTD-1/2/3/12):
+ * Production column-boundary hooks make the graph the single source of truth for lifecycle MOVES:
+ * as the interpreter enters each node, createWorkflowColumnBoundary moves the card to the node's
+ * trait column. Move-safety lives in the controller (same-column no-op, KTD-2 hold→wip parked for
+ * the scheduler, rejected-move leaves the card in place); the executor only supplies raw seams
+ * (moveTask engine-sourced with bypassGuards for KTD-9, ids-only audit KTD-12, warn log sink).
+ *
+ * FNXC:WorkflowIrPin 2026-07-19-18:30 (KTD-3 / U9b):
+ * The KTD-3 durable IR pin is WIRED via task-row fields (workflowIrPin/workflowIrPinNodeId/
+ * workflowIrPinColumnId, migration 0026). pinNodeEntry/loadPriorPin bind through
+ * createStoreIrPinPersistence; drift parks with task:reconcile-workflow-drift. Stores without the
+ * fields degrade to the previous inert no-pin posture.
+ *
+ * FNXC:WorkflowNoMergeCompletion 2026-07-19-12:40:
+ * A workflow with NO merge region had no way to reach its `complete` column. `end` is a graph
+ * terminal, never a column destination (KTD-1), so a card only lands in complete when a REAL node
+ * lives there. Merge-bearing built-ins get that from post-merge-verification; no-merge workflows
+ * do not. Without this mover a lead-generation card finished its graph and sat in outreach forever.
+ *
+ * Narrow deliberately: fires ONLY when the IR declares no merge-orchestration column (merge-bearing
+ * workflows stay byte-identical); does NOT reintroduce a move on `end`; no complete-trait column
+ * no-ops; no worktree is not an error.
  */
 import type { TaskDetail, TaskStore, WorkflowIr } from "@fusion/core";
 import {
