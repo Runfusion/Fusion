@@ -881,3 +881,20 @@ export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExec
     unregisterArchiveWorkspaceWorktreeDisposer,
   };
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-07:25:
+Apply wireExecutorLifecycle disposer handles onto a TaskExecutor-shaped host so the
+class constructor stays a two-line super()+apply wire-up (U4 densify). Host is object
+because disposer fields are protected on TaskExecutorState.
+*/
+export function applyWireExecutorLifecycleDisposers(
+  host: object,
+  wired: WireExecutorLifecycleResult,
+): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- protected TaskExecutorState disposer fields
+  const h = host as any;
+  h.unregisterTaskMoveDisposer = wired.unregisterTaskMoveDisposer;
+  h.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
+  h.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
+}

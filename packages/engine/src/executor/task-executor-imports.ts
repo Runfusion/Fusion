@@ -34,7 +34,11 @@ export {
   type FacadeAfterSecond,
 } from "./facade-methods.js";
 export { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./worktree-create-binders.js";
-export { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./wire-executor-lifecycle.js";
+export {
+  buildWireExecutorLifecycleDeps,
+  wireExecutorLifecycle,
+  applyWireExecutorLifecycleDisposers,
+} from "./wire-executor-lifecycle.js";
 export type {
   TaskExecutorOptions,
   CliAgentRuntime,

@@ -9,9 +9,8 @@ import {
   type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants,
   pure, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
   bindHandleWorktreeConflict, bindTryCreateWorktree, buildWireExecutorLifecycleDeps, wireExecutorLifecycle,
-  type TaskExecutorOptions, TaskExecutorState
+  applyWireExecutorLifecycleDisposers, type TaskExecutorOptions, TaskExecutorState
 } from "./executor/task-executor-imports.js";
-/* FNXC:CodeOrganization 2026-08-04-07:15: FNXC/doc hosts via executor-side-effect-hosts (isBackward body stays here). */
 import "./executor/executor-side-effect-hosts.js";
 export class TaskExecutor extends TaskExecutorState {
   private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
@@ -80,8 +79,7 @@ export class TaskExecutor extends TaskExecutorState {
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
     super();
-    const w = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
-    this.unregisterTaskMoveDisposer = w.unregisterTaskMoveDisposer; this.unregisterArchiveWorktreeDisposer = w.unregisterArchiveWorktreeDisposer; this.unregisterArchiveWorkspaceWorktreeDisposer = w.unregisterArchiveWorkspaceWorktreeDisposer;
+    applyWireExecutorLifecycleDisposers(this, wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this)));
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any { return { ...facadeFields(this, ["store"]), ...facadeMethods(this, ["getRunContextFor"]) }; }
