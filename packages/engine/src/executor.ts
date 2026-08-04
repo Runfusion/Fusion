@@ -717,23 +717,8 @@ export class TaskExecutor {
     disposeEphemeralTimersImpl(this.pendingEphemeralDeletions);
   }
 
-  /**
-   * Abort the in-flight bash subprocess (if any) on every active agent session.
-   *
-   * Invoked at runtime shutdown so detached subprocess trees spawned by agent
-   * bash tools — including grandchildren like vitest workers — are killed via
-   * pi-coding-agent's killProcessTree. Without this, when the worker is killed
-   * those process groups are orphaned because they're detached.
-   *
-   * Sessions are not disposed here so any near-complete agent loop still has a
-   * chance to wrap up during the runtime's graceful drain window.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:40: abortAllSessionBash FNXC lives on abort-all-session-bash.ts. */
 
-  /**
-   * Register a subagent session (e.g. reviewer) under its parent task ID so it
-   * can be disposed when the parent stops. Used as the `onSessionCreated`
-   * callback passed to `reviewStep`.
-   */
   private registerSubagentSession(taskId: string, session: AgentSession): void {
     registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session);
   }
@@ -1084,20 +1069,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Result of a workflow-rerun bounce attempt.
-   *
-   * - `bounced` — the move sequence completed successfully and the task is
-   *   back in `in-progress` ready for re-execution.
-   * - `skipped-pending` — another bounce for the same task is mid-flight;
-   *   this attempt is a no-op. Callers (notably the watchdog) must NOT log
-   *   this as a successful retry, since the original bounce may itself be
-   *   stuck.
-   */
-  /*
-  FNXC:ReviewLeniency 2026-07-02-02:10:
-  Clear prior terminal failure results (failed/advisory_failure — incl. optional gate nodes like code-review) so a retry starts clean. Call this ONLY once the task has left the mergeable in-review column (i.e. it is in `todo`): clearing while still in-review drops the merge blocker during the rerun-bounce window and could let a concurrent auto-merge sweep merge an empty-`steps` graph-native task with its gate failure unaddressed. `moveTask(in-review→todo)` already clears ALL results (applyReopenFieldClears), so this is chiefly for the in-progress→todo bounce path where the move does not. Passed/skipped/pending evidence is kept.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:40: clearTerminalStepFailures ReviewLeniency FNXC lives on clear-terminal-step-failures-for-retry.ts. */
   private async clearTerminalStepFailuresForRetry(taskId: string): Promise<void> {
     return clearTerminalStepFailuresForRetryImpl(
       {
@@ -3033,33 +3005,12 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * When the engine restarts mid-step, an `in-progress` step may have already
-   * passed its code review (log: `code review Step N: APPROVE`) but not yet
-   * been flipped to `done` by the agent's next `fn_task_update` call. Without
-   * intervention, the next executor pass re-enters the step and replays plan
-   * + code review, which we've measured at 5–20 min of pure waste per restart.
-   *
-   * This reconciler scans the task log for any in-progress step whose most
-   * recent approved code review is newer than its most recent `→ pending`
-   * transition, and marks those steps `done`. Subsequent resume logic then
-   * advances to the next actually-pending step.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:40: recoverApprovedSteps FNXC lives on recover-approved-steps-on-resume.ts. */
   private async recoverApprovedStepsOnResume(taskId: string): Promise<void> {
     return recoverApprovedStepsOnResumeImpl(this.store, taskId);
   }
 
-  /**
-   * On resume (task already has a branch from a prior run), walk git history
-   * and mark steps as done when a commit matching the step-completion convention
-   * is found. This prevents the agent from redoing already-committed work after
-   * an auto-requeue.
-   *
-   * Commit message convention (case-insensitive):
-   *   feat|chore|fix(FN-XXXX): complete Step N
-   *
-   * Called after the worktree is acquired and before the agent session starts.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:40: reconcileStepsFromGitHistory FNXC lives on reconcile-steps-from-git-history.ts. */
   private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): Promise<void> {
     return reconcileStepsFromGitHistoryImpl(
       {
@@ -3102,21 +3053,8 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Handle a loop-detected event from the stuck task detector.
-   * Attempts an in-process compact-and-resume before falling back to kill/requeue.
-   *
-   * This method is the `onLoopDetected` callback wired through the dashboard.
-   * It:
-   * 1. Checks if the task has an active session
-   * 2. Rejects if the one-attempt ceiling has been reached
-   * 3. Calls `compactSessionContext()` to compact the conversation
-   * 4. Sets recovery-pending state so the execution flow can resume
-   *
-   * @returns true if the executor accepted recovery ownership (detector skips kill),
-   *   false if recovery should not be attempted (detector proceeds with kill/requeue)
-   */
-    async handleLoopDetected(event: StuckTaskEvent): Promise<boolean> {
+  /* FNXC:CodeOrganization 2026-08-04-03:40: handleLoopDetected FNXC lives on handle-loop-detected.ts. */
+  async handleLoopDetected(event: StuckTaskEvent): Promise<boolean> {
     return handleLoopDetectedImpl(
       buildHandleLoopDetectedDeps(this),
       event,

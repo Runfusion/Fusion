@@ -2,7 +2,13 @@
  * FNXC:CodeOrganization 2026-08-03-17:00:
  * abortAllSessionBash peeled from TaskExecutor (U4).
  *
- * Best-effort abort of bash tools across coding sessions, spawned children, and step executors.
+ * Abort the in-flight bash subprocess (if any) on every active agent session.
+ * Invoked at runtime shutdown so detached subprocess trees spawned by agent bash
+ * tools — including grandchildren like vitest workers — are killed via
+ * pi-coding-agent's killProcessTree. Without this, when the worker is killed those
+ * process groups are orphaned because they're detached. Sessions are not disposed
+ * here so any near-complete agent loop still has a chance to wrap up during the
+ * runtime's graceful drain window.
  */
 import { executorLog } from "../logger.js";
 

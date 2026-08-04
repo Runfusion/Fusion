@@ -2,6 +2,9 @@
  * FNXC:CodeOrganization 2026-08-03-10:40:
  * handleLoopDetected peeled from TaskExecutor (U4).
  * Compact-and-resume once per execute lifecycle; else fall through to kill/requeue.
+ * Dashboard `onLoopDetected` callback: active-session check, one-attempt ceiling,
+ * compactSessionContext, then recovery-pending. Returns true when the executor
+ * accepted recovery ownership (detector skips kill).
  */
 import type { TaskStore } from "@fusion/core";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";

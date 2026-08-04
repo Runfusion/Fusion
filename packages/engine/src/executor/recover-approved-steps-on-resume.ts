@@ -1,7 +1,13 @@
 /**
  * FNXC:CodeOrganization 2026-08-03-20:05:
  * recoverApprovedStepsOnResume peeled from TaskExecutor (U4).
- * On resume, mark in-progress steps done when log already shows APPROVE after last pending.
+ *
+ * When the engine restarts mid-step, an `in-progress` step may have already passed its code
+ * review (log: `code review Step N: APPROVE`) but not yet been flipped to `done` by the agent's
+ * next `fn_task_update` call. Without intervention, the next executor pass re-enters the step
+ * and replays plan + code review (5–20 min waste per restart). Scans the task log for any
+ * in-progress step whose most recent approved code review is newer than its most recent
+ * `→ pending` transition, and marks those steps `done`.
  */
 import type { TaskDetail, TaskStore } from "@fusion/core";
 import { executorLog } from "../logger.js";

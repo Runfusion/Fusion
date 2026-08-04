@@ -2,6 +2,12 @@
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * reconcileStepsFromGitHistory peeled from TaskExecutor (U4).
  *
+ * On resume (task already has a branch from a prior run), walk git history and mark steps as
+ * done when a commit matching the step-completion convention is found
+ * (`feat|chore|fix(FN-XXXX): complete Step N`, case-insensitive). Prevents the agent from
+ * redoing already-committed work after an auto-requeue. Called after worktree acquire and
+ * before the agent session starts.
+ *
  * FNXC:WorkflowResume 2026-06-30-08:02:
  * Browser Verification and Code Review REVISE intentionally reopen the trailing implementation/verification suffix. FN-7273 showed git-history resume then found older `complete Step 5` commits from the previous attempt, tried to mark Step 5 done while Step 3 was active, and logged a false reconciliation after TaskStore rejected the out-of-order write. A reopened step may only be reconciled from a commit whose author time is newer than the latest `→ pending` transition for that step, and success is logged only after the store confirms the step is terminal.
  *
