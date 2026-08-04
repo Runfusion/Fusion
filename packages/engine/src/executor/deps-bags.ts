@@ -877,4 +877,31 @@ export function buildTerminateChildAgentDeps(host: any): any {
     setTotalSpawnedCount: (n: number) => { host.totalSpawnedCount = n; },
   };
 }
+
+export function buildRunProjectedGraphTaskStepDeps(host: any): any {
+  return {
+    store: host.store,
+    runGraphTaskStep: (
+      t: unknown, idx: number, inst?: string, gov?: string, think?: unknown, skill?: string,
+    ) => host.runGraphTaskStep(t, idx, inst, gov, think, skill),
+  };
+}
+
+export function buildRunSpawnedChildDeps(host: any): any {
+  return {
+    agentStore: host.options.agentStore,
+    childSessions: host.childSessions,
+    adjustSpawnedCount: (delta: number) => {
+      host.totalSpawnedCount = Math.max(0, host.totalSpawnedCount + delta);
+    },
+  };
+}
+
+export function buildTryFreshWorktreeAfterLiveConflictDeps(host: any, tryCreateWorktree: any): any {
+  return {
+    rootDir: host.rootDir,
+    store: host.store,
+    tryCreateWorktree,
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

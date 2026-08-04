@@ -223,6 +223,9 @@ import {
   buildBlockOuterDispatchWhenEphemeralDisabledDeps,
   buildCreateTaskAddDepToolDeps,
   buildTerminateChildAgentDeps,
+  buildRunProjectedGraphTaskStepDeps,
+  buildRunSpawnedChildDeps,
+  buildTryFreshWorktreeAfterLiveConflictDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -2070,10 +2073,7 @@ export class TaskExecutor {
     skillName?: string,
   ): Promise<RunTaskStepResult> {
     return runProjectedGraphTaskStepImpl(
-      {
-        store: this.store,
-        runGraphTaskStep: (t, idx, inst, gov, think, skill) => this.runGraphTaskStep(t, idx, inst, gov, think, skill),
-      },
+      buildRunProjectedGraphTaskStepDeps(this),
       task,
       live,
       stepIndex,
@@ -3393,11 +3393,7 @@ export class TaskExecutor {
     settings: Partial<Settings>;
   }): Promise<{ path: string; branch: string }> {
     return tryFreshWorktreeAfterLiveConflict(
-      {
-        rootDir: this.rootDir,
-        store: this.store,
-        tryCreateWorktree: bindTryCreateWorktree(this),
-      },
+      buildTryFreshWorktreeAfterLiveConflictDeps(this, bindTryCreateWorktree(this)),
       input,
     );
   }
@@ -3688,13 +3684,7 @@ export class TaskExecutor {
     taskPrompt: string,
   ): Promise<void> {
     return runSpawnedChildImpl(
-      {
-        agentStore: this.options.agentStore,
-        childSessions: this.childSessions,
-        adjustSpawnedCount: (delta) => {
-          this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount + delta);
-        },
-      },
+      buildRunSpawnedChildDeps(this),
       agentId,
       childSession,
       taskPrompt,
