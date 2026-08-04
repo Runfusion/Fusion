@@ -549,4 +549,55 @@ export function buildClearPhantomExecutorBindingDeps(host: any): any {
     ...facadeMethods(host, ["hasLiveSessionSurface", "getActiveWorktreePaths"]),
   };
 }
+
+export function buildShouldDeferWorkflowStepCompletionDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "pausedAborted", "userCanceledTaskIds"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "clearCompletedTaskWatchdog", "resolveResumeLanes",
+      "shouldDeferCompletionForGlobalPause",
+    ]),
+  };
+}
+
+export function buildRequestPreMergeOptionalStepFixDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
+      "clearPausedAborted", "sendTaskBackForFix",
+    ]),
+  };
+}
+
+export function buildHandleLoopDetectedDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "activeSessions", "loopRecoveryState"]),
+    markLoopObserved: host.options.stuckTaskDetector
+      ? (id: string) => host.options.stuckTaskDetector!.markLoopObserved(id)
+      : undefined,
+  };
+}
+
+export function buildSendTaskBackForFixDeps(host: any, maxWorkflowStepRetries: number): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, [
+      "clearCompletedTaskWatchdog", "injectWorkflowStepFailureInstructions", "reopenLastStepForRevision",
+      "scheduleWorkflowRerun",
+    ]),
+    maxWorkflowStepRetries,
+  };
+}
+
+export function buildAbortAllInFlightDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+      "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
+      "activeCliTaskSessions", "childSessions",
+    ]),
+    ...facadeMethods(host, ["awaitAbortInFlightTaskWork"]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -187,6 +187,11 @@ import {
   buildReenterPausedAbortedWorkflowNodeDeps,
   buildScheduleWorkflowRerunDeps,
   buildClearPhantomExecutorBindingDeps,
+  buildShouldDeferWorkflowStepCompletionDeps,
+  buildRequestPreMergeOptionalStepFixDeps,
+  buildHandleLoopDetectedDeps,
+  buildSendTaskBackForFixDeps,
+  buildAbortAllInFlightDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -635,13 +640,7 @@ export class TaskExecutor {
     context: string,
   ): Promise<boolean> {
     return shouldDeferWorkflowStepCompletionImpl(
-      {
-        ...facadeFields(this, ["store", "pausedAborted", "userCanceledTaskIds"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "clearCompletedTaskWatchdog", "resolveResumeLanes",
-          "shouldDeferCompletionForGlobalPause",
-        ]),
-      },
+      buildShouldDeferWorkflowStepCompletionDeps(this),
       taskId,
       context,
     );
@@ -1015,14 +1014,7 @@ export class TaskExecutor {
 
   async abortAllInFlight(reason: string): Promise<void> {
     return abortAllInFlightImpl(
-      {
-        ...facadeFields(this, [
-          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
-          "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
-          "activeCliTaskSessions", "childSessions",
-        ]),
-        ...facadeMethods(this, ["awaitAbortInFlightTaskWork"]),
-      },
+      buildAbortAllInFlightDeps(this),
       reason,
     );
   }
@@ -1486,13 +1478,7 @@ export class TaskExecutor {
     },
   ): Promise<boolean> {
     return requestPreMergeOptionalStepFixImpl(
-      {
-        ...facadeFields(this, ["store", "workflowLifecycleMovesInFlight"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
-          "clearPausedAborted", "sendTaskBackForFix",
-        ]),
-      },
+      buildRequestPreMergeOptionalStepFixDeps(this),
       taskId,
       fallbackTask,
       info,
@@ -3212,14 +3198,7 @@ export class TaskExecutor {
     retryPresentation?: { attempt: number; max?: number },
   ): Promise<void> {
     return sendTaskBackForFixImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, [
-          "clearCompletedTaskWatchdog", "injectWorkflowStepFailureInstructions", "reopenLastStepForRevision",
-          "scheduleWorkflowRerun",
-        ]),
-        maxWorkflowStepRetries: MAX_WORKFLOW_STEP_RETRIES,
-      },
+      buildSendTaskBackForFixDeps(this, MAX_WORKFLOW_STEP_RETRIES),
       task,
       worktreePath,
       failureFeedback,
@@ -3781,14 +3760,7 @@ export class TaskExecutor {
    */
     async handleLoopDetected(event: StuckTaskEvent): Promise<boolean> {
     return handleLoopDetectedImpl(
-      {
-        ...facadeFields(this, [
-          "store", "activeSessions", "loopRecoveryState",
-        ]),
-        markLoopObserved: this.options.stuckTaskDetector
-          ? (id) => this.options.stuckTaskDetector!.markLoopObserved(id)
-          : undefined,
-      },
+      buildHandleLoopDetectedDeps(this),
       event,
     );
   }
