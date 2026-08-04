@@ -569,13 +569,7 @@ export class TaskExecutor {
     return getExecutingTaskIdsImpl(this.taskLivenessDeps());
   }
 
-  /**
-   * FNXC:TaskTiming 2026-07-30-21:40:
-   * A planning segment has one owner: a graph Plan Review session is live only
-   * while both its session registration and planning ownership marker remain.
-   * This is intentionally narrower than isTaskActive(), which also covers
-   * implementation and non-planning workflow sessions.
-   */
+  /** FNXC:TaskTiming 2026-07-30-21:40: Plan Review liveness (narrower than isTaskActive). */
   hasActivePlanningWorkflowSession(taskId: string): boolean {
     return hasActivePlanningWorkflowSessionImpl(this.taskLivenessDeps(), taskId);
   }
@@ -957,11 +951,7 @@ export class TaskExecutor {
     return getTaskCompletionBlockerForStore(this.store, task);
   }
 
-  /**
-   * FNXC:TokenBudget 2026-07-16-00:00:
-   * Step-session token usage bypasses the shared session helper, so all executor
-   * writes use this seam to retain the required persist-time budget enforcement.
-   */
+  /** FNXC:TokenBudget 2026-07-16-00:00: persist-time budget enforcement for all executor token writes. */
   private async persistTaskTokenUsage(taskId: string, tokenUsage: TaskTokenUsage): Promise<void> {
     return persistTaskTokenUsageImpl(
       {
@@ -1012,23 +1002,13 @@ export class TaskExecutor {
     return extractSessionTokenUsageImpl(...args);
   }
 
-  /**
-   * Execute a review handoff: move the task to in-review column with
-   * awaiting-user-review status, assign the requesting user, and dispose
-   * the agent session.
-   */
   private async executeReviewHandoff(
     ...args: FacadeRestArgs<typeof executeReviewHandoffImpl>
   ): Promise<void>  {
     return executeReviewHandoffImpl(buildExecuteReviewHandoffDeps(this), ...args);
   }
 
-  /**
-   * Fast-path a completed task directly to in-review without spawning a new agent.
-   * Captures modified files, runs workflow steps, and transitions the task.
-   *
-   * @returns true if the task was successfully transitioned, false otherwise.
-   */
+  /** Fast-path completed task → in-review without a new agent session. */
   async recoverCompletedTask(task: Task): Promise<boolean> {
     return recoverCompletedTaskImpl(
       buildRecoverCompletedTaskDeps(this),
@@ -1073,13 +1053,7 @@ export class TaskExecutor {
     );
   }
 
-    /**
-   * Returns true when execute() should be deferred because the agent bound to
-   * this task has an active heartbeat run and allowParallelExecution=false.
-   *
-   * Only applies to permanent (non-ephemeral) agents. Always returns false
-   * when agentStore is unavailable or the agent cannot be resolved.
-   */
+  /** Defer execute when permanent agent has active heartbeat and allowParallelExecution=false. */
   private async shouldDeferForHeartbeat(agentId: string): Promise<boolean> {
     return shouldDeferForHeartbeatImpl(
       { agentStore: this.options.agentStore },
@@ -1235,19 +1209,7 @@ export class TaskExecutor {
     return resolveTaskCustomFieldDefsImpl({ store: this.store }, taskId);
   }
 
-  /**
-   * Build the parse-steps node handler deps (KTD-12, U12): artifact read through
-   * the task-documents machinery (PROMPT.md falls back to the task's own PROMPT
-   * content the way step-init does), step-list write through the graph-source
-   * projection (`updateTask({ steps })`), pin-protection probe (persisted instance
-   * rows exist → re-parse illegal, KTD-3), and a logEntry-backed audit sink.
-   */
-  /**
-   * Read a task artifact by key through the task-documents layer, falling back to
-   * the task's own PROMPT content for the default `PROMPT.md` step-source artifact
-   * (the same source the legacy step-init reads). Shared by the parse-steps and
-   * code-node deps (FIX 7: one source of truth for the fallback).
-   */
+  /** Task artifact by key (PROMPT.md falls back to task PROMPT content). */
   private async readTaskArtifact(taskId: string, key: string): Promise<string | undefined> {
     return readTaskArtifactImpl({ store: this.store }, taskId, key);
   }
@@ -1388,12 +1350,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:WorkflowMerge 2026-07-27-12:00:
-  FN-8601 gates checklist projection and foreach merge admission on required node-result
-  presence, terminal status for every present result, and expanded-instance coverage.
-  Non-foreach/no-seam coverage is vacuous and does not change legacy move behavior.
-  */
+  /** FNXC:WorkflowMerge 2026-07-27-12:00: FN-8601 checklist/foreach merge admission gate. */
   private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): boolean {
     return shouldCompleteChecklistAtWorkflowMergeImpl(task, proof);
   }
@@ -1408,13 +1365,7 @@ export class TaskExecutor {
     return updateStepGraphImpl({ store: this.store }, ...args);
   }
 
-  /**
-   * Pause the graph for user input: park the task paused with status
-   * "awaiting-user-input" and the node's question as pausedReason. On a later
-   * re-run (after the user unpauses), consume the newest steering comment as
-   * the answer. Pre-execute placement is fully supported; post-execute
-   * placement re-walks earlier read-only nodes until CU-U5 checkpoints land.
-   */
+  /** Await-input node: park awaiting-user-input; resume consumes steering as answer. */
   private async runAwaitInputNode(node: WorkflowIrNode, live: TaskDetail): Promise<WorkflowNodeResult> {
     return runAwaitInputNodeImpl(
       {
@@ -2003,11 +1954,7 @@ export class TaskExecutor {
     return listWorktreeHoldersImpl(this.activeWorktrees);
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-03-14:20:
-  Thin TaskExecutor facades over peeled free helpers so vi.spyOn(executor, method)
-  surfaces in executor-worktree tests keep working after U4 Slice B extraction.
-  */
+  /* FNXC:CodeOrganization 2026-08-03-14:20: thin free-helper facades for vi.spyOn surfaces (U4 Slice B). */
   private hasActiveWorktreeBinding(taskId: string, worktreePath: string): boolean {
     return hasActiveWorktreeBinding(this.activeWorktrees, taskId, worktreePath);
   }
@@ -2123,11 +2070,7 @@ export class TaskExecutor {
     return cleanupConflictingWorktreeImpl(buildCleanupConflictingWorktreeDeps(this), ...args);
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-03-15:20:
-  Thin facades over outer worktree create path (createWorktree loop, squash import,
-  post-create remote rebase, start-point resolution). U4 Slice B.
-  */
+  /* FNXC:CodeOrganization 2026-08-03-15:20: outer worktree create path facades (U4 Slice B). */
   private async resolveWorktreeStartPoint(startPoint: string, taskId: string): Promise<string | null> {
     return resolveWorktreeStartPointImpl(this.rootDir, this.store, startPoint, taskId);
   }
@@ -2207,14 +2150,7 @@ export class TaskExecutor {
     );
   }
 
-    /**
-   * Check whether the task's branch has any unique commits compared to main.
-   * If the branch has no unique commits and the task has steps marked done,
-   * those steps represent lost uncommitted work — reset them to "pending"
-   * so the next execution doesn't skip them.
-   *
-   * Called during stuck-kill cleanup when the worktree is about to be destroyed.
-   */
+  /** Stuck-kill: reset done steps when branch has no unique commits (lost uncommitted work). */
   private async resetStepsIfWorkLost(task: Task): Promise<void> {
     return resetStepsIfWorkLostImpl(
       {
