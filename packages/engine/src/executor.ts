@@ -4068,17 +4068,22 @@ export class TaskExecutor {
           "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
           "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
         ]),
-        sharedWorkerTools: {
-          store: this.store,
-          rootDir: this.rootDir,
-          messageStore: this.options.messageStore,
-          getRunContextFor: (id) => this.getRunContextFor(id),
-        },
+        sharedWorkerTools: this.sharedWorkerToolsDeps(),
       },
       task,
       graphCompletion,
       reportImplementationExit,
     );
+  }
+
+  /** FNXC:CodeOrganization 2026-08-03-22:25: shared free-tool deps bag for runImplementation + executeWorkflowStep. */
+  private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps {
+    return {
+      store: this.store,
+      rootDir: this.rootDir,
+      messageStore: this.options.messageStore,
+      getRunContextFor: (id) => this.getRunContextFor(id),
+    };
   }
 
   // ── Custom tools for the worker agent ──────────────────────────────
@@ -4457,12 +4462,7 @@ export class TaskExecutor {
           "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
           "setActiveWorkflowStepSession",
         ]),
-        sharedWorkerTools: {
-          store: this.store,
-          rootDir: this.rootDir,
-          messageStore: this.options.messageStore,
-          getRunContextFor: (id) => this.getRunContextFor(id),
-        },
+        sharedWorkerTools: this.sharedWorkerToolsDeps(),
       },
       task,
       workflowStep,
