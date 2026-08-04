@@ -4,6 +4,14 @@
  *
  * Acquires a planning worktree when none exists (non-workspace). Fail-soft: planning falls
  * back to the repo root on acquisition failure.
+ *
+ * FNXC:NodeWorktreeIsolation 2026-07-25-22:10 (planning acquires the task worktree):
+ * Public seam for the planning/triage lane. Specification runs a CODING-tool session; pointing it at
+ * the shared main checkout meant every planning agent had write tools in the operator's tree and every
+ * concurrent planner shared one path. Acquire the task's own worktree up front and let the whole
+ * lifecycle — planning, Plan Review, implementation, code review — reuse that single worktree.
+ * Returns null (caller falls back to the root, unchanged behavior) when the project is a workspace, or
+ * when acquisition fails: planning must never be blocked by a worktree problem.
  */
 import { existsSync } from "node:fs";
 import type { Settings, TaskDetail, TaskStore, WorkspaceConfig } from "@fusion/core";

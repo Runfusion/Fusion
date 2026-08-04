@@ -3,7 +3,9 @@
  * blockOuterDispatchWhenEphemeralDisabled peeled from TaskExecutor (U4).
  *
  * FNXC:EphemeralAgents 2026-07-01-00:00:
- * When ephemeralAgentsEnabled is false, block workflow/authoritative execution unless a permanent agent is assigned; requeue for scheduler permanent assignment.
+ * `ephemeralAgentsEnabled: false` means "never spawn short-lived executor-FN-XXXX workers; only permanent agents run work" (see types.ts ephemeralAgentsEnabled). The legacy spawn refusal lives in EphemeralWorkerManager.onTaskStart (ephemeral-worker-manager.ts), but that runs as a fire-and-forget bookkeeping callback AFTER execution has already begun, so it cannot stop a run. The workflow-engine dispatch paths (executeWorkflowGraph, maybeDispatchWorkflowWorkEngine) execute tasks in-process without ever consulting the toggle. Any task that reaches execute() without a permanent assignment via a non-scheduler path (resume-after-restart, heartbeat re-entry, mission/autopilot, work-engine claim) therefore ran despite the operator disabling ephemeral agents.
+ *
+ * This guard is the executor's last line of defense, mirroring the scheduler cutover gate and the spawn refusal. It runs once at the top of the outer dispatch — before all three workflow paths — so a single check covers every workflow dispatch entry point. A task explicitly assigned to a permanent (non-ephemeral) agent is exactly how ephemeral-off mode is meant to run, so those are allowed through; everything else is re-queued for the scheduler to auto-assign a permanent agent or hold.
  */
 import type { Task, TaskStore, AgentStore } from "@fusion/core";
 import { isEphemeralAgent } from "@fusion/core";

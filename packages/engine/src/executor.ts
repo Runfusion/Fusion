@@ -2066,15 +2066,6 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:NodeWorktreeIsolation 2026-07-25-22:10 (planning acquires the task worktree):
-  Public seam for the planning/triage lane. Specification runs a CODING-tool session; pointing it at
-  the shared main checkout meant every planning agent had write tools in the operator's tree and every
-  concurrent planner shared one path. Acquire the task's own worktree up front and let the whole
-  lifecycle — planning, Plan Review, implementation, code review — reuse that single worktree.
-  Returns null (caller falls back to the root, unchanged behavior) when the project is a workspace, or
-  when acquisition fails: planning must never be blocked by a worktree problem.
-  */
   public async releasePreExecutionWorktree(taskId: string, reason: string): Promise<boolean> {
     return releasePreExecutionWorktreeImpl(
       buildReleasePreExecutionWorktreeDeps(this),
@@ -2083,6 +2074,7 @@ export class TaskExecutor {
     );
   }
 
+  /* FNXC:CodeOrganization 2026-08-04-03:25: planning worktree acquisition FNXC lives on ensure-task-worktree-for-planning.ts. */
   public async ensureTaskWorktreeForPlanning(taskId: string): Promise<string | null> {
     return ensureTaskWorktreeForPlanningImpl(
       {
@@ -2477,12 +2469,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:EphemeralAgents 2026-07-01-00:00:
-  `ephemeralAgentsEnabled: false` means "never spawn short-lived executor-FN-XXXX workers; only permanent agents run work" (see types.ts ephemeralAgentsEnabled). The legacy spawn refusal lives in EphemeralWorkerManager.onTaskStart (ephemeral-worker-manager.ts), but that runs as a fire-and-forget bookkeeping callback AFTER execution has already begun, so it cannot stop a run. The workflow-engine dispatch paths (executeWorkflowGraph, maybeDispatchWorkflowWorkEngine) execute tasks in-process without ever consulting the toggle. Any task that reaches execute() without a permanent assignment via a non-scheduler path (resume-after-restart, heartbeat re-entry, mission/autopilot, work-engine claim) therefore ran despite the operator disabling ephemeral agents.
-
-  This guard is the executor's last line of defense, mirroring the scheduler cutover gate (scheduler.ts:2464) and the spawn refusal (ephemeral-worker-manager.ts:132). It runs once at the top of the outer dispatch — before all three workflow paths — so a single check covers every workflow dispatch entry point. A task explicitly assigned to a permanent (non-ephemeral) agent is exactly how ephemeral-off mode is meant to run, so those are allowed through; everything else is re-queued for the scheduler to auto-assign a permanent agent or hold.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:25: ephemeral-off dispatch guard FNXC lives on block-outer-dispatch-when-ephemeral-disabled.ts. */
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): Promise<boolean> {
     return blockOuterDispatchWhenEphemeralDisabledImpl(
       buildBlockOuterDispatchWhenEphemeralDisabledDeps(this),
@@ -2490,14 +2477,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
-  Structural cleanup for scheduler pre-held global slots: every execute() exit path
-  (early return, throw, graph-owned, legacy handoff) must leave no unclaimed registration.
-  take() removes the registration so a successful claim+release is a no-op here; early
-  returns that never take() release the underlying semaphore. New early-return paths
-  cannot reintroduce permanent capacity leaks without bypassing this wrapper.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:25: execute wrapper + executeCore routing FNXC lives on execute-core.ts. */
   async execute(task: Task): Promise<void> {
     try {
       await this.executeCore(task);
@@ -2506,17 +2486,6 @@ export class TaskExecutor {
     }
   }
 
-  /*
-  FNXC:WorkflowExecution 2026-07-19-02:10:
-  U5e (R9) — `executeCore` is ROUTING ONLY. It decides who owns the task (duplicate-dispatch
-  drop, dependency/ephemeral gates, the workflow graph, authoritative dispatch) and, when no
-  one else claims it, drives the implementation phase itself.
-
-  The routing block used to be wrapped in `if (!graphCompletion)` because the graph re-ENTERED
-  `execute()` to run the implementation phase, and that inner call had to skip routing or it
-  would recurse. The graph now calls `runImplementation()` directly, so there is no inner
-  invocation to exclude and the gates are unconditional.
-  */
   private async executeCore(task: Task): Promise<void> {
     return executeCoreImpl(
       buildExecuteCoreDeps(this),
@@ -2524,40 +2493,10 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:WorkflowExecution 2026-07-19-02:10:
-  U5e (R9) — the implementation phase, lifted out of the dual-purpose `executeCore` into a
-  standalone runner the workflow graph calls DIRECTLY. Before the lift the graph re-entered
-  `execute()` under a completion signal, because worktree / taskEnv / agent / semaphore state
-  is assembled here and was not available standalone at `createGraphSeams` time. Lifting the
-  body moves that assembly behind an ordinary method call, so the graph gets the state it
-  needs without a second trip through routing.
-
-  Owns: the process-wide task lock, soft-delete refusal, work-engine dispatch, heartbeat
-  deferral, settings merge, worktree acquisition, the agent session, and everything up to the
-  implementation-complete boundary. It does NOT own workflow gates, review handoff, or merge —
-  those are the graph's.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:25: runImplementation U5e/U10b/U8 FNXC lives on run-implementation.ts. */
   private async runImplementation(
     task: Task,
-    /*
-    FNXC:WorkflowExecution 2026-07-19-17:50 (U10b / R9):
-    REQUIRED, and an explicit parameter rather than an options bag. It was optional only to
-    describe "a run the graph does not own" — the legacy fallback. That fallback is deleted, so
-    every implementation pass is graph-owned and every completion boundary below is an
-    unconditional handoff. Making it required is the type-level statement of that invariant:
-    an implementation pass whose completion nothing owns can no longer be constructed.
-    */
     graphCompletion: GraphCompletionCallback,
-    /*
-    FNXC:WorkflowExecutionOwnership 2026-07-28-20:15 (U8 / R4, R5):
-    Optional exit reporter. `graphCompletion` can only say "done"; the endings it cannot express
-    are the ones the executor transitions itself (see `executor/implementation-exit.ts`). This
-    names them so they are OBSERVABLE before they are moved — it changes no routing and nothing
-    branches on it, by R5: an exit id is a reaction, and a dropped reaction must never cost a
-    state change. Optional so the ~22 uninstrumented dispositions stay silent rather than
-    forcing a 3k-line diff; the ownership ledger is the record of that gap, not this callback.
-    */
     reportImplementationExit?: ImplementationExitReporter,
   ): Promise<void> {
     return runImplementationImpl(

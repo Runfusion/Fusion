@@ -5,6 +5,34 @@
  * Full implementation-phase session: worktree acquire/claim, agent session loop,
  * verification, completion handoff, and recovery paths. Graph-owned via required
  * graphCompletion callback (U10b / R9).
+ *
+ * FNXC:WorkflowExecution 2026-07-19-02:10:
+ * U5e (R9) — the implementation phase, lifted out of the dual-purpose `executeCore` into a
+ * standalone runner the workflow graph calls DIRECTLY. Before the lift the graph re-entered
+ * `execute()` under a completion signal, because worktree / taskEnv / agent / semaphore state
+ * is assembled here and was not available standalone at `createGraphSeams` time. Lifting the
+ * body moves that assembly behind an ordinary method call, so the graph gets the state it
+ * needs without a second trip through routing.
+ *
+ * Owns: the process-wide task lock, soft-delete refusal, work-engine dispatch, heartbeat
+ * deferral, settings merge, worktree acquisition, the agent session, and everything up to the
+ * implementation-complete boundary. It does NOT own workflow gates, review handoff, or merge —
+ * those are the graph's.
+ *
+ * FNXC:WorkflowExecution 2026-07-19-17:50 (U10b / R9):
+ * graphCompletion is REQUIRED, and an explicit parameter rather than an options bag. It was
+ * optional only to describe "a run the graph does not own" — the legacy fallback. That fallback
+ * is deleted, so every implementation pass is graph-owned and every completion boundary below is
+ * an unconditional handoff. Making it required is the type-level statement of that invariant:
+ * an implementation pass whose completion nothing owns can no longer be constructed.
+ *
+ * FNXC:WorkflowExecutionOwnership 2026-07-28-20:15 (U8 / R4, R5):
+ * Optional exit reporter. `graphCompletion` can only say "done"; the endings it cannot express
+ * are the ones the executor transitions itself (see `executor/implementation-exit.ts`). This
+ * names them so they are OBSERVABLE before they are moved — it changes no routing and nothing
+ * branches on it, by R5: an exit id is a reaction, and a dropped reaction must never cost a
+ * state change. Optional so uninstrumented dispositions stay silent rather than forcing a
+ * large diff; the ownership ledger is the record of that gap, not this callback.
  */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";

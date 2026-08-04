@@ -3,6 +3,20 @@
  * executeCore peeled from TaskExecutor (U4).
  * Routing-only entry: soft-delete refuse, graph claim, gates, then executeWorkflowGraph.
  *
+ * FNXC:GlobalConcurrencyControls 2026-07-15-03:50:
+ * Structural cleanup for scheduler pre-held global slots lives on the execute() wrapper:
+ * every exit path must leave no unclaimed registration (dropPreHeldExecutorSlot + release).
+ *
+ * FNXC:WorkflowExecution 2026-07-19-02:10:
+ * U5e (R9) — `executeCore` is ROUTING ONLY. It decides who owns the task (duplicate-dispatch
+ * drop, dependency/ephemeral gates, the workflow graph, authoritative dispatch) and, when no
+ * one else claims it, drives the implementation phase itself.
+ *
+ * The routing block used to be wrapped in `if (!graphCompletion)` because the graph re-ENTERED
+ * `execute()` to run the implementation phase, and that inner call had to skip routing or it
+ * would recurse. The graph now calls `runImplementation()` directly, so there is no inner
+ * invocation to exclude and the gates are unconditional.
+ *
  * FNXC:ExecutorSoftDelete 2026-07-20-23:30:
  * Soft-delete refuse in routing so deleted cards never start a workflow run.
  *
