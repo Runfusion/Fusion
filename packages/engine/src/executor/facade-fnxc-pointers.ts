@@ -37,6 +37,30 @@
  * - 2026-08-04-03:40: reconcileStepsFromGitHistory FNXC lives on reconcile-steps-from-git-history.ts.
  * - 2026-08-04-03:40: handleLoopDetected FNXC lives on handle-loop-detected.ts.
  * - 2026-08-04-03:30: getWorktreePath KTD2 contract FNXC lives on active-worktrees helpers / free peel.
+ * - 2026-08-03-20:50: Public non-Free re-exports in executor/public-reexports.ts.
+ * - 2026-08-04-06:15: Executor tunables via namespace import (U4).
+ * - 2026-08-04-06:15: Pure free-helpers via namespace import (U4).
+ * - 2026-08-04-06:05: Impl bindings via namespace import (U4).
+ * - 2026-08-03-20:40: Free re-exports live in executor/free-reexports.ts (U4 barrel).
+ * - 2026-08-04-06:05: Deps-bag builders via namespace import (U4).
+ * - 2026-08-04-02:35: Orphan await-input/conventions JSDoc removed — lives on await-input-parse.ts + workflow-step-verdict.ts peels.
+ * - 2026-08-03-21:00: Options/types live in executor/task-executor-options.ts.
+ * - 2026-08-04-03:10: Rebound/guard Phase C FNXC lives on lifecycle-columns.ts; GraphCompletionCallback U5d/U5e on task-executor-options.ts.
+ * - 2026-08-04-03:35: effectiveColumnAgentByTask semantics on is-agent-effectively-executing.ts.
+ * - 2026-08-04-03:15: hasLiveSessionSurface / clearPhantom FNXC on has-live-session-surface.ts + clear-phantom-executor-binding.ts.
+ * - 2026-08-04-02:10: awaitAbort / abortAllInFlight thin facades (U4).
+ * - 2026-08-04-04:00: constructor wiring via buildWireExecutorLifecycleDeps (U4).
+ * - 2026-08-04-02:25: shared store + getRunContextFor deps bag for free-fn facades.
+ * - 2026-08-03-09:25: pure token helper facades for prototype/instance call sites after free peel.
+ * - 2026-08-04-03:20: optional-step budget + replan-cap FNXC on request-pre-merge-optional-step-fix.ts + park-plan-review-replan-cap.ts.
+ * - 2026-08-03-16:20: worktree invariant facades (U4 Slice B).
+ * - 2026-08-03-16:05: branch-conflict reclaim/handle facades (U4 Slice B).
+ * - 2026-08-03-14:20: thin free-helper facades for vi.spyOn surfaces (U4 Slice B).
+ * - 2026-08-03-14:50: stale-lock / reclaim / remove-own facades (U4 Slice B).
+ * - 2026-08-04-03:45: worktree create/conflict deps bag + binders (U4).
+ * - 2026-08-03-15:20: outer worktree create path facades (U4 Slice B).
+ * - 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests mutating priv.totalSpawnedCount still drive free-fn path.
+ * - 2026-08-03-22:25: shared free-tool deps bag for runImplementation + executeWorkflowStep.
  */
 
 export {};
