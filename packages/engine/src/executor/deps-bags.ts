@@ -1101,4 +1101,123 @@ export function buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(host: any): any
     ...facadeMethods(host, ["getRunContextFor"]),
   };
 }
+
+export function buildShouldDeferCompletionForGlobalPauseDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "clearCompletedTaskWatchdog"]),
+  };
+}
+
+export function buildNonContinuableSessionFacadeDeps(host: any): any {
+  return buildNonContinuableSessionDeps({
+    store: host.store,
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "persistTokenUsage",
+      "clearCompletedTaskWatchdog", "signalTaskComplete", "handoffTaskToReview",
+      "markGraphExecuteSelfRequeued",
+    ]),
+  });
+}
+
+export function buildColumnBoundaryHooksFacadeDeps(host: any): any {
+  return {
+    store: host.store,
+    workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
+  };
+}
+
+export function buildParseStepsFacadeDeps(host: any): any {
+  return {
+    store: host.store,
+    readTaskArtifact: (id: string, key: string) => host.readTaskArtifact(id, key),
+  };
+}
+
+export function buildCodeNodeRunnerFacadeDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    readTaskArtifact: (id: string, key: string) => host.readTaskArtifact(id, key),
+  };
+}
+
+export function buildEvaluateWorkflowMergeBoundaryDeps(host: any): any {
+  return {
+    store: host.store,
+    loadMergeBoundaryInstances: (id: string, rid?: string) => host.loadMergeBoundaryInstances(id, rid),
+  };
+}
+
+export function buildWorkflowMergeImplementationProofFailureDeps(host: any): any {
+  return {
+    store: host.store,
+    evaluateWorkflowMergeBoundary: (t: unknown, rid?: string) => host.evaluateWorkflowMergeBoundary(t, rid),
+  };
+}
+
+export function buildAdoptColumnAgentForNodeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor"]),
+    agentStore: host.options.agentStore,
+  };
+}
+
+export function buildWorktreeInvariantFacadeDeps(host: any): any {
+  return buildWorktreeInvariantDeps({
+    ...facadeFields(host, ["rootDir", "store", "workspaceConfig"]),
+    ...facadeMethods(host, [
+      "getActiveWorktreePaths", "getRunContextFor", "emitWorktreeReanchoredAudit",
+    ]),
+  });
+}
+
+export function buildHandleDepAbortCleanupDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store", "activeWorktrees"]),
+    ...facadeMethods(host, ["removeOwnWorktreeWithReconcile"]),
+  };
+}
+
+export function buildTryBootstrapMisbindingRecoveryDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, ["getRunContextFor", "markGraphExecuteSelfRequeued"]),
+  };
+}
+
+export function buildBranchConflictHandleFacadeDeps(host: any): any {
+  return buildBranchConflictHandleDeps({
+    rootDir: host.rootDir,
+    store: host.store,
+    onError: host.options.onError,
+    ...facadeMethods(host, [
+      "getRunContextFor", "findActiveWorktreeOwner", "normalizeReclaimableWorktreePath",
+      "cleanupConflictingWorktree", "getAutoRecoveryDispatcher", "persistTokenUsage",
+    ]),
+  });
+}
+
+export function buildReconcileStepsFromGitHistoryDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "resolveTaskStepSource"]),
+  };
+}
+
+export function buildResetStepsIfWorkLostDeps(host: any): any {
+  return {
+    rootDir: host.rootDir,
+    resetLostWorkStepProgress: (t: unknown, count: number, reason: string) =>
+      host.resetLostWorkStepProgress(t, count, reason),
+  };
+}
+
+export function buildTerminateAllChildrenDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["spawnedAgents"]),
+    ...facadeMethods(host, ["terminateChildAgent"]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
