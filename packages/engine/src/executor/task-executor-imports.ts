@@ -38,6 +38,7 @@ export {
   buildWireExecutorLifecycleDeps,
   wireExecutorLifecycle,
   applyWireExecutorLifecycleDisposers,
+  wireTaskExecutorLifecycle,
 } from "./wire-executor-lifecycle.js";
 export type {
   TaskExecutorOptions,
@@ -46,3 +47,4 @@ export type {
   GraphCompletionCallback,
 } from "./task-executor-options.js";
 export { TaskExecutorState } from "./task-executor-state.js";
+

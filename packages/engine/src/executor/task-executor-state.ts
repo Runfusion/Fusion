@@ -83,4 +83,13 @@ export abstract class TaskExecutorState {
   protected graphSeamSkillName = new Map<string, string>();
   protected mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
   protected sessionContentionHoldAttempts = new Map<string, number>();
+  /**
+   * FNXC:CodeOrganization 2026-08-04-07:40:
+   * Process-wide graph-routing set lives on the state base (U4). Instance getter keeps
+   * host.graphRouting / host.constructor.processWideGraphRouting bag access unchanged.
+   */
+  protected static processWideGraphRouting = new Set<string>();
+  protected get graphRouting(): Set<string> {
+    return (this.constructor as typeof TaskExecutorState).processWideGraphRouting;
+  }
 }

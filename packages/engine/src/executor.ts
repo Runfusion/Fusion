@@ -8,8 +8,8 @@ import {
   type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
   type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants,
   pure, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
-  bindHandleWorktreeConflict, bindTryCreateWorktree, buildWireExecutorLifecycleDeps, wireExecutorLifecycle,
-  applyWireExecutorLifecycleDisposers, type TaskExecutorOptions, TaskExecutorState
+  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle,
+  type TaskExecutorOptions, TaskExecutorState
 } from "./executor/task-executor-imports.js";
 import "./executor/executor-side-effect-hosts.js";
 export class TaskExecutor extends TaskExecutorState {
@@ -49,7 +49,7 @@ export class TaskExecutor extends TaskExecutorState {
   private get approvalRequestStore() { return impl.getApprovalRequestStoreImpl({ getCache: () => this._approvalRequestStore, setCache: (value) => { this._approvalRequestStore = value; }, store: this.store }); }
   private buildActionGateContext(...args: FacadeRestArgs<typeof impl.buildActionGateContextImpl>): ReturnType<typeof impl.buildActionGateContextImpl> { return impl.buildActionGateContextImpl(bags.buildBuildActionGateContextDeps(this), ...args); }
   private buildPermanentAgentGatingContext(...args: FacadeRestArgs<typeof impl.buildPermanentAgentGatingContextImpl>): ReturnType<typeof impl.buildPermanentAgentGatingContextImpl> { return impl.buildPermanentAgentGatingContextImpl(bags.buildBuildPermanentAgentGatingContextDeps(this), ...args); }
-  private taskLivenessDeps() { return bags.buildTaskLivenessDeps(this, TaskExecutor.processWideGraphRouting); }
+  private taskLivenessDeps() { return bags.buildTaskLivenessDeps(this); }
   getExecutingTaskIds(): Set<string> { return impl.getExecutingTaskIdsImpl(this.taskLivenessDeps()); }
   hasActivePlanningWorkflowSession(taskId: string): boolean { return impl.hasActivePlanningWorkflowSessionImpl(this.taskLivenessDeps(), taskId); }
   isTaskActive(taskId: string): boolean { return impl.isTaskActiveImpl(this.taskLivenessDeps(), taskId); }
@@ -61,7 +61,7 @@ export class TaskExecutor extends TaskExecutorState {
   private registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED; isBackward body stays (inert-sync 2). */
+  // isBackward body stays on TaskExecutor (inert-sync 2); FNXC host: is-backward-move-out-of-planning.ts
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" };
@@ -77,10 +77,7 @@ export class TaskExecutor extends TaskExecutorState {
   private async resolveMcpServers(agentId?: string | null) { return impl.resolveMcpServersImpl({ store: this.store }, agentId); }
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> { return impl.runWithExecutorSemaphoreImpl(bags.buildRunWithExecutorSemaphoreDeps(this), taskId, work); }
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
-  constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
-    super();
-    applyWireExecutorLifecycleDisposers(this, wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this)));
-  }
+  constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) { super(); wireTaskExecutorLifecycle(this); }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any { return { ...facadeFields(this, ["store"]), ...facadeMethods(this, ["getRunContextFor"]) }; }
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): ReturnType<typeof impl.resetMergeStateIfNeededImpl> { return impl.resetMergeStateIfNeededImpl(bags.buildResetMergeStateIfNeededDeps(this), task, from); }
@@ -121,10 +118,8 @@ export class TaskExecutor extends TaskExecutorState {
   private async listWipLaneTasks(): ReturnType<typeof impl.listWipLaneTasksImpl> { return impl.listWipLaneTasksImpl(this.store); }
   async resumeTaskForAgent(agentId: string): Promise<void> { return impl.resumeTaskForAgentImpl(bags.buildResumeTaskForAgentDeps(this), agentId); }
   private async taskEffectiveAgentMatches(task: Task, agentId: string): ReturnType<typeof impl.taskEffectiveAgentMatchesImpl> { return impl.taskEffectiveAgentMatchesImpl(this.store, task, agentId); }
-  async resumeOrphaned(): Promise<void> { return impl.resumeOrphanedImpl(bags.buildResumeOrphanedDeps(this, TaskExecutor.processWideGraphRouting)); }
+  async resumeOrphaned(): Promise<void> { return impl.resumeOrphanedImpl(bags.buildResumeOrphanedDeps(this)); }
   private async resolveInstructionsForRole(role: string, settings?: Settings): ReturnType<typeof impl.resolveInstructionsForRoleImpl> { return impl.resolveInstructionsForRoleImpl(bags.buildResolveInstructionsForRoleDeps(this), role, settings); }
-  private get graphRouting(): Set<string> { return TaskExecutor.processWideGraphRouting; }
-  private static processWideGraphRouting = new Set<string>();
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void { this.mergeRequester = requestMerge; }
   private async executeWorkflowGraph(...args: FacadeRestArgs<typeof impl.executeWorkflowGraphImpl>): ReturnType<typeof impl.executeWorkflowGraphImpl> { return impl.executeWorkflowGraphImpl(bags.buildExecuteWorkflowGraphDeps(this), ...args); }
   private buildBranchPersistence(): ReturnType<typeof impl.buildBranchPersistenceImpl> { return impl.buildBranchPersistenceImpl({ store: this.store }); }

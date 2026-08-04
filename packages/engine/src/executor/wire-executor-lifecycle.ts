@@ -898,3 +898,12 @@ export function applyWireExecutorLifecycleDisposers(
   h.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
   h.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-07:30:
+One-shot constructor wire: build deps, register lifecycle listeners, apply disposer
+handles. TaskExecutor constructor is then super()+wireTaskExecutorLifecycle(this).
+*/
+export function wireTaskExecutorLifecycle(host: object): void {
+  applyWireExecutorLifecycleDisposers(host, wireExecutorLifecycle(buildWireExecutorLifecycleDeps(host)));
+}

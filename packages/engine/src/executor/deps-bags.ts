@@ -952,10 +952,10 @@ export function buildMarkPausedAbortedDeps(host: any): any {
   };
 }
 
-export function buildResumeOrphanedDeps(host: any, processWideGraphRouting: Set<string>): any {
+export function buildResumeOrphanedDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "executing", "recoveringCompleted"]),
-    processWideGraphRouting,
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeMethods(host, [
       "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
       "recoverCompletedTask", "execute",
@@ -1301,7 +1301,7 @@ export function buildSharedWorkerToolsDeps(host: any): any {
   };
 }
 
-export function buildTaskLivenessDeps(host: any, processWideGraphRouting: Set<string>): any {
+export function buildTaskLivenessDeps(host: any): any {
   return {
     executing: host.executing,
     recoveringCompleted: host.recoveringCompleted,
@@ -1309,7 +1309,7 @@ export function buildTaskLivenessDeps(host: any, processWideGraphRouting: Set<st
     activeSessions: host.activeSessions,
     activePlanningWorkflowSessions: host.activePlanningWorkflowSessions,
     activeWorkflowStepSessions: host.activeWorkflowStepSessions,
-    processWideGraphRouting,
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
   };
 }
 
