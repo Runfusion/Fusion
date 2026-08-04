@@ -497,4 +497,56 @@ export function buildAwaitAbortInFlightTaskWorkDeps(host: any): any {
     ]),
   };
 }
+
+export function buildHandleStaleInReviewParsePauseAbortReplayDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+      "clearPausedAborted", "persistTokenUsage", "executeWorkflowGraph",
+    ]),
+    ...facadeFields(host, [
+      "activeWorktrees", "activeSessions", "activeStepExecutors",
+      "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
+    ]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+  };
+}
+
+export function buildReenterPausedAbortedWorkflowNodeDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "store", "activeWorktrees", "activeSessions", "activeStepExecutors",
+      "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
+    ]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "clearPausedAborted",
+      "persistTokenUsage", "executeWorkflowGraph", "execute",
+    ]),
+  };
+}
+
+export function buildScheduleWorkflowRerunDeps(host: any, workflowRerunWatchdogMs: number): any {
+  return {
+    ...facadeFields(host, ["store", "workflowRerunWatchdogs"]),
+    workflowRerunWatchdogMs,
+    ...facadeMethods(host, [
+      "clearWorkflowRerunWatchdog", "performWorkflowRerunBounce", "getExecutionPauseLabel",
+      "resolveResumeLanes",
+    ]),
+  };
+}
+
+export function buildClearPhantomExecutorBindingDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "activeWorktrees", "executing", "recoveringCompleted",
+      "resumingUnpaused", "approvalSuspended", "approvalResumeAfterUnwind",
+      "effectiveColumnAgentByTask",
+    ]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    ...facadeMethods(host, ["hasLiveSessionSurface", "getActiveWorktreePaths"]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

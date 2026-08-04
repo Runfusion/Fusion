@@ -183,6 +183,10 @@ import {
   buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps,
   buildAttemptExecutorVerificationFixDeps,
   buildAwaitAbortInFlightTaskWorkDeps,
+  buildHandleStaleInReviewParsePauseAbortReplayDeps,
+  buildReenterPausedAbortedWorkflowNodeDeps,
+  buildScheduleWorkflowRerunDeps,
+  buildClearPhantomExecutorBindingDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -825,15 +829,7 @@ export class TaskExecutor {
 
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
     return clearPhantomExecutorBindingImpl(
-      {
-        ...facadeFields(this, [
-          "activeWorktrees", "executing", "recoveringCompleted",
-          "resumingUnpaused", "approvalSuspended", "approvalResumeAfterUnwind",
-          "effectiveColumnAgentByTask",
-        ]),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        ...facadeMethods(this, ["hasLiveSessionSurface", "getActiveWorktreePaths"]),
-      },
+      buildClearPhantomExecutorBindingDeps(this),
       taskId,
       options,
     );
@@ -1291,14 +1287,7 @@ export class TaskExecutor {
     preserveResumeState: boolean = true,
   ): void {
     scheduleWorkflowRerunImpl(
-      {
-        ...facadeFields(this, ["store", "workflowRerunWatchdogs"]),
-        workflowRerunWatchdogMs: WORKFLOW_RERUN_WATCHDOG_MS,
-        ...facadeMethods(this, [
-          "clearWorkflowRerunWatchdog", "performWorkflowRerunBounce", "getExecutionPauseLabel",
-          "resolveResumeLanes",
-        ]),
-      },
+      buildScheduleWorkflowRerunDeps(this, WORKFLOW_RERUN_WATCHDOG_MS),
       taskId,
       worktreePath,
       successMessage,
@@ -2725,19 +2714,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return handleStaleInReviewParsePauseAbortReplayImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, [
-          "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
-          "clearPausedAborted",
-        ]),
-        ...facadeFields(this, [
-          "activeWorktrees", "activeSessions", "activeStepExecutors",
-          "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
-        ]),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        ...facadeMethods(this, ["persistTokenUsage", "executeWorkflowGraph"]),
-      },
+      buildHandleStaleInReviewParsePauseAbortReplayDeps(this),
       live,
       result,
       abortProvenance,
@@ -2806,17 +2783,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return reenterPausedAbortedWorkflowNodeImpl(
-      {
-        ...facadeFields(this, [
-          "store", "activeWorktrees", "activeSessions", "activeStepExecutors",
-          "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
-        ]),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        ...facadeMethods(this, [
-          "getRunContextFor", "resolveResumeLanes", "clearPausedAborted",
-          "persistTokenUsage", "executeWorkflowGraph", "execute",
-        ]),
-      },
+      buildReenterPausedAbortedWorkflowNodeDeps(this),
       live,
       result,
       abortProvenance,
