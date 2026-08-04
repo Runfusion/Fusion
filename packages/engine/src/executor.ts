@@ -117,11 +117,77 @@ const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
 import { isTaskWorkComplete, createSeenSteeringIds } from "./executor/task-predicates.js";
+/* FNXC:CodeOrganization 2026-08-03-21:15: Impl bindings barrel (U4). */
 import {
-  accumulateTokenUsage as accumulateTokenUsageImpl,
-  tokenUsageWithModelSnapshot as tokenUsageWithModelSnapshotImpl,
-  extractSessionTokenUsage as extractSessionTokenUsageImpl,
-} from "./executor/token-usage-pure.js";
+  accumulateTokenUsageImpl, tokenUsageWithModelSnapshotImpl, extractSessionTokenUsageImpl,
+  tryCreateWorktreeImpl, handleWorktreeConflictImpl, cleanupConflictingWorktreeImpl,
+  createWorktreeImpl, squashImportDepIntoWorktreeImpl, rebaseNewWorktreeOntoRemoteImpl,
+  resolveWorktreeStartPointImpl, reclaimExistingWorktreeImpl, handleBranchConflictImpl,
+  recoverMissingWorktreeSessionStartFailureImpl, verifyWorktreeInvariantsImpl, emitWorktreeReanchoredAuditImpl,
+  evaluateTaskDoneScopeLeakImpl, captureModifiedFilesImpl, captureWorkspaceModifiedFilesImpl,
+  captureUncommittedModifiedFilesImpl, executeScriptWorkflowStepImpl, reviewWorkspacePerRepoImpl,
+  workflowInputRepliesAfterWatermarkImpl, resolveWorkflowInputMarkerForGraphNodeImpl, parkCompletedBlockedTaskImpl,
+  getCompletedTaskFinalizationDecisionImpl, shouldFinalizeCompletedTaskImpl, handleNonContinuableSessionErrorImpl,
+  handleNonContinuableSessionRetryImpl, createTaskAddDepToolImpl, handleImplicitTaskDoneRefusalImpl,
+  handleDepAbortCleanupImpl, reopenLastStepForRevisionImpl, runExecutorDeterministicVerificationImpl,
+  injectWorkflowStepFailureInstructionsImpl, sendTaskBackForFixImpl, clearStalePauseAbortBeforeDispatchImpl,
+  clearPauseAbortStateForManualRetryImpl, blockOuterDispatchWhenDependenciesUnmetImpl, finalizeMergeConfirmedWorkflowGraphTaskImpl,
+  holdForSessionContentionImpl, runAwaitInputNodeImpl, pauseForCliApprovalImpl,
+  recoverApprovedStepsOnResumeImpl, tryBootstrapMisbindingRecoveryImpl, advanceNoMergeWorkflowToCompleteColumnImpl,
+  applyGraphRethinkResetImpl, disposeSubagentsForTaskImpl, ensureWorkflowMergeBoundaryTaskImpl,
+  scheduleCompletedTaskWatchdogImpl, scheduleWorkflowRerunImpl, recoverMissingRequiredArtifactsImpl,
+  isRequiredArtifactRecoveryProtectedImpl, performWorkflowRerunBounceImpl, dispatchUnpauseResumeImpl,
+  persistTaskTokenUsageImpl, captureExecutorTokenUsageBaselineImpl, persistTokenUsageImpl,
+  resetMergeStateIfNeededImpl, recoverFailedPreMergeWorkflowStepImpl, reconcileStepsFromGitHistoryImpl,
+  clearPhantomExecutorBindingImpl, cleanupMergeStateForReverificationImpl, clearResumeFailureStateImpl,
+  executeReviewHandoffImpl, shouldDeferForHeartbeatImpl, parkPlanReviewReplanCapExhaustedImpl,
+  resumeTaskForAgentImpl, buildActionGateContextImpl, buildPermanentAgentGatingContextImpl,
+  resolveInstructionsForRoleImpl, signalTaskCompleteImpl, triggerPostTaskReflectionCaptureImpl,
+  listWipLaneTasksImpl, resolveSeamColumnAgentImpl, resumeOrphanedImpl,
+  handleLoopDetectedImpl, recoverCompletedTaskImpl, markStuckAbortedImpl,
+  awaitAbortInFlightTaskWorkImpl, abortAllInFlightImpl, maybeDispatchWorkflowWorkEngineImpl,
+  executeCoreImpl, runCliAgentNodeImpl, reapCliTaskSessionForHandoffImpl,
+  adoptColumnAgentForNodeImpl, runSpawnedChildImpl, getAutoRecoveryDispatcherImpl,
+  prepareGraphNodeExecutionImpl, transitionReviewAddressingImpl, runGraphTaskStepImpl,
+  getAuthoritativeAssignedAgentImpl, shouldDeferWorkflowStepCompletionImpl, runProjectedGraphTaskStepImpl,
+  buildCodeNodeRunnerImpl, routeResetParsePinMismatchToRetryImpl, ensureGraphCustomNodeWorktreeImpl,
+  taskEffectiveAgentMatchesImpl, runRawCliCommandImpl, resetStepsIfWorkLostImpl,
+  routeRetryableRemediationGraphFailureToPreMergeFixImpl, buildForeachWorktreeDepsImpl, requestPreMergeOptionalStepFixImpl,
+  createSpawnAgentToolImpl, createTaskUpdateToolImpl, attemptExecutorVerificationFixImpl,
+  createTaskDoneToolImpl, resetLostWorkStepProgressImpl, resolveResumeLanesImpl,
+  isReentrantPausedAbortedInFlightNodeImpl, routeGraphFailureToExecutionResumeImpl, reenterPausedAbortedWorkflowNodeImpl,
+  isRetryableBenignMergePauseAbortImpl, isBenignManualMergeHoldPauseAbortImpl, handleStaleInReviewPlanPauseAbortReplayImpl,
+  handleStaleInReviewParsePauseAbortReplayImpl, routeGraphMergeFailureToRetryImpl, routeImplementationIncompleteMergeGraphFailureImpl,
+  evaluateTaskVerdictProvidersImpl, blockOuterDispatchWhenEphemeralDisabledImpl, routeUnusableWorktreeGraphFailureToRecoveryImpl,
+  hasLiveTaskSessionSurfaceImpl, resolveFailedPreMergeWorkflowStepBudgetImpl, hasTrailingConsecutiveToolFailuresImpl,
+  isLiveSharedBranchGroupMemberImpl, resolveEffectivePrincipalIdImpl, createAuthoritativeWorkflowPrimitivesFromExecutorImpl,
+  createAuthoritativeWorkflowSeamsImpl, executeWorkflowGraphImpl, runGraphCustomNodeImpl,
+  handleGraphFailureImpl, handoffTaskToReviewImpl, cleanupTaskWorktreeImpl,
+  getAssignedAgentRuntimeConfigImpl, runImplementationPhaseImpl, runImplementationImpl,
+  finalizeAlreadyReviewedTaskImpl, isTaskLiveForOverseerRetryImpl, abortAllSessionBashImpl,
+  runWithExecutorSemaphoreImpl, buildParseStepsDepsImpl, releasePreExecutionWorktreeImpl,
+  terminateChildAgentImpl, evaluateWorkflowMergeBoundaryImpl, getWorkflowMergeImplementationProofFailureImpl,
+  renewTaskLeaseImpl, readTaskArtifactImpl, getExecutionPauseLabelImpl,
+  resolveMergeBoundaryColumnImpl, loadMergeBoundaryInstancesImpl, shouldCompleteChecklistAtWorkflowMergeImpl,
+  markPausedAbortedImpl, acquireSessionRegistryPathImpl, shouldDeferCompletionForGlobalPauseImpl,
+  parkApprovalSuspensionImpl, resumeApprovalAfterUnwindIfNeededImpl, ensureTaskWorktreeForPlanningImpl,
+  foreachActiveForTaskImpl, buildBranchPersistenceImpl, sessionRegistryPathImpl,
+  addActiveWorktreeImpl, getActiveWorktreePathsImpl, setActiveSessionImpl,
+  markGraphExecuteSelfRequeuedImpl, deleteActiveSessionImpl, setActiveStepExecutorImpl,
+  deleteActiveStepExecutorImpl, setActiveWorkflowStepSessionImpl, deleteActiveWorkflowStepSessionImpl,
+  markCompletionFinalizedImpl, clearPausedAbortedImpl, updateStepGraphImpl,
+  buildColumnBoundaryHooksImpl, trackTaskDisposalImpl, registerConfiguredCommandControllerImpl,
+  unregisterConfiguredCommandControllerImpl, safeLogEntryImpl, awaitFeatureVideoBoundedImpl,
+  generateCompletionFeatureVideoImpl, getExecutingTaskIdsImpl, hasActivePlanningWorkflowSessionImpl,
+  isTaskActiveImpl, clearCompletedTaskWatchdogImpl, terminateAllChildrenImpl,
+  clearTerminalStepFailuresForRetryImpl, resolveTaskCustomFieldDefsImpl, disposeStoreLifecycleDisposersImpl,
+  registerSubagentSessionImpl, unregisterSubagentSessionImpl, clearWorkflowRerunWatchdogImpl,
+  getModelRegistryImpl, hasLiveSessionSurfaceImpl, listWorktreeHoldersImpl,
+  isAgentEffectivelyExecutingImpl, getWorktreePathImpl, buildInjectedRuntimeEnvImpl,
+  getApprovalRequestStoreImpl, buildStepInstancePersistenceImpl, resolveMcpServersImpl,
+  isRemediationGraphNodeImpl, isPreMergeRemediationGraphNodeImpl, executeWorkflowStepImpl,
+  isEphemeralDeletionPendingImpl, disposeEphemeralTimersImpl,
+} from "./executor/impl-bindings.js";
 import { extractOwnSettings } from "./executor/agent-binding-pure.js";
 
 
@@ -149,262 +215,17 @@ import {
 import { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
 import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
 import { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
-import {
-  tryCreateWorktree as tryCreateWorktreeImpl,
-  handleWorktreeConflict as handleWorktreeConflictImpl,
-} from "./executor/worktree-create-conflict.js";
 /* FNXC:CodeOrganization 2026-08-03-20:40: Free re-exports live in executor/free-reexports.ts (U4 barrel). */
 export * from "./executor/free-reexports.js";
-import { cleanupConflictingWorktree as cleanupConflictingWorktreeImpl } from "./executor/worktree-cleanup-conflicting.js";
-import {
-  createWorktree as createWorktreeImpl,
-  squashImportDepIntoWorktree as squashImportDepIntoWorktreeImpl,
-  rebaseNewWorktreeOntoRemote as rebaseNewWorktreeOntoRemoteImpl,
-  resolveWorktreeStartPoint as resolveWorktreeStartPointImpl,
-} from "./executor/worktree-create-outer.js";
-import {
-  reclaimExistingWorktree as reclaimExistingWorktreeImpl,
-  handleBranchConflict as handleBranchConflictImpl,
-} from "./executor/worktree-branch-conflict-handle.js";
-import { recoverMissingWorktreeSessionStartFailure as recoverMissingWorktreeSessionStartFailureImpl } from "./executor/worktree-missing-session-recovery.js";
-import {
-  verifyWorktreeInvariants as verifyWorktreeInvariantsImpl,
-  emitWorktreeReanchoredAudit as emitWorktreeReanchoredAuditImpl,
-} from "./executor/worktree-verify-invariants.js";
-import { evaluateTaskDoneScopeLeak as evaluateTaskDoneScopeLeakImpl } from "./executor/worktree-task-done-scope-leak.js";
-import {
-  captureModifiedFiles as captureModifiedFilesImpl,
-  captureWorkspaceModifiedFiles as captureWorkspaceModifiedFilesImpl,
-  captureUncommittedModifiedFiles as captureUncommittedModifiedFilesImpl,
-} from "./executor/worktree-capture-modified-files.js";
-import { executeScriptWorkflowStep as executeScriptWorkflowStepImpl } from "./executor/workflow-script-step.js";
-import { reviewWorkspacePerRepo as reviewWorkspacePerRepoImpl } from "./executor/workspace-review-per-repo.js";
-import {
-  workflowInputRepliesAfterWatermark as workflowInputRepliesAfterWatermarkImpl,
-  resolveWorkflowInputMarkerForGraphNode as resolveWorkflowInputMarkerForGraphNodeImpl,
-} from "./executor/workflow-input-markers.js";
-import {
-  parkCompletedBlockedTask as parkCompletedBlockedTaskImpl,
-  getCompletedTaskFinalizationDecision as getCompletedTaskFinalizationDecisionImpl,
-  shouldFinalizeCompletedTask as shouldFinalizeCompletedTaskImpl,
-} from "./executor/completion-finalization.js";
-import {
-  handleNonContinuableSessionError as handleNonContinuableSessionErrorImpl,
-  handleNonContinuableSessionRetry as handleNonContinuableSessionRetryImpl,
-} from "./executor/non-continuable-session.js";
-import { createTaskAddDepTool as createTaskAddDepToolImpl } from "./executor/task-add-dep-tool.js";
-import { handleImplicitTaskDoneRefusal as handleImplicitTaskDoneRefusalImpl } from "./executor/task-done-refusal-handler.js";
-import { handleDepAbortCleanup as handleDepAbortCleanupImpl } from "./executor/dep-abort-cleanup.js";
-import { reopenLastStepForRevision as reopenLastStepForRevisionImpl } from "./executor/reopen-last-step-for-revision.js";
-import { runExecutorDeterministicVerification as runExecutorDeterministicVerificationImpl } from "./executor/deterministic-verification.js";
-import { injectWorkflowStepFailureInstructions as injectWorkflowStepFailureInstructionsImpl } from "./executor/workflow-step-failure-injection.js";
-import { sendTaskBackForFix as sendTaskBackForFixImpl } from "./executor/send-task-back-for-fix.js";
-import {
-  clearStalePauseAbortBeforeDispatch as clearStalePauseAbortBeforeDispatchImpl,
-  clearPauseAbortStateForManualRetry as clearPauseAbortStateForManualRetryImpl,
-} from "./executor/stale-pause-abort.js";
-import { blockOuterDispatchWhenDependenciesUnmet as blockOuterDispatchWhenDependenciesUnmetImpl } from "./executor/dependency-dispatch-gate.js";
-import { finalizeMergeConfirmedWorkflowGraphTask as finalizeMergeConfirmedWorkflowGraphTaskImpl } from "./executor/merge-confirmed-finalize.js";
-import {
-  holdForSessionContention as holdForSessionContentionImpl,
-} from "./executor/session-contention-hold.js";
-import {
-  runAwaitInputNode as runAwaitInputNodeImpl,
-  pauseForCliApproval as pauseForCliApprovalImpl,
-} from "./executor/await-input-node.js";
-import { recoverApprovedStepsOnResume as recoverApprovedStepsOnResumeImpl } from "./executor/recover-approved-steps-on-resume.js";
-import { tryBootstrapMisbindingRecovery as tryBootstrapMisbindingRecoveryImpl } from "./executor/bootstrap-misbinding-recovery.js";
-import { advanceNoMergeWorkflowToCompleteColumn as advanceNoMergeWorkflowToCompleteColumnImpl } from "./executor/no-merge-complete-column.js";
-import { applyGraphRethinkReset as applyGraphRethinkResetImpl } from "./executor/graph-rethink-reset.js";
-import { disposeSubagentsForTask as disposeSubagentsForTaskImpl } from "./executor/dispose-subagents.js";
-import { ensureWorkflowMergeBoundaryTask as ensureWorkflowMergeBoundaryTaskImpl } from "./executor/workflow-merge-boundary.js";
-import { scheduleCompletedTaskWatchdog as scheduleCompletedTaskWatchdogImpl } from "./executor/completed-task-watchdog.js";
-import { scheduleWorkflowRerun as scheduleWorkflowRerunImpl } from "./executor/workflow-rerun-watchdog.js";
-import {
-  recoverMissingRequiredArtifacts as recoverMissingRequiredArtifactsImpl,
-  isRequiredArtifactRecoveryProtected as isRequiredArtifactRecoveryProtectedImpl,
-} from "./executor/required-artifact-recovery.js";
-import { performWorkflowRerunBounce as performWorkflowRerunBounceImpl } from "./executor/workflow-rerun-bounce.js";
-import { dispatchUnpauseResume as dispatchUnpauseResumeImpl } from "./executor/unpause-resume.js";
-import {
-  persistTaskTokenUsage as persistTaskTokenUsageImpl,
-  captureExecutorTokenUsageBaseline as captureExecutorTokenUsageBaselineImpl,
-  persistTokenUsage as persistTokenUsageImpl,
-} from "./executor/persist-token-usage.js";
-import { resetMergeStateIfNeeded as resetMergeStateIfNeededImpl } from "./executor/reset-merge-state.js";
-import { recoverFailedPreMergeWorkflowStep as recoverFailedPreMergeWorkflowStepImpl } from "./executor/recover-failed-pre-merge-step.js";
-import { reconcileStepsFromGitHistory as reconcileStepsFromGitHistoryImpl } from "./executor/reconcile-steps-from-git-history.js";
-import { clearPhantomExecutorBinding as clearPhantomExecutorBindingImpl } from "./executor/clear-phantom-executor-binding.js";
-import { cleanupMergeStateForReverification as cleanupMergeStateForReverificationImpl } from "./executor/cleanup-merge-state.js";
-import { clearResumeFailureState as clearResumeFailureStateImpl } from "./executor/clear-resume-failure-state.js";
-import { executeReviewHandoff as executeReviewHandoffImpl } from "./executor/execute-review-handoff.js";
-import { shouldDeferForHeartbeat as shouldDeferForHeartbeatImpl } from "./executor/should-defer-for-heartbeat.js";
-import { parkPlanReviewReplanCapExhausted as parkPlanReviewReplanCapExhaustedImpl } from "./executor/park-plan-review-replan-cap.js";
-import { resumeTaskForAgent as resumeTaskForAgentImpl } from "./executor/resume-task-for-agent.js";
-import { buildActionGateContext as buildActionGateContextImpl } from "./executor/build-action-gate-context.js";
-import { buildPermanentAgentGatingContext as buildPermanentAgentGatingContextImpl } from "./executor/build-permanent-agent-gating-context.js";
-import { resolveInstructionsForRole as resolveInstructionsForRoleImpl } from "./executor/resolve-instructions-for-role.js";
-import {
-  signalTaskComplete as signalTaskCompleteImpl,
-  triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureImpl,
-} from "./executor/signal-task-complete.js";
-import { listWipLaneTasks as listWipLaneTasksImpl } from "./executor/list-wip-lane-tasks.js";
-import { resolveSeamColumnAgent as resolveSeamColumnAgentImpl } from "./executor/resolve-seam-column-agent.js";
-import { resumeOrphaned as resumeOrphanedImpl } from "./executor/resume-orphaned.js";
-import { handleLoopDetected as handleLoopDetectedImpl } from "./executor/handle-loop-detected.js";
-import { recoverCompletedTask as recoverCompletedTaskImpl } from "./executor/recover-completed-task.js";
-import { markStuckAborted as markStuckAbortedImpl } from "./executor/mark-stuck-aborted.js";
-import { awaitAbortInFlightTaskWork as awaitAbortInFlightTaskWorkImpl } from "./executor/await-abort-in-flight.js";
-import { abortAllInFlight as abortAllInFlightImpl } from "./executor/abort-all-in-flight.js";
-import { maybeDispatchWorkflowWorkEngine as maybeDispatchWorkflowWorkEngineImpl } from "./executor/maybe-dispatch-workflow-work-engine.js";
-import { executeCore as executeCoreImpl } from "./executor/execute-core.js";
-import {
-  runCliAgentNode as runCliAgentNodeImpl,
-  reapCliTaskSessionForHandoff as reapCliTaskSessionForHandoffImpl,
-} from "./executor/run-cli-agent-node.js";
-import { adoptColumnAgentForNode as adoptColumnAgentForNodeImpl } from "./executor/adopt-column-agent-for-node.js";
-import { runSpawnedChild as runSpawnedChildImpl } from "./executor/run-spawned-child.js";
-import { getAutoRecoveryDispatcher as getAutoRecoveryDispatcherImpl } from "./executor/get-auto-recovery-dispatcher.js";
-import { prepareGraphNodeExecution as prepareGraphNodeExecutionImpl } from "./executor/prepare-graph-node-execution.js";
-import { transitionReviewAddressing as transitionReviewAddressingImpl } from "./executor/transition-review-addressing.js";
-import { runGraphTaskStep as runGraphTaskStepImpl } from "./executor/run-graph-task-step.js";
-import { getAuthoritativeAssignedAgent as getAuthoritativeAssignedAgentImpl } from "./executor/get-authoritative-assigned-agent.js";
-import { shouldDeferWorkflowStepCompletion as shouldDeferWorkflowStepCompletionImpl } from "./executor/should-defer-workflow-step-completion.js";
-import { runProjectedGraphTaskStep as runProjectedGraphTaskStepImpl } from "./executor/run-projected-graph-task-step.js";
-import { buildCodeNodeRunner as buildCodeNodeRunnerImpl } from "./executor/build-code-node-runner.js";
-import { routeResetParsePinMismatchToRetry as routeResetParsePinMismatchToRetryImpl } from "./executor/route-reset-parse-pin-mismatch.js";
-import { ensureGraphCustomNodeWorktree as ensureGraphCustomNodeWorktreeImpl } from "./executor/ensure-graph-custom-node-worktree.js";
-import { taskEffectiveAgentMatches as taskEffectiveAgentMatchesImpl } from "./executor/task-effective-agent-matches.js";
-import { runRawCliCommand as runRawCliCommandImpl } from "./executor/run-raw-cli-command.js";
-import { resetStepsIfWorkLost as resetStepsIfWorkLostImpl } from "./executor/reset-steps-if-work-lost.js";
-import { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixImpl } from "./executor/route-retryable-remediation.js";
-import { buildForeachWorktreeDeps as buildForeachWorktreeDepsImpl } from "./executor/build-foreach-worktree-deps.js";
-import { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixImpl } from "./executor/request-pre-merge-optional-step-fix.js";
-import { createSpawnAgentTool as createSpawnAgentToolImpl } from "./executor/create-spawn-agent-tool.js";
-import { createTaskUpdateTool as createTaskUpdateToolImpl } from "./executor/create-task-update-tool.js";
-import { attemptExecutorVerificationFix as attemptExecutorVerificationFixImpl } from "./executor/attempt-executor-verification-fix.js";
-import { createTaskDoneTool as createTaskDoneToolImpl } from "./executor/create-task-done-tool.js";
-import { resetLostWorkStepProgress as resetLostWorkStepProgressImpl } from "./executor/reset-lost-work-step-progress.js";
-import { resolveResumeLanes as resolveResumeLanesImpl } from "./executor/resolve-resume-lanes.js";
-import { isReentrantPausedAbortedInFlightNode as isReentrantPausedAbortedInFlightNodeImpl } from "./executor/is-reentrant-paused-aborted-in-flight-node.js";
-import { routeGraphFailureToExecutionResume as routeGraphFailureToExecutionResumeImpl } from "./executor/route-graph-failure-to-execution-resume.js";
-import { reenterPausedAbortedWorkflowNode as reenterPausedAbortedWorkflowNodeImpl } from "./executor/reenter-paused-aborted-workflow-node.js";
-import { isRetryableBenignMergePauseAbort as isRetryableBenignMergePauseAbortImpl } from "./executor/is-retryable-benign-merge-pause-abort.js";
-import { isBenignManualMergeHoldPauseAbort as isBenignManualMergeHoldPauseAbortImpl } from "./executor/is-benign-manual-merge-hold-pause-abort.js";
-import { handleStaleInReviewPlanPauseAbortReplay as handleStaleInReviewPlanPauseAbortReplayImpl } from "./executor/handle-stale-in-review-plan-pause-abort-replay.js";
-import { handleStaleInReviewParsePauseAbortReplay as handleStaleInReviewParsePauseAbortReplayImpl } from "./executor/handle-stale-in-review-parse-pause-abort-replay.js";
-import { routeGraphMergeFailureToRetry as routeGraphMergeFailureToRetryImpl } from "./executor/route-graph-merge-failure-to-retry.js";
-import { routeImplementationIncompleteMergeGraphFailure as routeImplementationIncompleteMergeGraphFailureImpl } from "./executor/route-implementation-incomplete-merge-graph-failure.js";
-import { evaluateTaskVerdictProviders as evaluateTaskVerdictProvidersImpl } from "./executor/evaluate-task-verdict-providers.js";
-import { blockOuterDispatchWhenEphemeralDisabled as blockOuterDispatchWhenEphemeralDisabledImpl } from "./executor/block-outer-dispatch-when-ephemeral-disabled.js";
-import { routeUnusableWorktreeGraphFailureToRecovery as routeUnusableWorktreeGraphFailureToRecoveryImpl } from "./executor/route-unusable-worktree-graph-failure-to-recovery.js";
-import { hasLiveTaskSessionSurface as hasLiveTaskSessionSurfaceImpl } from "./executor/has-live-task-session-surface.js";
-import { isRemediationGraphNode as isRemediationGraphNodeImpl, isPreMergeRemediationGraphNode as isPreMergeRemediationGraphNodeImpl } from "./executor/remediation-graph-node.js";
-import { resolveFailedPreMergeWorkflowStepBudget as resolveFailedPreMergeWorkflowStepBudgetImpl } from "./executor/resolve-failed-pre-merge-workflow-step-budget.js";
-import { hasTrailingConsecutiveToolFailures as hasTrailingConsecutiveToolFailuresImpl } from "./executor/has-trailing-consecutive-tool-failures.js";
-import { isLiveSharedBranchGroupMember as isLiveSharedBranchGroupMemberImpl } from "./executor/is-live-shared-branch-group-member.js";
-import { resolveEffectivePrincipalId as resolveEffectivePrincipalIdImpl } from "./executor/resolve-effective-principal-id.js";
-import { createAuthoritativeWorkflowPrimitivesFromExecutor as createAuthoritativeWorkflowPrimitivesFromExecutorImpl } from "./executor/create-authoritative-workflow-primitives.js";
-import { createAuthoritativeWorkflowSeams as createAuthoritativeWorkflowSeamsImpl } from "./executor/create-authoritative-workflow-seams.js";
-import { executeWorkflowGraph as executeWorkflowGraphImpl } from "./executor/execute-workflow-graph.js";
-import { runGraphCustomNode as runGraphCustomNodeImpl } from "./executor/run-graph-custom-node.js";
-import { handleGraphFailure as handleGraphFailureImpl } from "./executor/handle-graph-failure.js";
-import { executeWorkflowStep as executeWorkflowStepImpl, type ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
-import { handoffTaskToReview as handoffTaskToReviewImpl } from "./executor/handoff-task-to-review.js";
-import { cleanupTaskWorktree as cleanupTaskWorktreeImpl } from "./executor/cleanup-task-worktree.js";
-import { getAssignedAgentRuntimeConfig as getAssignedAgentRuntimeConfigImpl } from "./executor/get-assigned-agent-runtime-config.js";
-import { runImplementationPhase as runImplementationPhaseImpl } from "./executor/run-implementation-phase.js";
-import { runImplementation as runImplementationImpl } from "./executor/run-implementation.js";
-import { finalizeAlreadyReviewedTask as finalizeAlreadyReviewedTaskImpl } from "./executor/finalize-already-reviewed-task.js";
-import { isTaskLiveForOverseerRetry as isTaskLiveForOverseerRetryImpl } from "./executor/is-task-live-for-overseer-retry.js";
-import { abortAllSessionBash as abortAllSessionBashImpl } from "./executor/abort-all-session-bash.js";
-import { runWithExecutorSemaphore as runWithExecutorSemaphoreImpl } from "./executor/run-with-executor-semaphore.js";
-import { buildParseStepsDeps as buildParseStepsDepsImpl } from "./executor/build-parse-steps-deps.js";
-import { releasePreExecutionWorktree as releasePreExecutionWorktreeImpl } from "./executor/release-pre-execution-worktree.js";
-import { terminateChildAgent as terminateChildAgentImpl } from "./executor/terminate-child-agent.js";
-import {
-  evaluateWorkflowMergeBoundary as evaluateWorkflowMergeBoundaryImpl,
-  getWorkflowMergeImplementationProofFailure as getWorkflowMergeImplementationProofFailureImpl,
-} from "./executor/evaluate-workflow-merge-boundary.js";
-import { renewTaskLease as renewTaskLeaseImpl } from "./executor/renew-task-lease.js";
-import { readTaskArtifact as readTaskArtifactImpl } from "./executor/read-task-artifact.js";
-import { getExecutionPauseLabel as getExecutionPauseLabelImpl } from "./executor/get-execution-pause-label.js";
-import {
-  resolveMergeBoundaryColumn as resolveMergeBoundaryColumnImpl,
-  loadMergeBoundaryInstances as loadMergeBoundaryInstancesImpl,
-  shouldCompleteChecklistAtWorkflowMerge as shouldCompleteChecklistAtWorkflowMergeImpl,
-} from "./executor/workflow-merge-boundary-helpers.js";
-import { markPausedAborted as markPausedAbortedImpl } from "./executor/mark-paused-aborted.js";
-import { acquireSessionRegistryPath as acquireSessionRegistryPathImpl } from "./executor/acquire-session-registry-path.js";
-import { shouldDeferCompletionForGlobalPause as shouldDeferCompletionForGlobalPauseImpl } from "./executor/should-defer-completion-for-global-pause.js";
-import { parkApprovalSuspension as parkApprovalSuspensionImpl } from "./executor/park-approval-suspension.js";
-import { resumeApprovalAfterUnwindIfNeeded as resumeApprovalAfterUnwindIfNeededImpl } from "./executor/resume-approval-after-unwind.js";
-import { ensureTaskWorktreeForPlanning as ensureTaskWorktreeForPlanningImpl } from "./executor/ensure-task-worktree-for-planning.js";
-import { foreachActiveForTask as foreachActiveForTaskImpl } from "./executor/foreach-active-for-task.js";
-import { buildBranchPersistence as buildBranchPersistenceImpl } from "./executor/build-branch-persistence.js";
+import type { ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
+import type { ActiveSessionBookkeepingDeps } from "./executor/active-session-bookkeeping.js";
+import type { TaskLivenessDeps } from "./executor/task-liveness.js";
 import {
   buildBranchConflictHandleDeps,
   buildWorktreeCreateConflictDeps,
   buildWorktreeInvariantDeps,
   buildNonContinuableSessionDeps,
 } from "./executor/deps-bags.js";
-import { sessionRegistryPath as sessionRegistryPathImpl } from "./executor/session-registry-path.js";
-import {
-  addActiveWorktree as addActiveWorktreeImpl,
-  getActiveWorktreePaths as getActiveWorktreePathsImpl,
-} from "./executor/active-worktrees.js";
-import {
-  type ActiveSessionBookkeepingDeps,
-  setActiveSession as setActiveSessionImpl,
-  markGraphExecuteSelfRequeued as markGraphExecuteSelfRequeuedImpl,
-  deleteActiveSession as deleteActiveSessionImpl,
-  setActiveStepExecutor as setActiveStepExecutorImpl,
-  deleteActiveStepExecutor as deleteActiveStepExecutorImpl,
-  setActiveWorkflowStepSession as setActiveWorkflowStepSessionImpl,
-  deleteActiveWorkflowStepSession as deleteActiveWorkflowStepSessionImpl,
-} from "./executor/active-session-bookkeeping.js";
-import {
-  markCompletionFinalized as markCompletionFinalizedImpl,
-  clearPausedAborted as clearPausedAbortedImpl,
-} from "./executor/pause-abort-markers.js";
-import { updateStepGraph as updateStepGraphImpl } from "./executor/update-step-graph.js";
-import { buildColumnBoundaryHooks as buildColumnBoundaryHooksImpl } from "./executor/build-column-boundary-hooks.js";
-import { trackTaskDisposal as trackTaskDisposalImpl } from "./executor/track-task-disposal.js";
-import {
-  registerConfiguredCommandController as registerConfiguredCommandControllerImpl,
-  unregisterConfiguredCommandController as unregisterConfiguredCommandControllerImpl,
-} from "./executor/configured-command-controllers.js";
-import { safeLogEntry as safeLogEntryImpl } from "./executor/safe-log-entry.js";
-import {
-  awaitFeatureVideoBounded as awaitFeatureVideoBoundedImpl,
-  generateCompletionFeatureVideo as generateCompletionFeatureVideoImpl,
-} from "./executor/completion-feature-video.js";
-import {
-  type TaskLivenessDeps,
-  getExecutingTaskIds as getExecutingTaskIdsImpl,
-  hasActivePlanningWorkflowSession as hasActivePlanningWorkflowSessionImpl,
-  isTaskActive as isTaskActiveImpl,
-} from "./executor/task-liveness.js";
-import { clearCompletedTaskWatchdog as clearCompletedTaskWatchdogImpl } from "./executor/clear-completed-task-watchdog.js";
-import { terminateAllChildren as terminateAllChildrenImpl } from "./executor/terminate-all-children.js";
-import { clearTerminalStepFailuresForRetry as clearTerminalStepFailuresForRetryImpl } from "./executor/clear-terminal-step-failures-for-retry.js";
-import { resolveTaskCustomFieldDefs as resolveTaskCustomFieldDefsImpl } from "./executor/resolve-task-custom-field-defs.js";
-import { disposeStoreLifecycleDisposers as disposeStoreLifecycleDisposersImpl } from "./executor/dispose-store-lifecycle-disposers.js";
-import {
-  registerSubagentSession as registerSubagentSessionImpl,
-  unregisterSubagentSession as unregisterSubagentSessionImpl,
-} from "./executor/subagent-session-registry.js";
-import { clearWorkflowRerunWatchdog as clearWorkflowRerunWatchdogImpl } from "./executor/clear-workflow-rerun-watchdog.js";
-import { getModelRegistry as getModelRegistryImpl } from "./executor/get-model-registry.js";
-import { hasLiveSessionSurface as hasLiveSessionSurfaceImpl } from "./executor/has-live-session-surface.js";
-import { listWorktreeHolders as listWorktreeHoldersImpl } from "./executor/list-worktree-holders.js";
-import { isAgentEffectivelyExecuting as isAgentEffectivelyExecutingImpl } from "./executor/is-agent-effectively-executing.js";
-import { getWorktreePath as getWorktreePathImpl } from "./executor/get-worktree-path.js";
-import { buildInjectedRuntimeEnv as buildInjectedRuntimeEnvImpl } from "./executor/build-injected-runtime-env.js";
-import { getApprovalRequestStore as getApprovalRequestStoreImpl } from "./executor/get-approval-request-store.js";
-import { isEphemeralDeletionPending as isEphemeralDeletionPendingImpl, disposeEphemeralTimers as disposeEphemeralTimersImpl } from "./executor/ephemeral-deletion-pending.js";
-import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from "./executor/build-step-instance-persistence.js";
-import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
 
 import { runConfiguredCommand } from "./executor/configured-command.js";
 
