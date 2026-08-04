@@ -1,4 +1,4 @@
-// port-4040-allowlist: never kill port 4040. FNXC:CodeOrganization 2026-08-04-07:20: facade imports via task-executor-imports barrel (U4).
+// port-4040-allowlist: never kill port 4040. FNXC:CodeOrganization 2026-08-04-07:55: facade imports via task-executor-imports barrel (U4).
 export * from "./executor/public-reexports.js";
 export * from "./executor/free-reexports.js";
 import {
