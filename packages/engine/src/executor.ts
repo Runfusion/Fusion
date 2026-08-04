@@ -152,11 +152,6 @@ import {
   isEphemeralDeletionPendingImpl, disposeEphemeralTimersImpl, resolveTaskStepSourceImpl,
 } from "./executor/impl-bindings.js";
 
-
-
-
-
-
 /* FNXC:CodeOrganization 2026-08-03-20:40: Free re-exports live in executor/free-reexports.ts (U4 barrel). */
 export * from "./executor/free-reexports.js";
 import type { ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
@@ -172,7 +167,6 @@ import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
-
 export async function __runConfiguredCommandForTests(
   command: string,
   cwd: string,
@@ -184,38 +178,10 @@ export async function __runConfiguredCommandForTests(
   return runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
 }
 
-// ── Tool parameter schemas (module-level for reuse in ToolDefinition generics) ──
-
-// taskLogParams and taskCreateParams are imported from agent-tools.ts
-
-/**
- * Sentinel a skill running in a Fusion workflow step emits when it needs to ask
- * the user a blocking question (it has no synchronous question tool — see the CE
- * skills' "Running inside Fusion" sections). The executor detects this in the
- * step's output and parks the task `awaiting-user-input`, reusing the same
- * pause/resume machinery as an `awaitInput` node (U6). Returns the question text,
- * or null when no well-formed sentinel is present.
- */
-
-/**
- * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
- * step's prompt at the skill-prompt build path (runGraphCustomNode). It teaches
- * any bundled skill the conventions Fusion needs — in ONE engine-side place, so
- * the skills stay byte-for-byte upstream. The block is skill-agnostic and rides
- * on the node prompt; it deliberately overrides the upstream skill bodies that
- * still say "call AskUserQuestion" / "Task ce-*". Stable text — the await-input
- * grammar here must match `parseAwaitInputSentinel` and the persona-override
- * contract (fn_spawn_agent's `systemPromptOverride` param) verbatim.
- *
- * (U9 / KTD-7) The persona-fan-out instruction is path-confined: the skill must
- * resolve `<persona>.md` strictly within `$FUSION_CE_AGENTS_DIR` and reject any
- * `../` traversal before reading, since the file body is injected verbatim into a
- * child's system prompt (a filesystem prompt-injection surface otherwise).
- */
+/* FNXC:CodeOrganization 2026-08-04-02:35: Orphan await-input/conventions JSDoc removed — lives on await-input-parse.ts + workflow-step-verdict.ts peels. */
 import type {
   WorkflowStepOutcome,
 } from "./executor/workflow-step-verdict.js";
-
 
 /* FNXC:CodeOrganization 2026-08-03-21:00: Options/types live in executor/task-executor-options.ts. */
 export type {
@@ -254,26 +220,7 @@ which is the half-conversion shape: the correct target reached through a check t
 not see it. Each site now resolves once and uses the same value for both.
 */
 
-/*
-FNXC:WorkflowExecution 2026-07-19-01:30:
-U5d (R9): explicit replacement for the deleted `graphCompletionInterceptors` Map. When this
-callback is present the run IS a graph-owned implementation phase: execution stops at the
-implementation-complete boundary (no workflow steps, no legacy in-review handoff),
-`fn_review_step` is not injected, review gates are marked graph-owned, and the captured
-modifiedFiles are handed back through the callback. Absent callback == the legacy path.
-
-FNXC:WorkflowExecution 2026-07-19-02:10:
-U5e (R9): this is now a parameter of `runImplementation()`, NOT of `execute()`. The graph
-calls the runner directly, so the callback no longer travels through routing.
-
-Remaining U5e work: the callback should become MANDATORY and collapse into an ordinary
-return value. It is still optional only because `executeWorkflowGraph` keeps one
-legacy fallback (executor.ts, the workflow-selection-api-unavailable branch) that minimal
-TEST stores reach; production stores always expose a workflow-selection reader and are
-always graph-owned. Deleting that fallback makes every `runImplementation` call
-graph-owned, at which point this type disappears in favor of a returned outcome. See
-docs/plans/2026-07-19-002-u5e-remaining-deletions-handoff.md.
-*/
+/* FNXC:CodeOrganization 2026-08-04-02:35: GraphCompletionCallback U5d/U5e FNXC lives on task-executor-options.ts. */
 
 export class TaskExecutor {
   /*

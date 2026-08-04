@@ -120,4 +120,25 @@ export interface ActiveExecutorSessionState {
   lastEffectiveColumnAgentId?: string | null;
 }
 
+/*
+FNXC:WorkflowExecution 2026-07-19-01:30:
+U5d (R9): explicit replacement for the deleted `graphCompletionInterceptors` Map. When this
+callback is present the run IS a graph-owned implementation phase: execution stops at the
+implementation-complete boundary (no workflow steps, no legacy in-review handoff),
+`fn_review_step` is not injected, review gates are marked graph-owned, and the captured
+modifiedFiles are handed back through the callback. Absent callback == the legacy path.
+
+FNXC:WorkflowExecution 2026-07-19-02:10:
+U5e (R9): this is now a parameter of `runImplementation()`, NOT of `execute()`. The graph
+calls the runner directly, so the callback no longer travels through routing.
+
+FNXC:CodeOrganization 2026-08-04-02:35:
+Remaining U5e work: the callback should become MANDATORY and collapse into an ordinary
+return value. It is still optional only because `executeWorkflowGraph` keeps one
+legacy fallback (executor.ts, the workflow-selection-api-unavailable branch) that minimal
+TEST stores reach; production stores always expose a workflow-selection reader and are
+always graph-owned. Deleting that fallback makes every `runImplementation` call
+graph-owned, at which point this type disappears in favor of a returned outcome. See
+docs/plans/2026-07-19-002-u5e-remaining-deletions-handoff.md.
+*/
 export type GraphCompletionCallback = (info: { modifiedFiles: string[] }) => void;
