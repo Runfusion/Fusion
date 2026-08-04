@@ -50,6 +50,20 @@ describe("FN-5403 reliability interactions: engine stop aborts execution", () =>
     expect(runtime.executor.abortAllInFlight).not.toHaveBeenCalled();
   });
 
+  it("continues closing admission sources when one stop throws", () => {
+    const runtime = new InProcessRuntime({ projectId: "p", workingDirectory: "/tmp", isolationMode: "in-process" } as any, {} as any) as any;
+    runtime.status = "active";
+    runtime.selfHealingManager = { stop: vi.fn(() => {
+      throw new Error("stop failed");
+    }) };
+    runtime.routineScheduler = { stop: vi.fn() };
+
+    expect(() => runtime.beginDrain()).not.toThrow();
+
+    expect(runtime.selfHealingManager.stop).toHaveBeenCalledOnce();
+    expect(runtime.routineScheduler.stop).toHaveBeenCalledOnce();
+  });
+
   it("FN-5403: engine stop aborts executor AI sessions before drain completes", async () => {
     const runtime = new InProcessRuntime({ projectId: "p", workingDirectory: "/tmp", isolationMode: "in-process" } as any, {} as any) as any;
     let aborted = false;

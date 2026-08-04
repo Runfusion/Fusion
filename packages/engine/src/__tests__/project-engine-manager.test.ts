@@ -311,6 +311,22 @@ describe("ProjectEngineManager", () => {
       expect(centralCore.markLocalNodeOffline).not.toHaveBeenCalled();
     });
 
+    it("continues draining other engines when one engine throws", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+      await manager.startAll();
+      const engineA = manager.getEngine("proj_aaa")!;
+      const engineB = manager.getEngine("proj_bbb")!;
+      engineA.beginDrain = vi.fn(() => {
+        throw new Error("drain failed");
+      });
+      engineB.beginDrain = vi.fn();
+
+      expect(() => manager.beginDrain()).not.toThrow();
+
+      expect(engineA.beginDrain).toHaveBeenCalledOnce();
+      expect(engineB.beginDrain).toHaveBeenCalledOnce();
+    });
+
     it("stops all engines and clears state", async () => {
       const manager = new ProjectEngineManager(centralCore);
       await manager.startAll();

@@ -23,7 +23,16 @@ export function createDevWatchRestartCoordinator({ log = console.log, warn = con
   let queued = false;
   let pendingPaths = [];
 
+  const requeuePaths = (changedPaths) => {
+    pendingPaths = [...new Set([...pendingPaths, ...changedPaths])];
+  };
+
   const sendRestart = (changedPaths) => {
+    if (!child?.connected) {
+      requeuePaths(changedPaths);
+      warn("[fusion:dev] source restart deferred; the engine child is not connected");
+      return;
+    }
     const preview = changedPaths.slice(0, 3).join(", ");
     const remainder = Math.max(0, changedPaths.length - 3);
     log(`[fusion:dev] source changed (${preview}${remainder > 0 ? ` +${remainder} more` : ""}) — restart queued…`);
@@ -32,10 +41,12 @@ export function createDevWatchRestartCoordinator({ log = console.log, warn = con
       child.send({ type: "fusion:dev-source-changed" }, (error) => {
         if (!error) return;
         queued = false;
+        requeuePaths(changedPaths);
         warn(`[fusion:dev] source restart message failed: ${error.message}`);
       });
     } catch (error) {
       queued = false;
+      requeuePaths(changedPaths);
       warn(`[fusion:dev] source restart message failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -54,10 +65,13 @@ export function createDevWatchRestartCoordinator({ log = console.log, warn = con
         return;
       }
       if (!child?.connected) {
-        warn("[fusion:dev] source changed while the engine child was unavailable; the next start will load it");
+        requeuePaths(changedPaths);
+        warn("[fusion:dev] source restart deferred; the engine child is not connected");
         return;
       }
-      sendRestart(changedPaths);
+      const paths = [...new Set([...pendingPaths, ...changedPaths])];
+      pendingPaths = [];
+      sendRestart(paths);
     },
     onMessage(message) {
       if (!message || typeof message !== "object" || message.type !== "fusion:dev-source-restart-armed") return;

@@ -99,7 +99,8 @@ export function registerDevSourceRestart({
     pending = true;
     if (drainStarted) return;
     drainStarted = true;
-    void Promise.resolve(beginDrain())
+    void Promise.resolve()
+      .then(beginDrain)
       .then(() => schedule(0))
       .catch((error) => {
         logger.warn(`[fusion:dev] could not begin source restart drain: ${error instanceof Error ? error.message : String(error)}`);

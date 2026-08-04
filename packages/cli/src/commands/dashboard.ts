@@ -145,7 +145,10 @@ import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
 import { phaseTime } from "../startup-phase.js";
-import { registerDevSourceRestart } from "./dev-source-restart.js";
+import {
+  DEV_SOURCE_RESTART_ARMED_MESSAGE,
+  registerDevSourceRestart,
+} from "./dev-source-restart.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -1303,7 +1306,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         && Boolean(systemControlForServer.sourceWorkspaceRoot),
       beginDrain,
       notifyArmed: () => {
-        process.send?.({ type: "fusion:dev-source-restart-armed" });
+        process.send?.({ type: DEV_SOURCE_RESTART_ARMED_MESSAGE });
       },
       getLiveRunningAgentCounts: () => centralCore.getLiveRunningAgentCounts(),
       requestRestart: (reason) => requestSelfRestart?.(reason) ?? false,

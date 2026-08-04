@@ -665,7 +665,7 @@ pnpm local --no-engine        # Start local dashboard/API only
 pnpm build                    # Build default workspace packages (excludes desktop/mobile)
 pnpm build:all                # Build all packages (including desktop/mobile)
 pnpm dev dashboard            # Run dashboard + AI engine
-pnpm dev:watch                # Restart runtime source safely after active agents drain
+pnpm dev:watch                # Dashboard + AI engine; restart on source edits after agents drain
 pnpm dev:ui                   # Dashboard only (no AI engine)
 pnpm lint                     # Lint all packages
 pnpm typecheck                # Type-check all packages

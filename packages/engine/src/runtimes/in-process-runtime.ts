@@ -1947,15 +1947,26 @@ export class InProcessRuntime
       clearInterval(this.workflowContinuationTimer);
       this.workflowContinuationTimer = undefined;
     }
-    this.selfHealingManager?.stop();
-    this.routineScheduler?.stop();
-    this.triggerScheduler?.stop();
-    this.stuckTaskDetector?.stop();
-    this.heartbeatMonitor?.stop();
-    this.triageProcessor?.stop();
-    this.scheduler?.stop();
-    this.missionAutopilot?.stop();
-    this.missionExecutionLoop?.stop();
+    const admissionStops: Array<readonly [string, () => void]> = [
+      ["self-healing manager", () => this.selfHealingManager?.stop()],
+      ["routine scheduler", () => this.routineScheduler?.stop()],
+      ["trigger scheduler", () => this.triggerScheduler?.stop()],
+      ["stuck task detector", () => this.stuckTaskDetector?.stop()],
+      ["heartbeat monitor", () => this.heartbeatMonitor?.stop()],
+      ["triage processor", () => this.triageProcessor?.stop()],
+      ["scheduler", () => this.scheduler?.stop()],
+      ["mission autopilot", () => this.missionAutopilot?.stop()],
+      ["mission execution loop", () => this.missionExecutionLoop?.stop()],
+    ];
+    for (const [label, stop] of admissionStops) {
+      try {
+        stop();
+      } catch (error) {
+        runtimeLog.warn(
+          `Failed to stop ${label} while draining ${this.config.projectId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     runtimeLog.log(`InProcessRuntime draining for ${this.config.projectId}`);
   }
 

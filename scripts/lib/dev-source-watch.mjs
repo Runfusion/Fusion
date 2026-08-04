@@ -95,7 +95,13 @@ export function createDevSourceWatcher({
       debounceTimer = undefined;
       firstChangeAt = undefined;
       changedPaths.clear();
-      for (const watcher of watchers) watcher.close();
+      for (const watcher of watchers) {
+        try {
+          watcher.close();
+        } catch (error) {
+          logger.warn(`[fusion:dev] source watcher close failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     },
   };
 }

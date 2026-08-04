@@ -94,6 +94,24 @@ describe("registerDevSourceRestart", () => {
     harness.dispose();
   });
 
+  it("contains a synchronous drain failure in the IPC handler", async () => {
+    const harness = createHarness(0);
+    harness.beginDrain.mockImplementation(() => {
+      throw new Error("drain failed");
+    });
+
+    expect(() => {
+      harness.processEvents.emit("message", { type: DEV_SOURCE_CHANGE_MESSAGE });
+    }).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(harness.warn).toHaveBeenCalledWith(expect.stringContaining("drain failed"));
+    expect(harness.getLiveRunningAgentCounts).not.toHaveBeenCalled();
+    harness.dispose();
+  });
+
   it("keeps the restart pending when the host initially declines it", async () => {
     vi.useFakeTimers();
     const harness = createHarness(0);
