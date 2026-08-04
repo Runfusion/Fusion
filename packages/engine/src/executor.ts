@@ -21,8 +21,7 @@ import type { ReviewResult } from "./execution/reviewer.js";
 import { ModelRegistry, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
 /* FNXC:Workspace 2026-06-21-15:00: F5/F8 workspace-path helpers are consumed via free peels / pure-bindings, not direct imports here. */
-import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
-import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
+import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 
@@ -205,6 +204,23 @@ import {
   buildResumeLaneClassifierDeps,
   buildMarkPausedAbortedDeps,
   buildResumeOrphanedDeps,
+  buildSignalTaskCompleteDeps,
+  buildTriggerPostTaskReflectionCaptureDeps,
+  buildParkApprovalSuspensionDeps,
+  buildResumeApprovalAfterUnwindDeps,
+  buildHandoffTaskToReviewDeps,
+  buildActiveSessionBookkeepingDeps,
+  buildAcquireSessionRegistryPathDeps,
+  buildGetAutoRecoveryDispatcherDeps,
+  buildEnsureTaskWorktreeForPlanningDeps,
+  buildPrepareGraphNodeExecutionDeps,
+  buildCreateTaskUpdateToolDeps,
+  buildRemoveOwnWorktreeWithReconcileDeps,
+  buildNormalizeReclaimableWorktreePathDeps,
+  buildResolveEffectivePrincipalIdDeps,
+  buildInjectedRuntimeEnvDeps,
+  buildGetAuthoritativeAssignedAgentDeps,
+  buildFinalizeMergeConfirmedWorkflowGraphTaskDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -371,30 +387,14 @@ export class TaskExecutor {
   }
 
   private activeSessionBookkeepingDeps(): ActiveSessionBookkeepingDeps {
-    return {
-      rootDir: this.rootDir, activeSessions: this.activeSessions, activeStepExecutors: this.activeStepExecutors,
-      ...facadeFields(this, [
-        "activeStepExecutorSeenSteeringIds", "activeWorkflowStepSessions", "activeWorkflowStepSessionSeenSteeringIds",
-      ]),
-      effectiveColumnAgentByTask: this.effectiveColumnAgentByTask, graphRouting: this.graphRouting,
-      graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
-      getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
-      acquireSessionRegistryPath: (id, path, kind, owner) => this.acquireSessionRegistryPath(id, path, kind, owner),
-    };
+    return buildActiveSessionBookkeepingDeps(this);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:00: Full SessionContention FNXC lives on acquire-session-registry-path.ts. */
-  private acquireSessionRegistryPath(taskId: string, registryPath: string, kind: ActiveSessionKind, ownerKey: string): void {
-    acquireSessionRegistryPathImpl(
-      {
-        store: this.store,
-        hasLiveTaskSessionSurface: (id) => this.hasLiveTaskSessionSurface(id),
-      },
-      taskId,
-      registryPath,
-      kind,
-      ownerKey,
-    );
+  private acquireSessionRegistryPath(
+    ...args: FacadeRestArgs<typeof acquireSessionRegistryPathImpl>
+  ): void {
+    acquireSessionRegistryPathImpl(buildAcquireSessionRegistryPathDeps(this), ...args);
   }
 
   private setActiveSession(taskId: string, sessionState: ActiveExecutorSessionState, worktreePath: string): void {
@@ -434,14 +434,7 @@ export class TaskExecutor {
   }
 
   private getAutoRecoveryDispatcher(audit: RunAuditor): AutoRecoveryDispatcher {
-    return getAutoRecoveryDispatcherImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        autoRecoveryDispatcher: this.options.autoRecoveryDispatcher,
-      },
-      audit,
-    );
+    return getAutoRecoveryDispatcherImpl(buildGetAutoRecoveryDispatcherDeps(this), audit);
   }
 
   private async renewTaskLease(
@@ -498,18 +491,12 @@ export class TaskExecutor {
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:35: handoffTaskToReview reason/failure FNXC lives on handoff-task-to-review.ts. */
-  private async handoffTaskToReview(task: Task, reason: string, runId = this.getRunContextFor(task.id)?.runId): Promise<Task> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
-    return handoffTaskToReviewImpl(
-      {
-        ...this.storeRunContextDeps(),
-        generateCompletionFeatureVideo: (...args: unknown[]) => (this as any).generateCompletionFeatureVideo(...args),
-      },
-      task,
-      reason,
-      runId,
-    );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+  private async handoffTaskToReview(
+    task: Task,
+    reason: string,
+    runId = this.getRunContextFor(task.id)?.runId,
+  ): Promise<Task> {
+    return handoffTaskToReviewImpl(buildHandoffTaskToReviewDeps(this), task, reason, runId);
   }
 
   /* FNXC:ReviewArtifacts 2026-07-19-10:00: best-effort feature-video before review handoff (never delays transition). */
@@ -744,32 +731,20 @@ export class TaskExecutor {
     });
   }
 
-  private async parkApprovalSuspension(taskId: string, surface: string): Promise<boolean> {
-    return parkApprovalSuspensionImpl(
-      {
-        ...facadeFields(this, ["store", "approvalSuspended"]),
-        ...facadeMethods(this, ["getRunContextFor", "clearPausedAborted"]),
-      },
-      taskId,
-      surface,
-    );
+  private async parkApprovalSuspension(
+    ...args: FacadeRestArgs<typeof parkApprovalSuspensionImpl>
+  ): Promise<boolean> {
+    return parkApprovalSuspensionImpl(buildParkApprovalSuspensionDeps(this), ...args);
   }
 
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
-    return dispatchUnpauseResumeImpl(
-      buildDispatchUnpauseResumeDeps(this),
-      task,
-    );
+    return dispatchUnpauseResumeImpl(buildDispatchUnpauseResumeDeps(this), task);
   }
 
-  private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
-    return resumeApprovalAfterUnwindIfNeededImpl(
-      {
-        ...facadeFields(this, ["store", "approvalResumeAfterUnwind"]),
-        ...facadeMethods(this, ["resolveResumeLanes", "dispatchUnpauseResume"]),
-      },
-      taskId,
-    );
+  private async resumeApprovalAfterUnwindIfNeeded(
+    ...args: FacadeRestArgs<typeof resumeApprovalAfterUnwindIfNeededImpl>
+  ): Promise<boolean> {
+    return resumeApprovalAfterUnwindIfNeededImpl(buildResumeApprovalAfterUnwindDeps(this), ...args);
   }
 
   private async resolveMcpServers(agentId?: string | null) {
@@ -850,26 +825,11 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:35: signalTaskComplete FN-7528 FNXC lives on signal-task-complete.ts. */
   private signalTaskComplete(task: Task): void {
-    return signalTaskCompleteImpl(
-      {
-        store: this.store,
-        capturedReflectionTaskIds: this.capturedReflectionTaskIds,
-        reflectionService: this.options.reflectionService,
-        onComplete: this.options.onComplete,
-      },
-      task,
-    );
+    return signalTaskCompleteImpl(buildSignalTaskCompleteDeps(this), task);
   }
 
   private triggerPostTaskReflectionCapture(task: Task): void {
-    return triggerPostTaskReflectionCaptureImpl(
-      {
-        store: this.store,
-        capturedReflectionTaskIds: this.capturedReflectionTaskIds,
-        reflectionService: this.options.reflectionService,
-      },
-      task,
-    );
+    return triggerPostTaskReflectionCaptureImpl(buildTriggerPostTaskReflectionCaptureDeps(this), task);
   }
 
   private clearWorkflowRerunWatchdog(taskId: string): void {
@@ -1059,16 +1019,7 @@ export class TaskExecutor {
   private async getAuthoritativeAssignedAgent(
     ...args: FacadeRestArgs<typeof getAuthoritativeAssignedAgentImpl>
   ): Promise<Agent | null> {
-    return getAuthoritativeAssignedAgentImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        agentStore: this.options.agentStore,
-        getAuthoritativeAssignedAgentStore: () => this.authoritativeAssignedAgentStore,
-        setAuthoritativeAssignedAgentStore: (s) => { this.authoritativeAssignedAgentStore = s; },
-      },
-      ...args,
-    );
+    return getAuthoritativeAssignedAgentImpl(buildGetAuthoritativeAssignedAgentDeps(this), ...args);
   }
 
   private async getAssignedAgentRuntimeConfig(
@@ -1404,13 +1355,7 @@ export class TaskExecutor {
   private resolveEffectivePrincipalId(
     ...args: FacadeRestArgs<typeof resolveEffectivePrincipalIdImpl>
   ): string | undefined {
-    return resolveEffectivePrincipalIdImpl(
-      {
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphColumnAgentResolver: this.graphColumnAgentResolver,
-      },
-      ...args,
-    );
+    return resolveEffectivePrincipalIdImpl(buildResolveEffectivePrincipalIdDeps(this), ...args);
   }
 
   isAgentEffectivelyExecuting(agentId: string): boolean {
@@ -1421,15 +1366,7 @@ export class TaskExecutor {
   private async buildInjectedRuntimeEnv(
     ...args: FacadeRestArgs<typeof buildInjectedRuntimeEnvImpl>
   ): Promise<{ env: NodeJS.ProcessEnv; injectedKeyCount: number; pathEntryCount: number }> {
-    return buildInjectedRuntimeEnvImpl(
-      {
-        rootDir: this.rootDir,
-        collectExecutorRuntimeEnv: this.options.pluginRunner
-          ? (input) => this.options.pluginRunner!.collectExecutorRuntimeEnv(input)
-          : undefined,
-      },
-      ...args,
-    );
+    return buildInjectedRuntimeEnvImpl(buildInjectedRuntimeEnvDeps(this), ...args);
   }
 
   private async ensureGraphCustomNodeWorktree(
@@ -1446,38 +1383,21 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: planning worktree acquisition FNXC lives on ensure-task-worktree-for-planning.ts. */
   public async ensureTaskWorktreeForPlanning(taskId: string): Promise<string | null> {
-    return ensureTaskWorktreeForPlanningImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        getWorkspaceConfig: () => this.workspaceConfig,
-        setWorkspaceConfig: (cfg) => { this.workspaceConfig = cfg; },
-        ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
-      },
-      taskId,
-    );
+    return ensureTaskWorktreeForPlanningImpl(buildEnsureTaskWorktreeForPlanningDeps(this), taskId);
   }
 
   private async prepareGraphNodeExecution(
     ...args: FacadeRestArgs<typeof prepareGraphNodeExecutionImpl>
   ): Promise<void> {
-    return prepareGraphNodeExecutionImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
-      },
-      ...args,
-    );
+    return prepareGraphNodeExecutionImpl(buildPrepareGraphNodeExecutionDeps(this), ...args);
   }
 
-  private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
+  private async finalizeMergeConfirmedWorkflowGraphTask(
+    ...args: FacadeRestArgs<typeof finalizeMergeConfirmedWorkflowGraphTaskImpl>
+  ): Promise<boolean> {
     return finalizeMergeConfirmedWorkflowGraphTaskImpl(
-      {
-        ...facadeFields(this, ["rootDir", "store"]),
-        ...facadeMethods(this, ["getRunContextFor"]),
-      },
-      taskId,
-      reason,
+      buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(this),
+      ...args,
     );
   }
 
@@ -1714,14 +1634,7 @@ export class TaskExecutor {
   private createTaskUpdateTool(
     ...args: FacadeRestArgs<typeof createTaskUpdateToolImpl>
   ): ToolDefinition {
-    return createTaskUpdateToolImpl(
-      {
-        store: this.store,
-        resolveTaskCustomFieldDefs: (id) => this.resolveTaskCustomFieldDefs(id),
-        loopRecoveryState: this.loopRecoveryState,
-      },
-      ...args,
-    );
+    return createTaskUpdateToolImpl(buildCreateTaskUpdateToolDeps(this), ...args);
   }
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {
@@ -1998,27 +1911,15 @@ export class TaskExecutor {
   private async normalizeReclaimableWorktreePath(
     ...args: FacadeRestArgs<typeof normalizeReclaimableWorktreePath>
   ): Promise<string> {
-    return normalizeReclaimableWorktreePath(
-      {
-        ...facadeFields(this, ["rootDir", "store"]),
-        ...facadeMethods(this, ["hasActiveWorktreeBinding", "isLiveCleanupRefusal"]),
-      },
-      ...args,
-    );
+    return normalizeReclaimableWorktreePath(buildNormalizeReclaimableWorktreePathDeps(this), ...args);
   }
 
-  private async tryFreshWorktreeAfterLiveConflict(input: {
-    conflictPath: string;
-    branch: string;
-    taskId: string;
-    startPoint?: string;
-    attemptNumber?: number;
-    allowSiblingBranchRename: boolean;
-    settings: Partial<Settings>;
-  }): Promise<{ path: string; branch: string }> {
+  private async tryFreshWorktreeAfterLiveConflict(
+    ...args: FacadeRestArgs<typeof tryFreshWorktreeAfterLiveConflict>
+  ): Promise<{ path: string; branch: string }> {
     return tryFreshWorktreeAfterLiveConflict(
       buildTryFreshWorktreeAfterLiveConflictDeps(this, bindTryCreateWorktree(this)),
-      input,
+      ...args,
     );
   }
 
@@ -2080,20 +1981,10 @@ export class TaskExecutor {
     );
   }
 
-  private async removeOwnWorktreeWithReconcile(input: {
-    worktreePath: string;
-    settings: Settings;
-    taskId: string;
-    reason: RemovalReason;
-    audit?: Parameters<typeof removeWorktree>[0]["audit"];
-  }): Promise<void> {
-    return removeOwnWorktreeWithReconcile(
-      {
-        ...facadeFields(this, ["rootDir", "store"]),
-        ...facadeMethods(this, ["reconcileSelfOwnedBeforeRemove", "hasActiveWorktreeBinding"]),
-      },
-      input,
-    );
+  private async removeOwnWorktreeWithReconcile(
+    ...args: FacadeRestArgs<typeof removeOwnWorktreeWithReconcile>
+  ): Promise<void> {
+    return removeOwnWorktreeWithReconcile(buildRemoveOwnWorktreeWithReconcileDeps(this), ...args);
   }
 
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */

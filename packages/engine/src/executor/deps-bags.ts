@@ -956,4 +956,149 @@ export function buildResumeOrphanedDeps(host: any, processWideGraphRouting: Set<
     ]),
   };
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-04:30:
+Additional one-liner facade deps bags for remaining multi-line TaskExecutor wrappers.
+*/
+export function buildSignalTaskCompleteDeps(host: any): any {
+  return {
+    store: host.store,
+    capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    reflectionService: host.options.reflectionService,
+    onComplete: host.options.onComplete,
+  };
+}
+
+export function buildTriggerPostTaskReflectionCaptureDeps(host: any): any {
+  return {
+    store: host.store,
+    capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    reflectionService: host.options.reflectionService,
+  };
+}
+
+export function buildParkApprovalSuspensionDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "approvalSuspended"]),
+    ...facadeMethods(host, ["getRunContextFor", "clearPausedAborted"]),
+  };
+}
+
+export function buildResumeApprovalAfterUnwindDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "approvalResumeAfterUnwind"]),
+    ...facadeMethods(host, ["resolveResumeLanes", "dispatchUnpauseResume"]),
+  };
+}
+
+export function buildHandoffTaskToReviewDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "generateCompletionFeatureVideo"]),
+  };
+}
+
+export function buildActiveSessionBookkeepingDeps(host: any): any {
+  return {
+    rootDir: host.rootDir,
+    activeSessions: host.activeSessions,
+    activeStepExecutors: host.activeStepExecutors,
+    ...facadeFields(host, [
+      "activeStepExecutorSeenSteeringIds", "activeWorkflowStepSessions", "activeWorkflowStepSessionSeenSteeringIds",
+    ]),
+    effectiveColumnAgentByTask: host.effectiveColumnAgentByTask,
+    graphRouting: host.graphRouting,
+    graphExecuteSelfRequeued: host.graphExecuteSelfRequeued,
+    ...facadeMethods(host, ["getActiveWorktreePaths", "acquireSessionRegistryPath"]),
+  };
+}
+
+export function buildAcquireSessionRegistryPathDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, ["hasLiveTaskSessionSurface"]),
+  };
+}
+
+export function buildGetAutoRecoveryDispatcherDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    autoRecoveryDispatcher: host.options.autoRecoveryDispatcher,
+  };
+}
+
+export function buildEnsureTaskWorktreeForPlanningDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    getWorkspaceConfig: () => host.workspaceConfig,
+    setWorkspaceConfig: (cfg: unknown) => { host.workspaceConfig = cfg; },
+    ensureGraphCustomNodeWorktree: (t: unknown, s: unknown, nodeId: string, refresh?: boolean) =>
+      host.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
+  };
+}
+
+export function buildPrepareGraphNodeExecutionDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "ensureGraphCustomNodeWorktree"]),
+  };
+}
+
+export function buildCreateTaskUpdateToolDeps(host: any): any {
+  return {
+    store: host.store,
+    resolveTaskCustomFieldDefs: (id: string) => host.resolveTaskCustomFieldDefs(id),
+    loopRecoveryState: host.loopRecoveryState,
+  };
+}
+
+export function buildRemoveOwnWorktreeWithReconcileDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, ["reconcileSelfOwnedBeforeRemove", "hasActiveWorktreeBinding"]),
+  };
+}
+
+export function buildNormalizeReclaimableWorktreePathDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, ["hasActiveWorktreeBinding", "isLiveCleanupRefusal"]),
+  };
+}
+
+export function buildResolveEffectivePrincipalIdDeps(host: any): any {
+  return {
+    graphSeamGoverningNodeId: host.graphSeamGoverningNodeId,
+    graphColumnAgentResolver: host.graphColumnAgentResolver,
+  };
+}
+
+export function buildInjectedRuntimeEnvDeps(host: any): any {
+  return {
+    rootDir: host.rootDir,
+    collectExecutorRuntimeEnv: host.options.pluginRunner
+      ? (input: unknown) => host.options.pluginRunner.collectExecutorRuntimeEnv(input)
+      : undefined,
+  };
+}
+
+export function buildGetAuthoritativeAssignedAgentDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    agentStore: host.options.agentStore,
+    getAuthoritativeAssignedAgentStore: () => host.authoritativeAssignedAgentStore,
+    setAuthoritativeAssignedAgentStore: (s: unknown) => { host.authoritativeAssignedAgentStore = s; },
+  };
+}
+
+export function buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, ["getRunContextFor"]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
