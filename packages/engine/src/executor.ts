@@ -845,19 +845,9 @@ export class TaskExecutor {
   }
 
   private async cleanupMergeStateForReverification(
-    task: Task,
-    logMessage: string,
-    options?: { preserveVerificationFailureCount?: boolean },
-  ): Promise<Task> {
-    return cleanupMergeStateForReverificationImpl(
-      {
-        ...this.storeRunContextDeps(),
-        reopenLastStepForRevision: (id, t) => this.reopenLastStepForRevision(id, t),
-      },
-      task,
-      logMessage,
-      options,
-    );
+    ...args: FacadeRestArgs<typeof cleanupMergeStateForReverificationImpl>
+  ): Promise<Task>  {
+    return cleanupMergeStateForReverificationImpl(this.storeRunContextDeps(), ...args);
   }
 
   private async clearResumeFailureState(task: Task): Promise<void> {
@@ -1058,20 +1048,9 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: optional-step budget + replan-cap FNXC on request-pre-merge-optional-step-fix.ts + park-plan-review-replan-cap.ts. */
   private async parkPlanReviewReplanCapExhausted(
-    taskId: string,
-    capLabel: string,
-    currentCount: number,
-    feedback: string,
-  ): Promise<void> {
-    return parkPlanReviewReplanCapExhaustedImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      taskId,
-      capLabel,
-      currentCount,
-      feedback,
-    );
+    ...args: FacadeRestArgs<typeof parkPlanReviewReplanCapExhaustedImpl>
+  ): Promise<void>  {
+    return parkPlanReviewReplanCapExhaustedImpl(this.storeRunContextDeps(), ...args);
   }
 
   private async requestPreMergeOptionalStepFix(
@@ -1942,20 +1921,9 @@ export class TaskExecutor {
    * Returns a structured result indicating whether all commands passed.
    */
   private async runExecutorDeterministicVerification(
-    task: Task,
-    worktreePath: string,
-    settings: Settings,
-    extraEnv?: NodeJS.ProcessEnv,
-  ): Promise<VerificationResult> {
-    return runExecutorDeterministicVerificationImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      task,
-      worktreePath,
-      settings,
-      extraEnv,
-    );
+    ...args: FacadeRestArgs<typeof runExecutorDeterministicVerificationImpl>
+  ): Promise<VerificationResult>  {
+    return runExecutorDeterministicVerificationImpl(this.storeRunContextDeps(), ...args);
   }
 
   private async attemptExecutorVerificationFix(
