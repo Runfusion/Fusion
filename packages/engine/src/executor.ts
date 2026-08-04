@@ -1,57 +1,34 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
-import { type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep, type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel } from "@fusion/core";
-import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
-import { AgentStore } from "@fusion/core";
-import { resolvePlannerLanes } from "./execution/replan-target.js";
-import type { WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, TaskMoveLanes } from "@fusion/core";
-import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
-import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflows/workflow-node-handlers.js";
-import type { WorkflowBranchPersistence } from "./workflows/workflow-graph-branches.js";
-import type {
-  WorkflowStepInstancePersistence,
-} from "./workflows/workflow-graph-foreach.js";
 import {
-
-  type ForeachActiveContext,
-  type WorkflowLegacySeams,
-} from "./workflows/workflow-node-handlers.js";
+  AgentStore,
+  type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep,
+  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
+  type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel,
+  type WorkflowIr, type WorkflowFieldDefinition, type WorkflowColumnAgent, type TaskMoveLanes,
+  type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult,
+} from "@fusion/core";
+import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
+import { resolvePlannerLanes } from "./execution/replan-target.js";
+import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
+import type { ParseStepsHandlerDeps, CodeNodeRunner, ForeachActiveContext, WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
+import type { WorkflowBranchPersistence } from "./workflows/workflow-graph-branches.js";
+import type { WorkflowStepInstancePersistence } from "./workflows/workflow-graph-foreach.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
-import type {
-  PreparedWorktree,
-  WorkflowRuntimePrimitives,
-} from "./execution/runtime-primitives.js";
+import type { PreparedWorktree, WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
-import { type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult } from "@fusion/core";
 import { type VerificationResult } from "./execution/verification-utils.js";
 import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
 import { ModelRegistry, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
-import {
-  dropPreHeldExecutorSlot,
-} from "./concurrency/concurrency.js";
-// FNXC:Workspace 2026-06-21-15:00: F5/F8 — wire in the previously dead workspace-path helpers.
-// `normalizeRepoRelPath` is the single shared scope-path normalizer (F8); `deriveRepoScopeSubset`
-// maps the task's repo-prefixed declared File Scope to a repo-LOCAL subset so the per-repo scope-leak
-// filter reuses the SAME always-allowed/scope-match surface as the non-workspace path (F5). One-way
-// executor→workspace-paths edge (workspace-paths imports nothing).
+import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
+/* FNXC:Workspace 2026-06-21-15:00: F5/F8 workspace-path helpers are consumed via free peels / pure-bindings, not direct imports here. */
 import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
-import {
-  activeSessionRegistry,
-  type ActiveSessionKind,
-} from "./agents/active-session-registry.js";
-// CLI Agent Executor (U7): task ↔ CLI session orchestration seam.
-import {
-  CliTaskSession,
-} from "./cli-agent/task-session.js";
+import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
+import { CliTaskSession } from "./cli-agent/task-session.js";
 import { BranchConflictError, BranchCrossContaminationError } from "./execution/branch-conflicts.js";
-
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
-import {
-  type RunTaskStepResult,
-} from "./execution/step-runner.js";
-// FNXC:MergerUnification 2026-06-21-19:05: the foundation branch imported `acquireWorkspaceRepoWorktree` here but never used it in executor.ts (the agent tool wraps it via agent-tools.ts), which fails lint on the inherited base. Removed until master-plan U1 re-adds it together with its per-repo acquisition usage.
-
+import type { RunTaskStepResult } from "./execution/step-runner.js";
 import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
@@ -229,7 +206,7 @@ import {
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
-import { wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
+import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
 export async function __runConfiguredCommandForTests(
   command: string,
@@ -690,20 +667,10 @@ export class TaskExecutor {
     registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session);
   }
 
-  /**
-   * Deregister a subagent session that has finished naturally. The reviewer's
-   * own `finally` block disposes the session — this just removes it from the
-   * map.
-   */
   private unregisterSubagentSession(taskId: string, session: AgentSession): void {
     unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session);
   }
 
-  /**
-   * Dispose all subagent sessions for a task and remove them from the map.
-   * Called by the kill paths (move-out-of-in-progress, pause, global pause)
-   * so subagents stop alongside the main session.
-   */
   private disposeSubagentsForTask(taskId: string, reason: string): void {
     disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason);
   }
@@ -795,27 +762,12 @@ export class TaskExecutor {
     return !forwardTargets.includes(to);
   }
 
-  /**
-   * FN-5256: register an in-flight disposal so a subsequent dispatch (task:moved
-   * → in-progress) can await it before acquiring/creating a worktree. Swallows
-   * errors so a failed disposal doesn't poison the map; surfaces them via the
-   * executor log instead.
-   */
+  /** FN-5256: register in-flight disposal so re-dispatch awaits prior session reap. */
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void {
     trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal);
   }
 
-  /**
-   * FN-5256: synchronously await session disposal so callers (e.g. pause-before-park)
-   * can rely on the worktree-bound shells being reaped before they return. Mirrors
-   * `abortInFlightTaskWork`, but awaits the async `abort()` / `terminateAllSessions()`
-   * calls instead of fire-and-forget.
-   */
-  /*
-  FNXC:CodeOrganization 2026-08-04-02:10:
-  Thin facades over awaitAbortInFlight / abortAllInFlight (U4). Shared field/method bags
-  replace hand-written this-bindings so hard-cancel deps stay one compact block.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-02:10: awaitAbort / abortAllInFlight thin facades (U4). */
   async awaitAbortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): Promise<void> {
     return awaitAbortInFlightTaskWorkImpl(
       buildAwaitAbortInFlightTaskWorkDeps(this),
@@ -833,13 +785,11 @@ export class TaskExecutor {
   }
 
   abortAllSessionBash(): void {
-     
     abortAllSessionBashImpl({
       ...facadeFields(this, [
         "activeSessions", "childSessions", "activeStepExecutors",
       ]),
     });
-     
   }
 
   /**
@@ -907,11 +857,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * FNXC:PlannerOversight 2026-07-13-23:05:
-   * Wire session-advisor live log flush after ProjectEngine starts (options are
-   * captured at TaskExecutor construction time; this setter updates the callback).
-   */
+  /* FNXC:PlannerOversight 2026-07-13-23:05: session-advisor flush setter (options captured at construct). */
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void {
     this.options = { ...this.options, onExecutorLogFlushed: cb };
   }
@@ -921,42 +867,14 @@ export class TaskExecutor {
     private rootDir: string,
     private options: TaskExecutorOptions = {},
   ) {
-    /*
-    FNXC:CodeOrganization 2026-08-03-22:40:
-    Constructor lifecycle wiring lives in wire-executor-lifecycle.ts (U4 peel).
-    */
-    const wired = wireExecutorLifecycle({
-      store: this.store,
-      rootDir: this.rootDir,
-      options: this.options,
-      ...facadeFields(this, [
-        "activeConfiguredCommandControllers", "activeSessions", "activeStepExecutorSeenSteeringIds",
-        "activeStepExecutors", "activeSubagentSessions", "activeWorkflowGraphAbortControllers",
-        "activeWorkflowStepSessionSeenSteeringIds", "activeWorkflowStepSessions",
-        "approvalResumeAfterUnwind", "approvalSuspended", "effectiveColumnAgentByTask", "executing",
-        "graphColumnAgentResolver", "graphRouting", "graphSeamGoverningNodeId", "loopRecoveryState",
-        "pendingTaskDisposals", "recoveringCompleted", "spawnedAgents", "stuckAborted",
-        "userCanceledTaskIds", "workflowLifecycleMovesInFlight",
-      ]),
-      ...facadeMethods(this, [
-        "awaitAbortInFlightTaskWork", "clearWorkflowRerunWatchdog", "deleteActiveWorkflowStepSession",
-        "dispatchUnpauseResume", "disposeSubagentsForTask", "execute", "executeReviewHandoff",
-        "getAssignedAgentRuntimeConfig", "getModelRegistry", "getRunContextFor",
-        "isBackwardMoveOutOfPlanning", "markPausedAborted", "releasePreExecutionWorktree",
-        "removeOwnWorktreeWithReconcile", "resetMergeStateIfNeeded", "resolveResumeLanes",
-        "terminateAllChildren", "trackTaskDisposal",
-      ]),
-    });
+    /* FNXC:CodeOrganization 2026-08-04-04:00: constructor wiring via buildWireExecutorLifecycleDeps (U4). */
+    const wired = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
     this.unregisterTaskMoveDisposer = wired.unregisterTaskMoveDisposer;
     this.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
     this.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-04-02:25:
-  Shared store + getRunContextFor deps bag for free-fn facades (U4). Most peeled
-  lifecycle helpers need exactly these two; one helper keeps call sites one-liners.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-02:25: shared store + getRunContextFor deps bag for free-fn facades. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any {
     return {
@@ -1410,29 +1328,20 @@ export class TaskExecutor {
    */
   private graphSeamSkillName = new Map<string, string>();
 
-  /** Tasks currently being orchestrated by the graph runner. Process-wide for
-   *  the same reason as executingTaskLock (FN-4811): duplicate execute()
-   *  invocations can arrive from different TaskExecutor instances in one
-   *  process (engine restart race, hybrid runtimes), and the graph runner does
-   *  not hold the executing-task lock between seams. */
+  /** FN-4811 process-wide graph routing (cross-instance execute() races). */
   private get graphRouting(): Set<string> {
     return TaskExecutor.processWideGraphRouting;
   }
 
   private static processWideGraphRouting = new Set<string>();
 
-  /** Wired by the runtime to ProjectEngine.onMerge — resolves with the merge outcome. */
+  /** Wired by the runtime to ProjectEngine.onMerge. */
   private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
 
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void {
     this.mergeRequester = requestMerge;
   }
 
-  /**
-   * Route a task through the workflow graph interpreter when eligible.
-   * Returns true when the graph owned the task to a terminal disposition
-   * (completed or failed); false when the legacy pipeline should run.
-   */
   private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
     return executeWorkflowGraphImpl(buildExecuteWorkflowGraphDeps(this), task, opts);
   }
@@ -1441,12 +1350,7 @@ export class TaskExecutor {
     return buildBranchPersistenceImpl({ store: this.store });
   }
 
-  /**
-   * Build the store-backed WorkflowStepInstancePersistence for graph-owned
-   * foreach runs (KTD-6, U3/U4 seam). Returns undefined when the store predates
-   * the instance CRUD methods (the SQLite migration is U4) so the sub-walk stays
-   * fully in-memory — purely additive, same posture as buildBranchPersistence.
-   */
+  /** Graph foreach instance persistence (KTD-6); undefined on pre-CRUD stores. */
   private buildStepInstancePersistence(): WorkflowStepInstancePersistence | undefined {
     return buildStepInstancePersistenceImpl({ store: this.store });
   }
@@ -1468,23 +1372,12 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Resolve which artifact/parser governs a graph-owned task's step list from its
-   * workflow's `parse-steps` declaration (KTD-12). Returns undefined for legacy
-   * tasks (no parse-steps node) so reconcile/resume keep their unchanged behavior.
-   * Used by reconcile read-through to know which artifact backs the step source.
-   */
+  /** KTD-12 parse-steps artifact/parser for graph-owned step lists (undefined = legacy). */
   private resolveTaskStepSource(ir: WorkflowIr | undefined): { artifact: string; parser: string } | undefined {
     return resolveTaskStepSourceImpl(ir);
   }
 
-  /**
-   * Resolve the custom field definitions declared by a task's selected workflow
-   * (KTD-13) so the executor prompt can surface the schema and current values to
-   * the agent. Pure read; degrades to undefined on any resolution failure (no
-   * selection, missing/corrupt definition, older store) so prompt-building never
-   * throws and legacy tasks see no custom-fields section.
-   */
+  /** KTD-13 workflow custom field defs for prompt surface (fail-soft → undefined). */
   private async resolveTaskCustomFieldDefs(taskId: string): Promise<WorkflowFieldDefinition[] | undefined> {
     return resolveTaskCustomFieldDefsImpl({ store: this.store }, taskId);
   }
@@ -2444,11 +2337,6 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Attempt to fix verification failures by spawning a dedicated AI fix agent.
-   * Follows the pattern established by the merger's attemptInMergeVerificationFix.
-   * Returns true if verification passes after the fix attempt, false otherwise.
-   */
   private async attemptExecutorVerificationFix(
     task: Task,
     worktreePath: string,
@@ -2475,11 +2363,6 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Send a task back to in-progress after verification failure.
-   * Injects failure feedback into PROMPT.md, resets steps, clears session,
-   * and schedules a move to todo → in-progress after the executing guard clears.
-   */
   private async sendTaskBackForFix(
     task: Task,
     worktreePath: string,

@@ -5,6 +5,10 @@
  * Registers task-move/archive disposers and task:moved / task:deleted /
  * task:updated / settings:updated listeners. Free function so the class
  * constructor stays a thin wire-up of deps.
+ *
+ * FNXC:CodeOrganization 2026-08-04-04:00:
+ * buildWireExecutorLifecycleDeps owns the field/method name lists so TaskExecutor's
+ * constructor is a one-liner (store/rootDir/options + facadeFields/Methods bag).
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Task, TaskStore, TaskMoveLanes, RunMutationContext } from "@fusion/core";
@@ -29,8 +33,30 @@ import { extractOwnSettings } from "./agent-binding-pure.js";
 import { formatCommentForInjection } from "./execution-prompt.js";
 import { detectReviewHandoffIntent } from "./pseudo-pause.js";
 import { createSeenSteeringIds } from "./task-predicates.js";
+import { facadeFields, facadeMethods } from "./facade-methods.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Field names collected from TaskExecutor for lifecycle listeners. */
+const WIRE_LIFECYCLE_FIELDS = [
+  "activeConfiguredCommandControllers", "activeSessions", "activeStepExecutorSeenSteeringIds",
+  "activeStepExecutors", "activeSubagentSessions", "activeWorkflowGraphAbortControllers",
+  "activeWorkflowStepSessionSeenSteeringIds", "activeWorkflowStepSessions",
+  "approvalResumeAfterUnwind", "approvalSuspended", "effectiveColumnAgentByTask", "executing",
+  "graphColumnAgentResolver", "graphRouting", "graphSeamGoverningNodeId", "loopRecoveryState",
+  "pendingTaskDisposals", "recoveringCompleted", "spawnedAgents", "stuckAborted",
+  "userCanceledTaskIds", "workflowLifecycleMovesInFlight",
+] as const;
+
+/** Method names bound from TaskExecutor for lifecycle listeners. */
+const WIRE_LIFECYCLE_METHODS = [
+  "awaitAbortInFlightTaskWork", "clearWorkflowRerunWatchdog", "deleteActiveWorkflowStepSession",
+  "dispatchUnpauseResume", "disposeSubagentsForTask", "execute", "executeReviewHandoff",
+  "getAssignedAgentRuntimeConfig", "getModelRegistry", "getRunContextFor",
+  "isBackwardMoveOutOfPlanning", "markPausedAborted", "releasePreExecutionWorktree",
+  "removeOwnWorktreeWithReconcile", "resetMergeStateIfNeeded", "resolveResumeLanes",
+  "terminateAllChildren", "trackTaskDisposal",
+] as const;
 
 export type WireExecutorLifecycleDeps = {
   store: TaskStore;
@@ -96,6 +122,24 @@ export type WireExecutorLifecycleResult = {
   unregisterArchiveWorktreeDisposer: (() => void) | undefined;
   unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
 };
+
+/**
+ * Build lifecycle deps from a TaskExecutor-shaped host (store/rootDir/options + maps/methods).
+ * Keeps the constructor free of the field/method name lists.
+ * Host is `object` because TaskExecutor's store/rootDir/options are private constructor params
+ * and are not publicly assignable to a structural type with those property names.
+ */
+export function buildWireExecutorLifecycleDeps(host: object): WireExecutorLifecycleDeps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- private TaskExecutor surface
+  const h = host as any;
+  return {
+    store: h.store as TaskStore,
+    rootDir: h.rootDir as string,
+    options: h.options as TaskExecutorOptions,
+    ...facadeFields(host, WIRE_LIFECYCLE_FIELDS),
+    ...facadeMethods(host, WIRE_LIFECYCLE_METHODS),
+  } as WireExecutorLifecycleDeps;
+}
 
 export function wireExecutorLifecycle(deps: WireExecutorLifecycleDeps): WireExecutorLifecycleResult {
   /*
