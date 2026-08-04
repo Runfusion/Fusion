@@ -61,53 +61,16 @@ import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 export * from "./executor/public-reexports.js";
 import type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
 
-// Re-export for backward compatibility (tests import from executor.ts)
-export { summarizeToolArgs } from "./agents/agent-logger.js";
-export {
-  createAgentCreateTool,
-  createAgentDeleteTool,
-  createDelegateTaskTool,
-  createTaskAssignTool,
-  createGetAgentConfigTool,
-  createListAgentsTool,
-  createReadMessagesTool,
-  createUpdateAgentConfigTool,
-  createSendMessageTool,
-  createTaskCreateTool,
-  createTaskDocumentReadTool,
-  createTaskDocumentWriteTool,
-  createTaskLogTool,
-  delegateTaskParams,
-  listAgentsParams,
-  memoryAppendParams,
-  memoryGetParams,
-  memorySearchParams,
-  readMessagesParams,
-  sendMessageParams,
-  taskCreateParams,
-  taskLogParams,
-} from "./agent-tools.js";
-
-
-/** Maximum retry attempts for workflow step hard failures before giving up */
-const MAX_WORKFLOW_STEP_RETRIES = 3;
-/** Maximum in-session retries when an agent exits without calling fn_task_done(). */
-
-/*
-FNXC:SessionContention 2026-07-25-21:30:
-The contention ladder is deliberately long and slow compared with the provider-failure budget (2 fast
-retries): a lease is held for as long as the holder's own work takes — minutes, not milliseconds. Ten
-attempts backing off 5s→60s covers ~8 minutes of waiting, after which the task is left queued for
-ordinary re-dispatch rather than parked.
-*/
-/** How long to wait before recovering a completed task still stuck in in-progress. */
-const COMPLETED_TASK_WATCHDOG_MS = 60_000;
-/** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
-const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
-const MAX_WORKTREE_RETRIES = 3;
-const WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
-const MAX_AUTO_RECOVERY_ATTEMPTS = 3;
-const BRANCH_CONFLICT_TRIPWIRE_THRESHOLD = 5;
+/* FNXC:CodeOrganization 2026-08-04-02:05: Tunables live in executor/executor-constants.ts (U4). */
+import {
+  MAX_WORKFLOW_STEP_RETRIES,
+  COMPLETED_TASK_WATCHDOG_MS,
+  WORKFLOW_RERUN_WATCHDOG_MS,
+  MAX_WORKTREE_RETRIES,
+  WORKTREE_RETRY_DELAYS,
+  MAX_AUTO_RECOVERY_ATTEMPTS,
+  BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+} from "./executor/executor-constants.js";
 
 /* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
 import {
@@ -206,6 +169,7 @@ import {
   buildNonContinuableSessionDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
+import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
 
@@ -3966,11 +3930,7 @@ export class TaskExecutor {
       {
         rootDir: this.rootDir,
         store: this.store,
-        tryCreateWorktree: (
-          branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
-        ) => this.tryCreateWorktree(
-          branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename ?? false, settings ?? {},
-        ),
+        tryCreateWorktree: bindTryCreateWorktree(this),
       },
       input,
     );
@@ -3980,23 +3940,18 @@ export class TaskExecutor {
   FNXC:CodeOrganization 2026-08-03-15:10:
   Thin facades over tryCreateWorktree / handleWorktreeConflict / cleanupConflictingWorktree
   (U4 Slice B). Shared deps bag wires circular callbacks through this.
+
+  FNXC:CodeOrganization 2026-08-04-02:05:
+  Multi-arg create/conflict defaults fill via bindTryCreateWorktree / bindHandleWorktreeConflict
+  so the three call sites stay one-liners without changing arity semantics.
   */
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
     return buildWorktreeCreateConflictDeps({
       rootDir: this.rootDir,
       store: this.store,
       maxWorktreeRetries: MAX_WORKTREE_RETRIES,
-      // Multi-arg create/conflict paths need default-filling; others bind via facadeMethods.
-      handleWorktreeConflict: (
-        conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename, settings,
-      ) => this.handleWorktreeConflict(
-        conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename ?? false, settings ?? {},
-      ),
-      tryCreateWorktree: (
-        branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
-      ) => this.tryCreateWorktree(
-        branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename ?? false, settings ?? {},
-      ),
+      handleWorktreeConflict: bindHandleWorktreeConflict(this),
+      tryCreateWorktree: bindTryCreateWorktree(this),
       ...facadeMethods(this, [
         "recoverIndexLockIfStale", "recoverStaleRegistration", "cleanupStaleBranch",
         "tryFreshWorktreeAfterLiveConflict", "shouldGenerateNewWorktreeName", "cleanupConflictingWorktree",
@@ -4094,12 +4049,8 @@ export class TaskExecutor {
         rootDir: this.rootDir,
         store: this.store,
         maxWorktreeRetries: MAX_WORKTREE_RETRIES,
-        worktreeRetryDelaysMs: WORKTREE_RETRY_DELAYS,
-        tryCreateWorktree: (
-          b, p, tid, start, attempt, recoveryDepth, allowSibling, settings,
-        ) => this.tryCreateWorktree(
-          b, p, tid, start, attempt, recoveryDepth, allowSibling ?? false, settings ?? {},
-        ),
+        worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS],
+        tryCreateWorktree: bindTryCreateWorktree(this),
         ...facadeMethods(this, [
           "resolveWorktreeStartPoint", "planSquashImportFromDep",
           "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",

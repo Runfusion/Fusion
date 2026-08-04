@@ -2,7 +2,38 @@
  * FNXC:CodeOrganization 2026-08-03-20:50:
  * Non-Free public re-exports peeled from executor.ts preamble (U4).
  * Keeps TaskExecutor facade file free of pure re-export noise.
+ *
+ * FNXC:CodeOrganization 2026-08-04-02:05:
+ * Also hosts agent-tools surface re-exports (tests import from executor.ts) and
+ * summarizeToolArgs so the façade preamble is not a re-export laundry list.
  */
+
+// Re-export for backward compatibility (tests import from executor.ts)
+export { summarizeToolArgs } from "../agents/agent-logger.js";
+export {
+  createAgentCreateTool,
+  createAgentDeleteTool,
+  createDelegateTaskTool,
+  createTaskAssignTool,
+  createGetAgentConfigTool,
+  createListAgentsTool,
+  createReadMessagesTool,
+  createUpdateAgentConfigTool,
+  createSendMessageTool,
+  createTaskCreateTool,
+  createTaskDocumentReadTool,
+  createTaskDocumentWriteTool,
+  createTaskLogTool,
+  delegateTaskParams,
+  listAgentsParams,
+  memoryAppendParams,
+  memoryGetParams,
+  memorySearchParams,
+  readMessagesParams,
+  sendMessageParams,
+  taskCreateParams,
+  taskLogParams,
+} from "../agent-tools.js";
 
 export type { PausedAbortProvenance } from "./paused-abort-provenance.js";
 export {
