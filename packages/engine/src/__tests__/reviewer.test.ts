@@ -517,6 +517,11 @@ describe("reviewStep — spec review type", () => {
       "# Task: KB-050\n\n## Mission\nDo something great",
     );
 
+    /*
+     * FNXC:PlanReviewPromptBoundary 2026-08-04-06:35:
+     * A spec session must carry the mandatory holistic policy and batch every
+     * independently discoverable blocker, without inheriting code-diff rules.
+     */
     expect(capturedPrompt).toContain("Evaluate this PROMPT.md specification");
     expect(capturedPrompt).toContain("## Mandatory Plan Review Procedure");
     expect(capturedPrompt).toContain("all independently discoverable blocking findings");

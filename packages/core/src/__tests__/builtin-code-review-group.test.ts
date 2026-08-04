@@ -43,6 +43,11 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(prompt).not.toContain('"verdict":"FAIL"');
     expect(prompt).toMatch(/git diff/);
     expect(prompt).toMatch(/out of scope/i);
+    /*
+     * FNXC:CodeReviewSurfaceCoverage 2026-08-04-06:35:
+     * The built-in gate must trace requirements through production entry points,
+     * temporal state, and every UI/API/CLI/agent consumer rather than diff only.
+     */
     expect(prompt).toContain("requirements ledger");
     expect(prompt).toContain("real production entry point");
     expect(prompt).toContain("## Symptom Verification");

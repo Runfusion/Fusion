@@ -194,7 +194,9 @@ describe("adding a dependency never parks a card in a deleted column", () => {
         workflowStepId: "plan-review",
         workflowStepName: "Plan Review",
         status,
-        completedAt: "2026-08-04T01:00:00.000Z",
+        ...(status === "pending"
+          ? { startedAt: "2026-08-04T01:00:00.000Z", leaseOwner: "planner:old-episode" }
+          : { completedAt: "2026-08-04T01:00:00.000Z" }),
       };
       const { store, row } = harness({
         column: "todo",
@@ -211,6 +213,47 @@ describe("adding a dependency never parks a card in a deleted column", () => {
           supersededReason: "dependency-change",
         }),
       ]);
+    },
+  );
+
+  it.each([
+    ["null", null],
+    ["empty", []],
+    ["unrelated replacement", [{
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      status: "passed",
+      completedAt: "2026-08-04T02:00:00.000Z",
+    }]],
+  ] as const)(
+    "retains the superseded prior Plan Review when a combined patch supplies %s workflow results",
+    async (label, workflowStepResults) => {
+      const oldPlanReview = {
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "passed" as const,
+        completedAt: "2026-08-04T01:00:00.000Z",
+      };
+      const { store, row } = harness({
+        column: "todo",
+        dependencies: [],
+        workflowStepResults: [oldPlanReview],
+      }, DEFAULT_IR);
+
+      await run(store, { dependencies: ["FN-2"], workflowStepResults });
+
+      expect(row.workflowStepResults).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          ...oldPlanReview,
+          supersededAt: expect.any(String),
+          supersededReason: "dependency-change",
+        }),
+      ]));
+      if (label === "unrelated replacement") {
+        expect(row.workflowStepResults).toEqual(expect.arrayContaining([
+          expect.objectContaining({ workflowStepId: "code-review", status: "passed" }),
+        ]));
+      }
     },
   );
 

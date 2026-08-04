@@ -245,6 +245,11 @@ export function createSmokeHtml() {
     </section>
   `;
 
+  /*
+  FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
+  Mirror both exhausted-review operator surfaces so Blink can prove the card badge and detail banner
+  remain visible and contained at mobile and desktop widths, not merely that fixture HTML loaded.
+  */
   const planApprovalFixture = `
     <section data-smoke="plan-review-replan-cap-approval" aria-label="Plan Review approval escalation" style="width:min(680px, calc(100vw - var(--space-xl))); margin:auto; padding:var(--space-lg);">
       <article class="card" data-column="todo">
@@ -1167,6 +1172,44 @@ async function runSmokeChecks(page, pageUrl) {
     };
   })()`);
 
+  const collectPlanApprovalLayout = () => evaluate(page, `(() => {
+    const fixture = document.querySelector('[data-smoke="plan-review-replan-cap-approval"]');
+    const card = fixture.querySelector('.card');
+    const badge = fixture.querySelector('.awaiting-approval--plan-review-replan-cap');
+    const banner = fixture.querySelector('.detail-plan-approval-banner--replan-cap');
+    const rect = (node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+    };
+    return {
+      viewportWidth: window.innerWidth,
+      documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      fixtureOverflow: fixture.scrollWidth - fixture.clientWidth,
+      fixture: rect(fixture),
+      card: rect(card),
+      badge: rect(badge),
+      banner: rect(banner),
+      badgeReason: badge.getAttribute('data-awaiting-approval-reason'),
+      bannerReason: banner.getAttribute('data-awaiting-approval-reason'),
+    };
+  })()`);
+
+  const planApprovalLayoutPasses = (layout) => layout.documentOverflow <= 1
+    && layout.fixtureOverflow <= 1
+    && layout.fixture.width > 0
+    && layout.card.height > 0
+    && layout.banner.height > 0
+    && layout.badge.width > 0
+    && layout.card.left >= layout.fixture.left - 1
+    && layout.card.right <= layout.fixture.right + 1
+    && layout.banner.left >= layout.fixture.left - 1
+    && layout.banner.right <= layout.fixture.right + 1
+    && layout.badge.left >= layout.card.left - 1
+    && layout.badge.right <= layout.card.right + 1
+    && layout.banner.top >= layout.card.bottom - 1
+    && layout.badgeReason === "plan-review-replan-cap"
+    && layout.bannerReason === "plan-review-replan-cap";
+
   const mobileResolvedGithubTableLayout = await collectResolvedGithubTableLayout();
   assertSmokeResult(
     "resolved GitHub table wraps long content without mobile page overflow",
@@ -1187,6 +1230,12 @@ async function runSmokeChecks(page, pageUrl) {
     await captureFixtureScreenshot(page, '[data-smoke="plan-review-replan-cap-approval"]', planApprovalMobileScreenshotPath);
     log(`saved Plan Review approval mobile screenshot to ${planApprovalMobileScreenshotPath}`);
   }
+  const mobilePlanApprovalLayout = await collectPlanApprovalLayout();
+  assertSmokeResult(
+    "Plan Review approval card and detail banner stay visible and contained on mobile",
+    planApprovalLayoutPasses(mobilePlanApprovalLayout),
+    JSON.stringify(mobilePlanApprovalLayout),
+  );
 
   const mobileAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();
   assertSmokeResult(
@@ -1828,6 +1877,12 @@ async function runSmokeChecks(page, pageUrl) {
     await captureFixtureScreenshot(page, '[data-smoke="plan-review-replan-cap-approval"]', planApprovalDesktopScreenshotPath);
     log(`saved Plan Review approval desktop screenshot to ${planApprovalDesktopScreenshotPath}`);
   }
+  const desktopPlanApprovalLayout = await collectPlanApprovalLayout();
+  assertSmokeResult(
+    "Plan Review approval card and detail banner stay visible and contained on desktop",
+    planApprovalLayoutPasses(desktopPlanApprovalLayout),
+    JSON.stringify(desktopPlanApprovalLayout),
+  );
 
   const desktopAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();
   assertSmokeResult(

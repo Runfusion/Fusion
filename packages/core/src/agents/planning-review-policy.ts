@@ -1,9 +1,8 @@
-/**
- * Shared planning and plan-review procedures.
- *
- * These policies keep the planner and the graph-owned Plan Review gate aligned:
- * planning does the repository research and completeness pass up front, while
- * review evaluates the whole artifact and reports every blocker in one round.
+/*
+ * FNXC:PlanningReviewCompleteness 2026-08-04-06:35:
+ * Planning and Plan Review share one completeness contract: planning researches
+ * and maps the full requirement ledger up front, while review evaluates the whole
+ * artifact and batches every independently discoverable blocker in one round.
  */
 export const PLANNING_COMPLETENESS_POLICY = `## Mandatory Planning Completeness Procedure
 

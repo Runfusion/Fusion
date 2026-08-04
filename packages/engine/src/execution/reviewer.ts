@@ -907,6 +907,11 @@ function buildReviewRequest(
     "",
   ];
 
+  /*
+   * FNXC:PlanReviewPromptBoundary 2026-08-04-06:35:
+   * Only spec reviews receive the holistic Plan Review procedure; code reviews
+   * use their dedicated production-reachability and implementation evidence gate.
+   */
   if (reviewType === "spec") {
     parts.push(
       PLAN_REVIEW_COMPLETENESS_POLICY,

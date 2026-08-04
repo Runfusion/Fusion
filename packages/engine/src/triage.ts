@@ -3015,7 +3015,7 @@ export class TriageProcessor {
             }
 
             /*
-            FNXC:PlanReviewReplan 2026-07-13-00:00:
+            FNXC:PlanReviewReplan 2026-08-04-06:35 (FN-8768):
             When re-planning and neither an explicit user/AI re-specification comment nor a
             user comment supplied feedback, fall back to the most recent Plan Review REVISE
             verdict recorded in `workflowStepResults`. The pre-execution Plan Review gate
@@ -3036,6 +3036,9 @@ export class TriageProcessor {
               feedback = latestPlanReviewRevise?.notes ?? latestPlanReviewRevise?.output ?? feedback;
             }
 
+            // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): Exclude
+            // the latest feedback because it renders in Revision Feedback; retain
+            // the bounded earlier decisions as a non-duplicated convergence ledger.
             planReviewFeedbackHistory = collectPlanReviewFeedbackHistory(currentTask.workflowStepResults, {
               exclude: feedback,
               includeCurrent: false,
@@ -5204,6 +5207,10 @@ Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Ori
 
   let revisionSection = "";
   if (isRevision) {
+    // FNXC:PlanningPromptConvergence 2026-08-04-06:35 (FN-8768): Prior review
+    // decisions are first-class revision input. Rendering them separately from
+    // the latest feedback prevents resolved requirements from disappearing;
+    // the full-spec completeness rerun below catches blockers beyond the delta.
     const cumulativeReviewLedger = (planningContext?.planReviewFeedbackHistory ?? [])
       .map((entry) => entry.trim())
       .filter(Boolean)

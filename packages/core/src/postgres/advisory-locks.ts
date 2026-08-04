@@ -33,6 +33,21 @@ export class PlanningLifecycleLockTransportError extends Error {
 const DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS = 5_000;
 
 type DedicatedPostgresClient = ReturnType<typeof postgres>;
+type PostgresBackendIdentity = {
+  database: string;
+  host: string | null;
+  port: number | null;
+  cluster: string | null;
+};
+
+async function readPostgresBackendIdentity(client: DedicatedPostgresClient): Promise<PostgresBackendIdentity[]> {
+  return await client<PostgresBackendIdentity[]>`
+    SELECT current_database() AS database,
+           inet_server_addr()::text AS host,
+           inet_server_port() AS port,
+           current_setting('cluster_name', true) AS cluster
+  `;
+}
 
 async function runBoundedTransportPhase<T>(
   client: DedicatedPostgresClient,
@@ -144,12 +159,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
       `Planning lifecycle lock session setup timed out after ${timeoutMs}ms`,
       "Planning lifecycle lock could not establish its dedicated session",
       async () => {
-        const rows = await client<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
-          SELECT current_database() AS database,
-                 inet_server_addr()::text AS host,
-                 inet_server_port() AS port,
-                 current_setting('cluster_name', true) AS cluster
-        `;
+        const rows = await readPostgresBackendIdentity(client);
         await client`SELECT set_config('lock_timeout', ${`${timeoutMs}ms`}, false)`;
         return rows;
       },
@@ -178,12 +188,7 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
           timeoutMs,
           `Planning lifecycle lock backend identity check timed out after ${timeoutMs}ms`,
           "Planning lifecycle lock could not verify the resolved backend server identity",
-          () => operationalClient<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
-            SELECT current_database() AS database,
-                   inet_server_addr()::text AS host,
-                   inet_server_port() AS port,
-                   current_setting('cluster_name', true) AS cluster
-          `,
+          () => readPostgresBackendIdentity(operationalClient),
         );
         const expected = operationalIdentity[0];
         const actual = identity[0];

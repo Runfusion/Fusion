@@ -32,9 +32,11 @@ export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
     && result.bypassReason.trim().length > 0;
 }
 
-/**
- * Preserve Plan Review history while retiring every gate projection (including
- * an in-flight lease) from the planning episode invalidated by a new dependency.
+/*
+ * FNXC:PlanReviewSupersession 2026-08-04-06:35:
+ * A dependency change preserves Plan Review history for audit while retiring
+ * every current gate projection, including an in-flight lease. Superseded
+ * evidence belongs to the old planning episode and cannot satisfy the new gate.
  */
 export function supersedePlanReviewResults(
   results: WorkflowStepResult[] | undefined,

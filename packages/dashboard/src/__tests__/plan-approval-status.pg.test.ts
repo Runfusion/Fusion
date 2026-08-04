@@ -175,21 +175,24 @@ pgDescribe("plan approval status persistence", () => {
       return originalUpdate(id, updates, runContext);
     }) as typeof store.updateTask;
 
-    const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
-    expect(interrupted.status).toBe(500);
-    let persisted = await store.getTask(task.id);
-    expect(persisted.column).toBe("todo");
-    expect(persisted.status).toBe("awaiting-approval");
-    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
-      workflowStepId: "plan-review",
-      status: "skipped",
-      bypassedBy: "dashboard-operator",
-    }));
+    try {
+      const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+      expect(interrupted.status).toBe(500);
+      const persisted = await store.getTask(task.id);
+      expect(persisted.column).toBe("todo");
+      expect(persisted.status).toBe("awaiting-approval");
+      expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+        workflowStepId: "plan-review",
+        status: "skipped",
+        bypassedBy: "dashboard-operator",
+      }));
+    } finally {
+      store.updateTask = originalUpdate;
+    }
 
-    store.updateTask = originalUpdate;
     const retried = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
     expect(retried.status).toBe(200);
-    persisted = await store.getTask(task.id);
+    const persisted = await store.getTask(task.id);
     expect(persisted.status).toBeUndefined();
     expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
       workflowStepId: "plan-review",
@@ -199,18 +202,57 @@ pgDescribe("plan approval status persistence", () => {
   });
 
   it("rejects an exhausted Plan Review from a split workflow's review column", async () => {
-    const task = await store.createTask({ description: "Reject legacy split-column review" });
-    await store.writeTaskWorkflowSelection(task.id, "builtin:legacy-coding", []);
+    const task = await store.createTask({ description: "Reject split-column review" });
+    const splitWorkflow = await store.createWorkflowDefinition({
+      name: "Split Plan Review rejection",
+      ir: {
+        ...BUILTIN_CODING_WORKFLOW_IR,
+        id: "split-plan-review-rejection",
+        nodes: BUILTIN_CODING_WORKFLOW_IR.nodes.map((node) =>
+          node.id === "plan-review" ? { ...node, column: "in-review" } : node
+        ),
+      },
+    });
+    await store.selectTaskWorkflow(task.id, splitWorkflow.id);
+    const intakeColumn = BUILTIN_CODING_WORKFLOW_IR.columns.find((column) =>
+      column.traits.some((trait) => trait.trait === "intake")
+    )!.id;
+    await store.moveTask(task.id, "in-review", {
+      moveSource: "engine",
+      recoveryRehome: true,
+      bypassGuards: true,
+    });
     await store.updateTask(task.id, {
       status: "awaiting-approval",
       awaitingApprovalReason: "plan-review-replan-cap",
-    } as never);
+    });
+
+    const originalUpdate = store.updateTask.bind(store);
+    let interruptFinalClear = true;
+    store.updateTask = (async (id, updates, runContext) => {
+      if (interruptFinalClear && updates.status === null && updates.approvedPlanFingerprint === null) {
+        interruptFinalClear = false;
+        throw new Error("simulated final reject clear interruption");
+      }
+      return originalUpdate(id, updates, runContext);
+    }) as typeof store.updateTask;
+
+    try {
+      const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
+      expect(interrupted.status).toBe(500);
+      const partiallyRejected = await store.getTask(task.id);
+      expect(partiallyRejected.column).toBe(intakeColumn);
+      expect(partiallyRejected.status).toBe("awaiting-approval");
+      expect(partiallyRejected.awaitingApprovalReason).toBe("plan-review-replan-cap");
+    } finally {
+      store.updateTask = originalUpdate;
+    }
 
     const response = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
 
     expect(response.status).toBe(200);
     const persisted = await store.getTask(task.id);
-    expect(persisted.column).toBe("todo");
+    expect(persisted.column).toBe(intakeColumn);
     expect(persisted.status).toBeUndefined();
   });
 
@@ -240,23 +282,29 @@ pgDescribe("plan approval status persistence", () => {
         return await originalApprovalLock(id, fn);
       };
 
-      const mutation = mutationStore.updateTaskDependencies(task.id, {
-        operation: "add",
-        dependency: dependency.id,
-      });
-      await mutationEntered.promise;
-      const approval = request(createApp(), "POST", `/api/tasks/${task.id}/${endpoint}`);
-      await approvalAttempted.promise;
-      allowMutation.release();
+      try {
+        const mutation = mutationStore.updateTaskDependencies(task.id, {
+          operation: "add",
+          dependency: dependency.id,
+        });
+        await mutationEntered.promise;
+        const approval = request(createApp(), "POST", `/api/tasks/${task.id}/${endpoint}`);
+        await approvalAttempted.promise;
+        allowMutation.release();
 
-      await mutation;
-      const response = await approval;
-      expect(response.status).toBe(400);
-      expect(response.body.error).toContain("awaiting-approval");
-      const persisted = await store.getTask(task.id);
-      expect(persisted.status).toBe("needs-replan");
-      expect(persisted.dependencies).toContain(dependency.id);
-      expect(persisted.approvedPlanFingerprint).toBeUndefined();
+        await mutation;
+        const response = await approval;
+        expect(response.status).toBe(400);
+        expect(response.body.error).toContain("awaiting-approval");
+        const persisted = await store.getTask(task.id);
+        expect(persisted.status).toBe("needs-replan");
+        expect(persisted.dependencies).toContain(dependency.id);
+        expect(persisted.approvedPlanFingerprint).toBeUndefined();
+      } finally {
+        allowMutation.release();
+        mutationStore.withPlanningLifecycleLock = originalMutationLock;
+        store.withPlanningLifecycleLock = originalApprovalLock;
+      }
     },
   );
 
@@ -284,22 +332,28 @@ pgDescribe("plan approval status persistence", () => {
       return await originalMutationLock(id, fn);
     };
 
-    const approval = request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
-    await approvalEntered.promise;
-    const mutation = mutationStore.updateTaskDependencies(task.id, {
-      operation: "add",
-      dependency: dependency.id,
-    });
-    await mutationAttempted.promise;
-    allowApproval.release();
+    try {
+      const approval = request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+      await approvalEntered.promise;
+      const mutation = mutationStore.updateTaskDependencies(task.id, {
+        operation: "add",
+        dependency: dependency.id,
+      });
+      await mutationAttempted.promise;
+      allowApproval.release();
 
-    const response = await approval;
-    expect(response.status).toBe(200);
-    await mutation;
-    const persisted = await store.getTask(task.id);
-    expect(persisted.status).toBe("needs-replan");
-    expect(persisted.dependencies).toContain(dependency.id);
-    expect(persisted.approvedPlanFingerprint).toBeUndefined();
+      const response = await approval;
+      expect(response.status).toBe(200);
+      await mutation;
+      const persisted = await store.getTask(task.id);
+      expect(persisted.status).toBe("needs-replan");
+      expect(persisted.dependencies).toContain(dependency.id);
+      expect(persisted.approvedPlanFingerprint).toBeUndefined();
+    } finally {
+      allowApproval.release();
+      store.withPlanningLifecycleLock = originalApprovalLock;
+      mutationStore.withPlanningLifecycleLock = originalMutationLock;
+    }
   });
 
   it("keeps the approval hold when cap metadata has no failed REVISE result", async () => {

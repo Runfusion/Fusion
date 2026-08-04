@@ -156,8 +156,11 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
     const limit = getTaskActivityLogEntryLimit();
     if (log.length > limit) log.splice(0, log.length - limit);
     await tx.update(schema.project.tasks)
-      // This diagnostic must not make an old planning handoff look fresh to
-      // recovery grace windows. The marker timestamp records audit recency.
+      /*
+       * FNXC:PlanningHandoffRecovery 2026-08-04-06:35:
+       * This diagnostic must not make an old planning handoff look fresh to
+       * recovery grace windows. The marker timestamp records audit recency.
+       */
       .set({ log })
       .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
     return true;

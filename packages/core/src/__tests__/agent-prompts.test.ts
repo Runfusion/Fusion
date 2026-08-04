@@ -62,6 +62,11 @@ describe("resolveAgentPrompt", () => {
     expect(result).not.toContain("turn it into short, actionable task specs or follow-up tickets");
   });
 
+  /*
+  FNXC:ReviewPromptBoundaries 2026-08-04-06:35:
+  The base reviewer remains role-neutral. Planning and code-review completeness
+  policies are injected only at their workflow seams, avoiding mixed contracts.
+  */
   it("returns the correct built-in prompt for reviewer when no config provided", () => {
     const result = resolveAgentPrompt("reviewer");
     expect(result).toBeTruthy();
@@ -346,8 +351,11 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
-    // The compact completeness ledger adds one bounded paragraph while the
-    // relative-size assertion above keeps fast mode materially leaner.
+    /*
+     * FNXC:FastPlanningPrompt 2026-08-04-06:35:
+     * The compact ledger may add one bounded paragraph, while both relative and
+     * absolute caps keep fast planning materially smaller than the full prompt.
+     */
     expect(fastPrompt.length).toBeLessThan(7500);
     expect(fastPrompt.split("\n").length).toBeLessThan(120);
   });

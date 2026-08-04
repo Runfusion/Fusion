@@ -393,6 +393,9 @@ describe("browser-verification workflow-step browser capability", () => {
   });
 
   it("gives graph-owned Plan Review cumulative feedback and an attempt-three convergence ratchet", async () => {
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): The prompt must
+    // carry full durable reviewer prose (not truncated activity previews), in
+    // chronological order, while deriving the next attempt from raw results.
     const store = createMockStore();
     const executor = makeExecutor(store);
     const cap = captureSession();
@@ -550,6 +553,8 @@ describe("browser-verification workflow-step browser capability", () => {
   });
 
   it("counts repeated identical Plan Review feedback as distinct attempts while deduplicating display", async () => {
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): Display
+    // deduplication is readability-only and must not reduce admission budgets.
     const store = createMockStore();
     const executor = makeExecutor(store);
     const cap = captureSession();

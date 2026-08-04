@@ -31,14 +31,18 @@ export function classifyPersistedPlanHandoff(
   },
 ): PersistedPlanHandoffKind | null {
   if (task.paused || task.userPaused || options.hasLivePlanningWork) return null;
+  // FNXC:PlanningHandoffRecovery 2026-08-04-06:35 (FN-8768): Manual approval
+  // parks and execution evidence outrank stale planning projections. In particular,
+  // a retained Plan Review approval must never make an operator-held or already-
+  // executing task eligible for planning-handoff recovery.
+  if (task.awaitingApprovalReason) return null;
+  if (task.worktree || task.firstExecutionAt || task.executionStartedAt) return null;
   if (task.status === "planning") return "planning";
   if (task.status != null) return null;
   if (task.workflowStepResults?.some(isPlanReviewSatisfied)) return "approved-null";
   if (task.approvedPlanFingerprint != null) return null;
-  if (task.awaitingApprovalReason) return null;
   if (task.workflowStepResults?.length) return null;
   if (options.requirePersistedSteps && !task.steps?.length) return null;
-  if (task.worktree || task.firstExecutionAt || task.executionStartedAt) return null;
 
   const staleMs = options.legacyStaleMs ?? 0;
   const updatedAt = new Date(task.updatedAt).getTime();

@@ -57,7 +57,11 @@ function repeatedPlanReviewResult(attemptCount: number): NonNullable<Task["workf
   };
   return {
     ...attempt,
-    priorAttempts: Array.from({ length: attemptCount - 1 }, () => ({ ...attempt })),
+    planReviewAttemptCount: attemptCount,
+    priorAttempts: Array.from(
+      { length: Math.min(attemptCount - 1, 15) },
+      () => ({ ...attempt }),
+    ),
   };
 }
 
@@ -424,12 +428,14 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     const cappedStore = createMockStore();
     const exhaustedTask = task({
-      postReviewFixCount: 2,
+      postReviewFixCount: 20,
       column: "in-progress",
-      log: [revisionLog("Plan Review", "plan-review", 1), revisionLog("Plan Review", "plan-review", 2)],
+      // The rendered/audit window is capped at 15, but the persisted scalar
+      // must still exhaust a valid finite budget above that cap.
+      workflowStepResults: [repeatedPlanReviewResult(21)],
     });
     cappedStore.getTask.mockResolvedValue(exhaustedTask);
-    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 2 });
+    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 20 });
     const cappedExecutor = new TaskExecutor(cappedStore, "/tmp/test");
 
     await expect((cappedExecutor as any).requestPreMergeOptionalStepFix(exhaustedTask.id, exhaustedTask, {

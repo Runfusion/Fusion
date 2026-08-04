@@ -11,6 +11,7 @@ import { dirname } from "node:path";
 import {
   PLAN_REVIEW_GROUP_ID,
   type Task,
+  type TaskStore,
   type WorkflowStepResult,
 } from "@fusion/core";
 
@@ -48,16 +49,19 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
 
   async function seedDependency(id: string): Promise<void> {
     await h.store().createTaskWithReservedId(
-      { description: `dependency ${id}`, column: "done" } as never,
-      { taskId: id, applyDefaultWorkflowSteps: false } as never,
+      { description: `dependency ${id}`, column: "done" },
+      { taskId: id, applyDefaultWorkflowSteps: false },
     );
   }
 
-  async function seedPlannedTask(id: string, overrides: Partial<Task> = {}): Promise<Task> {
+  async function seedPlannedTask(
+    id: string,
+    overrides: Parameters<TaskStore["updateTask"]>[1] = {},
+  ): Promise<Task> {
     const store = h.store();
     await store.createTaskWithReservedId(
-      { description: `planned ${id}`, column: "todo" } as never,
-      { taskId: id, applyDefaultWorkflowSteps: true } as never,
+      { description: `planned ${id}`, column: "todo" },
+      { taskId: id, applyDefaultWorkflowSteps: true },
     );
     const prompt = `# ${id}\n\n## Context\nReporter #3325 plan.\n\n## Steps\n\n### Step 1: Implement\n- [ ] work\n`;
     const promptPath = getPromptPath(store.getTasksDir(), id);
@@ -75,30 +79,38 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
   }
 
   it.each([
-    ["dependency mutation API", async (taskId: string, depId: string) => {
-      await h.store().updateTaskDependencies(taskId, { operation: "add", dependency: depId });
-    }],
-    ["combined task update API", async (taskId: string, depId: string) => {
-      await h.store().updateTask(taskId, {
-        dependencies: [depId],
-        nodeId: null,
-        // Stale fields from the same dashboard PATCH must not undo invalidation.
-        status: null,
-        approvedPlanFingerprint: "stale-writer",
-        workflowStepResults: [planReviewPass()],
-      });
-    }],
-  ])("%s invalidates the current approval episode", async (_label, mutate) => {
-    const taskId = _label.startsWith("dependency") ? "FN-8768-A" : "FN-8768-B";
-    const depId = _label.startsWith("dependency") ? "FN-8768-DA" : "FN-8768-DB";
-    await seedDependency(depId);
+    {
+      label: "dependency mutation API",
+      taskId: "FN-8768-A",
+      dependencyId: "FN-8768-DA",
+      mutate: async (taskId: string, depId: string) => {
+        await h.store().updateTaskDependencies(taskId, { operation: "add", dependency: depId });
+      },
+    },
+    {
+      label: "combined task update API",
+      taskId: "FN-8768-B",
+      dependencyId: "FN-8768-DB",
+      mutate: async (taskId: string, depId: string) => {
+        await h.store().updateTask(taskId, {
+          dependencies: [depId],
+          nodeId: null,
+          // Stale fields from the same dashboard PATCH must not undo invalidation.
+          status: null,
+          approvedPlanFingerprint: "stale-writer",
+          workflowStepResults: [planReviewPass()],
+        });
+      },
+    },
+  ])("$label invalidates the current approval episode", async ({ taskId, dependencyId, mutate }) => {
+    await seedDependency(dependencyId);
     await seedPlannedTask(taskId);
 
-    await mutate(taskId, depId);
+    await mutate(taskId, dependencyId);
 
     h.store().taskCache.delete(taskId);
     const updated = await h.store().getTask(taskId);
-    expect(updated).toMatchObject({ status: "needs-replan", dependencies: [depId] });
+    expect(updated).toMatchObject({ status: "needs-replan", dependencies: [dependencyId] });
     expect(updated.approvedPlanFingerprint).toBeUndefined();
     expect(updated.workflowStepResults).toEqual([
       expect.objectContaining({
@@ -113,7 +125,7 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
   it("serializes dependency-first and lifecycle-first orderings without continuation theft", async () => {
     await seedDependency("FN-8768-DC");
     const task = await seedPlannedTask("FN-8768-C", {
-      approvedPlanFingerprint: null as never,
+      approvedPlanFingerprint: null,
       workflowStepResults: [],
     });
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -142,21 +154,29 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
     const ownerReleased = new Promise<void>((resolve) => { releaseOwner = resolve; });
     let ownerEntered!: () => void;
     const entered = new Promise<void>((resolve) => { ownerEntered = resolve; });
+    const completionOrder: string[] = [];
     const owner = h.store().withPlanningLifecycleLock(task.id, async () => {
+      completionOrder.push("owner-entered");
       ownerEntered();
       await ownerReleased;
-    });
+      completionOrder.push("owner-released");
+    }).then(() => { completionOrder.push("owner-completed"); });
     await entered;
-    let mutationSettled = false;
     const mutation = h.store().updateTaskDependencies(task.id, {
       operation: "add",
       dependency: "FN-8768-DC",
-    }).finally(() => { mutationSettled = true; });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(mutationSettled).toBe(false);
+    }).then(() => { completionOrder.push("dependency-mutation-completed"); });
+    expect(completionOrder).toEqual(["owner-entered"]);
+    completionOrder.push("release-requested");
     releaseOwner();
     await Promise.all([owner, mutation]);
+    expect(completionOrder).toEqual([
+      "owner-entered",
+      "release-requested",
+      "owner-released",
+      "owner-completed",
+      "dependency-mutation-completed",
+    ]);
 
     h.store().taskCache.delete(task.id);
     expect(await h.store().getTask(task.id)).toMatchObject({
@@ -169,7 +189,7 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
   it("rechecks after acquiring the lifecycle lock when dependency mutation lands after discovery", async () => {
     await seedDependency("FN-8768-DE");
     const task = await seedPlannedTask("FN-8768-E", {
-      approvedPlanFingerprint: null as never,
+      approvedPlanFingerprint: null,
       workflowStepResults: [],
       // No parsed steps: this is an ordinary continuation-owned null episode,
       // not the conservative legacy lifecycle-recovery shape.
@@ -207,7 +227,7 @@ pgDescribe("FN-8768 planning dependency release interactions", () => {
     await seedDependency("FN-8768-DD");
     const task = await seedPlannedTask("FN-8768-D", {
       status: "needs-replan",
-      approvedPlanFingerprint: null as never,
+      approvedPlanFingerprint: null,
       workflowStepResults: [],
     });
 

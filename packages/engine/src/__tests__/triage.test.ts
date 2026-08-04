@@ -458,6 +458,7 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("### PR1");
     expect(prompt).toContain("Round one: enumerate every lifecycle writer.");
     expect(prompt).toContain("### PR2");
+    expect(prompt).toContain("Round two: define the lock order and both race orderings.");
     expect(prompt).toContain("rerun the full Mandatory Planning Completeness Procedure");
     expect(prompt).toContain("surgical");
     expect(prompt).toContain(existingPrompt);

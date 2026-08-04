@@ -107,6 +107,7 @@ import {
   collectPlanReviewFeedbackHistory,
   countPlanReviewRevisionAttempts,
   formatPlanReviewRevisionFeedback,
+  nextPlanReviewAttemptCount,
   PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT,
 } from "./plan-review-feedback-history.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
@@ -531,6 +532,9 @@ function buildGraphPlanReviewConvergenceContext(
   task: Pick<Task, "workflowStepResults">,
   revisionKey: string,
 ): string {
+  // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): Retry numbering uses
+  // the uncapped durable attempt ledger, while prompt prose uses the separately
+  // bounded, deduplicated same-episode decision history.
   const priorAttemptCount = countPlanReviewRevisionAttempts(task.workflowStepResults, { revisionKey });
   const attempt = priorAttemptCount + 1;
   if (attempt <= 1) return "";
@@ -5661,10 +5665,9 @@ export class TaskExecutor {
         return false;
       }
       const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
-      // The terminal Plan Review result is persisted before remediation runs.
-      // Count only retained REVISE results from the current planning episode;
-      // activity-log counts span dependency invalidations and are not an
-      // approval-episode authority.
+      // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): The terminal
+      // result is persisted before remediation. Budget from the durable raw
+      // same-episode count, not the capped prompt history or cross-episode log.
       const currentEpisodeAttemptCount = countPlanReviewRevisionAttempts(
         liveTask.workflowStepResults,
         { revisionKey },
@@ -6745,9 +6748,18 @@ export class TaskExecutor {
             */
             const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
               || result.workflowStepName === "Plan Review";
+            const resultToPersist = isPlanReviewResult
+              ? {
+                  ...result,
+                  planReviewAttemptCount: nextPlanReviewAttemptCount(
+                    live?.workflowStepResults?.find((existing) => existing.workflowStepId === result.workflowStepId),
+                    result,
+                  ),
+                }
+              : result;
             const existing = upsertWorkflowStepResult(
               live?.workflowStepResults,
-              result,
+              resultToPersist,
               isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
             );
             await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));

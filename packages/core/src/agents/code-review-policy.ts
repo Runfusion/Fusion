@@ -1,10 +1,8 @@
-/**
- * Shared completeness procedure for code-review agents.
- *
- * This is intentionally compact, while preserving the highest-value invariants:
- * requirements completeness,
- * production reachability, exact symptom coverage, temporal-state reasoning,
- * and a fresh validation pass before approval.
+/*
+ * FNXC:CodeReviewCompleteness 2026-08-04-06:35:
+ * Code Review must prove every contract row through production reachability and
+ * exact symptom coverage, reason about temporal state, and make a fresh
+ * adversarial pass before approval.
  */
 export const CODE_REVIEW_COMPLETENESS_POLICY = `## Mandatory Code Review Procedure
 

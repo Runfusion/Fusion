@@ -441,9 +441,10 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       task.log ??= [];
       let movedToTriage = false;
       /*
-      FNXC:WorkflowLifecycleColumns 2026-08-02-02:30 (fleet — GUARD AND DESTINATION together):
-      A new dependency on a card still resting in the HOLD lane sends it back to INTAKE for
-      re-specification. Both ends were literals, so this never fired on a renamed board — and converting
+      FNXC:WorkflowLifecycleColumns 2026-08-04-06:35 (FN-8768 — GUARD AND DESTINATION together):
+      A new dependency on a card still resting in the HOLD lane, or parked after exhausting Plan
+      Review in a distinct review column, sends it back to INTAKE for re-specification. Both ends
+      were literals, so this never fired on a renamed board — and converting
       only the guard would have written an `intake` column the board may not declare directly into the row,
       which is worse than not firing: the store would hold a card in a column that does not exist.
 
@@ -454,13 +455,17 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       const holdColumn = respecifyLifecycle?.hold ?? "todo";
       const intakeColumn = respecifyLifecycle?.intake;
       const respecifyFromColumn = task.column;
+      const isPlanReviewCapPark = task.status === "awaiting-approval"
+        && task.awaitingApprovalReason === "plan-review-replan-cap";
+      const shouldRespecify = hasNewDependencies
+        && (task.column === holdColumn || isPlanReviewCapPark);
       /*
-      FNXC:PlanningDependencyReseed 2026-08-04-00:43:
+      FNXC:PlanningDependencyReseed 2026-08-04-06:35:
       A new dependency invalidates every pre-execution approval artifact even
       when merged intake/hold lanes make this a same-column transition. Leaving
       the old fingerprint would let an unchanged prompt bypass manual approval.
       */
-      if (hasNewDependencies && task.column === holdColumn) {
+      if (shouldRespecify) {
         task.status = "needs-replan";
         task.approvedPlanFingerprint = undefined;
         task.awaitingApprovalReason = undefined;
@@ -469,7 +474,7 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
           task.updatedAt,
         );
       }
-      if (hasNewDependencies && task.column === holdColumn && intakeColumn !== undefined) {
+      if (shouldRespecify && intakeColumn !== undefined) {
         task.column = intakeColumn;
         movedToTriage = true;
         /*

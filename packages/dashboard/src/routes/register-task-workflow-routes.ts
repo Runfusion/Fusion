@@ -192,20 +192,24 @@ async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Pro
 }
 
 /**
- * Plan approval normally belongs in the workflow intake lane. An exhausted Plan Review is
- * different: the graph parks it where that review node ran, and both operator decisions must be
- * accepted there. Keep approve/reject on one resolver so the UI cannot offer a choice that only
- * one endpoint understands.
+ * FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
+ * Plan approval normally belongs in workflow intake. An exhausted Plan Review stays where the
+ * review node ran, and both operator decisions must be accepted there. Keep approve/reject on one
+ * resolver so the UI cannot offer a choice that only one endpoint understands.
  */
-async function resolvePlanApprovalColumnForTask(store: TaskStore, task: Task): Promise<string> {
-  const intakeColumn = await resolveIntakeColumnForTask(store, task.id);
-  if (task.awaitingApprovalReason !== "plan-review-replan-cap") return intakeColumn;
-
+async function resolvePlanApprovalColumnsForTask(
+  store: TaskStore,
+  task: Task,
+): Promise<{ approvalColumn: string; intakeColumn: string }> {
   try {
     const ir = await resolveWorkflowIrForTask(store, task.id);
-    return ir.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID)?.column ?? intakeColumn;
+    const intakeColumn = columnsWithFlag(ir, "intake")[0] ?? "triage";
+    const approvalColumn = task.awaitingApprovalReason === "plan-review-replan-cap"
+      ? ir.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID)?.column ?? intakeColumn
+      : intakeColumn;
+    return { approvalColumn, intakeColumn };
   } catch {
-    return intakeColumn;
+    return { approvalColumn: "triage", intakeColumn: "triage" };
   }
 }
 
@@ -4025,9 +4029,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
         /*
+         * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
          * The task read belongs inside the same lifecycle lock used by dependency mutation.
-         * Otherwise an approval request can validate an old awaiting-approval snapshot, wait for
-         * a dependency re-seed to publish needs-replan, and then erase that newer state.
+         * Otherwise approval can validate an old hold, wait for dependency re-seed to publish
+         * needs-replan, and then erase that newer state.
          */
         const task = await scopedStore.getTask(req.params.id);
 
@@ -4042,7 +4047,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         was STUCK with no operator action able to release it. The guard did not stop
         firing; it started firing on everything.
         */
-        const approveColumn = await resolvePlanApprovalColumnForTask(scopedStore, task);
+        const { approvalColumn: approveColumn } = await resolvePlanApprovalColumnsForTask(scopedStore, task);
         /*
         The resolved column ONLY — the legacy-`triage` disjunct this comment
         used to justify is gone (PR #2614 review — greptile: the comment outlived the code).
@@ -4057,9 +4062,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
         const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
         /*
-         * A split-column approval keeps the hold set while moving to the rebound
-         * lane. Accept that lane on retry so a process/database failure after the
-         * move cannot strand a safely blocked, half-finished operator decision.
+         * FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
+         * A split-column approval keeps the hold set while moving to rebound. Accept that lane on
+         * retry so a failure after the move cannot strand a safely blocked partial decision.
          */
         if (task.column !== approveColumn && task.column !== reboundColumn) {
           throw badRequest(`Task must be in the '${approveColumn}' column to approve plan`);
@@ -4146,6 +4151,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
         if (task.column !== reboundColumn) {
           /*
+           * FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
            * Persist the decision evidence while the approval hold remains set,
            * then preserve both across the rebound. Every interruption point is
            * therefore non-schedulable and retryable; the final update below is
@@ -4195,13 +4201,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
-        // Match approval's fresh-read invariant: a stale reject must not clear needs-replan.
+        /*
+         * FNXC:PlanningDependencyReseed 2026-08-04-06:35 FN-8768:
+         * Match approval's locked fresh-read invariant: a stale reject must not clear needs-replan.
+         */
         const task = await scopedStore.getTask(req.params.id);
 
-        // Same P0 as approve-plan above: resolve the intake column rather than naming
-        // `triage`, which #2515 removed from the default lineage.
-        const rejectColumn = await resolvePlanApprovalColumnForTask(scopedStore, task);
-        if (task.column !== rejectColumn) {
+        /*
+         * FNXC:WorkflowResolvedColumns 2026-08-04-06:35 FN-8768:
+         * Match approve-plan by resolving the workflow-owned approval column rather than naming
+         * legacy `triage`; exhausted review may deliberately park outside intake.
+         */
+        const { approvalColumn: rejectColumn, intakeColumn } = await resolvePlanApprovalColumnsForTask(scopedStore, task);
+        const retryingPartialCapRejection = task.awaitingApprovalReason === "plan-review-replan-cap"
+          && task.column === intakeColumn;
+        if (task.column !== rejectColumn && !retryingPartialCapRejection) {
           throw badRequest(`Task must be in the '${rejectColumn}' column to reject plan`);
         }
         if (task.status !== "awaiting-approval") {
@@ -4223,6 +4237,19 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         const { join } = await import("node:path");
         const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
         await rm(promptPath, { force: true });
+
+        if (task.column !== intakeColumn) {
+          /*
+           * FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
+           * Keep awaiting-approval durable while a split-column cap park is rehomed to planning
+           * intake. If the final clear fails, the safely blocked intake row can retry this route;
+           * no interruption exposes rejected content to planning or execution.
+           */
+          await scopedStore.moveTask(task.id, intakeColumn, {
+            preserveStatus: true,
+            workflowMoveSource: "plan-approval",
+          });
+        }
 
         // Clear status to return to normal triage state
         /*

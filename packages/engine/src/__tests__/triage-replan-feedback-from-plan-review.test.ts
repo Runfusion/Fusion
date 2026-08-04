@@ -260,7 +260,10 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(capturedPrompt).toContain("Cumulative Revision Decision Ledger");
     expect(capturedPrompt).toContain("### PR1");
     expect(capturedPrompt).toContain("PRIOR-PLAN-REVIEW-FEEDBACK");
-    expect(capturedPrompt).not.toMatch(/### PR\d+[\s\S]*EXPLICIT-COMMENT-FEEDBACK/);
+    const ledger = capturedPrompt?.split("## Cumulative Revision Decision Ledger\n", 2)[1]
+      ?.split("\n\nRevise the specification above", 1)[0];
+    expect(ledger).toBeDefined();
+    expect(ledger).not.toContain("EXPLICIT-COMMENT-FEEDBACK");
     expect(capturedPrompt).toContain("Existing Specification");
     expect(capturedPrompt).toContain("Keep this under surgical revision");
   });
