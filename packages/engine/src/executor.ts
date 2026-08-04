@@ -1,28 +1,24 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
 import {
-  AgentStore,
   type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings,
-  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type ThinkingLevel,
+  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
   type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes,
-  type ApprovalRequestStore, type WorkspaceConfig,
+  type ApprovalRequestStore,
 } from "@fusion/core";
-import type { ImplementationExit } from "./executor/implementation-exit.js";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
 import type { WorkflowGraphTaskRunResult } from "./workflows/workflow-graph-task-runner.js";
-import type { ForeachActiveContext, WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
+import type { WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
 import { ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
 import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
-import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import type { RunAuditor } from "./util/run-audit.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 
 export * from "./executor/public-reexports.js";
-import type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
 import * as constants from "./executor/executor-constants.js";
 import * as pure from "./executor/pure-bindings.js";
 import * as impl from "./executor/impl-bindings.js";
@@ -41,50 +37,10 @@ import "./executor/executor-product-fnxc.js";
 import "./executor/executor-method-docs.js";
 export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-options.js";
 import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./executor/task-executor-options.js";
-export class TaskExecutor {
-  private activeWorktrees = new Map<string, Set<string>>();
+import { TaskExecutorState } from "./executor/task-executor-state.js";
+export class TaskExecutor extends TaskExecutorState {
   private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
   private getActiveWorktreePaths(taskId: string): ReturnType<typeof impl.getActiveWorktreePathsImpl> { return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId); }
-  private executing = new Set<string>();
-  private resumingUnpaused = new Set<string>();
-  private approvalSuspended = new Set<string>();
-  private approvalResumeAfterUnwind = new Set<string>();
-  private recoveringCompleted = new Set<string>();
-  private capturedReflectionTaskIds = new Set<string>();
-  private workflowRerunPending = new Set<string>();
-  private workflowLifecycleMovesInFlight = new Set<string>();
-  private pendingTaskDisposals = new Map<string, Promise<void>>();
-  private unregisterTaskMoveDisposer: (() => void) | undefined;
-  private unregisterArchiveWorktreeDisposer: (() => void) | undefined;
-  private unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
-  private activeSessions = new Map<string, ActiveExecutorSessionState>();
-  private activeStepExecutors = new Map<string, StepSessionExecutor>();
-  private activeStepExecutorSeenSteeringIds = new Map<string, Set<string>>();
-  private effectiveColumnAgentByTask = new Map<string, string>();
-  private activeWorkflowStepSessions = new Map<string, AgentSession>();
-  private activePlanningWorkflowSessions = new Set<string>();
-  private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
-  private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
-  private authoritativeAssignedAgentStore: AgentStore | null = null;
-  private activeWorkflowGraphAbortControllers = new Map<string, AbortController>();
-  private activeCliTaskSessions = new Map<string, CliTaskSession>();
-  private readonlyWorkflowStepAuditDone = false;
-  private activeSubagentSessions = new Map<string, Set<AgentSession>>();
-  private pausedAborted = new Set<string>();
-  private pausedAbortProvenance = new Map<string, PausedAbortProvenance>();
-  private completionFinalizedTaskIds = new Set<string>();
-  private depAborted = new Set<string>();
-  private stuckAborted = new Map<string, boolean>();
-  private userCanceledTaskIds = new Set<string>();
-  private graphExecuteSelfRequeued = new Set<string>();
-  private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
-  private spawnedAgents = new Map<string, Set<string>>();
-  private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; totalTokens: number }>();
-  private branchConflictErrorCount = new Map<string, number>();
-  private completedTaskWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
-  private workflowRerunWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
-  private pendingEphemeralDeletions = new Set<string>();
-  private workspaceConfig: WorkspaceConfig | null | undefined = undefined;
   private safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(this.storeRunContextDeps(), taskId, message); }
   private markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }
   private pauseAbortMarkerDeps() { return bags.buildPauseAbortMarkerDeps(this); }
@@ -110,12 +66,6 @@ export class TaskExecutor {
   private async getExecutionPauseLabel(): ReturnType<typeof impl.getExecutionPauseLabelImpl> { return impl.getExecutionPauseLabelImpl({ store: this.store }); }
   private async shouldDeferCompletionForGlobalPause(...args: FacadeRestArgs<typeof impl.shouldDeferCompletionForGlobalPauseImpl>): ReturnType<typeof impl.shouldDeferCompletionForGlobalPauseImpl> { return impl.shouldDeferCompletionForGlobalPauseImpl(bags.buildShouldDeferCompletionForGlobalPauseDeps(this), ...args); }
   private async shouldDeferWorkflowStepCompletion(...args: FacadeRestArgs<typeof impl.shouldDeferWorkflowStepCompletionImpl>): ReturnType<typeof impl.shouldDeferWorkflowStepCompletionImpl> { return impl.shouldDeferWorkflowStepCompletionImpl(bags.buildShouldDeferWorkflowStepCompletionDeps(this), ...args); }
-  private childSessions = new Map<string, AgentSession>();
-  private totalSpawnedCount = 0;
-  private tokenCapDetector = new TokenCapDetector();
-  private _modelRegistry?: Promise<ModelRegistry>;
-  private _approvalRequestStore?: ApprovalRequestStore;
-  private currentRunContexts = new Map<string, RunMutationContext>();
   private getRunContextFor(taskId: string): RunMutationContext | undefined { return this.currentRunContexts.get(taskId); }
   private async handoffTaskToReview(...args: FacadeRestArgs<typeof impl.handoffTaskToReviewImpl>): ReturnType<typeof impl.handoffTaskToReviewImpl> { return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), ...args); }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional reviewArtifactGenerator on options
@@ -153,10 +103,10 @@ export class TaskExecutor {
   private async dispatchUnpauseResume(task: Task): ReturnType<typeof impl.dispatchUnpauseResumeImpl> { return impl.dispatchUnpauseResumeImpl(bags.buildDispatchUnpauseResumeDeps(this), task); }
   private async resumeApprovalAfterUnwindIfNeeded(...args: FacadeRestArgs<typeof impl.resumeApprovalAfterUnwindIfNeededImpl>): ReturnType<typeof impl.resumeApprovalAfterUnwindIfNeededImpl> { return impl.resumeApprovalAfterUnwindIfNeededImpl(bags.buildResumeApprovalAfterUnwindDeps(this), ...args); }
   private async resolveMcpServers(agentId?: string | null) { return impl.resolveMcpServersImpl({ store: this.store }, agentId); }
-  private outerConcurrencyClaims = new Set<string>();
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> { return impl.runWithExecutorSemaphoreImpl(bags.buildRunWithExecutorSemaphoreDeps(this), taskId, work); }
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
+    super();
     const wired = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
     this.unregisterTaskMoveDisposer = wired.unregisterTaskMoveDisposer;
     this.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
@@ -204,19 +154,8 @@ export class TaskExecutor {
   private async taskEffectiveAgentMatches(task: Task, agentId: string): ReturnType<typeof impl.taskEffectiveAgentMatchesImpl> { return impl.taskEffectiveAgentMatchesImpl(this.store, task, agentId); }
   async resumeOrphaned(): Promise<void> { return impl.resumeOrphanedImpl(bags.buildResumeOrphanedDeps(this, TaskExecutor.processWideGraphRouting)); }
   private async resolveInstructionsForRole(role: string, settings?: Settings): ReturnType<typeof impl.resolveInstructionsForRoleImpl> { return impl.resolveInstructionsForRoleImpl(bags.buildResolveInstructionsForRoleDeps(this), role, settings); }
-  private graphToolFailureRunCursors = new Map<string, number>();
-  private graphStepSessionPinned = new Set<string>();
-  private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
-  private graphStepActiveContext = new Map<string, ForeachActiveContext>();
-  private graphRethinkNarrations = new Map<string, string>();
-  private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
-  private graphUnattendedRuns = new Set<string>();
-  private graphSeamGoverningNodeId = new Map<string, string>();
-  private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
-  private graphSeamSkillName = new Map<string, string>();
   private get graphRouting(): Set<string> { return TaskExecutor.processWideGraphRouting; }
   private static processWideGraphRouting = new Set<string>();
-  private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void { this.mergeRequester = requestMerge; }
   private async executeWorkflowGraph(...args: FacadeRestArgs<typeof impl.executeWorkflowGraphImpl>): ReturnType<typeof impl.executeWorkflowGraphImpl> { return impl.executeWorkflowGraphImpl(bags.buildExecuteWorkflowGraphDeps(this), ...args); }
   private buildBranchPersistence(): ReturnType<typeof impl.buildBranchPersistenceImpl> { return impl.buildBranchPersistenceImpl({ store: this.store }); }
@@ -230,8 +169,8 @@ export class TaskExecutor {
   private buildCodeNodeRunner(): ReturnType<typeof impl.buildCodeNodeRunnerImpl> { return impl.buildCodeNodeRunnerImpl(bags.buildCodeNodeRunnerFacadeDeps(this)); }
   private buildForeachWorktreeDeps(...args: FacadeRestArgs<typeof impl.buildForeachWorktreeDepsImpl>): ReturnType<typeof impl.buildForeachWorktreeDepsImpl> { return impl.buildForeachWorktreeDepsImpl(bags.buildBuildForeachWorktreeDepsDeps(this), ...args); }
   private async applyGraphRethinkReset(...args: FacadeRestArgs<typeof impl.applyGraphRethinkResetImpl>): ReturnType<typeof impl.applyGraphRethinkResetImpl> { return impl.applyGraphRethinkResetImpl(bags.buildApplyGraphRethinkResetDeps(this), ...args); }
-  private async runImplementationPhase(...args: FacadeRestArgs<typeof impl.runImplementationPhaseImpl>): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> { return impl.runImplementationPhaseImpl(bags.buildRunImplementationPhaseDeps(this), ...args); }
-  private async runGraphTaskStep(...args: FacadeRestArgs<typeof impl.runGraphTaskStepImpl>): Promise<{ success: boolean; error?: string; exit?: ImplementationExit }> { return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args); }
+  private async runImplementationPhase(...args: FacadeRestArgs<typeof impl.runImplementationPhaseImpl>): ReturnType<typeof impl.runImplementationPhaseImpl> { return impl.runImplementationPhaseImpl(bags.buildRunImplementationPhaseDeps(this), ...args); }
+  private async runGraphTaskStep(...args: FacadeRestArgs<typeof impl.runGraphTaskStepImpl>): ReturnType<typeof impl.runGraphTaskStepImpl> { return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args); }
   private foreachActiveForTask(taskId: string, instanceId?: string): ReturnType<typeof impl.foreachActiveForTaskImpl> { return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId); }
   private async runProjectedGraphTaskStep(...args: FacadeRestArgs<typeof impl.runProjectedGraphTaskStepImpl>): ReturnType<typeof impl.runProjectedGraphTaskStepImpl> { return impl.runProjectedGraphTaskStepImpl(bags.buildRunProjectedGraphTaskStepDeps(this), ...args); }
   public createAuthoritativeWorkflowPrimitives(settings: Settings): WorkflowRuntimePrimitives { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings)).create(settings); }
@@ -260,7 +199,6 @@ export class TaskExecutor {
   private async runGraphCustomNode(...args: FacadeRestArgs<typeof impl.runGraphCustomNodeImpl>): ReturnType<typeof impl.runGraphCustomNodeImpl> { return impl.runGraphCustomNodeImpl(bags.buildRunGraphCustomNodeDeps(this), ...args); }
   private async runCliAgentNode(...args: FacadeRestArgs<typeof impl.runCliAgentNodeImpl>): ReturnType<typeof impl.runCliAgentNodeImpl> { return impl.runCliAgentNodeImpl(bags.buildRunCliAgentNodeDeps(this), ...args); }
   private async reapCliTaskSessionForHandoff(session: CliTaskSession, taskId: string): ReturnType<typeof impl.reapCliTaskSessionForHandoffImpl> { return impl.reapCliTaskSessionForHandoffImpl(session, taskId); }
-  private sessionContentionHoldAttempts = new Map<string, number>();
   private clearSessionContentionHold(taskId: string): void { this.sessionContentionHoldAttempts.delete(taskId); }
   private async holdForSessionContention(...args: FacadeRestArgs<typeof impl.holdForSessionContentionImpl>): ReturnType<typeof impl.holdForSessionContentionImpl> { return impl.holdForSessionContentionImpl(bags.buildHoldForSessionContentionDeps(this), ...args); }
   private async routeUnusableWorktreeGraphFailureToRecovery(...args: FacadeRestArgs<typeof impl.routeUnusableWorktreeGraphFailureToRecoveryImpl>): ReturnType<typeof impl.routeUnusableWorktreeGraphFailureToRecoveryImpl> { return impl.routeUnusableWorktreeGraphFailureToRecoveryImpl(bags.buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(this), ...args); }
@@ -287,10 +225,7 @@ export class TaskExecutor {
   private async evaluateTaskVerdictProviders(...args: FacadeRestArgs<typeof impl.evaluateTaskVerdictProvidersImpl>): Promise<{ ok: true } | { ok: false; message: string }> { return impl.evaluateTaskVerdictProvidersImpl({ store: this.store }, ...args); }
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): ReturnType<typeof impl.blockOuterDispatchWhenDependenciesUnmetImpl> { return impl.blockOuterDispatchWhenDependenciesUnmetImpl(this.storeRunContextDeps(), task); }
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): ReturnType<typeof impl.blockOuterDispatchWhenEphemeralDisabledImpl> { return impl.blockOuterDispatchWhenEphemeralDisabledImpl(bags.buildBlockOuterDispatchWhenEphemeralDisabledDeps(this), task); }
-  async execute(task: Task): Promise<void> {
-    try { await this.executeCore(task); }
-    finally { if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release(); }
-  }
+  async execute(task: Task): Promise<void> { try { await this.executeCore(task); } finally { if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release(); } }
   private async executeCore(task: Task): ReturnType<typeof impl.executeCoreImpl> { return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task); }
   private async runImplementation(...args: FacadeRestArgs<typeof impl.runImplementationImpl>): ReturnType<typeof impl.runImplementationImpl> { return impl.runImplementationImpl(bags.buildRunImplementationFacadeDeps(this), ...args); }
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps { return bags.buildSharedWorkerToolsDeps(this); }
