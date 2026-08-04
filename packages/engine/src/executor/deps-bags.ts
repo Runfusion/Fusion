@@ -408,4 +408,47 @@ export function buildEvaluateTaskDoneScopeLeakDeps(host: any): any {
     ]),
   };
 }
+
+export function buildScheduleCompletedTaskWatchdogDeps(
+  host: any,
+  completedTaskWatchdogMs: number,
+): any {
+  return {
+    ...facadeFields(host, [
+      "store", "completedTaskWatchdogs", "recoveringCompleted",
+      "executing", "activeSessions", "activeStepExecutors",
+      "activeWorkflowStepSessions", "resumingUnpaused",
+    ]),
+    completedTaskWatchdogMs,
+    ...facadeMethods(host, [
+      "clearCompletedTaskWatchdog", "getExecutionPauseLabel", "resolveResumeLanes",
+      "recoverCompletedTask",
+    ]),
+  };
+}
+
+export function buildDispatchUnpauseResumeDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    ...facadeFields(host, [
+      "executing", "resumingUnpaused", "recoveringCompleted",
+      "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+      "graphRouting", "approvalSuspended",
+    ]),
+    ...facadeMethods(host, [
+      "getExecutionPauseLabel", "clearResumeFailureState", "recoverApprovedStepsOnResume",
+      "recoverCompletedTask", "execute",
+    ]),
+  };
+}
+
+export function buildHoldForSessionContentionDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    getHoldAttempts: (taskId: string) => host.sessionContentionHoldAttempts.get(taskId) ?? 0,
+    setHoldAttempts: (taskId: string, attempt: number) => { host.sessionContentionHoldAttempts.set(taskId, attempt); },
+    clearHold: (taskId: string) => host.clearSessionContentionHold(taskId),
+    reexecute: (t: unknown) => host.execute(t),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

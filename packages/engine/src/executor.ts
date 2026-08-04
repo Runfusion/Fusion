@@ -177,6 +177,9 @@ import {
   buildCreateWorktreeDeps,
   buildRunRawCliCommandDeps,
   buildEvaluateTaskDoneScopeLeakDeps,
+  buildScheduleCompletedTaskWatchdogDeps,
+  buildDispatchUnpauseResumeDeps,
+  buildHoldForSessionContentionDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -1073,18 +1076,7 @@ export class TaskExecutor {
 
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
     return dispatchUnpauseResumeImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ...facadeFields(this, [
-          "executing", "resumingUnpaused", "recoveringCompleted",
-          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
-          "graphRouting", "approvalSuspended",
-        ]),
-        ...facadeMethods(this, [
-          "getExecutionPauseLabel", "clearResumeFailureState", "recoverApprovedStepsOnResume",
-          "recoverCompletedTask", "execute",
-        ]),
-      },
+      buildDispatchUnpauseResumeDeps(this),
       task,
     );
   }
@@ -1255,18 +1247,7 @@ export class TaskExecutor {
 
   private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
     scheduleCompletedTaskWatchdogImpl(
-      {
-        ...facadeFields(this, [
-          "store", "completedTaskWatchdogs", "recoveringCompleted",
-          "executing", "activeSessions", "activeStepExecutors",
-          "activeWorkflowStepSessions", "resumingUnpaused",
-        ]),
-        completedTaskWatchdogMs: COMPLETED_TASK_WATCHDOG_MS,
-        ...facadeMethods(this, [
-          "clearCompletedTaskWatchdog", "getExecutionPauseLabel", "resolveResumeLanes",
-          "recoverCompletedTask",
-        ]),
-      },
+      buildScheduleCompletedTaskWatchdogDeps(this, COMPLETED_TASK_WATCHDOG_MS),
       taskId,
       trigger,
     );
@@ -2591,13 +2572,7 @@ export class TaskExecutor {
     result: WorkflowGraphTaskRunResult,
   ): Promise<void> {
     return holdForSessionContentionImpl(
-      {
-        ...this.storeRunContextDeps(),
-        getHoldAttempts: (taskId: string) => this.sessionContentionHoldAttempts.get(taskId) ?? 0,
-        setHoldAttempts: (taskId: string, attempt: number) => { this.sessionContentionHoldAttempts.set(taskId, attempt); },
-        clearHold: (taskId: string) => this.clearSessionContentionHold(taskId),
-        reexecute: (t: Task) => this.execute(t),
-      },
+      buildHoldForSessionContentionDeps(this),
       task,
       live,
       result,
