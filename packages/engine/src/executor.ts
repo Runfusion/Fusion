@@ -2,8 +2,7 @@
 import {
   AgentStore,
   type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings,
-  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
-  type ThinkingLevel,
+  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode, type ThinkingLevel,
   type WorkflowIr, type WorkflowFieldDefinition, type WorkflowColumnAgent, type TaskMoveLanes,
   type ApprovalRequestStore, type WorkspaceConfig,
 } from "@fusion/core";
@@ -242,7 +241,7 @@ export class TaskExecutor {
   }
   /* FNXC:ReviewArtifacts 2026-07-19-10:00: best-effort feature-video before review handoff (never delays transition). */
   private async generateCompletionFeatureVideo(task: Task): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reviewArtifactGenerator is optional TaskExecutorOptions field
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional reviewArtifactGenerator on options
     return impl.generateCompletionFeatureVideoImpl({ store: this.store, options: this.options as any }, task);
   }
   private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> {
@@ -612,9 +611,7 @@ export class TaskExecutor {
   }
   /** Public authoritative-driver seam factory (same real lifecycle seams as internal graph runner). */
   public createAuthoritativeWorkflowPrimitives(settings: Settings): WorkflowRuntimePrimitives {
-    return createWorkflowRuntimePrimitiveProvider((providerSettings) =>
-      this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings),
-    ).create(settings);
+    return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings)).create(settings);
   }
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
     return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings);
@@ -898,8 +895,8 @@ export class TaskExecutor {
   private async emitWorktreeReanchoredAudit(...args: FacadeRestArgs<typeof impl.emitWorktreeReanchoredAuditImpl>): Promise<void> {
     return impl.emitWorktreeReanchoredAuditImpl(this.storeRunContextDeps(), ...args);
   }
+  /* FNXC:Workspace 2026-06-21-12:00: KTD2 flat-map each task Set to holder rows; reaper keys taskId (idempotent multi-row). */
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
-    // FNXC:Workspace 2026-06-21-12:00: KTD2 — flat-map each task's Set into one holder row per worktree path. A workspace task emits N rows; the FN-6782 reaper (self-healing.ts) and in-process-runtime adapter key purely off taskId (verified) and are idempotent across duplicate-task rows, so multi-row holders do not mis-count maxWorktrees slots.
     return impl.listWorktreeHoldersImpl(this.activeWorktrees);
   }
 
@@ -1022,9 +1019,8 @@ export class TaskExecutor {
   private async runSpawnedChild(...args: FacadeRestArgs<typeof impl.runSpawnedChildImpl>): Promise<void> {
     return impl.runSpawnedChildImpl(bags.buildRunSpawnedChildDeps(this), ...args);
   }
+  /* FNXC:CodeOrganization 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests mutating priv.totalSpawnedCount still drive free-fn path. */
   private createSpawnAgentTool(...args: FacadeRestArgs<typeof impl.createSpawnAgentToolImpl>): ToolDefinition {
-    // FNXC:CodeOrganization 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests that mutate priv.totalSpawnedCount still drive the free-fn path.
     return impl.createSpawnAgentToolImpl(bags.buildCreateSpawnAgentToolDeps(this), ...args);
   }
-
 }
