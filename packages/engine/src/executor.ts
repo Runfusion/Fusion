@@ -1,10 +1,9 @@
-// port-4040-allowlist: never kill port 4040. FNXC:CodeOrganization 2026-08-04-07:55: facade imports via task-executor-imports barrel (U4).
-export * from "./executor/public-reexports.js";
-export * from "./executor/free-reexports.js";
+// port-4040-allowlist: never kill port 4040. FNXC:CodeOrganization 2026-08-04-08:00: facade imports + single reexport barrel (U4).
+export * from "./executor/executor-reexports.js";
 import {
-  type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
-  type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants, pure, impl, bags, facadeFields, facadeMethods,
-  type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond, bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorState,
+  type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider, type AgentSession,
+  dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants, pure, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
+  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorState,
 } from "./executor/task-executor-imports.js";
 export class TaskExecutor extends TaskExecutorState {
   private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
