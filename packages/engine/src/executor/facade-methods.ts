@@ -24,6 +24,10 @@ export type FacadeRestArgs<F> = F extends (deps: any, ...args: infer A) => any ?
 /** Args after the first positional arg (store / rootDir / worktreePath) for free peels. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- first positional is host-owned
 export type FacadeAfterFirst<F> = F extends (first: any, ...args: infer A) => any ? A : never;
+
+/** Args after two fixed host positionals (rootDir, store). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- first two positionals are host-owned
+export type FacadeAfterSecond<F> = F extends (a: any, b: any, ...args: infer A) => any ? A : never;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see FNXC above
 export function facadeMethods(host: object, names: readonly string[]): any {
   const out: Record<string, (...args: unknown[]) => unknown> = {};

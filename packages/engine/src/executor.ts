@@ -24,12 +24,12 @@ import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
 import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
 import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
-import { BranchConflictError, BranchCrossContaminationError } from "./execution/branch-conflicts.js";
+import { BranchConflictError } from "./execution/branch-conflicts.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import type { RunTaskStepResult } from "./execution/step-runner.js";
-import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
+import type { RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
@@ -51,7 +51,7 @@ import {
 
 /* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
 import {
-  isTaskWorkComplete, evaluateTaskDoneRefusal,
+  isTaskWorkComplete,
   hasActiveWorktreeBinding, shouldGenerateNewWorktreeName, findActiveWorktreeOwner, isLiveCleanupRefusal,
   cleanupStaleBranch, planSquashImportFromDep, reconcileSelfOwnedBeforeRemove, emitStaleLockAudit,
   recoverIndexLockIfStale, recoverExecutorStaleRegistration, normalizeReclaimableWorktreePath, removeOwnWorktreeWithReconcile,
@@ -207,7 +207,7 @@ import {
   buildMarkPausedAbortedDeps,
   buildResumeOrphanedDeps,
 } from "./executor/deps-bags.js";
-import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst } from "./executor/facade-methods.js";
+import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
@@ -2312,8 +2312,8 @@ export class TaskExecutor {
   }
 
   private async rebaseNewWorktreeOntoRemote(
-    ...args: Parameters<typeof rebaseNewWorktreeOntoRemoteImpl> extends [any, any, ...infer R] ? R : never
-  ): Promise<void>  {
+    ...args: FacadeAfterSecond<typeof rebaseNewWorktreeOntoRemoteImpl>
+  ): Promise<void> {
     return rebaseNewWorktreeOntoRemoteImpl(this.rootDir, this.store, ...args);
   }
 
