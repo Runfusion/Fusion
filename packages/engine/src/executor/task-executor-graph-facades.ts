@@ -96,4 +96,6 @@ export abstract class TaskExecutorGraphFacades extends TaskExecutorSessionFacade
   protected async cleanupMergeStateForReverification(...args: FacadeRestArgs<typeof impl.cleanupMergeStateForReverificationImpl>): ReturnType<typeof impl.cleanupMergeStateForReverificationImpl> { return impl.cleanupMergeStateForReverificationImpl(bags.buildStoreRunContextDeps(this), ...args); }
   protected async clearResumeFailureState(task: Task): ReturnType<typeof impl.clearResumeFailureStateImpl> { return impl.clearResumeFailureStateImpl({ store: this.store }, task); }
   protected async isRequiredArtifactRecoveryProtected(task: Task): ReturnType<typeof impl.isRequiredArtifactRecoveryProtectedImpl> { return impl.isRequiredArtifactRecoveryProtectedImpl(this.store, (taskId: string) => this.resolveResumeLanes(taskId), task); }
+  protected async executeCore(task: import("@fusion/core").Task): ReturnType<typeof impl.executeCoreImpl> { return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task); }
+  protected async runImplementation(...args: FacadeRestArgs<typeof impl.runImplementationImpl>): ReturnType<typeof impl.runImplementationImpl> { return impl.runImplementationImpl(bags.buildRunImplementationFacadeDeps(this), ...args); }
 }
