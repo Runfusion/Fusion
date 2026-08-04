@@ -11,6 +11,7 @@ import type { BranchConflictHandleDeps } from "./worktree-branch-conflict-handle
 import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
 import type { NonContinuableSessionDeps } from "./non-continuable-session.js";
+import { facadeFields, facadeMethods } from "./facade-methods.js";
 
 export type BranchConflictHandleDepsSource = {
   rootDir: string;
@@ -105,5 +106,63 @@ export function buildNonContinuableSessionDeps(src: NonContinuableSessionDepsSou
     signalTaskComplete: src.signalTaskComplete,
     handoffTaskToReview: src.handoffTaskToReview,
     markGraphExecuteSelfRequeued: src.markGraphExecuteSelfRequeued,
+  };
+}
+
+/**
+ * FNXC:CodeOrganization 2026-08-04-02:40:
+ * Large graph-run deps bags peeled from TaskExecutor facades (U4). Built from the
+ * host so circular method callbacks stay on the class edge; name lists live here.
+ * processWideGraphRouting is the static TaskExecutor.processWideGraphRouting Set
+ * (same process-wide claim map the façade getter exposed).
+ */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
+export function buildExecuteWorkflowGraphDeps(host: any): any {
+  return {
+    store: host.store,
+    options: host.options as { prNodes?: unknown; [k: string]: unknown },
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    ...facadeFields(host, [
+      "activeWorkflowGraphAbortControllers", "graphColumnAgentResolver", "graphExecuteSelfRequeued",
+      "graphRethinkNarrations", "graphRouting", "graphSeamGoverningNodeId", "graphSeamSkillName",
+      "graphSeamThinkingLevel", "graphStepActiveContext", "graphStepRunOnce", "graphStepSessionPinned",
+      "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
+    ]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
+      "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
+      "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
+      "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
+      "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
+      "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
+    ]),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
+export function buildHandleGraphFailureDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    options: host.options as { stuckTaskDetector?: { untrackTask?: (taskId: string) => void }; [k: string]: unknown },
+    ...facadeFields(host, [
+      "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
+      "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
+    ]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
+      "finalizeMergeConfirmedWorkflowGraphTask", "getTaskCompletionBlocker",
+      "handleStaleInReviewParsePauseAbortReplay", "handleStaleInReviewPlanPauseAbortReplay",
+      "handoffTaskToReview", "hasLiveTaskSessionSurface", "hasTrailingConsecutiveToolFailures",
+      "holdForSessionContention", "isBenignManualMergeHoldPauseAbort",
+      "isReentrantPausedAbortedInFlightNode", "isRemediationGraphNode",
+      "isRequiredArtifactRecoveryProtected", "isRetryableBenignMergePauseAbort",
+      "parkCompletedBlockedTask", "persistTokenUsage", "reenterPausedAbortedWorkflowNode",
+      "resolveResumeLanes", "routeGraphFailureToExecutionResume", "routeGraphMergeFailureToRetry",
+      "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
+      "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
+      "safeLogEntry",
+    ]),
   };
 }

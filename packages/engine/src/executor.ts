@@ -162,6 +162,8 @@ import {
   buildWorktreeCreateConflictDeps,
   buildWorktreeInvariantDeps,
   buildNonContinuableSessionDeps,
+  buildExecuteWorkflowGraphDeps,
+  buildHandleGraphFailureDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -1871,29 +1873,7 @@ export class TaskExecutor {
    * (completed or failed); false when the legacy pipeline should run.
    */
   private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
-    return executeWorkflowGraphImpl(
-      {
-        store: this.store,
-        options: this.options as { prNodes?: unknown; [k: string]: unknown },
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        ...facadeFields(this, [
-          "activeWorkflowGraphAbortControllers", "graphColumnAgentResolver", "graphExecuteSelfRequeued",
-          "graphRethinkNarrations", "graphRouting", "graphSeamGoverningNodeId", "graphSeamSkillName",
-          "graphSeamThinkingLevel", "graphStepActiveContext", "graphStepRunOnce", "graphStepSessionPinned",
-          "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
-        ]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
-          "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
-          "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
-          "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
-          "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
-          "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
-        ]),
-      },
-      task,
-      opts,
-    );
+    return executeWorkflowGraphImpl(buildExecuteWorkflowGraphDeps(this), task, opts);
   }
 
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
@@ -2988,36 +2968,8 @@ export class TaskExecutor {
 
   /** Terminal failure of a graph run: record the error and park the task in
    *  review so a human can act — never leave it invisible in in-progress. */
-  /** Terminal failure of a graph run: record the error and park the task in
-   *  review so a human can act — never leave it invisible in in-progress. */
   private async handleGraphFailure(task: Task, result: WorkflowGraphTaskRunResult): Promise<void> {
-    return handleGraphFailureImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        options: this.options as { stuckTaskDetector?: { untrackTask?: (taskId: string) => void }; [k: string]: unknown },
-        ...facadeFields(this, [
-          "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
-          "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
-        ]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
-          "finalizeMergeConfirmedWorkflowGraphTask", "getTaskCompletionBlocker",
-          "handleStaleInReviewParsePauseAbortReplay", "handleStaleInReviewPlanPauseAbortReplay",
-          "handoffTaskToReview", "hasLiveTaskSessionSurface", "hasTrailingConsecutiveToolFailures",
-          "holdForSessionContention", "isBenignManualMergeHoldPauseAbort",
-          "isReentrantPausedAbortedInFlightNode", "isRemediationGraphNode",
-          "isRequiredArtifactRecoveryProtected", "isRetryableBenignMergePauseAbort",
-          "parkCompletedBlockedTask", "persistTokenUsage", "reenterPausedAbortedWorkflowNode",
-          "resolveResumeLanes", "routeGraphFailureToExecutionResume", "routeGraphMergeFailureToRetry",
-          "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
-          "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
-          "safeLogEntry",
-        ]),
-      },
-      task,
-      result,
-    );
+    return handleGraphFailureImpl(buildHandleGraphFailureDeps(this), task, result);
   }
 
   private async routeGraphFailureToExecutionResume(
