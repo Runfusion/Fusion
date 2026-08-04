@@ -42,8 +42,6 @@ import {
   COMPLETED_TASK_WATCHDOG_MS,
   WORKFLOW_RERUN_WATCHDOG_MS,
   MAX_WORKTREE_RETRIES,
-  MAX_AUTO_RECOVERY_ATTEMPTS,
-  BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
 } from "./executor/executor-constants.js";
 
 /* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
@@ -133,7 +131,6 @@ import type { TaskLivenessDeps } from "./executor/task-liveness.js";
 import {
   buildExecuteWorkflowGraphDeps,
   buildHandleGraphFailureDeps,
-  buildRunImplementationDeps,
   buildRunGraphCustomNodeDeps,
   buildCreateAuthoritativeWorkflowSeamsDeps,
   buildCreateSpawnAgentToolDeps,
@@ -244,6 +241,8 @@ import {
   buildTaskLivenessDeps,
   buildCompletionFinalizationFacadeDeps,
   buildStaleLockRecoveryDeps,
+  buildRecoverFailedPreMergeWorkflowStepDeps,
+  buildRunImplementationFacadeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -761,10 +760,7 @@ export class TaskExecutor {
    */
   private outerConcurrencyClaims = new Set<string>();
 
-  /*
-  FNXC:GlobalConcurrencyControls 2026-07-14-18:30:
-  Prefer a scheduler pre-held global slot when present so the hold/release tryAcquire and the executor share one top-level claim. Without this handoff the executor would acquire a second slot (or leave a gap if the pre-held slot were dropped) and live running counts could drift above the global cap again. While this outer claim is active, seam/step sessions must not acquire again — a second top-level acquire under a full global cap deadlocks (parent holds the last slot, child waits forever).
-  */
+  /* FNXC:GlobalConcurrencyControls 2026-07-14-18:30: share scheduler pre-held global slot; no second top-level acquire under full cap. */
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> {
     return runWithExecutorSemaphoreImpl(buildRunWithExecutorSemaphoreDeps(this), taskId, work);
   }
@@ -969,12 +965,7 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:30: recoverFailedPreMerge FNXC lives on recover-failed-pre-merge-step.ts. */
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> {
-    return recoverFailedPreMergeWorkflowStepImpl(
-      {
-        ...facadeMethods(this, ["resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
-      },
-      task,
-    );
+    return recoverFailedPreMergeWorkflowStepImpl(buildRecoverFailedPreMergeWorkflowStepDeps(this), task);
   }
 
   /** Defer execute when permanent agent has active heartbeat and allowParallelExecution=false. */
@@ -1506,13 +1497,7 @@ export class TaskExecutor {
   private async runImplementation(
     ...args: FacadeRestArgs<typeof runImplementationImpl>
   ): Promise<void> {
-    return runImplementationImpl(
-      buildRunImplementationDeps(this, {
-        BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
-        MAX_AUTO_RECOVERY_ATTEMPTS,
-      }),
-      ...args,
-    );
+    return runImplementationImpl(buildRunImplementationFacadeDeps(this), ...args);
   }
 
   /** FNXC:CodeOrganization 2026-08-03-22:25: shared free-tool deps bag for runImplementation + executeWorkflowStep. */
@@ -1571,10 +1556,6 @@ export class TaskExecutor {
     return createTaskDoneToolImpl(buildCreateTaskDoneToolDeps(this), ...args);
   }
 
-  /**
-   * Clean up after a dep-abort: remove worktree, delete branch, move task to triage.
-   * Shared between the try-block (graceful return) and catch-block (error) paths.
-   */
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
     return handleDepAbortCleanupImpl(buildHandleDepAbortCleanupDeps(this), taskId, worktreePath);
   }
@@ -1654,10 +1635,6 @@ export class TaskExecutor {
     return resolveWorkflowInputMarkerForGraphNodeImpl(this.storeRunContextDeps(), live, nodeId);
   }
 
-  /**
-   * Execute a single workflow step by spawning an agent with the step's prompt.
-   * Returns structured outcome with support for revision requests.
-   */
   private async executeWorkflowStep(
     ...args: FacadeRestArgs<typeof executeWorkflowStepImpl>
   ): Promise<WorkflowStepOutcome> {
@@ -1890,18 +1867,10 @@ export class TaskExecutor {
 
   // ── Agent Spawning ─────────────────────────────────────────────────────
 
-  /**
-   * Terminate all child agents spawned by a parent task.
-   * Called from the finally block of agentWork when the parent session ends.
-   */
   private async terminateAllChildren(parentTaskId: string): Promise<void> {
     return terminateAllChildrenImpl(buildTerminateAllChildrenDeps(this), parentTaskId);
   }
 
-  /**
-   * Terminate a single child agent by ID.
-   * Disposes the session, updates AgentStore state, and cleans up tracking Maps.
-   */
   private async terminateChildAgent(childId: string): Promise<void> {
     return terminateChildAgentImpl(
       buildTerminateChildAgentDeps(this),

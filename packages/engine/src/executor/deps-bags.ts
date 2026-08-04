@@ -12,7 +12,12 @@ import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
 import type { NonContinuableSessionDeps } from "./non-continuable-session.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
-import { MAX_WORKTREE_RETRIES, WORKTREE_RETRY_DELAYS } from "./executor-constants.js";
+import {
+  MAX_WORKTREE_RETRIES,
+  WORKTREE_RETRY_DELAYS,
+  MAX_AUTO_RECOVERY_ATTEMPTS,
+  BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+} from "./executor-constants.js";
 
 export type BranchConflictHandleDepsSource = {
   rootDir: string;
@@ -1320,5 +1325,18 @@ export function buildStaleLockRecoveryDeps(host: any): any {
     ...facadeFields(host, ["rootDir", "store"]),
     ...facadeMethods(host, ["getRunContextFor"]),
   };
+}
+
+export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
+  return {
+    ...facadeMethods(host, ["resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+  };
+}
+
+export function buildRunImplementationFacadeDeps(host: any): any {
+  return buildRunImplementationDeps(host, {
+    BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+    MAX_AUTO_RECOVERY_ATTEMPTS,
+  });
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
