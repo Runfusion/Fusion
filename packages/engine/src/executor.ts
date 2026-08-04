@@ -23,7 +23,6 @@ import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js
 
 export * from "./executor/public-reexports.js";
 import type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
-
 import * as constants from "./executor/executor-constants.js";
 import * as pure from "./executor/pure-bindings.js";
 import * as impl from "./executor/impl-bindings.js";
@@ -139,7 +138,6 @@ export class TaskExecutor {
   private unregisterSubagentSession(taskId: string, session: AgentSession): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED (zero production callers; inert sync-lane count drop). */
-
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = {
@@ -150,9 +148,7 @@ export class TaskExecutor {
       complete: moveLanes?.complete ?? sync?.complete ?? "done",
     };
     if (from !== lanes.hold && from !== lanes.intake) return false;
-    const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter(
-      (column): column is string => typeof column === "string",
-    );
+    const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter((column): column is string => typeof column === "string");
     return !forwardTargets.includes(to);
   }
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
@@ -224,11 +220,9 @@ export class TaskExecutor {
   private graphSeamGoverningNodeId = new Map<string, string>();
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
   private graphSeamSkillName = new Map<string, string>();
-
   private get graphRouting(): Set<string> { return TaskExecutor.processWideGraphRouting; }
   private static processWideGraphRouting = new Set<string>();
   private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
-
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void { this.mergeRequester = requestMerge; }
   private async executeWorkflowGraph(...args: FacadeRestArgs<typeof impl.executeWorkflowGraphImpl>): ReturnType<typeof impl.executeWorkflowGraphImpl> { return impl.executeWorkflowGraphImpl(bags.buildExecuteWorkflowGraphDeps(this), ...args); }
   private buildBranchPersistence(): ReturnType<typeof impl.buildBranchPersistenceImpl> { return impl.buildBranchPersistenceImpl({ store: this.store }); }
@@ -300,16 +294,12 @@ export class TaskExecutor {
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): ReturnType<typeof impl.blockOuterDispatchWhenDependenciesUnmetImpl> { return impl.blockOuterDispatchWhenDependenciesUnmetImpl(this.storeRunContextDeps(), task); }
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): ReturnType<typeof impl.blockOuterDispatchWhenEphemeralDisabledImpl> { return impl.blockOuterDispatchWhenEphemeralDisabledImpl(bags.buildBlockOuterDispatchWhenEphemeralDisabledDeps(this), task); }
   async execute(task: Task): Promise<void> {
-    try {
-      await this.executeCore(task);
-    } finally {
-      if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release();
-    }
+    try { await this.executeCore(task); }
+    finally { if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release(); }
   }
   private async executeCore(task: Task): ReturnType<typeof impl.executeCoreImpl> { return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task); }
   private async runImplementation(...args: FacadeRestArgs<typeof impl.runImplementationImpl>): ReturnType<typeof impl.runImplementationImpl> { return impl.runImplementationImpl(bags.buildRunImplementationFacadeDeps(this), ...args); }
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps { return bags.buildSharedWorkerToolsDeps(this); }
-
   private createTaskUpdateTool(...args: FacadeRestArgs<typeof impl.createTaskUpdateToolImpl>): ReturnType<typeof impl.createTaskUpdateToolImpl> { return impl.createTaskUpdateToolImpl(bags.buildCreateTaskUpdateToolDeps(this), ...args); }
   private createTaskAddDepTool(taskId: string): ReturnType<typeof impl.createTaskAddDepToolImpl> { return impl.createTaskAddDepToolImpl(bags.buildCreateTaskAddDepToolDeps(this), taskId); }
   private async transitionReviewAddressing(taskId: string, from: Array<"queued" | "in-progress" | "addressed" | "failed">, to: "queued" | "in-progress" | "addressed" | "failed"): ReturnType<typeof impl.transitionReviewAddressingImpl> { return impl.transitionReviewAddressingImpl(this.store, taskId, from, to); }
@@ -328,7 +318,6 @@ export class TaskExecutor {
   private async captureWorkspaceModifiedFiles(...args: Parameters<typeof impl.captureWorkspaceModifiedFilesImpl>): ReturnType<typeof impl.captureWorkspaceModifiedFilesImpl> { return impl.captureWorkspaceModifiedFilesImpl(...args); }
   private async reviewWorkspacePerRepo(...args: Parameters<typeof impl.reviewWorkspacePerRepoImpl>): ReturnType<typeof impl.reviewWorkspacePerRepoImpl> { return impl.reviewWorkspacePerRepoImpl(...args); }
   private async captureUncommittedModifiedFiles(worktreePath: string): ReturnType<typeof impl.captureUncommittedModifiedFilesImpl> { return impl.captureUncommittedModifiedFilesImpl(worktreePath); }
-
   private async executeScriptWorkflowStep(...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>): Promise<{ success: boolean; output?: string; error?: string }> { return impl.executeScriptWorkflowStepImpl(bags.buildExecuteScriptWorkflowStepDeps(this, pure.runConfiguredCommand), ...args); }
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> { return impl.workflowInputRepliesAfterWatermarkImpl(task, marker); }
   private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): ReturnType<typeof impl.resolveWorkflowInputMarkerForGraphNodeImpl> { return impl.resolveWorkflowInputMarkerForGraphNodeImpl(this.storeRunContextDeps(), live, nodeId); }
@@ -371,7 +360,6 @@ export class TaskExecutor {
   markStuckAborted(...args: FacadeRestArgs<typeof impl.markStuckAbortedImpl>): ReturnType<typeof impl.markStuckAbortedImpl> { return impl.markStuckAbortedImpl(bags.buildMarkStuckAbortedDeps(this), ...args); }
   async handleLoopDetected(...args: FacadeRestArgs<typeof impl.handleLoopDetectedImpl>): ReturnType<typeof impl.handleLoopDetectedImpl> { return impl.handleLoopDetectedImpl(bags.buildHandleLoopDetectedDeps(this), ...args); }
   getWorktreePath(taskId: string): string | undefined { return impl.getWorktreePathImpl(this.workspaceConfig, (id) => this.getActiveWorktreePaths(id), taskId); }
-
   private async terminateAllChildren(parentTaskId: string): ReturnType<typeof impl.terminateAllChildrenImpl> { return impl.terminateAllChildrenImpl(bags.buildTerminateAllChildrenDeps(this), parentTaskId); }
   private async terminateChildAgent(childId: string): ReturnType<typeof impl.terminateChildAgentImpl> { return impl.terminateChildAgentImpl(bags.buildTerminateChildAgentDeps(this), childId); }
   private async runSpawnedChild(...args: FacadeRestArgs<typeof impl.runSpawnedChildImpl>): ReturnType<typeof impl.runSpawnedChildImpl> { return impl.runSpawnedChildImpl(bags.buildRunSpawnedChildDeps(this), ...args); }
