@@ -619,9 +619,9 @@ export class TaskExecutor {
   ): Promise<void> {
     return renewTaskLeaseImpl(
       {
-        store: this.store,
+        ...facadeFields(this, ["store"]),
         options: this.options as { agentStore?: import("@fusion/core").AgentStore | null; [k: string]: unknown },
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       agentId,
@@ -634,9 +634,8 @@ export class TaskExecutor {
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
     return finalizeAlreadyReviewedTaskImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor", "resolveResumeLanes"]),
       },
       taskId,
     );
@@ -652,9 +651,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return shouldDeferCompletionForGlobalPauseImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor", "clearCompletedTaskWatchdog"]),
       },
       taskId,
       context,
@@ -667,13 +665,11 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return shouldDeferWorkflowStepCompletionImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        pausedAborted: this.pausedAborted,
-        userCanceledTaskIds: this.userCanceledTaskIds,
-        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
-        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
-        shouldDeferCompletionForGlobalPause: (id, ctx) => this.shouldDeferCompletionForGlobalPause(id, ctx),
+        ...facadeFields(this, ["store", "pausedAborted", "userCanceledTaskIds"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "clearCompletedTaskWatchdog", "resolveResumeLanes",
+          "shouldDeferCompletionForGlobalPause",
+        ]),
       },
       taskId,
       context,
@@ -1111,10 +1107,8 @@ export class TaskExecutor {
   private async parkApprovalSuspension(taskId: string, surface: string): Promise<boolean> {
     return parkApprovalSuspensionImpl(
       {
-        store: this.store,
-        approvalSuspended: this.approvalSuspended,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        ...facadeFields(this, ["store", "approvalSuspended"]),
+        ...facadeMethods(this, ["getRunContextFor", "clearPausedAborted"]),
       },
       taskId,
       surface,
@@ -1143,10 +1137,8 @@ export class TaskExecutor {
   private async resumeApprovalAfterUnwindIfNeeded(taskId: string): Promise<boolean> {
     return resumeApprovalAfterUnwindIfNeededImpl(
       {
-        store: this.store,
-        approvalResumeAfterUnwind: this.approvalResumeAfterUnwind,
-        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
-        dispatchUnpauseResume: (t) => this.dispatchUnpauseResume(t),
+        ...facadeFields(this, ["store", "approvalResumeAfterUnwind"]),
+        ...facadeMethods(this, ["resolveResumeLanes", "dispatchUnpauseResume"]),
       },
       taskId,
     );
@@ -1330,8 +1322,8 @@ export class TaskExecutor {
   private async clearTerminalStepFailuresForRetry(taskId: string): Promise<void> {
     return clearTerminalStepFailuresForRetryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
     );
@@ -1344,11 +1336,10 @@ export class TaskExecutor {
   ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
     return performWorkflowRerunBounceImpl(
       {
-        store: this.store,
-        workflowRerunPending: this.workflowRerunPending,
-        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
-        resolveResumeLanes: (id: string) => this.resolveResumeLanes(id),
-        clearTerminalStepFailuresForRetry: (id: string) => this.clearTerminalStepFailuresForRetry(id),
+        ...facadeFields(this, ["store", "workflowRerunPending"]),
+        ...facadeMethods(this, [
+          "getExecutionPauseLabel", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
+        ]),
       },
       taskId,
       worktreePath,
@@ -3432,7 +3423,7 @@ export class TaskExecutor {
   ): Promise<void> {
     return handleImplicitTaskDoneRefusalImpl(
       {
-        store: this.store,
+        ...facadeFields(this, ["store"]),
         ...facadeMethods(this, [
           "getRunContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
           "deleteActiveSession",
@@ -3476,10 +3467,8 @@ export class TaskExecutor {
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
     return handleDepAbortCleanupImpl(
       {
-        ...facadeFields(this, [
-          "rootDir", "store", "activeWorktrees",
-        ]),
-        removeOwnWorktreeWithReconcile: (input) => this.removeOwnWorktreeWithReconcile(input),
+        ...facadeFields(this, ["rootDir", "store", "activeWorktrees"]),
+        ...facadeMethods(this, ["removeOwnWorktreeWithReconcile"]),
       },
       taskId,
       worktreePath,
@@ -3510,8 +3499,8 @@ export class TaskExecutor {
   ): Promise<VerificationResult> {
     return runExecutorDeterministicVerificationImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       task,
       worktreePath,
@@ -4224,8 +4213,8 @@ export class TaskExecutor {
   private async terminateAllChildren(parentTaskId: string): Promise<void> {
     return terminateAllChildrenImpl(
       {
-        spawnedAgents: this.spawnedAgents,
-        terminateChildAgent: (id) => this.terminateChildAgent(id),
+        ...facadeFields(this, ["spawnedAgents"]),
+        ...facadeMethods(this, ["terminateChildAgent"]),
       },
       parentTaskId,
     );
