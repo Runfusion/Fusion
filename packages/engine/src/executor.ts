@@ -3,7 +3,7 @@ import {
   AgentStore,
   type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings,
   type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
-  type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel,
+  type ThinkingLevel,
   type WorkflowIr, type WorkflowFieldDefinition, type WorkflowColumnAgent, type TaskMoveLanes,
   type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult,
 } from "@fusion/core";
@@ -36,22 +36,15 @@ import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 export * from "./executor/public-reexports.js";
 import type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
 
-/* FNXC:CodeOrganization 2026-08-04-02:05: Tunables live in executor/executor-constants.ts (U4). */
-import {
-  MAX_WORKFLOW_STEP_RETRIES,
-  COMPLETED_TASK_WATCHDOG_MS,
-  WORKFLOW_RERUN_WATCHDOG_MS,
-  MAX_WORKTREE_RETRIES,
-} from "./executor/executor-constants.js";
+/* FNXC:CodeOrganization 2026-08-04-06:15:
+ Executor tunables via namespace import (U4).
+*/
+import * as constants from "./executor/executor-constants.js";
 
-/* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
-import {
-  isTaskWorkComplete,
-  hasActiveWorktreeBinding, shouldGenerateNewWorktreeName, findActiveWorktreeOwner, isLiveCleanupRefusal,
-  cleanupStaleBranch, planSquashImportFromDep, reconcileSelfOwnedBeforeRemove, emitStaleLockAudit,
-  recoverIndexLockIfStale, recoverExecutorStaleRegistration, normalizeReclaimableWorktreePath, removeOwnWorktreeWithReconcile,
-  tryFreshWorktreeAfterLiveConflict, runConfiguredCommand,
-} from "./executor/pure-bindings.js";
+/* FNXC:CodeOrganization 2026-08-04-06:15:
+ Pure free-helpers via namespace import (U4) — line-count ratchet for pure-bindings barrel.
+*/
+import * as pure from "./executor/pure-bindings.js";
 /* FNXC:CodeOrganization 2026-08-04-06:05:
  Impl bindings via namespace import (U4) — collapses the long named-import list so executor.ts line count
  can keep ratcheting without per-symbol import lines.
@@ -78,7 +71,7 @@ export async function __runConfiguredCommandForTests(
   auditor?: RunAuditor,
   signal?: AbortSignal,
 ): Promise<RunCommandResult> {
-  return runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
+  return pure.runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
 }
 
 /* FNXC:CodeOrganization 2026-08-04-02:35: Orphan await-input/conventions JSDoc removed — lives on await-input-parse.ts + workflow-step-verdict.ts peels. */
@@ -321,11 +314,9 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:35: handoffTaskToReview reason/failure FNXC lives on handoff-task-to-review.ts. */
   private async handoffTaskToReview(
-    task: Task,
-    reason: string,
-    runId = this.getRunContextFor(task.id)?.runId,
+    ...args: FacadeRestArgs<typeof impl.handoffTaskToReviewImpl>
   ): Promise<Task> {
-    return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), task, reason, runId);
+    return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), ...args);
   }
 
   /* FNXC:ReviewArtifacts 2026-07-19-10:00: best-effort feature-video before review handoff (never delays transition). */
@@ -384,10 +375,7 @@ export class TaskExecutor {
     return impl.isTaskActiveImpl(this.taskLivenessDeps(), taskId);
   }
 
-  /*
-  FNXC:PlannerOversight 2026-07-21-22:56:
-  Overseer retry_step must not hard-cancel a live agent (FN-8471 thrash: status=failed from a raced graph park while step-execute still held a session, then overseer moveTask→todo aborted the live work three times). True when any in-process graph claim, coding/step/CLI session, or unpause-resume handoff still owns the task — broader than isTaskActive so step/workflow/CLI surfaces are covered.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-06:15: isTaskLiveForOverseerRetry FNXC lives on is-task-live-for-overseer-retry.ts. */
   isTaskLiveForOverseerRetry(taskId: string): boolean {
     return impl.isTaskLiveForOverseerRetryImpl(
       {
@@ -536,10 +524,7 @@ export class TaskExecutor {
   }
 
   async abortAllInFlight(reason: string): Promise<void> {
-    return impl.abortAllInFlightImpl(
-      bags.buildAbortAllInFlightDeps(this),
-      reason,
-    );
+    return impl.abortAllInFlightImpl(bags.buildAbortAllInFlightDeps(this), reason);
   }
 
   abortAllSessionBash(): void {
@@ -640,7 +625,7 @@ export class TaskExecutor {
 
   private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
     impl.scheduleCompletedTaskWatchdogImpl(
-      bags.buildScheduleCompletedTaskWatchdogDeps(this, COMPLETED_TASK_WATCHDOG_MS),
+      bags.buildScheduleCompletedTaskWatchdogDeps(this, constants.COMPLETED_TASK_WATCHDOG_MS),
       taskId,
       trigger,
     );
@@ -660,14 +645,14 @@ export class TaskExecutor {
   private scheduleWorkflowRerun(
     ...args: FacadeRestArgs<typeof impl.scheduleWorkflowRerunImpl>
   ): void {
-    impl.scheduleWorkflowRerunImpl(bags.buildScheduleWorkflowRerunDeps(this, WORKFLOW_RERUN_WATCHDOG_MS), ...args);
+    impl.scheduleWorkflowRerunImpl(bags.buildScheduleWorkflowRerunDeps(this, constants.WORKFLOW_RERUN_WATCHDOG_MS), ...args);
   }
 
   private completionFinalizationDeps() {
     return bags.buildCompletionFinalizationFacadeDeps(this);
   }
 
-  private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = isTaskWorkComplete(task)): Promise<boolean> {
+  private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = pure.isTaskWorkComplete(task)): Promise<boolean> {
     return impl.parkCompletedBlockedTaskImpl(this.completionFinalizationDeps(), task, completionBlocker, source, workComplete);
   }
 
@@ -700,16 +685,9 @@ export class TaskExecutor {
     return impl.persistTaskTokenUsageImpl(this.storeRunContextDeps(), taskId, tokenUsage);
   }
 
-  /*
-   * FNXC:TokenAnalytics 2026-07-17-14:00:
-   * `persistTokenUsage` is the sole writer for a central executor session. Prompt paths call this same delta seam rather than `accumulateSessionTokenUsage`, preventing independently-baselined helper and finalization writes from crediting the same cumulative tokens twice.
-   */
+  /* FNXC:TokenAnalytics 2026-07-17-14:00: persistTokenUsage sole central writer; baselines feed that delta seam (no double-credit). */
   private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> {
-    return impl.captureExecutorTokenUsageBaselineImpl(
-      { tokenUsageBaselines: this.tokenUsageBaselines },
-      taskId,
-      session,
-    );
+    return impl.captureExecutorTokenUsageBaselineImpl({ tokenUsageBaselines: this.tokenUsageBaselines }, taskId, session);
   }
 
   private async persistTokenUsage(
@@ -718,23 +696,14 @@ export class TaskExecutor {
     return impl.persistTokenUsageImpl(bags.buildPersistTokenUsageDeps(this), ...args);
   }
 
-  // FNXC:CodeOrganization 2026-08-03-09:25:
-  // Thin prototype facades for pure token helpers so Object.create(TaskExecutor.prototype) tests and any instance-method call sites keep working after the free-function peel.
-  private accumulateTokenUsage(
-    ...args: Parameters<typeof impl.accumulateTokenUsageImpl>
-  ): ReturnType<typeof impl.accumulateTokenUsageImpl>  {
+  // FNXC:CodeOrganization 2026-08-03-09:25: pure token helper facades for prototype/instance call sites after free peel.
+  private accumulateTokenUsage(...args: Parameters<typeof impl.accumulateTokenUsageImpl>): ReturnType<typeof impl.accumulateTokenUsageImpl> {
     return impl.accumulateTokenUsageImpl(...args);
   }
-
-  private tokenUsageWithModelSnapshot(
-    ...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>
-  ): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl>  {
+  private tokenUsageWithModelSnapshot(...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl> {
     return impl.tokenUsageWithModelSnapshotImpl(...args);
   }
-
-  private async extractSessionTokenUsage(
-    ...args: Parameters<typeof impl.extractSessionTokenUsageImpl>
-  ): ReturnType<typeof impl.extractSessionTokenUsageImpl>  {
+  private async extractSessionTokenUsage(...args: Parameters<typeof impl.extractSessionTokenUsageImpl>): ReturnType<typeof impl.extractSessionTokenUsageImpl> {
     return impl.extractSessionTokenUsageImpl(...args);
   }
 
@@ -746,10 +715,7 @@ export class TaskExecutor {
 
   /** Fast-path completed task → in-review without a new agent session. */
   async recoverCompletedTask(task: Task): Promise<boolean> {
-    return impl.recoverCompletedTaskImpl(
-      bags.buildRecoverCompletedTaskDeps(this),
-      task,
-    );
+    return impl.recoverCompletedTaskImpl(bags.buildRecoverCompletedTaskDeps(this), task);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: optional-step budget + replan-cap FNXC on request-pre-merge-optional-step-fix.ts + park-plan-review-replan-cap.ts. */
@@ -1045,7 +1011,7 @@ export class TaskExecutor {
   private async runRawCliCommand(
     ...args: FacadeRestArgs<typeof impl.runRawCliCommandImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    return impl.runRawCliCommandImpl(bags.buildRunRawCliCommandDeps(this, runConfiguredCommand), ...args);
+    return impl.runRawCliCommandImpl(bags.buildRunRawCliCommandDeps(this, pure.runConfiguredCommand), ...args);
   }
 
   /** Column-agent U3 adoption for custom nodes (R8 fail-soft → undefined). */
@@ -1085,7 +1051,7 @@ export class TaskExecutor {
   private async ensureGraphCustomNodeWorktree(
     ...args: FacadeRestArgs<typeof impl.ensureGraphCustomNodeWorktreeImpl>
   ): Promise<TaskDetail>  {
-    return impl.ensureGraphCustomNodeWorktreeImpl(bags.buildEnsureGraphCustomNodeWorktreeDeps(this, runConfiguredCommand), ...args);
+    return impl.ensureGraphCustomNodeWorktreeImpl(bags.buildEnsureGraphCustomNodeWorktreeDeps(this, pure.runConfiguredCommand), ...args);
   }
 
   public async releasePreExecutionWorktree(
@@ -1151,38 +1117,25 @@ export class TaskExecutor {
     return impl.routeUnusableWorktreeGraphFailureToRecoveryImpl(bags.buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(this), ...args);
   }
 
-  /*
-  FNXC:WorkflowRemediation 2026-07-01-23:40:
-  A live agent session surface for a task proves the work is still executing, independent of the persisted column/pause/status row that handleGraphFailure re-fetches. This mirrors clearPhantomExecutorBinding's `hasLiveSessionSurface` (FN-6736) but deliberately EXCLUDES `this.executing` and graph-routing membership: those are still set for the graph run that is currently ending (graphRouting is cleared in executeWorkflowGraph's finally, AFTER handleGraphFailure returns), so including them would report every ending run as "still executing" and suppress all failures. Only a registered coding/step/CLI session surface means a SEPARATE, live agent is working the task.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-06:15: hasLiveTaskSessionSurface FNXC lives on has-live-task-session-surface host peel. */
   private hasLiveTaskSessionSurface(taskId: string): boolean {
-    return impl.hasLiveTaskSessionSurfaceImpl(
-      bags.buildHasLiveTaskSessionSurfaceDeps(this),
-      taskId,
-    );
+    return impl.hasLiveTaskSessionSurfaceImpl(bags.buildHasLiveTaskSessionSurfaceDeps(this), taskId);
   }
 
-  /*
-  FNXC:WorkflowRemediation 2026-07-01-23:40:
-  A `pre-merge-remediation` / `plan-replan` node (e.g. `code-review-remediation`) is a FIRE-AND-FORGET async scheduler, not a terminal work node: its job is to hand off an implementation fix (sendTaskBackForFix re-dispatches the coding session) and stop traversal. These nodes carry only a `success` rework edge back to their gate and NO `failure` out-edge, so when their schedule call cannot re-arm (missing rehydrated failureContext after a restart → `missing-remediation-context`, `remediation-not-scheduled`, or an exhausted rework budget) the failure bubbles out as the terminal graph outcome and handleGraphFailure would stamp `status:"failed"` — even while a previously-scheduled fix/reviewer session is still live. Classify these nodes so that terminal sink can preserve a still-executing task instead of flagging a spurious failure. Detection prefers the resolved IR `workflowAction` (covers custom workflows), with a node-id fallback for the built-in ids when the IR cannot be resolved.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-06:15: isRemediationGraphNode FNXC lives on remediation-graph-node.ts. */
   private async isRemediationGraphNode(taskId: string, failedNode: string | undefined): Promise<boolean> {
     return impl.isRemediationGraphNodeImpl({ store: this.store }, taskId, failedNode);
   }
 
-  /*
-  FNXC:WorkflowRemediation 2026-07-03-23:10:
-  Retryable parked-remediation recovery is only for pre-merge optional-step remediation nodes. Plan Review `plan-replan` failures must stay on the existing replan/triage path instead of delegating to `recoverFailedPreMergeWorkflowStep`, which reopens implementation work.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-06:15: isPreMergeRemediationGraphNode FNXC lives on remediation-graph-node.ts. */
   private async isPreMergeRemediationGraphNode(taskId: string, failedNode: string | undefined): Promise<boolean> {
     return impl.isPreMergeRemediationGraphNodeImpl({ store: this.store }, taskId, failedNode);
   }
 
   private async resolveFailedPreMergeWorkflowStepBudget(
-    task: Task,
-    target: CoreWorkflowStepResult,
-  ): Promise<{ unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }> {
-    return impl.resolveFailedPreMergeWorkflowStepBudgetImpl({ store: this.store }, task, target);
+    ...args: FacadeAfterFirst<typeof impl.resolveFailedPreMergeWorkflowStepBudgetImpl>
+  ): ReturnType<typeof impl.resolveFailedPreMergeWorkflowStepBudgetImpl> {
+    return impl.resolveFailedPreMergeWorkflowStepBudgetImpl({ store: this.store }, ...args);
   }
 
   private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
@@ -1303,10 +1256,7 @@ export class TaskExecutor {
   }
 
   private async executeCore(task: Task): Promise<void> {
-    return impl.executeCoreImpl(
-      bags.buildExecuteCoreDeps(this),
-      task,
-    );
+    return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: runImplementation U5e/U10b/U8 FNXC lives on run-implementation.ts. */
@@ -1330,20 +1280,14 @@ export class TaskExecutor {
   }
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {
-    return impl.createTaskAddDepToolImpl(
-      bags.buildCreateTaskAddDepToolDeps(this),
-      taskId,
-    );
+    return impl.createTaskAddDepToolImpl(bags.buildCreateTaskAddDepToolDeps(this), taskId);
   }
 
   private async transitionReviewAddressing(taskId: string, from: Array<"queued" | "in-progress" | "addressed" | "failed">, to: "queued" | "in-progress" | "addressed" | "failed"): Promise<void> {
     return impl.transitionReviewAddressingImpl(this.store, taskId, from, to);
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-03-16:20:
-  Thin facades over peeled verifyWorktreeInvariants / emitWorktreeReanchoredAudit (U4 Slice B).
-  */
+  /* FNXC:CodeOrganization 2026-08-03-16:20: worktree invariant facades (U4 Slice B). */
   private worktreeInvariantDeps() {
     return bags.buildWorktreeInvariantFacadeDeps(this);
   }
@@ -1397,7 +1341,7 @@ export class TaskExecutor {
   private async sendTaskBackForFix(
     ...args: FacadeRestArgs<typeof impl.sendTaskBackForFixImpl>
   ): Promise<void> {
-    return impl.sendTaskBackForFixImpl(bags.buildSendTaskBackForFixDeps(this, MAX_WORKFLOW_STEP_RETRIES), ...args);
+    return impl.sendTaskBackForFixImpl(bags.buildSendTaskBackForFixDeps(this, constants.MAX_WORKFLOW_STEP_RETRIES), ...args);
   }
 
   private async injectWorkflowStepFailureInstructions(
@@ -1406,21 +1350,13 @@ export class TaskExecutor {
     return impl.injectWorkflowStepFailureInstructionsImpl(this.store, ...args);
   }
 
-  private async captureModifiedFiles(
-    ...args: Parameters<typeof impl.captureModifiedFilesImpl>
-  ): Promise<string[]>  {
+  private async captureModifiedFiles(...args: Parameters<typeof impl.captureModifiedFilesImpl>): Promise<string[]> {
     return impl.captureModifiedFilesImpl(...args);
   }
-
-  private async captureWorkspaceModifiedFiles(
-    ...args: Parameters<typeof impl.captureWorkspaceModifiedFilesImpl>
-  ): Promise<string[]>  {
+  private async captureWorkspaceModifiedFiles(...args: Parameters<typeof impl.captureWorkspaceModifiedFilesImpl>): Promise<string[]> {
     return impl.captureWorkspaceModifiedFilesImpl(...args);
   }
-
-  private async reviewWorkspacePerRepo(
-    ...args: Parameters<typeof impl.reviewWorkspacePerRepoImpl>
-  ): Promise<ReviewResult>  {
+  private async reviewWorkspacePerRepo(...args: Parameters<typeof impl.reviewWorkspacePerRepoImpl>): Promise<ReviewResult> {
     return impl.reviewWorkspacePerRepoImpl(...args);
   }
 
@@ -1438,7 +1374,7 @@ export class TaskExecutor {
     ...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return impl.executeScriptWorkflowStepImpl(
-      bags.buildExecuteScriptWorkflowStepDeps(this, runConfiguredCommand),
+      bags.buildExecuteScriptWorkflowStepDeps(this, pure.runConfiguredCommand),
       ...args,
     );
   }
@@ -1499,69 +1435,66 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-03-14:20: thin free-helper facades for vi.spyOn surfaces (U4 Slice B). */
   private hasActiveWorktreeBinding(taskId: string, worktreePath: string): boolean {
-    return hasActiveWorktreeBinding(this.activeWorktrees, taskId, worktreePath);
+    return pure.hasActiveWorktreeBinding(this.activeWorktrees, taskId, worktreePath);
   }
 
   private async shouldGenerateNewWorktreeName(conflictPath: string, currentTaskId: string): Promise<boolean> {
-    return shouldGenerateNewWorktreeName(this.activeWorktrees, this.store, conflictPath, currentTaskId);
+    return pure.shouldGenerateNewWorktreeName(this.activeWorktrees, this.store, conflictPath, currentTaskId);
   }
 
   private async findActiveWorktreeOwner(worktreePath: string, requestingTaskId: string): Promise<string | null> {
-    return findActiveWorktreeOwner(this.activeWorktrees, this.store, worktreePath, requestingTaskId);
+    return pure.findActiveWorktreeOwner(this.activeWorktrees, this.store, worktreePath, requestingTaskId);
   }
 
   private async isLiveCleanupRefusal(worktreePath: string, taskId: string): Promise<boolean> {
-    return isLiveCleanupRefusal(this.activeWorktrees, this.store, worktreePath, taskId);
+    return pure.isLiveCleanupRefusal(this.activeWorktrees, this.store, worktreePath, taskId);
   }
 
   private async cleanupStaleBranch(branch: string, taskId: string): Promise<boolean> {
-    return cleanupStaleBranch(this.rootDir, this.store, branch, taskId);
+    return pure.cleanupStaleBranch(this.rootDir, this.store, branch, taskId);
   }
 
   private async planSquashImportFromDep(
-    ...args: FacadeAfterSecond<typeof planSquashImportFromDep>
-  ): ReturnType<typeof planSquashImportFromDep> {
-    return planSquashImportFromDep(this.rootDir, this.store, ...args);
+    ...args: FacadeAfterSecond<typeof pure.planSquashImportFromDep>
+  ): ReturnType<typeof pure.planSquashImportFromDep> {
+    return pure.planSquashImportFromDep(this.rootDir, this.store, ...args);
   }
 
   private async reconcileSelfOwnedBeforeRemove(
-    ...args: FacadeRestArgs<typeof reconcileSelfOwnedBeforeRemove>
+    ...args: FacadeRestArgs<typeof pure.reconcileSelfOwnedBeforeRemove>
   ): Promise<void> {
-    return reconcileSelfOwnedBeforeRemove(this.store, ...args);
+    return pure.reconcileSelfOwnedBeforeRemove(this.store, ...args);
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-03-14:50:
-  Thin facades over peeled stale-lock / reclaim / remove-own helpers (U4 Slice B).
-  */
+  /* FNXC:CodeOrganization 2026-08-03-14:50: stale-lock / reclaim / remove-own facades (U4 Slice B). */
   private staleLockRecoveryDeps() {
     return bags.buildStaleLockRecoveryDeps(this);
   }
 
   private async emitStaleLockAudit(
-    ...args: FacadeRestArgs<typeof emitStaleLockAudit>
+    ...args: FacadeRestArgs<typeof pure.emitStaleLockAudit>
   ): Promise<void> {
-    return emitStaleLockAudit(this.staleLockRecoveryDeps(), ...args);
+    return pure.emitStaleLockAudit(this.staleLockRecoveryDeps(), ...args);
   }
 
   private async recoverIndexLockIfStale(taskId: string, path: string, conflictInfo: { lockPath?: string; message?: string }): Promise<boolean> {
-    return recoverIndexLockIfStale(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
+    return pure.recoverIndexLockIfStale(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
   }
 
   private async recoverStaleRegistration(taskId: string, path: string, conflictInfo: { path?: string; message?: string }): Promise<boolean> {
-    return recoverExecutorStaleRegistration(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
+    return pure.recoverExecutorStaleRegistration(this.staleLockRecoveryDeps(), taskId, path, conflictInfo);
   }
 
   private async normalizeReclaimableWorktreePath(
-    ...args: FacadeRestArgs<typeof normalizeReclaimableWorktreePath>
+    ...args: FacadeRestArgs<typeof pure.normalizeReclaimableWorktreePath>
   ): Promise<string> {
-    return normalizeReclaimableWorktreePath(bags.buildNormalizeReclaimableWorktreePathDeps(this), ...args);
+    return pure.normalizeReclaimableWorktreePath(bags.buildNormalizeReclaimableWorktreePathDeps(this), ...args);
   }
 
   private async tryFreshWorktreeAfterLiveConflict(
-    ...args: FacadeRestArgs<typeof tryFreshWorktreeAfterLiveConflict>
+    ...args: FacadeRestArgs<typeof pure.tryFreshWorktreeAfterLiveConflict>
   ): Promise<{ path: string; branch: string }> {
-    return tryFreshWorktreeAfterLiveConflict(
+    return pure.tryFreshWorktreeAfterLiveConflict(
       bags.buildTryFreshWorktreeAfterLiveConflictDeps(this, bindTryCreateWorktree(this)),
       ...args,
     );
@@ -1571,7 +1504,7 @@ export class TaskExecutor {
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
     return bags.buildWorktreeCreateConflictFacadeDeps(
       this,
-      MAX_WORKTREE_RETRIES,
+      constants.MAX_WORKTREE_RETRIES,
       bindHandleWorktreeConflict(this),
       bindTryCreateWorktree(this),
     );
@@ -1622,9 +1555,9 @@ export class TaskExecutor {
   }
 
   private async removeOwnWorktreeWithReconcile(
-    ...args: FacadeRestArgs<typeof removeOwnWorktreeWithReconcile>
+    ...args: FacadeRestArgs<typeof pure.removeOwnWorktreeWithReconcile>
   ): Promise<void> {
-    return removeOwnWorktreeWithReconcile(bags.buildRemoveOwnWorktreeWithReconcileDeps(this), ...args);
+    return pure.removeOwnWorktreeWithReconcile(bags.buildRemoveOwnWorktreeWithReconcileDeps(this), ...args);
   }
 
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
