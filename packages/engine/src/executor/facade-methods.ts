@@ -10,7 +10,16 @@
  * Returns `any` deliberately so spread into typed deps bags does not force `as any` at
  * every call site (eslint no-explicit-any would fire on each cast). The host methods are
  * private TaskExecutor members; the free-fn deps types are the real contract.
+ *
+ * FNXC:CodeOrganization 2026-08-04-04:15:
+ * FacadeRestArgs strips the leading deps bag from a free-fn signature so multi-arg
+ * TaskExecutor facades can forward with `...args` instead of re-declaring long parameter
+ * lists (defaults remain on the free function).
  */
+
+/** Args after the deps bag for a free function of shape `(deps, ...args) => R`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- free-fn deps bag is always first
+export type FacadeRestArgs<F> = F extends (deps: any, ...args: infer A) => any ? A : never;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see FNXC above
 export function facadeMethods(host: object, names: readonly string[]): any {
   const out: Record<string, (...args: unknown[]) => unknown> = {};

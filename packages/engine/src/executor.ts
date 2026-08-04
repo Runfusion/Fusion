@@ -207,7 +207,7 @@ import {
   buildMarkPausedAbortedDeps,
   buildResumeOrphanedDeps,
 } from "./executor/deps-bags.js";
-import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
+import { facadeFields, facadeMethods, type FacadeRestArgs } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
@@ -1110,26 +1110,9 @@ export class TaskExecutor {
   }
 
   private async requestPreMergeOptionalStepFix(
-    taskId: string,
-    fallbackTask: Task,
-    info: {
-      stepName: string;
-      feedback: string;
-      phase: CoreWorkflowStepResult["phase"];
-      status: CoreWorkflowStepResult["status"];
-      verdict?: string;
-      /** Raw graph node result when no reviewer verdict was produced. */
-      failureValue?: string;
-      nodeId?: string;
-      maxRevisions?: unknown;
-    },
+    ...args: FacadeRestArgs<typeof requestPreMergeOptionalStepFixImpl>
   ): Promise<boolean> {
-    return requestPreMergeOptionalStepFixImpl(
-      buildRequestPreMergeOptionalStepFixDeps(this),
-      taskId,
-      fallbackTask,
-      info,
-    );
+    return requestPreMergeOptionalStepFixImpl(buildRequestPreMergeOptionalStepFixDeps(this), ...args);
   }
 
   private async recoverMissingRequiredArtifacts(
@@ -1393,22 +1376,9 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: step-inversion driver FNXC lives on run-graph-task-step.ts. */
   private async runGraphTaskStep(
-    task: Task,
-    stepIndex: number,
-    instanceId?: string,
-    governingNodeId?: string,
-    thinkingLevel?: ThinkingLevel,
-    skillName?: string,
+    ...args: FacadeRestArgs<typeof runGraphTaskStepImpl>
   ): Promise<{ success: boolean; error?: string; exit?: ImplementationExit }> {
-    return runGraphTaskStepImpl(
-      buildRunGraphTaskStepDeps(this),
-      task,
-      stepIndex,
-      instanceId,
-      governingNodeId,
-      thinkingLevel,
-      skillName,
-    );
+    return runGraphTaskStepImpl(buildRunGraphTaskStepDeps(this), ...args);
   }
 
   /** Read the active foreach instance context for a graph-owned task (if any) so
@@ -1425,24 +1395,9 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: projected step worktree-gating FNXC lives on run-projected-graph-task-step.ts. */
   private async runProjectedGraphTaskStep(
-    task: Task,
-    live: TaskDetail,
-    stepIndex: number,
-    active: ForeachActiveContext,
-    governingNodeId?: string,
-    thinkingLevel?: ThinkingLevel,
-    skillName?: string,
+    ...args: FacadeRestArgs<typeof runProjectedGraphTaskStepImpl>
   ): Promise<RunTaskStepResult> {
-    return runProjectedGraphTaskStepImpl(
-      buildRunProjectedGraphTaskStepDeps(this),
-      task,
-      live,
-      stepIndex,
-      active,
-      governingNodeId,
-      thinkingLevel,
-      skillName,
-    );
+    return runProjectedGraphTaskStepImpl(buildRunProjectedGraphTaskStepDeps(this), ...args);
   }
 
   /** Public authoritative-driver seam factory: exposes the same real lifecycle
@@ -1563,20 +1518,9 @@ export class TaskExecutor {
 
   /** Run an arbitrary (approved) CLI command in the task worktree, supervised. */
   private async runRawCliCommand(
-    task: TaskDetail,
-    label: string,
-    command: string,
-    worktreePath: string,
-    extraEnv?: NodeJS.ProcessEnv,
+    ...args: FacadeRestArgs<typeof runRawCliCommandImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    return runRawCliCommandImpl(
-      buildRunRawCliCommandDeps(this, runConfiguredCommand),
-      task,
-      label,
-      command,
-      worktreePath,
-      extraEnv,
-    );
+    return runRawCliCommandImpl(buildRunRawCliCommandDeps(this, runConfiguredCommand), ...args);
   }
 
   /** Column-agent U3 adoption for custom nodes (R8 fail-soft → undefined). */
@@ -1715,20 +1659,9 @@ export class TaskExecutor {
 
   /** Custom (non-seam) graph node via WorkflowStep machinery; columnBinding U3/R precedence. */
   private async runGraphCustomNode(
-    node: WorkflowIrNode,
-    nodeTask: TaskDetail,
-    settings: Settings,
-    columnBinding?: WorkflowColumnAgent,
-    graphContext?: Record<string, unknown>,
+    ...args: FacadeRestArgs<typeof runGraphCustomNodeImpl>
   ): Promise<WorkflowNodeResult> {
-    return runGraphCustomNodeImpl(
-      buildRunGraphCustomNodeDeps(this),
-      node,
-      nodeTask,
-      settings,
-      columnBinding,
-      graphContext,
-    );
+    return runGraphCustomNodeImpl(buildRunGraphCustomNodeDeps(this), ...args);
   }
 
   private async runCliAgentNode(
@@ -1838,94 +1771,33 @@ export class TaskExecutor {
 
   /* Shared resumeLanesMemo: one snapshot for handleGraphFailure recovery paths (avoid disagreeing re-resolve). */
   private async isRetryableBenignMergePauseAbort(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof isRetryableBenignMergePauseAbortImpl>
   ): Promise<boolean> {
-    return isRetryableBenignMergePauseAbortImpl(
-      buildResumeLaneClassifierDeps(this),
-      live,
-      result,
-      abortProvenance,
-      pausedAborted,
-      resumeLanesMemo,
-    );
+    return isRetryableBenignMergePauseAbortImpl(buildResumeLaneClassifierDeps(this), ...args);
   }
 
   private async isBenignManualMergeHoldPauseAbort(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof isBenignManualMergeHoldPauseAbortImpl>
   ): Promise<boolean> {
-    return isBenignManualMergeHoldPauseAbortImpl(
-      buildResumeLaneClassifierDeps(this),
-      live,
-      result,
-      abortProvenance,
-      pausedAborted,
-      resumeLanesMemo,
-    );
+    return isBenignManualMergeHoldPauseAbortImpl(buildResumeLaneClassifierDeps(this), ...args);
   }
 
   private async handleStaleInReviewPlanPauseAbortReplay(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    userCanceled: boolean,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof handleStaleInReviewPlanPauseAbortReplayImpl>
   ): Promise<boolean> {
-    return handleStaleInReviewPlanPauseAbortReplayImpl(
-      buildHandleStaleInReviewPlanPauseAbortReplayDeps(this),
-      live,
-      result,
-      abortProvenance,
-      pausedAborted,
-      userCanceled,
-      resumeLanesMemo,
-    );
+    return handleStaleInReviewPlanPauseAbortReplayImpl(buildHandleStaleInReviewPlanPauseAbortReplayDeps(this), ...args);
   }
 
   private async handleStaleInReviewParsePauseAbortReplay(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    userCanceled: boolean,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof handleStaleInReviewParsePauseAbortReplayImpl>
   ): Promise<boolean> {
-    return handleStaleInReviewParsePauseAbortReplayImpl(
-      buildHandleStaleInReviewParsePauseAbortReplayDeps(this),
-      live,
-      result,
-      abortProvenance,
-      pausedAborted,
-      userCanceled,
-      resumeLanesMemo,
-    );
+    return handleStaleInReviewParsePauseAbortReplayImpl(buildHandleStaleInReviewParsePauseAbortReplayDeps(this), ...args);
   }
 
   private async isReentrantPausedAbortedInFlightNode(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    pausedAborted: boolean,
-    userCanceled: boolean,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof isReentrantPausedAbortedInFlightNodeImpl>
   ): Promise<boolean> {
-    return isReentrantPausedAbortedInFlightNodeImpl(
-      buildResumeLaneClassifierDeps(this),
-      live,
-      result,
-      abortProvenance,
-      pausedAborted,
-      userCanceled,
-      resumeLanesMemo,
-    );
+    return isReentrantPausedAbortedInFlightNodeImpl(buildResumeLaneClassifierDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:05: Full Phase C resume-eligibility FNXC lives on resolve-resume-lanes.ts. */
@@ -2236,52 +2108,15 @@ export class TaskExecutor {
   }
 
   private async attemptExecutorVerificationFix(
-    task: Task,
-    worktreePath: string,
-    failureContext: {
-      command: string;
-      exitCode: number | null;
-      output: string;
-      type: "test" | "build";
-    },
-    settings: Settings,
-    retryNumber: number,
-    maxRetries: number,
-    extraEnv?: NodeJS.ProcessEnv,
+    ...args: FacadeRestArgs<typeof attemptExecutorVerificationFixImpl>
   ): Promise<boolean> {
-    return attemptExecutorVerificationFixImpl(
-      buildAttemptExecutorVerificationFixDeps(this),
-      task,
-      worktreePath,
-      failureContext,
-      settings,
-      retryNumber,
-      maxRetries,
-      extraEnv,
-    );
+    return attemptExecutorVerificationFixImpl(buildAttemptExecutorVerificationFixDeps(this), ...args);
   }
 
   private async sendTaskBackForFix(
-    task: Task,
-    worktreePath: string,
-    failureFeedback: string,
-    stepName: string,
-    reason: string,
-    preserveResumeState: boolean = true,
-    mergeVerificationFailure: boolean = false,
-    retryPresentation?: { attempt: number; max?: number },
+    ...args: FacadeRestArgs<typeof sendTaskBackForFixImpl>
   ): Promise<void> {
-    return sendTaskBackForFixImpl(
-      buildSendTaskBackForFixDeps(this, MAX_WORKFLOW_STEP_RETRIES),
-      task,
-      worktreePath,
-      failureFeedback,
-      stepName,
-      reason,
-      preserveResumeState,
-      mergeVerificationFailure,
-      retryPresentation,
-    );
+    return sendTaskBackForFixImpl(buildSendTaskBackForFixDeps(this, MAX_WORKFLOW_STEP_RETRIES), ...args);
   }
 
   private async injectWorkflowStepFailureInstructions(
@@ -2364,24 +2199,9 @@ export class TaskExecutor {
    * Returns structured outcome with support for revision requests.
    */
   private async executeWorkflowStep(
-    task: Task,
-    workflowStep: WorkflowStep,
-    worktreePath: string,
-    settings: Settings,
-    taskEnv?: NodeJS.ProcessEnv,
-    stepOptions?: { unattended?: boolean },
+    ...args: FacadeRestArgs<typeof executeWorkflowStepImpl>
   ): Promise<WorkflowStepOutcome> {
-     
-    return executeWorkflowStepImpl(
-      buildExecuteWorkflowStepDeps(this),
-      task,
-      workflowStep,
-      worktreePath,
-      settings,
-      taskEnv,
-      stepOptions,
-    );
-     
+    return executeWorkflowStepImpl(buildExecuteWorkflowStepDeps(this), ...args);
   }
 
   private async tryBootstrapMisbindingRecovery(
@@ -2661,11 +2481,7 @@ export class TaskExecutor {
   }
 
   private async createWorktree(
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    allowSiblingBranchRename = false,
+    ...args: FacadeRestArgs<typeof createWorktreeImpl>
   ): Promise<{ path: string; branch: string }> {
     return createWorktreeImpl(
       buildCreateWorktreeDeps(
@@ -2673,11 +2489,7 @@ export class TaskExecutor {
         { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
         bindTryCreateWorktree(this),
       ),
-      branch,
-      path,
-      taskId,
-      startPoint,
-      allowSiblingBranchRename,
+      ...args,
     );
   }
 
