@@ -326,7 +326,7 @@ export function buildRunGraphTaskStepDeps(host: any): any {
 
 export function buildRecoverCompletedTaskDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     ...facadeFields(host, [
       "executing", "activeSessions", "activeStepExecutors",
       "activeWorkflowStepSessions", "resumingUnpaused",
@@ -435,7 +435,7 @@ export function buildScheduleCompletedTaskWatchdogDeps(
 
 export function buildDispatchUnpauseResumeDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     ...facadeFields(host, [
       "executing", "resumingUnpaused", "recoveringCompleted",
       "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
@@ -450,7 +450,7 @@ export function buildDispatchUnpauseResumeDeps(host: any): any {
 
 export function buildHoldForSessionContentionDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     getHoldAttempts: (taskId: string) => host.sessionContentionHoldAttempts.get(taskId) ?? 0,
     setHoldAttempts: (taskId: string, attempt: number) => { host.sessionContentionHoldAttempts.set(taskId, attempt); },
     clearHold: (taskId: string) => host.clearSessionContentionHold(taskId),
@@ -618,7 +618,7 @@ export function buildPerformWorkflowRerunBounceDeps(host: any): any {
 
 export function buildExecuteReviewHandoffDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     ...facadeMethods(host, ["persistTokenUsage", "handoffTaskToReview", "deleteActiveSession"]),
     activeSessions: host.activeSessions,
     untrackStuckTask: (id: string) => { host.options.stuckTaskDetector?.untrackTask(id); },
@@ -666,7 +666,7 @@ export function buildHasLiveSessionSurfaceDeps(host: any, pathsForTask: (id: str
 
 export function buildBuildActionGateContextDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     approvalSuspended: host.approvalSuspended,
     awaitAbortInFlightTaskWork: (id: string, reason: string) => host.awaitAbortInFlightTaskWork(id, reason),
     agentStore: host.options.agentStore,
@@ -728,7 +728,7 @@ export function buildApplyGraphRethinkResetDeps(host: any): any {
 
 export function buildRunCliAgentNodeDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     activeCliTaskSessions: host.activeCliTaskSessions,
     cliAgentRuntime: host.options.cliAgentRuntime,
     reapCliTaskSessionForHandoff: (session: unknown, id: string) => host.reapCliTaskSessionForHandoff(session, id),
@@ -737,7 +737,7 @@ export function buildRunCliAgentNodeDeps(host: any): any {
 
 export function buildEnsureWorkflowMergeBoundaryTaskDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     ...facadeMethods(host, ["resolveMergeBoundaryColumn", "evaluateWorkflowMergeBoundary"]),
     shouldCompleteChecklistAtWorkflowMerge: (live: unknown, mergeProof: unknown) =>
       host.shouldCompleteChecklistAtWorkflowMerge(live, mergeProof),
@@ -746,7 +746,7 @@ export function buildEnsureWorkflowMergeBoundaryTaskDeps(host: any): any {
 
 export function buildResolveSeamColumnAgentDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     agentStore: host.options.agentStore,
     graphSeamGoverningNodeId: host.graphSeamGoverningNodeId,
     graphColumnAgentResolver: host.graphColumnAgentResolver,
@@ -814,7 +814,7 @@ export function buildRenewTaskLeaseDeps(host: any): any {
 
 export function buildBuildPermanentAgentGatingContextDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     approvalSuspended: host.approvalSuspended,
     approvalRequestStore: host.approvalRequestStore,
   };
@@ -822,7 +822,7 @@ export function buildBuildPermanentAgentGatingContextDeps(host: any): any {
 
 export function buildPersistTokenUsageDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     tokenUsageBaselines: host.tokenUsageBaselines,
     getActiveSession: (id: string) => host.activeSessions.get(id)?.session,
   };
@@ -830,7 +830,7 @@ export function buildPersistTokenUsageDeps(host: any): any {
 
 export function buildRecoverMissingRequiredArtifactsDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     isRequiredArtifactRecoveryProtected: (t: unknown) => host.isRequiredArtifactRecoveryProtected(t),
     workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
   };
@@ -846,7 +846,7 @@ export function buildBuildForeachWorktreeDepsDeps(host: any): any {
 
 export function buildRouteGraphMergeFailureToRetryDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     mergeRequester: host.mergeRequester,
     ...facadeMethods(host, ["ensureWorkflowMergeBoundaryTask", "persistTokenUsage"]),
   };
@@ -854,7 +854,7 @@ export function buildRouteGraphMergeFailureToRetryDeps(host: any): any {
 
 export function buildRouteImplementationIncompleteMergeGraphFailureDeps(host: any): any {
   return {
-    ...host.storeRunContextDeps(),
+    ...buildStoreRunContextDeps(host),
     ...facadeMethods(host, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
     activeWorktrees: host.activeWorktrees,
   };
