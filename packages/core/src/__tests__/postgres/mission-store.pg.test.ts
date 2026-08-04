@@ -37,7 +37,7 @@ import {
   listMissions as listMissionRows,
   updateMilestoneValidationState,
 } from "../../async-stores/async-mission-store.js";
-import { BUILTIN_CODING_WORKFLOW_IR } from "../../postgres/schema/index.js";
+import { BUILTIN_CODING_WORKFLOW_IR } from "../../workflows/builtin-coding-workflow-ir.js";
 
 const pgTest = pgDescribe;
 
@@ -413,6 +413,12 @@ pgTest("MissionStore (PostgreSQL backend mode)", () => {
   render, from a path that runs during ordinary feature bootstrap.
 
   DIFFERENTIAL: `filed` collides with no legacy id, so a surviving `"archived"` cannot pass by luck.
+
+  FNXC:WorkflowResolvedColumns 2026-08-03-23:52:
+  This fixture imports the canonical workflow module directly. The PostgreSQL schema barrel is only
+  the Drizzle table contract and deliberately does not re-export workflow definitions; sibling
+  renamed-lane PostgreSQL coverage uses the same direct source to keep schema and workflow APIs
+  separate.
   */
   it("archives a bootstrap duplicate into the RENAMED archive lane", async () => {
     const m = missions();
