@@ -3,35 +3,21 @@ export * from "./executor/executor-reexports.js";
 import {
   type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider, type AgentSession,
   dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
-  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorWorktreePureFacades,
+  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorSessionFacades,
 } from "./executor/task-executor-imports.js";
-export class TaskExecutor extends TaskExecutorWorktreePureFacades {
-  private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
-  private getActiveWorktreePaths(taskId: string): ReturnType<typeof impl.getActiveWorktreePathsImpl> { return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId); }
+export class TaskExecutor extends TaskExecutorSessionFacades {
   private safeLogEntry(taskId: string, message: string): void { impl.safeLogEntryImpl(bags.buildStoreRunContextDeps(this), taskId, message); }
   private markPausedAborted(...args: FacadeRestArgs<typeof impl.markPausedAbortedImpl>): void { impl.markPausedAbortedImpl(bags.buildMarkPausedAbortedDeps(this), ...args); }
   private markCompletionFinalized(taskId: string): void { impl.markCompletionFinalizedImpl(bags.buildPauseAbortMarkerDeps(this), taskId); }
   private clearPausedAborted(taskId: string): void { impl.clearPausedAbortedImpl(bags.buildPauseAbortMarkerDeps(this), taskId); }
   private async clearStalePauseAbortBeforeDispatch(task: Task): ReturnType<typeof impl.clearStalePauseAbortBeforeDispatchImpl> { return impl.clearStalePauseAbortBeforeDispatchImpl(bags.buildClearStalePauseAbortBeforeDispatchDeps(this), task); }
   clearPauseAbortStateForManualRetry(taskId: string): void { impl.clearPauseAbortStateForManualRetryImpl({ clearPausedAborted: (id: string) => this.clearPausedAborted(id) }, taskId); }
-  private sessionRegistryPath(taskId: string, worktreePath: string): ReturnType<typeof impl.sessionRegistryPathImpl> { return impl.sessionRegistryPathImpl(this.rootDir, taskId, worktreePath); }
-  private acquireSessionRegistryPath(...args: FacadeRestArgs<typeof impl.acquireSessionRegistryPathImpl>): void { impl.acquireSessionRegistryPathImpl(bags.buildAcquireSessionRegistryPathDeps(this), ...args); }
-  private setActiveSession(taskId: string, sessionState: Parameters<typeof impl.setActiveSessionImpl>[2], worktreePath: string): void { impl.setActiveSessionImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, sessionState, worktreePath); }
-  private markGraphExecuteSelfRequeued(taskId: string): void { impl.markGraphExecuteSelfRequeuedImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId); }
-  private deleteActiveSession(taskId: string, worktreePath?: string): void { impl.deleteActiveSessionImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, worktreePath); }
-  private setActiveStepExecutor(taskId: string, stepExecutor: Parameters<typeof impl.setActiveStepExecutorImpl>[2], worktreePath: string, seenSteeringIds = new Set<string>()): void { impl.setActiveStepExecutorImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, stepExecutor, worktreePath, seenSteeringIds); }
-  private deleteActiveStepExecutor(taskId: string, worktreePath?: string): void { impl.deleteActiveStepExecutorImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, worktreePath); }
-  private setActiveWorkflowStepSession(taskId: string, session: Parameters<typeof impl.setActiveWorkflowStepSessionImpl>[2], worktreePath: string, seenSteeringIds = new Set<string>()): void { impl.setActiveWorkflowStepSessionImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, session, worktreePath, seenSteeringIds); }
-  private deleteActiveWorkflowStepSession(taskId: string, worktreePath?: string): void { impl.deleteActiveWorkflowStepSessionImpl(bags.buildActiveSessionBookkeepingDeps(this), taskId, worktreePath); }
-  private registerConfiguredCommandController(taskId: string, controller: AbortController): void { impl.registerConfiguredCommandControllerImpl(this.activeConfiguredCommandControllers, taskId, controller); }
-  private unregisterConfiguredCommandController(taskId: string, controller: AbortController): void { impl.unregisterConfiguredCommandControllerImpl(this.activeConfiguredCommandControllers, taskId, controller); }
   private getAutoRecoveryDispatcher(audit: Parameters<typeof impl.getAutoRecoveryDispatcherImpl>[1]): ReturnType<typeof impl.getAutoRecoveryDispatcherImpl> { return impl.getAutoRecoveryDispatcherImpl(bags.buildGetAutoRecoveryDispatcherDeps(this), audit); }
   private async renewTaskLease(...args: FacadeRestArgs<typeof impl.renewTaskLeaseImpl>): ReturnType<typeof impl.renewTaskLeaseImpl> { return impl.renewTaskLeaseImpl(bags.buildRenewTaskLeaseDeps(this), ...args); }
   private async finalizeAlreadyReviewedTask(taskId: string): ReturnType<typeof impl.finalizeAlreadyReviewedTaskImpl> { return impl.finalizeAlreadyReviewedTaskImpl(bags.buildFinalizeAlreadyReviewedTaskDeps(this), taskId); }
   private async getExecutionPauseLabel(): ReturnType<typeof impl.getExecutionPauseLabelImpl> { return impl.getExecutionPauseLabelImpl({ store: this.store }); }
   private async shouldDeferCompletionForGlobalPause(...args: FacadeRestArgs<typeof impl.shouldDeferCompletionForGlobalPauseImpl>): ReturnType<typeof impl.shouldDeferCompletionForGlobalPauseImpl> { return impl.shouldDeferCompletionForGlobalPauseImpl(bags.buildShouldDeferCompletionForGlobalPauseDeps(this), ...args); }
   private async shouldDeferWorkflowStepCompletion(...args: FacadeRestArgs<typeof impl.shouldDeferWorkflowStepCompletionImpl>): ReturnType<typeof impl.shouldDeferWorkflowStepCompletionImpl> { return impl.shouldDeferWorkflowStepCompletionImpl(bags.buildShouldDeferWorkflowStepCompletionDeps(this), ...args); }
-  private getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
   private async handoffTaskToReview(...args: FacadeRestArgs<typeof impl.handoffTaskToReviewImpl>): ReturnType<typeof impl.handoffTaskToReviewImpl> { return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), ...args); }
   private async generateCompletionFeatureVideo(task: Task): ReturnType<typeof impl.generateCompletionFeatureVideoImpl> { return impl.generateCompletionFeatureVideoImpl(bags.buildGenerateCompletionFeatureVideoDeps(this), task); }
   private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> { return impl.awaitFeatureVideoBoundedImpl(result); }
@@ -47,9 +33,6 @@ export class TaskExecutor extends TaskExecutorWorktreePureFacades {
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean { return impl.clearPhantomExecutorBindingImpl(bags.buildClearPhantomExecutorBindingDeps(this), taskId, options); }
   isEphemeralDeletionPending(agentId: string): boolean { return impl.isEphemeralDeletionPendingImpl(this.pendingEphemeralDeletions, agentId); }
   disposeEphemeralTimers(): void { impl.disposeEphemeralTimersImpl(this.pendingEphemeralDeletions); }
-  private registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
-  private unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
-  private disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean { const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId); const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" }; return (from === lanes.hold || from === lanes.intake) && ![lanes.wip, lanes.review, lanes.complete].filter((c): c is string => typeof c === "string").includes(to); }
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }

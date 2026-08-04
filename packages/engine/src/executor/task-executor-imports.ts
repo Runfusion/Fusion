@@ -52,4 +52,5 @@ export type {
 } from "./task-executor-options.js";
 export { TaskExecutorState } from "./task-executor-state.js";
 export { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
+export { TaskExecutorSessionFacades } from "./task-executor-session-facades.js";
 
