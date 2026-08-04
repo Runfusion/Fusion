@@ -24,7 +24,6 @@ import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
 import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
 import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
-import { BranchConflictError } from "./execution/branch-conflicts.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
@@ -2075,26 +2074,15 @@ export class TaskExecutor {
   }
 
   private async reclaimExistingWorktree(
-    task: Task,
-    livePath: string,
-    branch: string,
-    tipSha: string,
-    count: number,
-    settings: Partial<Settings>,
+    ...args: FacadeRestArgs<typeof reclaimExistingWorktreeImpl>
   ): Promise<void> {
-    return reclaimExistingWorktreeImpl(
-      this.branchConflictHandleDeps(),
-      task,
-      livePath,
-      branch,
-      tipSha,
-      count,
-      settings,
-    );
+    return reclaimExistingWorktreeImpl(this.branchConflictHandleDeps(), ...args);
   }
 
-  private async handleBranchConflict(task: Task, error: BranchConflictError): Promise<"retry" | "reclaimed" | "sticky"> {
-    return handleBranchConflictImpl(this.branchConflictHandleDeps(), task, error);
+  private async handleBranchConflict(
+    ...args: FacadeRestArgs<typeof handleBranchConflictImpl>
+  ): Promise<"retry" | "reclaimed" | "sticky"> {
+    return handleBranchConflictImpl(this.branchConflictHandleDeps(), ...args);
   }
 
   private async recoverMissingWorktreeSessionStartFailure(
@@ -2104,20 +2092,9 @@ export class TaskExecutor {
   }
 
   private async emitWorktreeReanchoredAudit(
-    taskId: string,
-    fromPath: string,
-    toPath: string,
-    source: "verify-worktree-invariants" | "executor-liveness-gate",
+    ...args: FacadeRestArgs<typeof emitWorktreeReanchoredAuditImpl>
   ): Promise<void> {
-    return emitWorktreeReanchoredAuditImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      taskId,
-      fromPath,
-      toPath,
-      source,
-    );
+    return emitWorktreeReanchoredAuditImpl(this.storeRunContextDeps(), ...args);
   }
 
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
@@ -2234,35 +2211,15 @@ export class TaskExecutor {
   }
 
   private async tryCreateWorktree(
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    attemptNumber = 0,
-    recoveryDepth = 0,
-    allowSiblingBranchRename = false,
-    settings: Partial<Settings> = {},
+    ...args: FacadeRestArgs<typeof tryCreateWorktreeImpl>
   ): Promise<{ path: string; branch: string }> {
-    return tryCreateWorktreeImpl(
-      this.worktreeCreateConflictDeps(),
-      branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename, settings,
-    );
+    return tryCreateWorktreeImpl(this.worktreeCreateConflictDeps(), ...args);
   }
 
   private async handleWorktreeConflict(
-    conflictPath: string,
-    branch: string,
-    path: string,
-    taskId: string,
-    startPoint?: string,
-    attemptNumber?: number,
-    allowSiblingBranchRename = false,
-    settings: Partial<Settings> = {},
+    ...args: FacadeRestArgs<typeof handleWorktreeConflictImpl>
   ): Promise<{ path: string; branch: string } | null> {
-    return handleWorktreeConflictImpl(
-      this.worktreeCreateConflictDeps(),
-      conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename, settings,
-    );
+    return handleWorktreeConflictImpl(this.worktreeCreateConflictDeps(), ...args);
   }
 
   private async cleanupConflictingWorktree(
