@@ -18956,9 +18956,10 @@ ${planReviewSpecText}
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
 
 CRITICAL SCOPING RULES — read before doing anything else:
-- Review ONLY the files listed above. Do NOT analyze unmodified files or unrelated parts of the codebase.
-- If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
-- Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.${approvedContractBlock}`;
+- The modified-file list is the starting point and primary reporting scope, not a prohibition on reading code required to validate the change.
+- Read necessary callers, selectors, shared helpers, consumers, and tests outside that list when they establish production reachability, invariant coverage, or API/UI parity. Do not report unrelated pre-existing issues.
+- If NONE of the modified files are relevant to your review category, confirm that from the list and fast-bail without broad repository exploration.
+- Keep adjacent reads bounded to the changed behavior and its immediate production/test chain so the review finishes within its wall-clock budget.${approvedContractBlock}`;
 
     const latestTaskForUserComments = await this.store.getTask(task.id).catch(() => task);
     const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
@@ -19015,7 +19016,8 @@ This review-type node may fix issues it finds before returning a final verdict.
 - If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
 - Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
 - Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
-- Code Review and Browser Verification may fix implementation issues inside the assigned task worktree and should mention the fix in notes.`
+- Code Review and Browser Verification may fix implementation issues inside the assigned task worktree and should mention the fix in notes.
+- After any inline edit, treat your own change as untrusted: re-read the fresh diff, restart the mandatory review procedure from its requirements ledger and production-reachability checks, and rerun the smallest relevant verification. Never approve solely because the local fix compiles or its narrow test passes.`
       : "";
 
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}

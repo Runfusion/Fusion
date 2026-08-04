@@ -1,4 +1,5 @@
 import type { WorkflowIrNode } from "./workflow-ir-types.js";
+import { CODE_REVIEW_COMPLETENESS_POLICY } from "../agents/code-review-policy.js";
 
 /*
 FNXC:CodeReviewStep 2026-06-25-15:00:
@@ -64,6 +65,8 @@ const CODE_REVIEW_PROMPT = `You are a senior code reviewer. Review the task's di
 4. **Regressions in touched code paths** — does the change break or weaken an existing behavior in the files it edits or their callers?
 5. **Error handling** — swallowed errors, unhandled rejections/exceptions, missing validation at trust boundaries, misleading error messages.
 6. **Contract / signature changes** — changed function/exported-type signatures, API request/response shapes, or serialization that breaks existing callers.
+
+${CODE_REVIEW_COMPLETENESS_POLICY}
 
 Be specific: cite \`file:line\` for every finding and explain the concrete failure it causes.
 

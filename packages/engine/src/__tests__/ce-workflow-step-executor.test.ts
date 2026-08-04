@@ -1071,6 +1071,10 @@ Ship FIVE kinds. Do NOT add roadmap-item in this task.
       expect(cap.last?.systemPrompt).toContain("Ship FIVE kinds. Do NOT add roadmap-item in this task.");
       expect(cap.last?.systemPrompt).toContain("PROMPT.md is the authoritative current contract");
       expect(cap.last?.systemPrompt).toContain("Do not enforce superseded requirements from the original Task Description");
+      expect(cap.last?.systemPrompt).toContain("modified-file list is the starting point");
+      expect(cap.last?.systemPrompt).toContain("necessary callers, selectors, shared helpers, consumers, and tests");
+      expect(cap.last?.systemPrompt).not.toContain("Review ONLY the files listed above");
+      expect(cap.last?.systemPrompt).toContain("restart the mandatory review procedure");
     });
 
     it("does not restore the historical task description when PROMPT.md is unavailable", async () => {

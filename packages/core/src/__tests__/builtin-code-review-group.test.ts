@@ -43,6 +43,13 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(prompt).not.toContain('"verdict":"FAIL"');
     expect(prompt).toMatch(/git diff/);
     expect(prompt).toMatch(/out of scope/i);
+    expect(prompt).toContain("requirements ledger");
+    expect(prompt).toContain("real production entry point");
+    expect(prompt).toContain("## Symptom Verification");
+    expect(prompt).toContain("## Surface Enumeration");
+    expect(prompt).toContain("current state, version, or planning episode");
+    expect(prompt).toContain("bounded");
+    expect(prompt).toContain("UI, API, CLI, and agent consumers");
   });
 
   it("builds a DEFAULT-ON optional-group with the stable group id and distinct inner id", () => {
