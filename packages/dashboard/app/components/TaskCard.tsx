@@ -1541,8 +1541,9 @@ function TaskCardComponent({
   know approval is required because Plan Review exhausted automatic REVISE replans without
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
-  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
+  const isAwaitingApproval = (isIntakeColumn && task.status === "awaiting-approval")
+    || isPlanReviewReplanCapApproval;
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = isArchivedColumn;
   /*

@@ -61,6 +61,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     getRootDir: vi.fn().mockReturnValue(mkdtempSync(join(tmpdir(), "kb-plan-approval-"))),
     getTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     updateTask: vi.fn().mockResolvedValue(PLANNING_TASK),
+    withPlanningLifecycleLock: vi.fn(async (_id, fn) => await fn()),
     moveTask: vi.fn().mockResolvedValue(PLANNING_TASK),
     logEntry: vi.fn().mockResolvedValue(undefined),
     // Resolve the merged workflow so the routes see its real intake column.

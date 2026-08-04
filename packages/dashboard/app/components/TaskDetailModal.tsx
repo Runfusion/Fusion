@@ -3408,8 +3408,9 @@ export function TaskDetailContent({
   const isIntakeColumn = detailColumnFlags
     ? detailColumnFlags.intake === true
     : task.column === "triage";
-  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
+  const isAwaitingApproval = (isIntakeColumn && task.status === "awaiting-approval")
+    || isPlanReviewReplanCapApproval;
 
   const handleTogglePause = useCallback(async () => {
     try {

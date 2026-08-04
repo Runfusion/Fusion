@@ -191,6 +191,24 @@ async function resolveIntakeColumnForTask(store: TaskStore, taskId: string): Pro
   }
 }
 
+/**
+ * Plan approval normally belongs in the workflow intake lane. An exhausted Plan Review is
+ * different: the graph parks it where that review node ran, and both operator decisions must be
+ * accepted there. Keep approve/reject on one resolver so the UI cannot offer a choice that only
+ * one endpoint understands.
+ */
+async function resolvePlanApprovalColumnForTask(store: TaskStore, task: Task): Promise<string> {
+  const intakeColumn = await resolveIntakeColumnForTask(store, task.id);
+  if (task.awaitingApprovalReason !== "plan-review-replan-cap") return intakeColumn;
+
+  try {
+    const ir = await resolveWorkflowIrForTask(store, task.id);
+    return ir.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID)?.column ?? intakeColumn;
+  } catch {
+    return intakeColumn;
+  }
+}
+
 /*
 FNXC:WorkflowResolvedColumns 2026-07-27-16:15 (U10 / R8):
 Lifecycle POSITION — "is this move backward?" — resolved through `COLUMNS.indexOf(...)`, the
@@ -4005,133 +4023,124 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/approve-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.getTask(req.params.id);
+      const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
+        /*
+         * The task read belongs inside the same lifecycle lock used by dependency mutation.
+         * Otherwise an approval request can validate an old awaiting-approval snapshot, wait for
+         * a dependency re-seed to publish needs-replan, and then erase that newer state.
+         */
+        const task = await scopedStore.getTask(req.params.id);
 
-      /*
-      FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — P0, post-#2515):
-      Resolve the workflow's INTAKE column; do not name `triage`. #2515 removed `triage`
-      from the default lineage — the single pre-implementation column is now id `todo`
-      displayed as "Planning" — so comparing the card's column against the legacy
-      `triage` id became TRUE for every
-      default-workflow card and this route rejected all of them. A card parked
-      `awaiting-approval` could not be approved OR rejected (same guard below), i.e. it
-      was STUCK with no operator action able to release it. The guard did not stop
-      firing; it started firing on everything.
-      */
-      const approveIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      let approveColumn = approveIntakeColumn;
-      /*
-      FNXC:PlanReviewApproval 2026-08-04-00:26:
-      An exhausted Plan Review is parked in the review node's column. That column is not always
-      the workflow intake column (`builtin:legacy-coding` uses todo vs triage), so the operator's
-      terminal approval must be accepted where the failed review actually ran.
-      */
-      if (task.awaitingApprovalReason === "plan-review-replan-cap") {
+        /*
+        FNXC:WorkflowResolvedColumns 2026-07-29-00:00 (U12 — P0, post-#2515):
+        Resolve the workflow's INTAKE column; do not name `triage`. #2515 removed `triage`
+        from the default lineage — the single pre-implementation column is now id `todo`
+        displayed as "Planning" — so comparing the card's column against the legacy
+        `triage` id became TRUE for every
+        default-workflow card and this route rejected all of them. A card parked
+        `awaiting-approval` could not be approved OR rejected (same guard below), i.e. it
+        was STUCK with no operator action able to release it. The guard did not stop
+        firing; it started firing on everything.
+        */
+        const approveColumn = await resolvePlanApprovalColumnForTask(scopedStore, task);
+        /*
+        The resolved column ONLY — the legacy-`triage` disjunct this comment
+        used to justify is gone (PR #2614 review — greptile: the comment outlived the code).
+        It was a belt-and-braces widening added with the P0 fix, on the theory that a card
+        might still be sitting in `triage`. Nothing shipped declares that column since
+        #2515, so the disjunct only widened what the guard accepts, and re-adding it changed
+        no test in either direction. A guard that accepts a column no workflow declares is
+        not caution, it is an unreachable branch that reads like a requirement.
+        */
+        if (task.column !== approveColumn) {
+          throw badRequest(`Task must be in the '${approveColumn}' column to approve plan`);
+        }
+        if (task.status !== "awaiting-approval") {
+          throw badRequest("Task must have status 'awaiting-approval' to approve plan");
+        }
+        // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+        // The triage release-authorization gate was removed (it over-fired and stranded
+        // ordinary tasks). The approve-plan guard that refused any task carrying the legacy
+        // awaitingApprovalReason === "release-authorization" is gone too, so tasks parked by
+        // the old gate can now be approved normally instead of staying stuck with no exit.
+
+        /*
+         * FNXC:PlanApproval 2026-07-04-22:41:
+         * FN-7569 — persist a fingerprint of the exact PROMPT.md the operator just approved
+         * so a later re-specification (replan, plan-review retry, self-healing rebound) that
+         * produces the identical plan can skip re-parking at awaiting-approval. Read the
+         * on-disk PROMPT.md directly (best-effort) since the task row does not always carry
+         * full prompt text; a missing/unreadable file leaves the fingerprint unset and the
+         * manual gate falls back to today's always-re-park behavior for this task.
+         */
+        let approvedPlanFingerprint: string | undefined;
         try {
-          const ir = await resolveWorkflowIrForTask(scopedStore, task.id);
-          approveColumn = ir.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID)?.column
-            ?? approveIntakeColumn;
+          const { readFile } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+          const promptText = await readFile(promptPath, "utf8");
+          approvedPlanFingerprint = computePlanApprovalFingerprint(promptText);
         } catch {
-          // Preserve the existing intake fallback when workflow resolution is unavailable.
+          // No PROMPT.md to fingerprint (unusual for an awaiting-approval task) — leave unset.
         }
-      }
-      /*
-      The resolved column ONLY — the legacy-`triage` disjunct this comment
-      used to justify is gone (PR #2614 review — greptile: the comment outlived the code).
-      It was a belt-and-braces widening added with the P0 fix, on the theory that a card
-      might still be sitting in `triage`. Nothing shipped declares that column since
-      #2515, so the disjunct only widened what the guard accepts, and re-adding it changed
-      no test in either direction. A guard that accepts a column no workflow declares is
-      not caution, it is an unreachable branch that reads like a requirement.
-      */
-      if (task.column !== approveColumn) {
-        throw badRequest(`Task must be in the '${approveColumn}' column to approve plan`);
-      }
-      if (task.status !== "awaiting-approval") {
-        throw badRequest("Task must have status 'awaiting-approval' to approve plan");
-      }
-      // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
-      // The triage release-authorization gate was removed (it over-fired and stranded
-      // ordinary tasks). The approve-plan guard that refused any task carrying the legacy
-      // awaitingApprovalReason === "release-authorization" is gone too, so tasks parked by
-      // the old gate can now be approved normally instead of staying stuck with no exit.
 
-      /*
-       * FNXC:PlanApproval 2026-07-04-22:41:
-       * FN-7569 — persist a fingerprint of the exact PROMPT.md the operator just approved
-       * so a later re-specification (replan, plan-review retry, self-healing rebound) that
-       * produces the identical plan can skip re-parking at awaiting-approval. Read the
-       * on-disk PROMPT.md directly (best-effort) since the task row does not always carry
-       * full prompt text; a missing/unreadable file leaves the fingerprint unset and the
-       * manual gate falls back to today's always-re-park behavior for this task.
-       */
-      let approvedPlanFingerprint: string | undefined;
-      try {
-        const { readFile } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
-        const promptText = await readFile(promptPath, "utf8");
-        approvedPlanFingerprint = computePlanApprovalFingerprint(promptText);
-      } catch {
-        // No PROMPT.md to fingerprint (unusual for an awaiting-approval task) — leave unset.
-      }
-
-      /*
-      FNXC:PlanReviewApproval 2026-08-04-00:26:
-      Manual approval after the revision cap is durable evidence that the final REVISE was
-      accepted. Persist the audited bypass with the hold clear so no consumer can observe only
-      half of the operator decision and enqueue another Plan Review.
-      */
-      let approvedWorkflowStepResults: Task["workflowStepResults"] | undefined;
-      if (task.awaitingApprovalReason === "plan-review-replan-cap") {
-        const results = [...(task.workflowStepResults ?? [])];
-        let reviewIndex = -1;
-        for (let index = results.length - 1; index >= 0; index -= 1) {
-          const result = results[index];
-          if (
-            result.workflowStepId === PLAN_REVIEW_GROUP_ID
-            && (result.status === "failed" || result.status === "advisory_failure")
-            && result.verdict === "REVISE"
-          ) {
-            reviewIndex = index;
-            break;
+        /*
+        FNXC:PlanReviewApproval 2026-08-04-00:26:
+        Manual approval after the revision cap is durable evidence that the final REVISE was
+        accepted. Persist the audited bypass with the hold clear so no consumer can observe only
+        half of the operator decision and enqueue another Plan Review.
+        */
+        let approvedWorkflowStepResults: Task["workflowStepResults"] | undefined;
+        if (task.awaitingApprovalReason === "plan-review-replan-cap") {
+          const results = [...(task.workflowStepResults ?? [])];
+          let reviewIndex = -1;
+          for (let index = results.length - 1; index >= 0; index -= 1) {
+            const result = results[index];
+            if (
+              result.workflowStepId === PLAN_REVIEW_GROUP_ID
+              && (result.status === "failed" || result.status === "advisory_failure")
+              && result.verdict === "REVISE"
+            ) {
+              reviewIndex = index;
+              break;
+            }
           }
+          if (reviewIndex === -1) {
+            throw conflict("Cannot approve exhausted Plan Review: no failed REVISE result is available to override");
+          }
+
+          const prior = results[reviewIndex];
+          const bypassed = {
+            ...prior,
+            status: "skipped" as const,
+            bypassedBy: "dashboard-operator",
+            bypassedAt: new Date().toISOString(),
+            bypassReason: "Approved after Plan Review did not converge",
+            bypassedFromStatus: prior.status,
+            bypassedFromVerdict: prior.verdict,
+          };
+          delete bypassed.verdict;
+          results[reviewIndex] = bypassed;
+          approvedWorkflowStepResults = results;
         }
-        if (reviewIndex === -1) {
-          throw conflict("Cannot approve exhausted Plan Review: no failed REVISE result is available to override");
-        }
 
-        const prior = results[reviewIndex];
-        const bypassed = {
-          ...prior,
-          status: "skipped" as const,
-          bypassedBy: "dashboard-operator",
-          bypassedAt: new Date().toISOString(),
-          bypassReason: "Approved after Plan Review did not converge",
-          bypassedFromStatus: prior.status,
-          bypassedFromVerdict: prior.verdict,
-        };
-        delete bypassed.verdict;
-        results[reviewIndex] = bypassed;
-        approvedWorkflowStepResults = results;
-      }
+        await scopedStore.logEntry(task.id, "Plan approved by user");
 
-      await scopedStore.logEntry(task.id, "Plan approved by user");
-
-      // Move to todo and clear status
-      const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
-      await scopedStore.moveTask(task.id, reboundColumn);
-      /*
-       * FNXC:PlanApproval 2026-08-03-18:53:
-       * Approval must clear the durable awaiting-approval hold with TaskStore's explicit
-       * null sentinel; undefined omits a field from the patch. Persist the current plan's
-       * fingerprint, or explicitly clear a prior fingerprint when PROMPT.md was unreadable,
-       * so a stale plan can never bypass a later manual approval gate.
-       */
-      const updated = await scopedStore.updateTask(task.id, {
-        status: null,
-        approvedPlanFingerprint: approvedPlanFingerprint ?? null,
-        ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
+        // Move to todo and clear status
+        const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
+        await scopedStore.moveTask(task.id, reboundColumn);
+        /*
+         * FNXC:PlanApproval 2026-08-03-18:53:
+         * Approval must clear the durable awaiting-approval hold with TaskStore's explicit
+         * null sentinel; undefined omits a field from the patch. Persist the current plan's
+         * fingerprint, or explicitly clear a prior fingerprint when PROMPT.md was unreadable,
+         * so a stale plan can never bypass a later manual approval gate.
+         */
+        return await scopedStore.updateTask(task.id, {
+          status: null,
+          approvedPlanFingerprint: approvedPlanFingerprint ?? null,
+          ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
+        });
       });
 
       res.json(updated);
@@ -4149,44 +4158,46 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/reject-plan", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.getTask(req.params.id);
+      const updated = await scopedStore.withPlanningLifecycleLock(req.params.id, async () => {
+        // Match approval's fresh-read invariant: a stale reject must not clear needs-replan.
+        const task = await scopedStore.getTask(req.params.id);
 
-      // Same P0 as approve-plan above: resolve the intake column rather than naming
-      // `triage`, which #2515 removed from the default lineage.
-      const rejectIntakeColumn = await resolveIntakeColumnForTask(scopedStore, task.id);
-      if (task.column !== rejectIntakeColumn) {
-        throw badRequest(`Task must be in the '${rejectIntakeColumn}' column to reject plan`);
-      }
-      if (task.status !== "awaiting-approval") {
-        throw badRequest("Task must have status 'awaiting-approval' to reject plan");
-      }
-      // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
-      // Release-authorization gate removed — see the approve-plan handler above. A task
-      // carrying the legacy release-authorization hold can now be rejected normally.
+        // Same P0 as approve-plan above: resolve the intake column rather than naming
+        // `triage`, which #2515 removed from the default lineage.
+        const rejectColumn = await resolvePlanApprovalColumnForTask(scopedStore, task);
+        if (task.column !== rejectColumn) {
+          throw badRequest(`Task must be in the '${rejectColumn}' column to reject plan`);
+        }
+        if (task.status !== "awaiting-approval") {
+          throw badRequest("Task must have status 'awaiting-approval' to reject plan");
+        }
+        // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+        // Release-authorization gate removed — see the approve-plan handler above. A task
+        // carrying the legacy release-authorization hold can now be rejected normally.
 
-      // Log the rejection
-      await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
+        // Log the rejection
+        await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
 
-      /*
-       * FNXC:PlanApproval 2026-08-03-19:03:
-       * Remove PROMPT.md before releasing the approval hold. If removal fails, the rejected
-       * plan must remain blocked rather than becoming schedulable with rejected content.
-       */
-      const { rm } = await import("node:fs/promises");
-      const { join } = await import("node:path");
-      const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
-      await rm(promptPath, { force: true });
+        /*
+         * FNXC:PlanApproval 2026-08-03-19:03:
+         * Remove PROMPT.md before releasing the approval hold. If removal fails, the rejected
+         * plan must remain blocked rather than becoming schedulable with rejected content.
+         */
+        const { rm } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+        await rm(promptPath, { force: true });
 
-      // Clear status to return to normal triage state
-      /*
-       * FNXC:PlanApproval 2026-07-04-22:41:
-       * FN-7569 — clear any previously-recorded approval fingerprint alongside the status
-       * clear and PROMPT.md removal, so the regenerated plan is always treated as new and
-       * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
-       */
-      await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null });
-
-      const updated = await scopedStore.getTask(task.id);
+        // Clear status to return to normal triage state
+        /*
+         * FNXC:PlanApproval 2026-07-04-22:41:
+         * FN-7569 — clear any previously-recorded approval fingerprint alongside the status
+         * clear and PROMPT.md removal, so the regenerated plan is always treated as new and
+         * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
+         */
+        await scopedStore.updateTask(task.id, { status: null, approvedPlanFingerprint: null });
+        return await scopedStore.getTask(task.id);
+      });
       res.json(updated);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
