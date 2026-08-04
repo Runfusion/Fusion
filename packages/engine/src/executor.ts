@@ -1353,8 +1353,7 @@ export class TaskExecutor {
   ): void {
     scheduleWorkflowRerunImpl(
       {
-        store: this.store,
-        workflowRerunWatchdogs: this.workflowRerunWatchdogs,
+        ...facadeFields(this, ["store", "workflowRerunWatchdogs"]),
         workflowRerunWatchdogMs: WORKFLOW_RERUN_WATCHDOG_MS,
         ...facadeMethods(this, [
           "clearWorkflowRerunWatchdog", "performWorkflowRerunBounce", "getExecutionPauseLabel",
