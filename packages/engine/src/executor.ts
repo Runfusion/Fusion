@@ -13,8 +13,8 @@ import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } fro
 import type { ParseStepsHandlerDeps, CodeNodeRunner, ForeachActiveContext, WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
 import type { WorkflowBranchPersistence } from "./workflows/workflow-graph-branches.js";
 import type { WorkflowStepInstancePersistence } from "./workflows/workflow-graph-foreach.js";
-import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
-import type { PreparedWorktree, WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
+import type { WorkflowNodeResult } from "./workflows/workflow-graph-executor.js";
+import type { WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
 import { type VerificationResult } from "./execution/verification-utils.js";
 import type { ReviewResult } from "./execution/reviewer.js";
@@ -1289,16 +1289,14 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: runImplementationPhase U5e FNXC lives on run-implementation-phase.ts. */
   private async runImplementationPhase(
-    task: Task,
-    prepared?: PreparedWorktree,
+    ...args: FacadeRestArgs<typeof runImplementationPhaseImpl>
   ): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return runImplementationPhaseImpl(
       {
-        runImplementation: (...args: unknown[]) => (this as any).runImplementation(...args),
+        runImplementation: (...a: unknown[]) => (this as any).runImplementation(...a),
       },
-      task,
-      prepared,
+      ...args,
     );
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
@@ -1460,27 +1458,20 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:30: column-agent seam FNXC lives on resolve-seam-column-agent.ts / resolve-effective-principal-id.ts / is-agent-effectively-executing.ts. */
   private async resolveSeamColumnAgent(
-    task: Task,
-    detail: TaskDetail,
+    ...args: FacadeRestArgs<typeof resolveSeamColumnAgentImpl>
   ): Promise<{ agent: Agent; mode: WorkflowColumnAgent["mode"] | undefined } | undefined> {
-    return resolveSeamColumnAgentImpl(
-      buildResolveSeamColumnAgentDeps(this),
-      task,
-      detail,
-    );
+    return resolveSeamColumnAgentImpl(buildResolveSeamColumnAgentDeps(this), ...args);
   }
 
   private resolveEffectivePrincipalId(
-    task: Task,
-    detail: Task,
+    ...args: FacadeRestArgs<typeof resolveEffectivePrincipalIdImpl>
   ): string | undefined {
     return resolveEffectivePrincipalIdImpl(
       {
         graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
         graphColumnAgentResolver: this.graphColumnAgentResolver,
       },
-      task,
-      detail,
+      ...args,
     );
   }
 
@@ -1532,20 +1523,14 @@ export class TaskExecutor {
   }
 
   private async prepareGraphNodeExecution(
-    node: WorkflowIrNode,
-    nodeTask: TaskDetail,
-    settings: Settings,
-    requirement: WorkflowNodePreparationRequirement,
+    ...args: FacadeRestArgs<typeof prepareGraphNodeExecutionImpl>
   ): Promise<void> {
     return prepareGraphNodeExecutionImpl(
       {
         ...this.storeRunContextDeps(),
         ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
       },
-      node,
-      nodeTask,
-      settings,
-      requirement,
+      ...args,
     );
   }
 
@@ -1674,10 +1659,9 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:05: Full Phase C resume-eligibility FNXC lives on resolve-resume-lanes.ts. */
   private async resolveResumeLanes(
-    taskId: string,
-    memo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
+    ...args: FacadeRestArgs<typeof resolveResumeLanesImpl>
   ): Promise<{ hold: string; wip: string; review: string; wipDeclared: boolean }> {
-    return resolveResumeLanesImpl({ store: this.store }, taskId, memo);
+    return resolveResumeLanesImpl({ store: this.store }, ...args);
   }
 
   private async reenterPausedAbortedWorkflowNode(
@@ -1731,10 +1715,9 @@ export class TaskExecutor {
   }
 
   private async evaluateTaskVerdictProviders(
-    task: TaskDetail,
-    context: Record<string, unknown> = {},
+    ...args: FacadeRestArgs<typeof evaluateTaskVerdictProvidersImpl>
   ): Promise<{ ok: true } | { ok: false; message: string }> {
-    return evaluateTaskVerdictProvidersImpl({ store: this.store }, task, context);
+    return evaluateTaskVerdictProvidersImpl({ store: this.store }, ...args);
   }
 
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): Promise<boolean> {
@@ -1872,22 +1855,12 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Re-open the implementation-bearing slice of work for a revision/failure
-   * handler. Returns the earliest reopened step and all reopened indexes, or
-   * null when there was nothing to re-open.
-   */
   private async reopenLastStepForRevision(
-    taskId: string,
-    task: Task,
+    ...args: FacadeAfterFirst<typeof reopenLastStepForRevisionImpl>
   ): Promise<{ index: number; name: string; indexes: number[] } | null> {
-    return reopenLastStepForRevisionImpl(this.store, taskId, task);
+    return reopenLastStepForRevisionImpl(this.store, ...args);
   }
 
-  /**
-   * Run deterministic verification (test + build commands) in the task's worktree.
-   * Returns a structured result indicating whether all commands passed.
-   */
   private async runExecutorDeterministicVerification(
     ...args: FacadeRestArgs<typeof runExecutorDeterministicVerificationImpl>
   ): Promise<VerificationResult>  {
