@@ -1062,7 +1062,7 @@ export class TaskExecutor {
   }
 
   private async getAuthoritativeAssignedAgent(
-    assignedAgentId: string | null | undefined,
+    ...args: FacadeRestArgs<typeof getAuthoritativeAssignedAgentImpl>
   ): Promise<Agent | null> {
     return getAuthoritativeAssignedAgentImpl(
       {
@@ -1072,19 +1072,19 @@ export class TaskExecutor {
         getAuthoritativeAssignedAgentStore: () => this.authoritativeAssignedAgentStore,
         setAuthoritativeAssignedAgentStore: (s) => { this.authoritativeAssignedAgentStore = s; },
       },
-      assignedAgentId,
+      ...args,
     );
   }
 
   private async getAssignedAgentRuntimeConfig(
-    assignedAgentId: string | null | undefined,
+    ...args: FacadeRestArgs<typeof getAssignedAgentRuntimeConfigImpl>
   ): Promise<Record<string, unknown> | undefined> {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return getAssignedAgentRuntimeConfigImpl(
       {
-        getAuthoritativeAssignedAgent: (...args: unknown[]) => (this as any).getAuthoritativeAssignedAgent(...args),
+        getAuthoritativeAssignedAgent: (...a: unknown[]) => (this as any).getAuthoritativeAssignedAgent(...a),
       },
-      assignedAgentId,
+      ...args,
     );
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
@@ -1316,37 +1316,33 @@ export class TaskExecutor {
     return ensureWorkflowMergeBoundaryTaskImpl(buildEnsureWorkflowMergeBoundaryTaskDeps(this), ...args);
   }
 
-  private async evaluateWorkflowMergeBoundary(task: TaskDetail, runId?: string): Promise<{
-    resolved: boolean;
-    hasRelevantNodeResult: boolean;
-    allResultsTerminal: boolean;
-    coverageComplete: boolean;
-    hasForeachStepExecute: boolean;
-    missingInstanceIds: string[];
-    nonTerminalResult?: CoreWorkflowStepResult;
-    complete: boolean;
-  }> {
+  private async evaluateWorkflowMergeBoundary(
+    ...args: FacadeRestArgs<typeof evaluateWorkflowMergeBoundaryImpl>
+  ): Promise<ReturnType<typeof evaluateWorkflowMergeBoundaryImpl>> {
     return evaluateWorkflowMergeBoundaryImpl(
       {
         store: this.store,
         loadMergeBoundaryInstances: (id, rid) => this.loadMergeBoundaryInstances(id, rid),
       },
-      task,
-      runId,
+      ...args,
     );
   }
 
-  private async loadMergeBoundaryInstances(taskId: string, runId?: string): Promise<Array<{ foreachNodeId: string; stepIndex: number; pinnedStepCount: number }>> {
-    return loadMergeBoundaryInstancesImpl({ store: this.store }, taskId, runId);
+  private async loadMergeBoundaryInstances(
+    ...args: FacadeRestArgs<typeof loadMergeBoundaryInstancesImpl>
+  ): Promise<ReturnType<typeof loadMergeBoundaryInstancesImpl>> {
+    return loadMergeBoundaryInstancesImpl({ store: this.store }, ...args);
   }
 
-  private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
+  private async getWorkflowMergeImplementationProofFailure(
+    ...args: FacadeRestArgs<typeof getWorkflowMergeImplementationProofFailureImpl>
+  ): Promise<string | undefined> {
     return getWorkflowMergeImplementationProofFailureImpl(
       {
         store: this.store,
         evaluateWorkflowMergeBoundary: (t, rid) => this.evaluateWorkflowMergeBoundary(t, rid),
       },
-      task,
+      ...args,
     );
   }
 
@@ -2165,29 +2161,18 @@ export class TaskExecutor {
     return resetLostWorkStepProgressImpl({ store: this.store }, task, completedStepCount, reason);
   }
 
-  markStuckAborted(taskId: string, shouldRequeue: boolean = true): void {
-    return markStuckAbortedImpl(
-      buildMarkStuckAbortedDeps(this),
-      taskId,
-      shouldRequeue,
-    );
+  markStuckAborted(...args: FacadeRestArgs<typeof markStuckAbortedImpl>): void {
+    return markStuckAbortedImpl(buildMarkStuckAbortedDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:40: handleLoopDetected FNXC lives on handle-loop-detected.ts. */
-  async handleLoopDetected(event: StuckTaskEvent): Promise<boolean> {
-    return handleLoopDetectedImpl(
-      buildHandleLoopDetectedDeps(this),
-      event,
-    );
+  async handleLoopDetected(...args: FacadeRestArgs<typeof handleLoopDetectedImpl>): Promise<boolean> {
+    return handleLoopDetectedImpl(buildHandleLoopDetectedDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:30: getWorktreePath KTD2 contract FNXC lives on active-worktrees helpers / free peel. */
   getWorktreePath(taskId: string): string | undefined {
-    return getWorktreePathImpl(
-      this.workspaceConfig,
-      (id) => this.getActiveWorktreePaths(id),
-      taskId,
-    );
+    return getWorktreePathImpl(this.workspaceConfig, (id) => this.getActiveWorktreePaths(id), taskId);
   }
 
   // ── Agent Spawning ─────────────────────────────────────────────────────
