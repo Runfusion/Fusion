@@ -2,6 +2,14 @@
  * FNXC:CodeOrganization 2026-08-03-09:20:
  * recoverFailedPreMergeWorkflowStep peeled from TaskExecutor (U4).
  *
+ * Auto-revive an `in-review` task whose pre-merge workflow step(s) failed, by replaying
+ * the same send-back-for-fix flow the executor uses during a live run. Invoked by
+ * SelfHealingManager's `recoverReviewTasksWithFailedPreMergeSteps` scan when a task is
+ * parked in review with a failed pre-merge step and no active session. Picks the latest
+ * failed pre-merge workflow step result, injects feedback into PROMPT.md, resets steps,
+ * and schedules todo → in-progress. Independently enforces the effective finite-or-unlimited
+ * revision budget before it can reopen work.
+ *
  * FNXC:WorkflowPostMerge 2026-06-26-14:00:
  * U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
  * `workflow_steps` table read. The graph executor (workflow-graph-executor.ts) maps a

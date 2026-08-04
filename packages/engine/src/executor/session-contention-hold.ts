@@ -2,6 +2,15 @@
  * FNXC:CodeOrganization 2026-08-03-19:40:
  * holdForSessionContention peeled from TaskExecutor (U4).
  * Bounded in-place retry while another task holds a shared session path.
+ *
+ * FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
+ * Retry the graph in place on an exponential backoff while the holder finishes. The counter is
+ * IN-MEMORY on purpose: it needs no schema change, and an engine restart resetting it is the desired
+ * behavior (a restart also drops the in-process registry, so the contention is gone anyway).
+ * When the ladder is exhausted the task is left cleanly dispatchable — status/error cleared, progress
+ * untouched — so ordinary scheduling picks it up later with a fresh budget. There is no terminal branch
+ * here by design: lease contention always ends (the holder finishes, or self-healing sweeps it), so
+ * parking the task would only require a human to press Retry on a condition that fixed itself.
  */
 import type { Task, TaskDetail, TaskStore } from "@fusion/core";
 import { isSessionContentionError } from "../errors/transient-error-detector.js";

@@ -1365,22 +1365,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Auto-revive an `in-review` task whose pre-merge workflow step(s) failed, by
-   * replaying the same send-back-for-fix flow the executor uses during a live
-   * run. Invoked by SelfHealingManager's `recoverReviewTasksWithFailedPreMergeSteps`
-   * scan when a task is parked in review with a failed pre-merge step and no
-   * active session.
-   *
-   * Picks the latest failed pre-merge workflow step result (there is usually only
-   * one, but if several ran we want the most recent), injects its feedback into
-   * `PROMPT.md`, resets steps, and schedules todo → in-progress. The caller may
-   * account for a scheduled retry, but this method independently enforces the
-   * effective finite-or-unlimited revision budget before it can reopen work.
-   *
-   * @returns true when the task was sent back, false when no eligible failed
-   *          step exists (caller should skip).
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:30: recoverFailedPreMerge FNXC lives on recover-failed-pre-merge-step.ts. */
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> {
     return recoverFailedPreMergeWorkflowStepImpl(
       {
@@ -1956,24 +1941,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Resolve the effective COLUMN AGENT governing the coding/step session currently
-   * being built for a task (column-agent plan U4, R2/R3/R4/R8).
-   *
-   * Reads the governing node id stamped by the active seam ({@link
-   * graphSeamGoverningNodeId}) and the per-run binding resolver ({@link
-   * graphColumnAgentResolver}), both scoped to a graph-owned run. Feeds the task's
-   * OWN settings (`assignedAgentId` + complete `modelProvider`/`modelId` pair) into
-   * the shared core resolver (`resolveEffectiveAgent`, KTD-2/KTD-5) so defer/override
-   * precedence is never reimplemented here. When the verdict is `column-agent`,
-   * fetches the full Agent best-effort and audits the adoption; on a missing/deleted
-   * agent it logs and returns undefined so the caller falls back to the
-   * `assignedAgentId` path (R8). Returns undefined for the legacy/no-binding path so
-   * the session build is byte-identical (characterization parity).
-   *
-   * Exposes the resolved Agent object (not just an id) so U5 can consume the same
-   * effective principal for gating/heartbeat/restart without re-resolving.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:30: column-agent seam FNXC lives on resolve-seam-column-agent.ts / resolve-effective-principal-id.ts / is-agent-effectively-executing.ts. */
   private async resolveSeamColumnAgent(
     task: Task,
     detail: TaskDetail,
@@ -1985,19 +1953,6 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Column-agent principal alignment (plan U5, R6). Resolve the EFFECTIVE
-   * principal id for the in-flight seam WITHOUT fetching the full Agent or
-   * emitting an adoption log — a light counterpart to {@link resolveSeamColumnAgent}
-   * used by the heartbeat-deferral gate (which only needs the id to call
-   * {@link shouldDeferForHeartbeat}, which itself loads the agent).
-   *
-   * Returns the column-agent id when a governing binding selects it via the shared
-   * core resolver (`resolveEffectiveAgent`, KTD-2/KTD-5), else `task.assignedAgentId`
-   * (the legacy principal). Returns `undefined` only when there is no principal at
-   * all (no binding AND no assigned agent) — keeping the no-binding path
-   * byte-identical to the prior `assignedAgentId` deferral behavior.
-   */
   private resolveEffectivePrincipalId(
     task: Task,
     detail: Task,
@@ -2012,16 +1967,6 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Column-agent principal alignment (plan U5, R6). True when `agentId` is the
-   * EFFECTIVE column-agent principal currently running some executing task's
-   * coding/step session — i.e. an override/defer-bound column staffs it, even
-   * though the agent is not the task's `assignedAgentId`. Injected into the
-   * heartbeat scheduler's reverse-direction parallel-execution guards
-   * (`agent-heartbeat.ts`) so an `allowParallelExecution=false` column agent does
-   * not heartbeat concurrently with its own override session. Returns false for the
-   * legacy/no-binding path (the map is empty), preserving prior behavior exactly.
-   */
   isAgentEffectivelyExecuting(agentId: string): boolean {
     return isAgentEffectivelyExecutingImpl(this.effectiveColumnAgentByTask, agentId);
   }
@@ -2165,16 +2110,7 @@ export class TaskExecutor {
     return reapCliTaskSessionForHandoffImpl(session, taskId);
   }
 
-  /*
-  FNXC:SessionContention 2026-07-25-21:30 (self-recovering wait — the task is never parked):
-  Retry the graph in place on an exponential backoff while the holder finishes. The counter is
-  IN-MEMORY on purpose: it needs no schema change, and an engine restart resetting it is the desired
-  behavior (a restart also drops the in-process registry, so the contention is gone anyway).
-  When the ladder is exhausted the task is left cleanly dispatchable — status/error cleared, progress
-  untouched — so ordinary scheduling picks it up later with a fresh budget. There is no terminal branch
-  here by design: lease contention always ends (the holder finishes, or self-healing sweeps it), so
-  parking the task would only require a human to press Retry on a condition that fixed itself.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:30: session-contention hold FNXC lives on session-contention-hold.ts. */
   private sessionContentionHoldAttempts = new Map<string, number>();
 
   private clearSessionContentionHold(taskId: string): void {
@@ -3262,9 +3198,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * FNXC:Workspace 2026-06-21-12:00: KTD2 single-path-getter contract. Returns the task's sole worktree path for single-repo tasks (one-element set). For a multi-worktree workspace task there is no single answer — callers must read the per-repo `task.workspaceWorktrees` entry instead — so this returns undefined. A workspace task tracked only at the browse-only root also returns undefined, matching the "no removable single worktree" semantics.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:30: getWorktreePath KTD2 contract FNXC lives on active-worktrees helpers / free peel. */
   getWorktreePath(taskId: string): string | undefined {
     return getWorktreePathImpl(
       this.workspaceConfig,
