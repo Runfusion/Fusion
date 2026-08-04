@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSmokeHtml, prepareBrowserSmoke } from "../../scripts/browser-layout-smoke.mjs";
 
 describe("browser layout smoke fixture", () => {
@@ -34,6 +34,30 @@ describe("browser layout smoke fixture", () => {
     resolveFixture(fixture);
     await expect(preparing).resolves.toEqual({ fixture, launched });
     expect(events).toEqual(["fixture:start", "fixture:ready", "browser:launch"]);
+  });
+
+  it("preserves a browser launch failure when fixture cleanup also fails", async () => {
+    const launchError = new Error("browser launch failed");
+    const cleanupError = new Error("fixture cleanup failed");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await expect(prepareBrowserSmoke("/browser", {
+        startFixture: async () => ({ server: {}, url: "http://127.0.0.1:1234/" }),
+        launch: async () => {
+          throw launchError;
+        },
+        closeFixture: async () => {
+          throw cleanupError;
+        },
+      })).rejects.toBe(launchError);
+      expect(warn).toHaveBeenCalledWith(
+        "[dashboard-browser-smoke] fixture cleanup after browser launch failure also failed:",
+        cleanupError,
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("includes standalone and embedded Git Manager shell fixtures", () => {

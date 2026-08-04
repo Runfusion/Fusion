@@ -811,7 +811,14 @@ export async function prepareBrowserSmoke(executable, {
     const launched = await launch(executable);
     return { fixture, launched };
   } catch (error) {
-    await closeFixture(fixture);
+    try {
+      await closeFixture(fixture);
+    } catch (cleanupError) {
+      console.warn(
+        "[dashboard-browser-smoke] fixture cleanup after browser launch failure also failed:",
+        cleanupError,
+      );
+    }
     throw error;
   }
 }
