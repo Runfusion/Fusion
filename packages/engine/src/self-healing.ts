@@ -7404,6 +7404,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             stepResults: task.workflowStepResults, effectiveSettings: { autoMerge: resolveEffectiveAutoMerge(task, freshSettings) },
             enginePaused: freshEnginePaused, promptContent, live: live(task.id),
             stalenessMs: Date.now() - new Date(task.columnMovedAt ?? task.updatedAt).getTime(), graceMs,
+            now: Date.now(),
           }),
         };
       };
@@ -7421,19 +7422,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               if (type.endsWith("no-action")) this.strandedHoldContinuationNoActionAudited.add(key);
             };
             if (!initial.result.stranded) { await audit("task:reconcile-stranded-hold-continuation-no-action", initial.result.reason); continue; }
-            // FNXC:StrandedHoldContinuation 2026-07-26-14:15:
-            // Re-read every predicate input immediately before the atomic insert.
-            // This reduces stale pause/liveness/settings decisions; the shared
-            // store lock remains the correctness guard for continuation/results.
-            const fresh = await evaluate(snapshot.id);
-            if (!fresh || !fresh.result.stranded) {
-              if (fresh) await audit("task:reconcile-stranded-hold-continuation-no-action", fresh.result.reason, fresh);
-              continue;
-            }
-            const seeded = await seedPreReleasePlanReviewContinuation(this.store, fresh.task, fresh.ir, { atomic: true });
-            if (!seeded.seeded) { await audit("task:reconcile-stranded-hold-continuation-no-action", seeded.reason, fresh); continue; }
-            repaired += 1;
-            await audit("task:reconcile-stranded-hold-continuation", undefined, fresh);
+            // FNXC:PlanningDependencyReseed 2026-08-04-04:10:
+            // Re-read and seed under the same cross-process lifecycle lock used
+            // by dependency invalidation and planning finalization. A dependency
+            // mutation that wins first is therefore visible to this predicate;
+            // one that wins second supersedes the continuation after it commits.
+            const reconcileUnderLifecycleLock = async () => {
+              const fresh = await evaluate(snapshot.id);
+              if (!fresh || !fresh.result.stranded) {
+                if (fresh) await audit("task:reconcile-stranded-hold-continuation-no-action", fresh.result.reason, fresh);
+                return false;
+              }
+              const seeded = await seedPreReleasePlanReviewContinuation(this.store, fresh.task, fresh.ir, { atomic: true });
+              if (!seeded.seeded) {
+                await audit("task:reconcile-stranded-hold-continuation-no-action", seeded.reason, fresh);
+                return false;
+              }
+              await audit("task:reconcile-stranded-hold-continuation", undefined, fresh);
+              return true;
+            };
+            const lifecycleLock = (this.store as Partial<TaskStore>).withPlanningLifecycleLock;
+            const seeded = lifecycleLock
+              ? await lifecycleLock.call(this.store, snapshot.id, reconcileUnderLifecycleLock)
+              : await reconcileUnderLifecycleLock();
+            if (seeded) repaired += 1;
           } catch (error) { log.warn(`reconcileStrandedHoldContinuations: failed for ${snapshot.id}: ${error instanceof Error ? error.message : String(error)}`); }
         }
         if (tasks.length < 500) break;

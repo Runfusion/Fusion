@@ -795,6 +795,7 @@ async function issueRelease(
           live,
           stalenessMs: deps.now() - new Date(task.columnMovedAt ?? task.updatedAt).getTime(),
           graceMs: 60_000,
+          now: deps.now(),
         });
         const key = `${task.id}:${task.column}`;
         if (stranded.stranded && !strandedHoldWarningMemo.has(key)) {

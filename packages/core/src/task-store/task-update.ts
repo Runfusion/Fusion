@@ -168,6 +168,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
       let respecifyFromColumn: string | undefined;
       let respecifyMoveLanes: TaskMoveLanes | undefined;
       let previousDependencies: string[] | undefined;
+      let planningInvalidatedAt: string | undefined;
       if (updates.dependencies !== undefined) {
         previousDependencies = (task.dependencies ?? []).map((dependency) => dependency.trim()).filter(Boolean);
         const oldDeps = new Set(previousDependencies);
@@ -230,19 +231,7 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
           graph-owned durable re-entry signal: it preserves prompt authority and
           makes the interrupted planner's stale finalizer harmless.
           */
-          task.status = "needs-replan";
-          /*
-          FNXC:PlanningDependencyReseed 2026-08-04-00:54:
-          Both dependency mutation APIs invalidate the same pre-execution plan
-          handoff. Clearing manual-approval evidence here prevents a newly added
-          blocker from inheriting approval for the superseded specification.
-          */
-          task.approvedPlanFingerprint = undefined;
-          task.awaitingApprovalReason = undefined;
-          task.workflowStepResults = supersedePlanReviewResults(
-            task.workflowStepResults,
-            new Date().toISOString(),
-          );
+          planningInvalidatedAt = new Date().toISOString();
           const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
             action: relocating
@@ -838,6 +827,23 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
         task.workflowStepResults = undefined;
       } else if (updates.workflowStepResults !== undefined) {
         task.workflowStepResults = updates.workflowStepResults;
+      }
+      if (planningInvalidatedAt !== undefined) {
+        /*
+        FNXC:PlanningDependencyReseed 2026-08-04-02:20:
+        Dependency invalidation is authoritative over every field in the same
+        generic updateTask patch. Apply it after the ordinary status, approval,
+        and workflow-result merge so a dashboard PATCH containing dependencies
+        plus stale current-episode fields cannot undo the replan fence. The
+        persistence transaction below also retires the pending continuation.
+        */
+        task.status = "needs-replan";
+        task.approvedPlanFingerprint = undefined;
+        task.awaitingApprovalReason = undefined;
+        task.workflowStepResults = supersedePlanReviewResults(
+          task.workflowStepResults,
+          planningInvalidatedAt,
+        );
       }
       if (updates.mergeDetails === null) {
         task.mergeDetails = undefined;

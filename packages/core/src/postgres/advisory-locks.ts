@@ -79,6 +79,8 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     migrationUrl?: string | null;
     /** Bounds dedicated-session setup and lock acquisition, not callback work. */
     timeoutMs?: number;
+    /** @internal Test seam fired when the driver dispatches the lock query. */
+    onLockAcquisitionAttempt?: () => void;
   },
   callback: () => Promise<T>,
 ): Promise<T> {
@@ -121,6 +123,11 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     connect_timeout: Math.max(1, Math.ceil(timeoutMs / 1_000)),
     prepare: false,
     onnotice: () => {},
+    debug: input.onLockAcquisitionAttempt
+      ? (_connection, query) => {
+          if (query.includes("pg_advisory_lock(")) input.onLockAcquisitionAttempt?.();
+        }
+      : undefined,
   });
   const key = `fusion:planning-lifecycle:${input.projectId}:${input.taskId}`;
   let acquired = false;

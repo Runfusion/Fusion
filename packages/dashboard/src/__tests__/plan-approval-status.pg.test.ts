@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { computePlanApprovalFingerprint, isTaskBlockedOnApproval, TaskStore } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, computePlanApprovalFingerprint, isTaskBlockedOnApproval, TaskStore } from "@fusion/core";
 import {
   createTaskStoreForTest,
   pgDescribe,
@@ -133,6 +133,68 @@ pgDescribe("plan approval status persistence", () => {
       status: "skipped",
       bypassedFromStatus: "failed",
       bypassedFromVerdict: "REVISE",
+    }));
+  });
+
+  it("keeps a split-column approval blocked and retryable when the final hold clear fails", async () => {
+    const task = await store.createTask({ description: "Retry interrupted split-column approval" });
+    const splitWorkflow = await store.createWorkflowDefinition({
+      name: "Split Plan Review approval",
+      ir: {
+        ...BUILTIN_CODING_WORKFLOW_IR,
+        id: "split-plan-review-approval",
+        nodes: BUILTIN_CODING_WORKFLOW_IR.nodes.map((node) =>
+          node.id === "plan-review" ? { ...node, column: "in-review" } : node
+        ),
+      },
+    });
+    await store.selectTaskWorkflow(task.id, splitWorkflow.id);
+    await store.moveTask(task.id, "in-review", {
+      moveSource: "engine",
+      recoveryRehome: true,
+      bypassGuards: true,
+    });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "failed",
+        verdict: "REVISE",
+      }],
+    } as never);
+
+    const originalUpdate = store.updateTask.bind(store);
+    let approvalUpdates = 0;
+    store.updateTask = (async (id, updates, runContext) => {
+      if (id === task.id && updates.status !== undefined) {
+        approvalUpdates += 1;
+        if (approvalUpdates === 2) throw new Error("injected final approval write failure");
+      }
+      return originalUpdate(id, updates, runContext);
+    }) as typeof store.updateTask;
+
+    const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+    expect(interrupted.status).toBe(500);
+    let persisted = await store.getTask(task.id);
+    expect(persisted.column).toBe("todo");
+    expect(persisted.status).toBe("awaiting-approval");
+    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "skipped",
+      bypassedBy: "dashboard-operator",
+    }));
+
+    store.updateTask = originalUpdate;
+    const retried = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+    expect(retried.status).toBe(200);
+    persisted = await store.getTask(task.id);
+    expect(persisted.status).toBeUndefined();
+    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "skipped",
+      bypassedBy: "dashboard-operator",
     }));
   });
 

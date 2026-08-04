@@ -26,6 +26,8 @@ const gitHubImportAfterMobileScreenshotPath = process.env.FUSION_GITHUB_IMPORT_A
 const gitHubImportAfterShortScreenshotPath = process.env.FUSION_GITHUB_IMPORT_AFTER_SHORT_SCREENSHOT;
 const resolvedGithubDesktopScreenshotPath = process.env.FUSION_RESOLVED_GITHUB_DESKTOP_SCREENSHOT;
 const resolvedGithubMobileScreenshotPath = process.env.FUSION_RESOLVED_GITHUB_MOBILE_SCREENSHOT;
+const planApprovalDesktopScreenshotPath = process.env.FUSION_PLAN_APPROVAL_DESKTOP_SCREENSHOT;
+const planApprovalMobileScreenshotPath = process.env.FUSION_PLAN_APPROVAL_MOBILE_SCREENSHOT;
 const smokeTheme = process.env.FUSION_BROWSER_SMOKE_THEME === "light" ? "light" : "dark";
 
 function log(message) {
@@ -243,6 +245,18 @@ export function createSmokeHtml() {
     </section>
   `;
 
+  const planApprovalFixture = `
+    <section data-smoke="plan-review-replan-cap-approval" aria-label="Plan Review approval escalation" style="width:min(680px, calc(100vw - var(--space-xl))); margin:auto; padding:var(--space-lg);">
+      <article class="card" data-column="todo">
+        <div class="card-header"><span class="card-id">FN-8768</span><h3 class="card-title">Dependency changed during planning</h3></div>
+        <div class="card-meta"><span class="card-status-badge card-status-badge--todo awaiting-approval awaiting-approval--plan-review-replan-cap" data-awaiting-approval-reason="plan-review-replan-cap">Plan Review needs approval</span></div>
+      </article>
+      <div class="detail-plan-approval-banner detail-plan-approval-banner--replan-cap" data-awaiting-approval-reason="plan-review-replan-cap">
+        <strong>Plan Review needs approval</strong>
+        <span>Automatic revisions reached their limit. Review the latest plan, then approve it or send it back for replanning.</span>
+      </div>
+    </section>`;
+
   const githubImportMobileActionFixture = `
     <section data-smoke="github-import-mobile-actions" aria-label="GitHub issue detail actions">
       <div class="github-import-detail-actions" data-testid="github-import-detail-actions">
@@ -415,6 +429,7 @@ export function createSmokeHtml() {
 
       ${githubImportMobileActionFixture}
       ${resolvedGithubTableFixture}
+      ${planApprovalFixture}
 
       <footer class="executor-status-bar">
         <div class="executor-status-bar__segment">
@@ -1168,6 +1183,10 @@ async function runSmokeChecks(page, pageUrl) {
     await captureFixtureScreenshot(page, '[data-smoke="github-resolved-table"]', resolvedGithubMobileScreenshotPath);
     log(`saved resolved GitHub mobile screenshot to ${resolvedGithubMobileScreenshotPath}`);
   }
+  if (planApprovalMobileScreenshotPath) {
+    await captureFixtureScreenshot(page, '[data-smoke="plan-review-replan-cap-approval"]', planApprovalMobileScreenshotPath);
+    log(`saved Plan Review approval mobile screenshot to ${planApprovalMobileScreenshotPath}`);
+  }
 
   const mobileAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();
   assertSmokeResult(
@@ -1804,6 +1823,10 @@ async function runSmokeChecks(page, pageUrl) {
   if (resolvedGithubDesktopScreenshotPath) {
     await captureFixtureScreenshot(page, '[data-smoke="github-resolved-table"]', resolvedGithubDesktopScreenshotPath);
     log(`saved resolved GitHub desktop screenshot to ${resolvedGithubDesktopScreenshotPath}`);
+  }
+  if (planApprovalDesktopScreenshotPath) {
+    await captureFixtureScreenshot(page, '[data-smoke="plan-review-replan-cap-approval"]', planApprovalDesktopScreenshotPath);
+    log(`saved Plan Review approval desktop screenshot to ${planApprovalDesktopScreenshotPath}`);
   }
 
   const desktopAgentHeartbeatLayout = await collectAgentHeartbeatControlLayout();

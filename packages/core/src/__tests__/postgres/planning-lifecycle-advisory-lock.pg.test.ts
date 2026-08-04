@@ -20,6 +20,7 @@ function lock(
   taskId: string,
   callback: () => Promise<void>,
   timeoutMs = 1_000,
+  onLockAcquisitionAttempt?: () => void,
 ): Promise<void> {
   return withPlanningLifecycleAdvisoryLock({
     projectId,
@@ -29,6 +30,7 @@ function lock(
     runtimeUrl: h.testUrl(),
     migrationUrl: h.testUrl(),
     timeoutMs,
+    onLockAcquisitionAttempt,
   }, callback);
 }
 
@@ -52,23 +54,13 @@ pgDescribe("planning lifecycle advisory lock", () => {
     });
     await firstIsHolding;
 
+    let secondAttempted!: () => void;
+    const secondAttemptIsDispatched = new Promise<void>((resolve) => { secondAttempted = resolve; });
     const second = lock("project-a", "FN-1", async () => {
       order.push("second-enter");
-    });
+    }, 1_000, secondAttempted);
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const admin = h.adminSql();
-      const waiting = await admin<Array<{ waiting: boolean }>>`
-        SELECT EXISTS (
-          SELECT 1 FROM pg_stat_activity
-          WHERE datname = current_database()
-            AND wait_event_type = 'Lock'
-            AND wait_event = 'advisory'
-        ) AS waiting
-      `;
-      if (waiting[0]?.waiting) break;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await secondAttemptIsDispatched;
     expect(order).toEqual(["first-enter"]);
 
     releaseFirst();

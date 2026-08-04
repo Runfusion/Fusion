@@ -143,6 +143,50 @@ describe("adding a dependency never parks a card in a deleted column", () => {
     expect(row.awaitingApprovalReason).toBeUndefined();
   });
 
+  it("keeps dependency invalidation authoritative over a combined status clear", async () => {
+    const { store, row } = harness({
+      column: "todo",
+      dependencies: [],
+      status: "awaiting-approval",
+    }, DEFAULT_IR);
+
+    await run(store, { dependencies: ["FN-2"], status: null });
+
+    expect(row.status).toBe("needs-replan");
+  });
+
+  it("keeps dependency invalidation authoritative over combined current approval evidence", async () => {
+    const currentResult = {
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "passed",
+      completedAt: "2026-08-04T02:00:00.000Z",
+    };
+    const { store, row } = harness({
+      column: "todo",
+      dependencies: [],
+    }, DEFAULT_IR);
+
+    await run(store, {
+      dependencies: ["FN-2"],
+      status: "awaiting-approval",
+      approvedPlanFingerprint: "sha256:current",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [currentResult],
+    });
+
+    expect(row.status).toBe("needs-replan");
+    expect(row.approvedPlanFingerprint).toBeUndefined();
+    expect(row.awaitingApprovalReason).toBeUndefined();
+    expect(row.workflowStepResults).toEqual([
+      expect.objectContaining({
+        ...currentResult,
+        supersededAt: expect.any(String),
+        supersededReason: "dependency-change",
+      }),
+    ]);
+  });
+
   it.each(["passed", "pending"] as const)(
     "preserves but supersedes an old %s Plan Review projection when a dependency starts a new planning episode",
     async (status) => {

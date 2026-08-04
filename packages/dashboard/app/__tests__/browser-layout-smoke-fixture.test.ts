@@ -42,6 +42,14 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("floating-window--github-import-detail");
   });
 
+  it("includes the Plan Review replan-cap approval card and detail surfaces", () => {
+    const html = createSmokeHtml();
+    expect(html).toContain('data-smoke="plan-review-replan-cap-approval"');
+    expect(html).toContain("awaiting-approval--plan-review-replan-cap");
+    expect(html).toContain("detail-plan-approval-banner--replan-cap");
+    expect(html).toContain("Plan Review needs approval");
+  });
+
   it("includes PR flow fixture sections and class hooks", () => {
     const html = createSmokeHtml();
     expect(html).toContain('data-smoke="pr-create-modal"');

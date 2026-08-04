@@ -4052,11 +4052,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         no test in either direction. A guard that accepts a column no workflow declares is
         not caution, it is an unreachable branch that reads like a requirement.
         */
-        if (task.column !== approveColumn) {
-          throw badRequest(`Task must be in the '${approveColumn}' column to approve plan`);
-        }
         if (task.status !== "awaiting-approval") {
           throw badRequest("Task must have status 'awaiting-approval' to approve plan");
+        }
+        const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
+        /*
+         * A split-column approval keeps the hold set while moving to the rebound
+         * lane. Accept that lane on retry so a process/database failure after the
+         * move cannot strand a safely blocked, half-finished operator decision.
+         */
+        if (task.column !== approveColumn && task.column !== reboundColumn) {
+          throw badRequest(`Task must be in the '${approveColumn}' column to approve plan`);
         }
         // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
         // The triage release-authorization gate was removed (it over-fired and stranded
@@ -4106,29 +4112,57 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             }
           }
           if (reviewIndex === -1) {
-            throw conflict("Cannot approve exhausted Plan Review: no failed REVISE result is available to override");
+            const alreadyBypassed = results.some((result) =>
+              result.workflowStepId === PLAN_REVIEW_GROUP_ID
+              && result.status === "skipped"
+              && result.bypassedBy === "dashboard-operator"
+              && result.bypassedFromVerdict === "REVISE"
+            );
+            if (!alreadyBypassed) {
+              throw conflict("Cannot approve exhausted Plan Review: no failed REVISE result is available to override");
+            }
+          } else {
+            const prior = results[reviewIndex];
+            const bypassed = {
+              ...prior,
+              status: "skipped" as const,
+              bypassedBy: "dashboard-operator",
+              bypassedAt: new Date().toISOString(),
+              bypassReason: "Approved after Plan Review did not converge",
+              bypassedFromStatus: prior.status,
+              bypassedFromVerdict: prior.verdict,
+            };
+            delete bypassed.verdict;
+            results[reviewIndex] = bypassed;
           }
-
-          const prior = results[reviewIndex];
-          const bypassed = {
-            ...prior,
-            status: "skipped" as const,
-            bypassedBy: "dashboard-operator",
-            bypassedAt: new Date().toISOString(),
-            bypassReason: "Approved after Plan Review did not converge",
-            bypassedFromStatus: prior.status,
-            bypassedFromVerdict: prior.verdict,
-          };
-          delete bypassed.verdict;
-          results[reviewIndex] = bypassed;
           approvedWorkflowStepResults = results;
         }
 
-        await scopedStore.logEntry(task.id, "Plan approved by user");
+        const approvalPatch = {
+          status: null,
+          approvedPlanFingerprint: approvedPlanFingerprint ?? null,
+          ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
+        } satisfies Parameters<TaskStore["updateTask"]>[1];
 
-        // Move to todo and clear status
-        const reboundColumn = await resolveReboundColumnForTask(scopedStore, task.id);
-        await scopedStore.moveTask(task.id, reboundColumn);
+        if (task.column !== reboundColumn) {
+          /*
+           * Persist the decision evidence while the approval hold remains set,
+           * then preserve both across the rebound. Every interruption point is
+           * therefore non-schedulable and retryable; the final update below is
+           * the only operation that releases the hold.
+           */
+          await scopedStore.updateTask(task.id, {
+            ...approvalPatch,
+            status: "awaiting-approval",
+          });
+          await scopedStore.moveTask(task.id, reboundColumn, {
+            preserveStatus: true,
+            workflowMoveSource: "plan-approval",
+          });
+        } else {
+          // Preserve the historical same-column move behavior and its guards.
+          await scopedStore.moveTask(task.id, reboundColumn);
+        }
         /*
          * FNXC:PlanApproval 2026-08-03-18:53:
          * Approval must clear the durable awaiting-approval hold with TaskStore's explicit
@@ -4136,11 +4170,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * fingerprint, or explicitly clear a prior fingerprint when PROMPT.md was unreadable,
          * so a stale plan can never bypass a later manual approval gate.
          */
-        return await scopedStore.updateTask(task.id, {
-          status: null,
-          approvedPlanFingerprint: approvedPlanFingerprint ?? null,
-          ...(approvedWorkflowStepResults ? { workflowStepResults: approvedWorkflowStepResults } : {}),
+        const approved = await scopedStore.updateTask(task.id, approvalPatch);
+        // Activity logging is secondary to the now-durable decision. Do not turn
+        // a successful approval into a 500 if the bounded log append is unavailable.
+        await scopedStore.logEntry(task.id, "Plan approved by user").catch((error) => {
+          severityAuditLog.warn(`Failed to record plan approval activity for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
         });
+        return approved;
       });
 
       res.json(updated);
