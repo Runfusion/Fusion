@@ -1,8 +1,7 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
 import {
-  type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings,
-  type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
-  type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes,
+  type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type RunMutationContext,
+  type Agent, type MergeResult, type WorkflowIrNode, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes,
   type ApprovalRequestStore,
 } from "@fusion/core";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
@@ -17,7 +16,6 @@ import { CliTaskSession } from "./cli-agent/task-session.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import type { RunAuditor } from "./util/run-audit.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
-
 export * from "./executor/public-reexports.js";
 import * as constants from "./executor/executor-constants.js";
 import * as pure from "./executor/pure-bindings.js";
@@ -103,9 +101,7 @@ export class TaskExecutor extends TaskExecutorState {
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
     super();
     const w = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
-    this.unregisterTaskMoveDisposer = w.unregisterTaskMoveDisposer;
-    this.unregisterArchiveWorktreeDisposer = w.unregisterArchiveWorktreeDisposer;
-    this.unregisterArchiveWorkspaceWorktreeDisposer = w.unregisterArchiveWorkspaceWorktreeDisposer;
+    this.unregisterTaskMoveDisposer = w.unregisterTaskMoveDisposer; this.unregisterArchiveWorktreeDisposer = w.unregisterArchiveWorktreeDisposer; this.unregisterArchiveWorkspaceWorktreeDisposer = w.unregisterArchiveWorkspaceWorktreeDisposer;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any { return { ...facadeFields(this, ["store"]), ...facadeMethods(this, ["getRunContextFor"]) }; }
