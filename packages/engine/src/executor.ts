@@ -158,7 +158,6 @@ import type { ActiveSessionBookkeepingDeps } from "./executor/active-session-boo
 import type { TaskLivenessDeps } from "./executor/task-liveness.js";
 import {
   buildBranchConflictHandleDeps,
-  buildWorktreeCreateConflictDeps,
   buildWorktreeInvariantDeps,
   buildNonContinuableSessionDeps,
   buildExecuteWorkflowGraphDeps,
@@ -226,6 +225,7 @@ import {
   buildRunProjectedGraphTaskStepDeps,
   buildRunSpawnedChildDeps,
   buildTryFreshWorktreeAfterLiveConflictDeps,
+  buildWorktreeCreateConflictFacadeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -3408,18 +3408,12 @@ export class TaskExecutor {
   so the three call sites stay one-liners without changing arity semantics.
   */
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
-    return buildWorktreeCreateConflictDeps({
-      rootDir: this.rootDir,
-      store: this.store,
-      maxWorktreeRetries: MAX_WORKTREE_RETRIES,
-      handleWorktreeConflict: bindHandleWorktreeConflict(this),
-      tryCreateWorktree: bindTryCreateWorktree(this),
-      ...facadeMethods(this, [
-        "recoverIndexLockIfStale", "recoverStaleRegistration", "cleanupStaleBranch",
-        "tryFreshWorktreeAfterLiveConflict", "shouldGenerateNewWorktreeName", "cleanupConflictingWorktree",
-        "normalizeReclaimableWorktreePath", "isLiveCleanupRefusal",
-      ]),
-    });
+    return buildWorktreeCreateConflictFacadeDeps(
+      this,
+      MAX_WORKTREE_RETRIES,
+      bindHandleWorktreeConflict(this),
+      bindTryCreateWorktree(this),
+    );
   }
 
   private async tryCreateWorktree(

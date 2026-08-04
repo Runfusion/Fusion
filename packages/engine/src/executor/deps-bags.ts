@@ -904,4 +904,24 @@ export function buildTryFreshWorktreeAfterLiveConflictDeps(host: any, tryCreateW
     tryCreateWorktree,
   };
 }
+
+export function buildWorktreeCreateConflictFacadeDeps(
+  host: any,
+  maxWorktreeRetries: number,
+  handleWorktreeConflict: any,
+  tryCreateWorktree: any,
+): any {
+  return {
+    rootDir: host.rootDir,
+    store: host.store,
+    maxWorktreeRetries,
+    handleWorktreeConflict,
+    tryCreateWorktree,
+    ...facadeMethods(host, [
+      "recoverIndexLockIfStale", "recoverStaleRegistration", "cleanupStaleBranch",
+      "tryFreshWorktreeAfterLiveConflict", "shouldGenerateNewWorktreeName", "cleanupConflictingWorktree",
+      "normalizeReclaimableWorktreePath", "isLiveCleanupRefusal",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
