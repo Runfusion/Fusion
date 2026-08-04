@@ -4620,7 +4620,7 @@ export function TaskDetailContent({
             )}
           </div>
         </div>
-        <div className={`detail-body${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`}>
+        <div className={`detail-body${activeTab === "chat" && activitySegment === "feed" && !isActivityExpanded && !isEditing ? " detail-body--feed" : ""}${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && (activitySegment === "current" || isActivityExpanded) && !isEditing ? " detail-body--chat" : ""}${activeTab === "planner-chat" && !isEditing ? " detail-body--planner-chat" : ""}`}>
           <div className="detail-body-content">
           {isEditing ? (
             <div className="modal-edit-form">
@@ -5653,7 +5653,7 @@ export function TaskDetailContent({
             /* FNXC:TaskDetailTabKeepAlive 2026-07-22-12:55: body renders from the kept-alive sibling below the ternary; null here prevents fall-through to Definition. */
             null
           ) : activeTab === "chat" ? (
-            <div className={`detail-section detail-section--activity${activitySegment === "current" || isActivityExpanded ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
+            <div className={`detail-section detail-section--activity${activitySegment === "feed" && !isActivityExpanded ? " detail-section--feed" : ""}${activitySegment === "current" || isActivityExpanded ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
               {/*
                 FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
                 Activity owns the existing steering/current view, Feed, and raw agent logs inside one compact selector. The stable Activity tab id remains `chat`, legacy `logs` callers land on Feed, and Raw is the only selector option that enables raw agent-log fetching. Planner-model conversation belongs to the separate `planner-chat` tab and must not route into steering comments.
@@ -6841,7 +6841,8 @@ export function TaskDetailContent({
             </KeepAliveView>
           ) : null}
         </div>
-        {isReviewColumn && (
+      </div>
+      {isReviewColumn && (
           <PrCreateModal
             open={prCreateOpen}
             taskId={task.id}
@@ -7085,9 +7086,8 @@ export function TaskDetailContent({
               </div>
             </>
           )}
-          </div>
-        </div>
-        {showRefineModal && (
+      </div>
+      {showRefineModal && (
           <div
             className="modal-overlay open detail-refine-overlay"
             {...refineOverlayDismissProps}

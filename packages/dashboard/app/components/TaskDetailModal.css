@@ -114,6 +114,7 @@ It is excluded from shell-inset symmetry; FN-7581 Interventions remains at zero 
 .detail-body {
   padding: 0;
   min-width: 0;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-color: var(--border) transparent;
@@ -148,12 +149,19 @@ It is excluded from shell-inset symmetry; FN-7581 Interventions remains at zero 
   background: var(--text-muted);
 }
 
-/* When Activity → Raw Logs is active, switch to flex layout so the log section
-   can stretch to fill the remaining space above the action bar.
-   The detail-body itself should NOT scroll; the agent-log-viewer scrolls instead. */
+/* Activity views that delegate vertical scrolling use a flex body so their inner
+   section can stretch to the remaining space above the shared action bar. */
+/*
+FNXC:TaskDetailFeed 2026-08-04-08:12:
+FN-8779 requires long Activity Feed histories to scroll only inside Task Detail's
+shrinkable middle region. Keep the shared action footer outside this flex chain so it
+remains visible and operable in modal, floating, embedded, and mobile hosts.
+*/
+.detail-body--feed,
 .detail-body--agent-log {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow-y: hidden;
 }
 
@@ -174,6 +182,7 @@ the previous direct-child flex contract so the transcript and agent log still fi
   overflow-y: hidden;
 }
 
+.detail-body--feed > .detail-body-content,
 .detail-body--agent-log > .detail-body-content,
 .detail-body--chat > .detail-body-content,
 .detail-body--planner-chat > .detail-body-content {
@@ -1446,14 +1455,32 @@ for a "skipped" outcome upstream).
   color: var(--color-error);
 }
 
-/* Activity → Raw Logs: stretch to fill the remaining modal body height
-   so the log viewer uses all available space above the action bar. */
+/* Feed and Raw Logs stretch to fill the remaining modal body height so their
+   respective list viewers use the available space above the action bar. */
+.detail-section--feed,
 .detail-section--agent-log {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   margin-top: var(--space-lg);
+}
+
+.detail-section--feed > .detail-activity {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.detail-section--feed .detail-activity-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.task-detail-content > .modal-actions {
+  flex: 0 0 auto;
 }
 
 .detail-section--chat {
@@ -3446,6 +3473,7 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
   */
   .detail-body {
     padding: 0;
+    min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: none;

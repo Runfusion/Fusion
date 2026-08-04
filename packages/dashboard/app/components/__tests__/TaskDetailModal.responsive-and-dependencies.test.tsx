@@ -702,6 +702,52 @@ describe("TaskDetailModal", () => {
       expect(detailBodyBlock).not.toContain("overflow: hidden;");
     });
 
+    it("FN-8779: keeps the Feed flex chain bounded while the shared footer remains outside it on every Task Detail host", () => {
+      const css = readDashboardStylesSource();
+      const rootBlock = getExactCssRuleBlock(css, ".task-detail-content");
+      const detailBodyBlock = getExactCssRuleBlock(css, ".detail-body");
+      const feedBodyBlock = getExactCssRuleBlock(css, ".detail-body--feed,\n.detail-body--agent-log");
+      const feedContentBlock = getExactCssRuleBlock(
+        css,
+        ".detail-body--feed > .detail-body-content,\n.detail-body--agent-log > .detail-body-content,\n.detail-body--chat > .detail-body-content,\n.detail-body--planner-chat > .detail-body-content",
+      );
+      const feedSectionBlock = getExactCssRuleBlock(css, ".detail-section--feed,\n.detail-section--agent-log");
+      const feedActivityBlock = getExactCssRuleBlock(css, ".detail-section--feed > .detail-activity");
+      const feedListBlock = getExactCssRuleBlock(css, ".detail-section--feed .detail-activity-list");
+      const footerBlock = getExactCssRuleBlock(css, ".task-detail-content > .modal-actions");
+      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".detail-body");
+      const mobileDetailBodyBlock = getExactCssRuleBlock(mobileBlock, ".detail-body");
+      const embeddedBlock = getExactCssRuleBlock(
+        css,
+        ".task-detail-content--embedded .modal-header,\n.task-detail-content--embedded .detail-body,\n.task-detail-content--embedded .detail-tabs,\n.task-detail-content--embedded .modal-actions",
+      );
+
+      expect(css).toContain("FNXC:TaskDetailFeed 2026-08-04-08:12:");
+      expect(rootBlock).toContain("height: 100%;");
+      expect(rootBlock).toContain("min-height: 0;");
+      expect(detailBodyBlock).toContain("flex: 1;");
+      expect(detailBodyBlock).toContain("min-height: 0;");
+      expect(feedBodyBlock).toContain("display: flex;");
+      expect(feedBodyBlock).toContain("flex-direction: column;");
+      expect(feedBodyBlock).toContain("min-height: 0;");
+      expect(feedBodyBlock).toContain("overflow-y: hidden;");
+      expect(feedContentBlock).toContain("flex: 1;");
+      expect(feedContentBlock).toContain("min-height: 0;");
+      expect(feedSectionBlock).toContain("flex: 1;");
+      expect(feedSectionBlock).toContain("min-height: 0;");
+      expect(feedActivityBlock).toContain("flex: 1;");
+      expect(feedActivityBlock).toContain("min-height: 0;");
+      expect(feedListBlock).toContain("flex: 1;");
+      expect(feedListBlock).toContain("min-height: 0;");
+      expect(feedListBlock).toContain("overflow-y: auto;");
+      expect(footerBlock).toContain("flex: 0 0 auto;");
+      expect(mobileDetailBodyBlock).toContain("min-height: 0;");
+      expect(mobileDetailBodyBlock).toContain("overflow-y: auto;");
+      expect(embeddedBlock).toContain("width: 100%;");
+      expect(embeddedBlock).toContain("min-width: 0;");
+      expect(embeddedBlock).toContain("max-width: 100%;");
+    });
+
     it("keeps the Activity tab dropdown portal-safe and reachable on mobile", () => {
       const css = readDashboardStylesSource();
       const tabDropdownBlock = getExactCssRuleBlock(css, ".detail-tab-dropdown");

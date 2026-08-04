@@ -29,15 +29,19 @@ let voice = {
   stop: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
 };
 const voiceListeners = new Set<() => void>();
+const voiceProjectIds: Array<string | undefined> = [];
 
 vi.mock("../../hooks/useVoiceDictation", async () => {
   const React = await import("react");
   return {
-    useVoiceDictation: () => React.useSyncExternalStore(
+    useVoiceDictation: (projectId?: string) => {
+      voiceProjectIds.push(projectId);
+      return React.useSyncExternalStore(
       (listener) => { voiceListeners.add(listener); return () => voiceListeners.delete(listener); },
       () => voice,
       () => voice,
-    ),
+    );
+    },
   };
 });
 
@@ -154,10 +158,19 @@ async function exerciseRealComposer(renderSurface: () => ReturnType<typeof rende
 
 describe("voice dictation composer inventory", () => {
   beforeEach(async () => {
-    vi.clearAllMocks(); activeRoom = null;
+    vi.clearAllMocks(); activeRoom = null; voiceProjectIds.length = 0;
     await act(async () => { setVoice({ enabled: true, supported: true, state: "idle", partialText: "", finalText: "", error: undefined }); });
   });
   afterEach(cleanup);
+
+  it("passes explicit project identity while preserving default-project composers", () => {
+    for (const surface of primarySurfaceRenders) {
+      const view = surface.render();
+      view.unmount();
+    }
+    expect(voiceProjectIds).toContain("project-1");
+    expect(voiceProjectIds).toContain(undefined);
+  });
 
   it("opens the reachable shared ChatView composer from QuickChatFAB", () => {
     render(<QuickChatVoicePath />);

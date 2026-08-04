@@ -2,6 +2,27 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.75.0-beta.1
+
+### Highlights
+
+- Approved plans resume immediately when Plan Review exhausts its revision budget
+- Dependency-reseeded plans stay recoverable instead of stranding in the board
+- Mission group merges to the default branch now go through the manual release gate
+- Voice dictation stays scoped to the selected project
+- Task Detail Activity shows thinking blocks expanded by default
+
+### Fixed
+
+- Plan Review that runs out of revisions no longer parks approved work: the bypass is recorded as an audited human decision, and the scheduler plus deferred workflow continuations wake up right away.
+- Dependency changes keep the durable replan signal, so a reseeded plan stays recoverable rather than silently stranding.
+- Mission default merge strategies now integrate through a dedicated mission integration branch, so default-branch landings still pass the normal manual release gate.
+- Stale plan approvals are blocked, with bounded lifecycle locks, planning-episode evidence, serialized approvals, and convergent planning and review ledgers.
+- Voice dictation session create, transcription, and cleanup all use the selected project's identity instead of leaking across projects.
+- Planning finalization no longer crashes after writing the task prompt.
+- Task Detail Activity thinking blocks open by default and keep per-block collapse state while streamed reasoning arrives.
+- Planning gathers repository evidence before drafting, Plan Review batches independently discoverable blockers into one pass, and code review traces changed invariants through consumers and tests.
+
 ## 0.75.0-beta.0
 
 ### Highlights

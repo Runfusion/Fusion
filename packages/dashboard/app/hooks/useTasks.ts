@@ -12,15 +12,6 @@ import { isLikelyTabSuspensionError } from "./visibilitySuspension";
 import { isIntakeColumnRole, isHoldColumnRole, type ColumnRoleFlags } from "../utils/columnRoles";
 
 const loggedTaskCacheHitProjects = new Set<string>();
-/*
-FNXC:MobileTabDiscard 2026-07-26-10:34:
-In-app task-view re-entry freshness is deliberately NOT the hydration TTL. `SWR_TASKS_MAX_AGE_MS` was
-raised to hours so a discarded mobile tab can repaint its last board instantly; this bound answers a
-different question — "is the LIVE in-memory snapshot recent enough to skip the catch-up fetch when the
-user returns to Board/List within the same page session?" — and must stay short, because task SSE is
-disabled off task-list views and missed events need server confirmation.
-*/
-const TASK_VIEW_REENTRY_FRESHNESS_MS = 60_000;
 
 /*
 FNXC:MobileTabDiscard 2026-07-26-16:40:
@@ -395,6 +386,8 @@ export function useTasks(options?: UseTasksOptions) {
   const searchQueryRef = useRef(searchQuery);
   const refreshTasksRef = useRef<typeof refreshTasks>(null!);
   const prevSseEnabledRef = useRef(sseEnabled);
+  // Coordinates the earlier re-entry effect with the project-change fetch effect below.
+  const projectChangeRefreshPendingRef = useRef(false);
   /*
   FNXC:MobileTabDiscard 2026-07-26-14:12:
   "Data as of" clock for everything derived from `tasks` (isTaskStuck / countStuckTasks, TaskCard's
@@ -474,6 +467,7 @@ export function useTasks(options?: UseTasksOptions) {
   if (previousProjectIdRef.current !== projectId) {
     previousProjectIdRef.current = projectId;
     projectContextVersionRef.current++;
+    projectChangeRefreshPendingRef.current = true;
   }
 
   const VISIBILITY_REFRESH_DEBOUNCE_MS = 1000;
@@ -586,35 +580,25 @@ export function useTasks(options?: UseTasksOptions) {
   }, [projectId]);
   refreshTasksRef.current = refreshTasks;
 
-  const shouldRefreshOnTaskViewReentry = useCallback(() => {
-    if (lastRefreshErrorAt !== null) return true;
-    if (searchQueryRef.current) return true;
-    if (includeArchivedRef.current) return true;
-    if (lastConfirmedProjectIdRef.current !== projectId) return true;
-    if (lastConfirmedSearchQueryRef.current !== searchQueryRef.current) return true;
-    if (lastConfirmedIncludeArchivedRef.current !== includeArchivedRef.current) return true;
-
-    const lastFetchAt = lastFetchTimeMs.current;
-    if (lastFetchAt === undefined) return true;
-
-    return Date.now() - lastFetchAt > TASK_VIEW_REENTRY_FRESHNESS_MS;
-  }, [lastRefreshErrorAt, projectId]);
-
   /*
-  FNXC:DashboardTaskCache 2026-06-29-22:35:
-  Brief Board/List returns should reuse fresh in-memory task state instead of issuing another all-task fetch, so the existing task array renders immediately without an empty/loading shell. Stale, missing, failed, project/search, or archived snapshots still perform one catch-up because task SSE is disabled off task-list views and missed events need server confirmation.
+  FNXC:DashboardLiveUpdates 2026-08-04-08:12:
+  Task SSE is disabled outside Board/List, so elapsed time cannot prove that the in-memory snapshot is
+  current: any task lifecycle event may have been missed during that lossy interval. Every genuine
+  false→true task-view return therefore reconciles once with the server, regardless of snapshot age.
 
-  FNXC:DashboardTaskCache 2026-06-29-23:12:
-  The freshness shortcut is scoped only to in-app task-view re-entry. Initial mount, tab visibility recovery, SSE reconnect resync, search refreshes, and delete fetch-version invalidation remain independent safety paths because each represents either a new browser/server gap or a changed query context.
+  The project-change effect is deliberately later in this hook. When a project switch and false→true
+  return occur in one render, it owns the single new-project request; this effect skips that coincident
+  transition rather than issuing a duplicate. Initial true mounts, false→false renders, and Board↔List
+  true→true renders are not re-entries, while a later same-project false→true transition remains eligible.
   */
   useEffect(() => {
     const previous = prevSseEnabledRef.current;
     prevSseEnabledRef.current = sseEnabled;
 
-    if (previous === false && sseEnabled === true && shouldRefreshOnTaskViewReentry()) {
+    if (previous === false && sseEnabled === true && !projectChangeRefreshPendingRef.current) {
       void refreshTasksRef.current();
     }
-  }, [shouldRefreshOnTaskViewReentry, sseEnabled]);
+  }, [sseEnabled]);
 
   /*
   FNXC:ArchivePagination 2026-07-08-00:00:
@@ -754,6 +738,7 @@ export function useTasks(options?: UseTasksOptions) {
   useEffect(() => {
     setIsStale(true);
     void refreshTasks({ clearOnError: true });
+    projectChangeRefreshPendingRef.current = false;
     // FNXC:ArchivePagination 2026-07-08-00:00: reset archived-page state on
     // project switch so a new project's Archived column starts collapsed
     // and re-fetches its own page 1 rather than reusing the previous

@@ -4138,7 +4138,7 @@ export class TriageProcessor {
     */
     try {
       return lifecycleLock
-        ? await lifecycleLock(task.id, finalizeUnderLock)
+        ? await this.store.withPlanningLifecycleLock(task.id, finalizeUnderLock)
         : await finalizeUnderLock();
     } finally {
       this.finalizing.delete(task.id);

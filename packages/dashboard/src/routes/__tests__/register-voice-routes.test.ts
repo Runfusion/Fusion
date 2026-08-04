@@ -58,6 +58,34 @@ describe("voice route authorization split", () => {
     });
   });
 
+  it("keeps an ordered partial/final session in its owning project through cleanup", async () => {
+    const app = express(); const router = express.Router(); app.use(router);
+    const acceptChunk = vi.fn((_audio: Buffer, options: { final: boolean }) => options.final ? { text: "final transcript" } : { partial: "partial transcript" });
+    const close = vi.fn();
+    createRegisterVoiceRoutes({
+      manager: { getState: async () => ({ status: "installed" as const, installedPath: "/model" }), peekState: () => ({ status: "installed" as const, installedPath: "/model" }), scheduleDownload: () => ({ accepted: false as const, state: { status: "error" as const } }), remove: async () => {}, download: async () => ({ status: "installed" as const }), subscribe: () => () => {} },
+      service: { getRuntimeStatus: async () => ({ status: "available" as const }), createSession: async () => ({ acceptChunk, finish: () => ({ text: "unused" }), close }) },
+    })({ router, getScopedStore: async () => ({ getSettings: async () => ({ voiceInput: { enabled: true } }), getGlobalSettingsStore: () => ({ getSettings: async () => ({}) }) }), getProjectIdFromRequest: (request) => typeof request.query.projectId === "string" ? request.query.projectId : undefined } as unknown as ApiRoutesContext);
+    const server = app.listen(0); servers.push(server);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const request = (path: string, init?: RequestInit) => fetch(`http://127.0.0.1:${port}${path}`, init);
+    const headers = { "content-type": "application/json" };
+    const projectA = "voice-project";
+    expect((await request(`/voice/status?projectId=${projectA}`)).status).toBe(200);
+    const { sessionId } = await (await request(`/voice/session?projectId=${projectA}`, { method: "POST" })).json() as { sessionId: string };
+    const partial = await request(`/voice/transcribe?projectId=${projectA}`, { method: "POST", headers, body: JSON.stringify({ sessionId, audio: "AAA=", sequence: 0, final: false, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
+    expect(await partial.json()).toMatchObject({ partial: "partial transcript", final: false });
+    const final = await request(`/voice/transcribe?projectId=${projectA}`, { method: "POST", headers, body: JSON.stringify({ sessionId, audio: "AAA=", sequence: 1, final: true, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
+    expect(await final.json()).toMatchObject({ text: "final transcript", final: true });
+    const foreign = await request(`/voice/transcribe?projectId=other-project`, { method: "POST", headers, body: JSON.stringify({ sessionId, audio: "AAA=", sequence: 2, final: false }) });
+    expect(await foreign.json()).toEqual({ error: "unknown-session" });
+    expect(await (await request(`/voice/session/${sessionId}?projectId=${projectA}`, { method: "DELETE" })).json()).toMatchObject({ closed: true, alreadyClosed: true });
+    expect(acceptChunk).toHaveBeenNthCalledWith(1, Buffer.from([0, 0]), { final: false });
+    expect(acceptChunk).toHaveBeenNthCalledWith(2, Buffer.from([0, 0]), { final: true });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("allows lifecycle inspection while dictation is disabled", async () => {
     const request = await harness(false);
     expect((await request("/voice/status")).status).toBe(200);

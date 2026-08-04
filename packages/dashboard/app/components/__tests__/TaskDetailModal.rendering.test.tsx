@@ -35,6 +35,7 @@ import {
   mockUsePluginUiSlots,
   expectBaseRule,
   readDashboardStylesSource,
+  resetTaskDetailFetchMock,
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
@@ -212,17 +213,23 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  it("renders clickable file links in markdown inline code while preserving code wrappers", async () => {
+  it("keeps refreshed prompt and summary file links interactive in code wrappers", async () => {
     const openFile = vi.fn();
+    const initialDetail = makeTask({
+      column: "done",
+      summary: "See `packages/dashboard/app/App.tsx:25:3` for context.",
+      prompt: "# Prompt\n\nInspect `packages/dashboard/app/App.tsx:11`.",
+    });
+    vi.mocked(dashboardApi.fetchTaskDetail).mockResolvedValue(makeTask({
+      ...initialDetail,
+      prompt: "# Prompt\n\nInspect `packages/dashboard/app/App.tsx:12`.",
+    }));
+
     render(
       <FileBrowserProvider openFile={openFile}>
         <TaskDetailModal
           initialTab="definition"
-          task={makeTask({
-            column: "done",
-            summary: "See `packages/dashboard/app/App.tsx:12` for context.",
-            prompt: "# Prompt\n\nInspect `packages/dashboard/app/App.tsx:12`."
-          })}
+          task={initialDetail}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -233,14 +240,25 @@ describe("TaskDetailModal", () => {
       </FileBrowserProvider>,
     );
 
-    const fileLinks = screen.getAllByRole("button", { name: "packages/dashboard/app/App.tsx:12" });
-    expect(fileLinks.length).toBeGreaterThan(0);
-    const code = fileLinks[0]?.closest("code");
-    expect(code).toBeTruthy();
-    expect(code?.querySelector("button.file-path-link")).toBe(fileLinks[0]);
+    /*
+    FNXC:DashboardTests 2026-08-04-15:05:
+    Definition refresh replaces its markdown tree. Query only after it settles so
+    this integration test clicks the live prompt link, then assert the separately
+    rendered completed-summary surface retains the same FileBrowser contract.
+    */
+    await waitFor(() => expect(dashboardApi.fetchTaskDetail).toHaveBeenCalledWith("FN-099", undefined));
+    const promptLink = await screen.findByRole("button", { name: "packages/dashboard/app/App.tsx:12" });
+    expect(screen.queryByRole("button", { name: "packages/dashboard/app/App.tsx:11" })).toBeNull();
+    expect(promptLink.closest("code")?.querySelector("button.file-path-link")).toBe(promptLink);
+    await userEvent.click(promptLink);
 
-    await userEvent.click(fileLinks[0]!);
-    expect(openFile).toHaveBeenCalledWith("packages/dashboard/app/App.tsx", { line: 12, col: undefined });
+    await userEvent.click(screen.getByRole("button", { name: "Summary" }));
+    const summaryLink = screen.getByRole("button", { name: "packages/dashboard/app/App.tsx:25:3" });
+    expect(summaryLink.closest("code")?.querySelector("button.file-path-link")).toBe(summaryLink);
+    await userEvent.click(summaryLink);
+
+    expect(openFile).toHaveBeenNthCalledWith(1, "packages/dashboard/app/App.tsx", { line: 12, col: undefined });
+    expect(openFile).toHaveBeenNthCalledWith(2, "packages/dashboard/app/App.tsx", { line: 25, col: 3 });
   });
 
   /*
@@ -2370,8 +2388,38 @@ describe("TaskDetailModal", () => {
 
   describe("optimistic opening with Task", () => {
     beforeEach(async () => {
+      await resetTaskDetailFetchMock();
+    });
+
+    it("restores a resolved detail Promise after an override is reset", async () => {
       const { fetchTaskDetail } = await import("../../api");
-      vi.mocked(fetchTaskDetail).mockReset();
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      mockFetch.mockReset();
+      mockFetch.mockResolvedValueOnce(makeTask({ id: "FN-override", prompt: "# Override" }));
+
+      await expect(mockFetch("FN-override", undefined)).resolves.toMatchObject({ id: "FN-override" });
+      await resetTaskDetailFetchMock();
+
+      /*
+      FNXC:DashboardTests 2026-08-04-15:05:
+      The reproducing reset sequence must never leave Definition refresh with
+      Vitest's undefined return value instead of the API's Promise contract.
+      */
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ prompt: "# Restored default prompt" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined));
+      await waitFor(() => expect(screen.queryByText("Restored default prompt")).toBeNull());
     });
 
     it("renders immediately when opened with a Task prop (no prompt)", async () => {
@@ -2465,7 +2513,7 @@ describe("TaskDetailModal", () => {
       });
     });
 
-    it("does NOT call fetchTaskDetail when prop is already a TaskDetail with prompt", async () => {
+    it("uses one Definition refresh request when prop is already a TaskDetail with prompt", async () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
 
@@ -2495,10 +2543,124 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Give a tick for any async operations
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // A full detail skips the slim initial load but Definition still refreshes
+      // its authoritative prompt exactly once when shown.
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-202", undefined));
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
 
-      expect(mockFetch).not.toHaveBeenCalledWith("FN-202", undefined);
+    it("retains the last good prompt when Definition refresh rejects", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      const mockFetch = vi.mocked(fetchTaskDetail);
+      const detail = makeTask({ id: "FN-202-rejected", prompt: "# Last good prompt" });
+      mockFetch.mockRejectedValueOnce(new Error("refresh failed"));
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={detail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-202-rejected", undefined));
+      expect(screen.getByText("Last good prompt")).toBeInTheDocument();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    /*
+    FNXC:TaskDetailPlan 2026-08-04-15:21:
+    Definition refresh is lifecycle-owned, not modal-owned: embedded kept-alive hosts
+    must defer while hidden, refresh immediately on reveal, keep one request during a
+    pending interval tick, and stop polling again when hidden. Exercise that actual
+    visibility sequence so a mock-default repair cannot hide a broken refresh fence.
+    */
+    it("defers embedded refresh while inactive, deduplicates pending interval work, and resumes on re-show", async () => {
+      vi.useFakeTimers();
+      try {
+        const mockFetch = vi.mocked(dashboardApi.fetchTaskDetail);
+        let resolveFirstRequest: (detail: TaskDetail) => void = () => undefined;
+        mockFetch.mockImplementationOnce(() => new Promise<TaskDetail>((resolve) => {
+          resolveFirstRequest = resolve;
+        }));
+        mockFetch.mockResolvedValueOnce(makeTask({ id: "FN-lifecycle", prompt: "# Interval refresh" }));
+        mockFetch.mockResolvedValue(makeTask({ id: "FN-lifecycle", prompt: "# Re-shown refresh" }));
+        const props = {
+          embedded: true,
+          initialTab: "definition" as const,
+          task: makeTask({ id: "FN-lifecycle", status: "planning", prompt: "# Initial prompt" }),
+          onMoveTask: noopMove,
+          onDeleteTask: noopDelete,
+          onMergeTask: noopMerge,
+          onOpenDetail: noopOpenDetail,
+          addToast: noop,
+        };
+
+        const { rerender } = render(<TaskDetailContent {...props} active={false} />);
+        expect(mockFetch).not.toHaveBeenCalled();
+
+        rerender(<TaskDetailContent {...props} active />);
+        await act(async () => {});
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        await act(async () => { resolveFirstRequest(makeTask({ id: "FN-lifecycle", prompt: "# First refresh" })); });
+        expect(screen.getByText("First refresh")).toBeInTheDocument();
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+
+        rerender(<TaskDetailContent {...props} active={false} />);
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+
+        rerender(<TaskDetailContent {...props} active />);
+        await act(async () => {});
+        expect(mockFetch).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("fences a cancelled embedded refresh after a visible task switch", async () => {
+      const mockFetch = vi.mocked(dashboardApi.fetchTaskDetail);
+      let resolveStaleRequest: (detail: TaskDetail) => void = () => undefined;
+      let resolveCurrentRequest: (detail: TaskDetail) => void = () => undefined;
+      mockFetch
+        .mockImplementationOnce(() => new Promise<TaskDetail>((resolve) => { resolveStaleRequest = resolve; }))
+        .mockImplementationOnce(() => new Promise<TaskDetail>((resolve) => { resolveCurrentRequest = resolve; }));
+      const sharedProps = {
+        embedded: true,
+        initialTab: "definition" as const,
+        onMoveTask: noopMove,
+        onDeleteTask: noopDelete,
+        onMergeTask: noopMerge,
+        onOpenDetail: noopOpenDetail,
+        addToast: noop,
+      };
+      const staleTask = makeTask({ id: "FN-stale-detail", prompt: "# Stale initial" });
+      const currentTask = makeTask({ id: "FN-current-detail", prompt: "# Current initial" });
+
+      const { rerender } = render(<TaskDetailContent {...sharedProps} task={staleTask} active />);
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-stale-detail", undefined));
+
+      rerender(<TaskDetailContent {...sharedProps} task={staleTask} active={false} />);
+      rerender(<TaskDetailContent {...sharedProps} task={currentTask} active />);
+      await waitFor(() => expect(mockFetch).toHaveBeenCalledWith("FN-current-detail", undefined));
+
+      await act(async () => { resolveCurrentRequest(makeTask({ id: "FN-current-detail", prompt: "# Current response" })); });
+      expect(await screen.findByText("Current response")).toBeInTheDocument();
+
+      await act(async () => { resolveStaleRequest(makeTask({ id: "FN-stale-detail", prompt: "# Stale response" })); });
+      expect(screen.queryByText("Stale response")).toBeNull();
+      expect(screen.getByText("Current response")).toBeInTheDocument();
     });
 
     it("shows loading state in spec area when detailLoading is true", async () => {

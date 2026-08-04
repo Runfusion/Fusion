@@ -155,6 +155,60 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByText("raw executor line")).toBeInTheDocument();
   });
 
+  it("FN-8779: keeps Feed scrolling separate from the shared action footer across Feed states and switches", async () => {
+    const { fetchTaskDetail } = await import("../../api");
+    const { prompt: _prompt, log: _log, steps: _steps, ...slimTask } = makeTask({ id: "FN-8779-loading" });
+    vi.mocked(fetchTaskDetail).mockReset();
+    vi.mocked(fetchTaskDetail).mockImplementationOnce(() => new Promise(() => {}));
+
+    const loading = renderModal({ task: slimTask as any, initialTab: "logs" });
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading activity…");
+    expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
+    loading.unmount();
+
+    const empty = renderModal({ task: makeTask({ id: "FN-8779-empty", log: [] }), initialTab: "logs" });
+    expect(screen.getByText("(no activity)")).toBeInTheDocument();
+    empty.unmount();
+
+    const short = renderModal({
+      task: makeTask({ id: "FN-8779-short", log: [{ timestamp: "2026-08-04T08:00:00.000Z", action: "Short Feed entry" }] }),
+      initialTab: "logs",
+    });
+    expect(screen.getByText("Short Feed entry")).toBeInTheDocument();
+    short.unmount();
+
+    const longLog = Array.from({ length: 80 }, (_, index) => ({
+      timestamp: `2026-08-04T08:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      action: `Repeated Feed entry ${index + 1}`,
+    }));
+    const long = renderModal({ task: makeTask({ id: "FN-8779-long", log: longLog }), initialTab: "logs" });
+    const feedBody = long.baseElement.querySelector<HTMLElement>(".detail-body--feed");
+    const feedContent = feedBody?.querySelector<HTMLElement>(".detail-body-content");
+    const feedSection = feedContent?.querySelector<HTMLElement>(".detail-section--feed");
+    const feedList = feedSection?.querySelector<HTMLElement>(".detail-activity-list");
+    const detailRoot = feedBody?.closest<HTMLElement>(".task-detail-content");
+    const footer = detailRoot?.querySelector<HTMLElement>(":scope > .modal-actions");
+
+    expect(screen.getByText("Repeated Feed entry 80")).toBeInTheDocument();
+    expect(feedBody).not.toBeNull();
+    expect(feedContent).not.toBeNull();
+    expect(feedSection).not.toBeNull();
+    expect(feedList).not.toBeNull();
+    expect(footer).not.toBeNull();
+    expect(feedBody?.parentElement).toBe(footer?.parentElement);
+    expect(feedBody).not.toContainElement(footer);
+    expect(feedList).toContainElement(screen.getByText("Repeated Feed entry 80"));
+    expect(screen.getByTestId("task-chat-expand-toggle")).toBeVisible();
+
+    selectActivityView("current");
+    expect(long.baseElement.querySelector(".detail-body--feed")).toBeNull();
+    selectActivityView("feed");
+    expect(long.baseElement.querySelector(".detail-body--feed")).not.toBeNull();
+    expect(screen.getByTestId("task-chat-expand-toggle")).toBeVisible();
+
+    vi.mocked(fetchTaskDetail).mockResolvedValue(makeTask());
+  });
+
   it("FN-8303: suppresses the initial Live loading flash for overlay and embedded Activity defaults", () => {
     mockedUseAgentLogs.mockReturnValue({
       entries: [],

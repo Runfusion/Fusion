@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { withProjectId } from "../api/health.js";
 import { useVoiceAvailability } from "./useVoiceAvailability";
 
 export type VoiceDictationState = "idle" | "listening" | "transcribing" | "error";
@@ -26,6 +27,7 @@ export function useVoiceDictation(projectId?: string) {
   const sourceRef = useRef<MediaStreamAudioSourceNode | undefined>(undefined);
   const workletUrlRef = useRef<string | undefined>(undefined);
   const sessionRef = useRef<string | undefined>(undefined);
+  const sessionUrlsRef = useRef(new Map<string, { transcribe: string; delete: string }>());
   // FNXC:VoiceInput 2026-07-25-20:30: Sequence numbers belong to backend sessions,
   // not the hook instance. A new capture may start while an old stopped session finalizes.
   const sequenceRef = useRef(new Map<string, number>());
@@ -73,12 +75,18 @@ export function useVoiceDictation(projectId?: string) {
       sessionRef.current = undefined;
       if (id) {
         sequenceRef.current.delete(id);
-        void fetch(`/api/voice/session/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
+        const urls = sessionUrlsRef.current.get(id);
+        sessionUrlsRef.current.delete(id);
+        void fetch(urls?.delete ?? `/api/voice/session/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
       }
     }
   }, [releaseCapture]);
 
   useEffect(() => release, [release]);
+  // FNXC:VoiceInput 2026-08-04-07:37:
+  // Status and every session operation must share the selected project scope. Changing projects
+  // invalidates the old capture generation and deletes it with its original scoped URL.
+  useEffect(() => { release(); }, [projectId, release]);
 
   const fail = useCallback((message: string) => { release(); setError(message); setState("error"); }, [release]);
   const sendChunk = useCallback(async (blob: Blob, final: boolean, sessionId: string, generation: number) => {
@@ -92,7 +100,9 @@ export function useVoiceDictation(projectId?: string) {
     try {
       const sequence = sequenceRef.current.get(sessionId) ?? 0;
       sequenceRef.current.set(sessionId, sequence + 1);
-      response = await fetch("/api/voice/transcribe", { signal: controller.signal, method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, audio: base64(await blob.arrayBuffer()), sequence, final, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
+      const urls = sessionUrlsRef.current.get(sessionId);
+      if (!urls) return;
+      response = await fetch(urls.transcribe, { signal: controller.signal, method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, audio: base64(await blob.arrayBuffer()), sequence, final, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
     } finally {
       controllers.delete(controller);
       if (controllers.size === 0) transcriptionControllersRef.current.delete(sessionId);
@@ -146,15 +156,19 @@ export function useVoiceDictation(projectId?: string) {
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     setError(undefined); setPartialText(""); setFinalText("");
+    const sessionUrl = withProjectId("/api/voice/session", projectId);
+    const transcribeUrl = withProjectId("/api/voice/transcribe", projectId);
     try {
-      const session = await fetch("/api/voice/session", { method: "POST" });
+      const session = await fetch(sessionUrl, { method: "POST" });
       if (!session.ok) throw new Error("Voice session unavailable");
       const sessionId = (await session.json() as { sessionId: string }).sessionId;
+      const deleteUrl = withProjectId(`/api/voice/session/${encodeURIComponent(sessionId)}`, projectId);
       if (!startInProgressRef.current || generationRef.current !== generation) {
-        void fetch(`/api/voice/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => undefined);
+        void fetch(deleteUrl, { method: "DELETE" }).catch(() => undefined);
         return;
       }
       sessionRef.current = sessionId;
+      sessionUrlsRef.current.set(sessionId, { transcribe: transcribeUrl, delete: deleteUrl });
       sequenceRef.current.set(sessionId, 0);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
       if (!startInProgressRef.current || generationRef.current !== generation) {
@@ -185,9 +199,10 @@ export function useVoiceDictation(projectId?: string) {
     } catch (reason) {
       if (generationRef.current === generation) fail(reason instanceof Error ? reason.message : "Microphone permission was denied");
     }
-  }, [enabled, fail, flushBuffers, supported]);
+  }, [enabled, fail, flushBuffers, projectId, supported]);
   const stop = useCallback(() => {
     const sessionId = sessionRef.current;
+    const deleteUrl = sessionId ? sessionUrlsRef.current.get(sessionId)?.delete : undefined;
     const generation = generationRef.current;
     if (!sessionId || stoppingRef.current) { releaseCapture(); setState("idle"); return; }
     stoppingRef.current = true;
@@ -225,7 +240,9 @@ export function useVoiceDictation(projectId?: string) {
         try {
           const sequence = sequenceRef.current.get(sessionId) ?? 0;
           sequenceRef.current.set(sessionId, sequence + 1);
-          const response = await fetch("/api/voice/transcribe", { signal: controller.signal, method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, audio: base64(await trailing.arrayBuffer()), sequence, final: true, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
+          const urls = sessionUrlsRef.current.get(sessionId);
+          if (!urls) return;
+          const response = await fetch(urls.transcribe, { signal: controller.signal, method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, audio: base64(await trailing.arrayBuffer()), sequence, final: true, sampleRate: 16000, channels: 1, encoding: "pcm_s16le" }) });
           if (!response.ok) throw new Error("Voice transcription finalization failed");
           const result = await response.json() as { text?: string; partial?: string; final?: boolean };
           if (generationRef.current === generation && result.final) {
@@ -240,9 +257,18 @@ export function useVoiceDictation(projectId?: string) {
       } catch { /* capture teardown remains successful when transcription cannot finish */ }
       finally {
         stoppingRef.current = false;
-        if (sessionRef.current === sessionId) sessionRef.current = undefined;
-        sequenceRef.current.delete(sessionId);
-        void fetch(`/api/voice/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => undefined);
+        /*
+         * FNXC:VoiceInput 2026-08-04-07:58:
+         * Stop may be awaiting finalization when unmount or a project change releases this session.
+         * Only the lifecycle generation that still owns the session may delete it, preventing the
+         * old stop continuation from issuing a duplicate cleanup request after teardown.
+         */
+        if (sessionRef.current === sessionId && generationRef.current === generation) {
+          sessionRef.current = undefined;
+          sequenceRef.current.delete(sessionId);
+          sessionUrlsRef.current.delete(sessionId);
+          void fetch(deleteUrl ?? `/api/voice/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => undefined);
+        }
       }
     })();
   }, [releaseCapture]);

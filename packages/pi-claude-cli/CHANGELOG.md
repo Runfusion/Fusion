@@ -1,5 +1,7 @@
 # @fusion/pi-claude-cli
 
+## 0.75.0-beta.1
+
 ## 0.75.0-beta.0
 
 ## 0.74.0

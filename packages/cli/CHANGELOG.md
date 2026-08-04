@@ -1,5 +1,34 @@
 # @runfusion/fusion
 
+## 0.75.0-beta.1
+
+### Patch Changes
+
+- 9dc7b94: summary: Resume approved plans immediately after Plan Review exhausts its revision budget.
+  category: fix
+  dev: Records an audited human Plan Review bypass and wakes scheduler and deferred workflow continuations.
+- bb17baa: summary: Keep dependency-reseeded plans recoverable instead of silently stranding them.
+  category: fix
+  dev: Dependency changes now retain the durable `needs-replan` lifecycle signal.
+- 9939897: summary: Prevent stale plan approvals and strengthen planning and review completeness.
+  category: fix
+  dev: Adds bounded lifecycle locks, planning-episode evidence, approval serialization, and convergent planning/review ledgers.
+- 7824150: summary: Protect default-branch mission group merges with the normal manual release gate.
+  category: fix
+  dev: Mission default strategies now reuse a dedicated mission/<mission.id> integration branch.
+- c10a880: summary: Keep voice dictation requests scoped to the selected project.
+  category: fix
+  dev: Voice session create, transcription, and cleanup now share the status request project identity.
+- dd2cb0c: summary: Prevent planning finalization from crashing after PROMPT.md writes.
+  category: fix
+  dev: Preserves the TaskStore receiver when invoking the planning lifecycle lock.
+- 3cc1d93: summary: Expand Task Detail Activity thinking blocks by default.
+  category: fix
+  dev: Preserves per-block collapse state while streamed reasoning updates arrive.
+- f344715: summary: Make planning and review prompts converge faster and catch cross-surface regressions.
+  category: fix
+  dev: Planning now gathers repository evidence before drafting, Plan Review batches independently discoverable blockers, and code review traces changed invariants through consumers and tests.
+
 ## 0.75.0-beta.0
 
 ### Minor Changes

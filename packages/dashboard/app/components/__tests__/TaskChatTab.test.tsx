@@ -1149,7 +1149,26 @@ describe("TaskChatTab", () => {
     expect(within(standaloneEntry).getByLabelText("Tool entry timestamp")).toHaveTextContent(expectedTime);
   });
 
-  it("renders thinking in a collapsed-by-default expandable block for inactive tasks", async () => {
+  it.each([
+    ["WIP", "in-progress"],
+    ["review", "in-review"],
+    ["idle", "todo"],
+    ["planning", "triage"],
+    ["terminal", "done"],
+    ["archived", "archived"],
+  ] as const)("defaults thinking blocks open for %s tasks", (_state, column) => {
+    mockLogs([
+      makeEntry({ agent: "executor", type: "thinking", text: "Immediately readable reasoning" }),
+    ]);
+
+    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
+
+    const thinking = screen.getByTestId("task-chat-thinking");
+    expect(thinking).toHaveAttribute("open");
+    expect(screen.getByText("Immediately readable reasoning")).toBeVisible();
+  });
+
+  it("lets users collapse and reopen initially expanded thinking blocks", async () => {
     const user = userEvent.setup();
     mockLogs([
       makeEntry({ agent: "triage", type: "thinking", text: "I am considering options" }),
@@ -1158,57 +1177,20 @@ describe("TaskChatTab", () => {
     render(<TaskChatTab task={makeTask({ column: "done" })} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
-    expect(thinking).not.toHaveAttribute("open");
+    expect(thinking).toHaveAttribute("open");
     expect(within(thinking).getByText("Thinking")).toBeVisible();
-    expect(screen.getByText("I am considering options")).not.toBeVisible();
+    expect(screen.getByText("I am considering options")).toBeVisible();
     expect(within(thinking).getAllByTestId("task-chat-entry-thinking")).toHaveLength(1);
+
+    await user.click(within(thinking).getByText("Thinking"));
+
+    expect(thinking).not.toHaveAttribute("open");
+    expect(screen.getByText("I am considering options")).not.toBeVisible();
 
     await user.click(within(thinking).getByText("Thinking"));
 
     expect(thinking).toHaveAttribute("open");
     expect(screen.getByText("I am considering options")).toBeVisible();
-
-    await user.click(within(thinking).getByText("Thinking"));
-
-    expect(thinking).not.toHaveAttribute("open");
-    expect(screen.getByText("I am considering options")).not.toBeVisible();
-  });
-
-  it.each(["in-progress", "in-review"] as const)("defaults thinking blocks open for %s tasks", (column) => {
-    mockLogs([
-      makeEntry({ agent: "executor", type: "thinking", text: "Live reasoning" }),
-    ]);
-
-    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
-
-    expect(screen.getByTestId("task-chat-thinking")).toHaveAttribute("open");
-  });
-
-  it.each(["todo", "done", "triage", "archived"] as const)("keeps thinking blocks collapsed for %s tasks", (column) => {
-    mockLogs([
-      makeEntry({ agent: "executor", type: "thinking", text: "Historical reasoning" }),
-    ]);
-
-    render(<TaskChatTab task={makeTask({ column })} active addToast={vi.fn()} />);
-
-    expect(screen.getByTestId("task-chat-thinking")).not.toHaveAttribute("open");
-  });
-
-  it("lets users collapse auto-expanded thinking blocks", async () => {
-    const user = userEvent.setup();
-    mockLogs([
-      makeEntry({ agent: "executor", type: "thinking", text: "Active reasoning" }),
-    ]);
-
-    render(<TaskChatTab task={makeTask({ column: "in-progress" })} active addToast={vi.fn()} />);
-
-    const thinking = screen.getByTestId("task-chat-thinking");
-    expect(thinking).toHaveAttribute("open");
-
-    await user.click(within(thinking).getByText("Thinking"));
-
-    expect(thinking).not.toHaveAttribute("open");
-    expect(screen.getByText("Active reasoning")).not.toBeVisible();
   });
 
   it("renders consecutive thinking entries as one continuous section", () => {
@@ -1220,6 +1202,7 @@ describe("TaskChatTab", () => {
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
+    expect(thinking).toHaveAttribute("open");
     const summary = thinking.querySelector("summary");
     expect(summary).toBeTruthy();
     expect(within(summary as HTMLElement).getByText("Thinking")).toBeVisible();
@@ -1234,7 +1217,7 @@ describe("TaskChatTab", () => {
   FNXC:TaskChatSegmentKey 2026-07-22-12:00:
   Segment keys must be kind + startIndex only. Embedding entries.length remounted the actively streaming segment on every appended entry, collapsing an expanded thinking block mid-stream.
   */
-  it("keeps an expanded thinking block expanded while entries stream into the same segment", async () => {
+  it("keeps a user-collapsed thinking block collapsed while entries stream into the same segment", async () => {
     const user = userEvent.setup();
     mockLogs([
       makeEntry({ agent: "executor", type: "thinking", text: "First streamed thought" }),
@@ -1243,9 +1226,9 @@ describe("TaskChatTab", () => {
     const { rerender } = render(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
 
     const thinking = screen.getByTestId("task-chat-thinking");
-    expect(thinking).not.toHaveAttribute("open");
-    await user.click(within(thinking).getByText("Thinking"));
     expect(thinking).toHaveAttribute("open");
+    await user.click(within(thinking).getByText("Thinking"));
+    expect(thinking).not.toHaveAttribute("open");
 
     mockLogs([
       makeEntry({ agent: "executor", type: "thinking", text: "First streamed thought" }),
@@ -1253,8 +1236,8 @@ describe("TaskChatTab", () => {
     ]);
     rerender(<TaskChatTab task={makeTask({ column: "todo" })} active addToast={vi.fn()} />);
 
-    expect(screen.getByTestId("task-chat-thinking")).toHaveAttribute("open");
-    expect(screen.getByText(/Second streamed thought/)).toBeVisible();
+    expect(screen.getByTestId("task-chat-thinking")).not.toHaveAttribute("open");
+    expect(screen.getByText(/Second streamed thought/)).not.toBeVisible();
   });
 
   it("gives a genuinely new segment a fresh instance with defaultOpen applied", async () => {
@@ -1302,7 +1285,7 @@ describe("TaskChatTab", () => {
     expect(within(toolGroups[1]).getByLabelText("Tool names")).toHaveTextContent("second tool");
     expect(screen.getAllByTestId("task-chat-entry-text")).toHaveLength(1);
     expect(screen.getByText("plain response")).toBeVisible();
-    expect(screen.getByText("thinking between tools")).not.toBeVisible();
+    expect(screen.getByText("thinking between tools")).toBeVisible();
   });
 
   it("appends newly streamed entries from the hook without auto-opening tool groups", () => {
@@ -2962,7 +2945,7 @@ describe("TaskChatTab", () => {
     const source = readFileSync(resolve(__dirname, "../TaskDetailModal.tsx"), "utf8");
     const taskChatMounts = source.match(/<TaskChatTab\b/g) ?? [];
 
-    expect(source).toContain('import { TaskChatTab } from "../TaskChatTab"');
+    expect(source).toContain('import { TaskChatTab } from "./TaskChatTab"');
     expect(taskChatMounts).toHaveLength(1);
     expect(source).toContain("const isActivityExpanded = activityExpanded && activeTab === \"chat\" && !isEditing");
     expect(source).toContain("task-detail-content--chat-expanded");

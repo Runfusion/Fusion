@@ -3278,9 +3278,23 @@ describe("specified triage recovery", () => {
   it("fences a stale finalizer after dependency re-seed commits before lifecycle-lock acquisition", async () => {
     const stalePlannerSnapshot = createTriageTask({ status: "planning" });
     const store = createMockStore({
-      withPlanningLifecycleLock: vi.fn(async (_id, callback) => callback()),
       getTask: vi.fn().mockResolvedValue({ ...stalePlannerSnapshot, status: "needs-replan" }),
     });
+    /*
+     * FNXC:PlanningDependencyReseed 2026-08-04-08:04:
+     * Finalization may feature-detect the lifecycle method, but it must invoke
+     * that extracted method with TaskStore as its receiver. The production
+     * method reads instance state (`asyncLayer`); an arrow-function mock hid the
+     * unbound-call crash that stranded FN-8778 after every successful prompt write.
+     */
+    store.withPlanningLifecycleLock = vi.fn(async function (
+      this: TaskStore,
+      _id: string,
+      callback: () => Promise<unknown>,
+    ) {
+      expect(this).toBe(store);
+      return await callback();
+    }) as typeof store.withPlanningLifecycleLock;
     const processor = new TriageProcessor(store, rootDir);
 
     await (processor as unknown as {

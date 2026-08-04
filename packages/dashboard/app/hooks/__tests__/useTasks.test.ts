@@ -389,9 +389,12 @@ describe("useTasks", () => {
   });
 
   describe("view-transition refresh behavior", () => {
-    it("skips the false-to-true catch-up when the in-memory snapshot is fresh", async () => {
+    it("reconciles a fresh false-to-true return with changed server state", async () => {
       const initialTask = createMockTask({ id: "FN-001", title: "Before return" });
-      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+      const returnedTask = createMockTask({ id: "FN-001", title: "After return", column: "done" });
+      mockFetchTasks
+        .mockResolvedValueOnce([initialTask])
+        .mockResolvedValueOnce([returnedTask]);
 
       const { result, rerender } = renderHook(
         ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
@@ -399,30 +402,28 @@ describe("useTasks", () => {
       );
 
       await waitFor(() => {
-        expect(result.current.tasks[0]?.id).toBe("FN-001");
+        expect(result.current.tasks[0]?.title).toBe("Before return");
       });
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
-      mockFetchTasks.mockClear();
 
       await act(async () => {
         rerender({ sseEnabled: true });
-        await flushPromises();
       });
 
-      expect(mockFetchTasks).not.toHaveBeenCalled();
-      expect(result.current.tasks[0]?.id).toBe("FN-001");
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+        expect(result.current.tasks[0]?.title).toBe("After return");
+      });
       expect(MockEventSource.instances).toHaveLength(1);
     });
 
-    it("skips only same-project fresh returns and restores the project-scoped SSE subscription", async () => {
-      const projectTask = createMockTask({ id: "FN-PROJ-1", title: "Project one" });
-      mockFetchTasks.mockResolvedValueOnce([projectTask]);
-      mockReadCache.mockImplementation((key) => {
-        if (key === `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-2`) {
-          return [createMockTask({ id: "FN-PROJ-2", title: "Project two cache" })];
-        }
-        return null;
-      });
+    it("coalesces a project switch and task-view return into one new-project fetch", async () => {
+      let resolveOldProject: ((tasks: Task[]) => void) | undefined;
+      let resolveNewProject: ((tasks: Task[]) => void) | undefined;
+      mockFetchTasks.mockImplementation((_limit, _offset, projectId) => new Promise<Task[]>((resolve) => {
+        if (projectId === "proj-1") resolveOldProject = resolve;
+        if (projectId === "proj-2") resolveNewProject = resolve;
+      }));
 
       const { result, rerender } = renderHook(
         ({ projectId, sseEnabled }: { projectId: string; sseEnabled: boolean }) =>
@@ -430,36 +431,27 @@ describe("useTasks", () => {
         { initialProps: { projectId: "proj-1", sseEnabled: false } },
       );
 
-      await waitFor(() => {
-        expect(result.current.tasks[0]?.id).toBe("FN-PROJ-1");
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        rerender({ projectId: "proj-2", sseEnabled: true });
       });
-      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-1", undefined, false);
-      mockFetchTasks.mockClear();
+
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(2));
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-2", undefined, false);
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(MockEventSource.instances[0]?.url).toContain("/api/events?projectId=proj-2");
 
       await act(async () => {
-        rerender({ projectId: "proj-1", sseEnabled: true });
+        resolveNewProject?.([createMockTask({ id: "FN-PROJ-2-LIVE" })]);
         await flushPromises();
       });
+      expect(result.current.tasks[0]?.id).toBe("FN-PROJ-2-LIVE");
 
-      expect(mockFetchTasks).not.toHaveBeenCalled();
-      expect(result.current.tasks[0]?.id).toBe("FN-PROJ-1");
-      expect(MockEventSource.instances.at(-1)?.url).toContain("/api/events?projectId=proj-1");
-
-      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-PROJ-2-LIVE" })]);
       await act(async () => {
-        rerender({ projectId: "proj-2", sseEnabled: false });
+        resolveOldProject?.([createMockTask({ id: "FN-PROJ-1-LATE" })]);
+        await flushPromises();
       });
-
-      expect(mockReadCache).toHaveBeenCalledWith(
-        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-2`,
-        { maxAgeMs: swrCache.SWR_TASKS_MAX_AGE_MS },
-      );
-      await waitFor(() => {
-        expect(mockFetchTasks).toHaveBeenCalledWith(undefined, undefined, "proj-2", undefined, false);
-      });
-      await waitFor(() => {
-        expect(result.current.tasks[0]?.id).toBe("FN-PROJ-2-LIVE");
-      });
+      expect(result.current.tasks[0]?.id).toBe("FN-PROJ-2-LIVE");
     });
 
     it("performs one false-to-true catch-up when the confirmed snapshot is stale", async () => {
@@ -495,8 +487,10 @@ describe("useTasks", () => {
       vi.useRealTimers();
     });
 
-    it("treats a fresh empty server snapshot as confirmed data on task-view return", async () => {
-      mockFetchTasks.mockResolvedValueOnce([]);
+    it("reconciles an empty server snapshot on task-view return", async () => {
+      mockFetchTasks
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const { result, rerender } = renderHook(
         ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
@@ -507,14 +501,12 @@ describe("useTasks", () => {
         expect(result.current.lastFetchTimeMs).toEqual(expect.any(Number));
       });
       expect(result.current.tasks).toEqual([]);
-      mockFetchTasks.mockClear();
-
       await act(async () => {
         rerender({ sseEnabled: true });
         await flushPromises();
       });
 
-      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(mockFetchTasks).toHaveBeenCalledTimes(2);
       expect(result.current.tasks).toEqual([]);
     });
 
@@ -674,11 +666,13 @@ describe("useTasks", () => {
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps SSE reconnect resync active after a fresh return skips catch-up", async () => {
+    it("keeps SSE reconnect resync active after a task-view catch-up", async () => {
       const initialTask = createMockTask({ id: "FN-INITIAL" });
+      const returnedTask = createMockTask({ id: "FN-RETURNED" });
       const reconnectedTask = createMockTask({ id: "FN-RECONNECTED" });
       mockFetchTasks
         .mockResolvedValueOnce([initialTask])
+        .mockResolvedValueOnce([returnedTask])
         .mockResolvedValueOnce([reconnectedTask]);
 
       const { result, rerender, unmount } = renderHook(
@@ -689,14 +683,13 @@ describe("useTasks", () => {
       await waitFor(() => {
         expect(result.current.tasks[0]?.id).toBe("FN-INITIAL");
       });
-      mockFetchTasks.mockClear();
 
       await act(async () => {
         rerender({ sseEnabled: true });
         await flushPromises();
       });
 
-      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(mockFetchTasks).toHaveBeenCalledTimes(2);
       expect(MockEventSource.instances).toHaveLength(1);
 
       // The resync fires when the REBUILT stream opens, not on the error (see the FNXC note above).
@@ -719,7 +712,7 @@ describe("useTasks", () => {
           await flushPromises();
         });
 
-        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+        expect(mockFetchTasks).toHaveBeenCalledTimes(3);
         expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, false);
         await waitFor(() => {
           expect(result.current.tasks[0]?.id).toBe("FN-RECONNECTED");

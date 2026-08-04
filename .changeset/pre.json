@@ -52,7 +52,15 @@
     "fn-8760-planning-wake",
     "fn-8762-todos-plugin",
     "fn-8766-task-detail-popup-spacing",
+    "fn-8768-plan-review-approval",
+    "fn-8768-planning-reseed",
+    "fn-8768-review-followups",
+    "fn-8769-default-branch-group-auto-merge-gate",
+    "fn-8777-voice-entry-e2e",
+    "fn-8778-planning-lock-receiver",
+    "fn-8780-activity-thinking-open",
     "planning-reusable-task-creation",
+    "planning-review-prompt-completeness",
     "restore-fn-8752-8753-locale-parity"
   ]
 }

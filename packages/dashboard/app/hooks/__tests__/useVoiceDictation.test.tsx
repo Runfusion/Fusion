@@ -1,15 +1,34 @@
+import express from "express";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useRef, useState } from "react";
+import { createRegisterVoiceRoutes } from "../../../src/routes/register-voice-routes";
+import type { ApiRoutesContext } from "../../../src/routes/types";
+import { useComposerDictation } from "../useComposerDictation";
 import { useVoiceDictation } from "../useVoiceDictation";
 
 import { __resetVoiceAvailabilityCache } from "../useVoiceAvailability";
 
-function Harness() {
-  const voice = useVoiceDictation();
+const nativeFetch = globalThis.fetch.bind(globalThis);
+
+function Harness({ projectId }: { projectId?: string }) {
+  const voice = useVoiceDictation(projectId);
   return <>
     <output data-testid="voice">{JSON.stringify({ enabled: voice.enabled, supported: voice.supported, partialText: voice.partialText, finalText: voice.finalText })}</output>
     <button onClick={() => void voice.start()}>start</button>
     <button onClick={() => void voice.stop()}>stop</button>
+  </>;
+}
+
+function ControlledComposer({ projectId }: { projectId: string }) {
+  const [value, setValue] = useState("before-after");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { micProps } = useComposerDictation({ textareaRef, value, onChange: setValue, projectId });
+  return <>
+    <textarea aria-label="Voice composer" ref={textareaRef} value={value} onChange={(event) => setValue(event.target.value)} />
+    <button aria-label="Start voice dictation" onClick={() => void micProps.start()}>start</button>
+    <button aria-label="Stop voice dictation" onClick={() => void micProps.stop()}>stop</button>
   </>;
 }
 
@@ -45,6 +64,85 @@ describe("useVoiceDictation", () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  it("drives the selected-project composer through the real route and recognizer seams", async () => {
+    const { port, tracks } = installAudioCapture();
+    const app = express();
+    const router = express.Router();
+    const close = vi.fn();
+    const acceptChunk = vi.fn((_audio: Buffer, options: { final: boolean }) => options.final
+      ? { text: "final transcript" }
+      : { partial: "partial transcript" });
+    const requests: string[] = [];
+    let clientSessionId: string | undefined;
+    const clientSessionIds: string[] = [];
+    app.use((req, res, next) => {
+      requests.push(`${req.method} ${req.originalUrl}`);
+      const json = res.json.bind(res);
+      res.json = ((body: unknown) => {
+        if (req.method === "POST" && req.path === "/voice/session") {
+          clientSessionId = (body as { sessionId?: string }).sessionId;
+          if (clientSessionId) clientSessionIds.push(clientSessionId);
+        }
+        return json(body);
+      }) as typeof res.json;
+      next();
+    });
+    app.use("/api", router);
+    createRegisterVoiceRoutes({
+      manager: { getState: async () => ({ status: "installed" as const, installedPath: "/model" }), peekState: () => ({ status: "installed" as const, installedPath: "/model" }), scheduleDownload: () => ({ accepted: false as const, state: { status: "error" as const } }), remove: async () => {}, download: async () => ({ status: "installed" as const }), subscribe: () => () => {} },
+      service: { getRuntimeStatus: async () => ({ status: "available" as const }), createSession: async () => ({ acceptChunk, finish: () => ({ text: "unused" }), close }) },
+    })({ router, getScopedStore: async () => ({ getSettings: async () => ({ voiceInput: { enabled: true } }), getGlobalSettingsStore: () => ({ getSettings: async () => ({}) }) }), getProjectIdFromRequest: (request) => typeof request.query.projectId === "string" ? request.query.projectId : undefined } as unknown as ApiRoutesContext);
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    vi.mocked(fetch).mockImplementation((input, init) => nativeFetch(`${origin}${String(input)}`, init));
+
+    /*
+     * FNXC:VoiceInput 2026-08-04-07:49:
+     * The regression must cross the real controlled-composer, browser-capture, and Express
+     * registrar seams. A response-only fetch mock cannot prove selected-project session ownership.
+     */
+    const view = render(<ControlledComposer projectId="voice-project" />);
+    await waitFor(() => expect(requests).toContain("GET /api/voice/status?projectId=voice-project"));
+    const textarea = screen.getByLabelText("Voice composer") as HTMLTextAreaElement;
+    textarea.setSelectionRange("before".length, "before".length);
+    fireEvent.click(screen.getByRole("button", { name: "Start voice dictation" }));
+    await waitFor(() => expect(port.onmessage).toBeTypeOf("function"));
+    await waitFor(() => expect(requests).toContain("POST /api/voice/session?projectId=voice-project"));
+    await waitFor(() => expect(clientSessionId).toBeDefined());
+    const foreign = await nativeFetch(`${origin}/api/voice/transcribe?projectId=other-project`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: clientSessionId, audio: "AAA=", sequence: 0, final: false }) });
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual({ error: "unknown-session" });
+
+    await act(async () => { port.onmessage?.({ data: new ArrayBuffer(6_400) } as MessageEvent<ArrayBuffer>); });
+    await waitFor(() => expect(textarea).toHaveValue("beforepartial transcript-after"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop voice dictation" }));
+    await waitFor(() => expect(textarea).toHaveValue("beforefinal transcript-after"));
+    await waitFor(() => expect(requests.filter((request) => request.startsWith("DELETE /api/voice/session/") && request.endsWith("?projectId=voice-project"))).toHaveLength(1));
+    expect(requests).toEqual(expect.arrayContaining([
+      "GET /api/voice/status?projectId=voice-project",
+      "POST /api/voice/session?projectId=voice-project",
+      "POST /api/voice/transcribe?projectId=voice-project",
+    ]));
+    expect(acceptChunk).toHaveBeenNthCalledWith(1, expect.any(Buffer), { final: false });
+    expect(acceptChunk).toHaveBeenNthCalledWith(2, expect.any(Buffer), { final: true });
+    expect(close).toHaveBeenCalledOnce();
+    expect(tracks[0].stop).toHaveBeenCalledOnce();
+
+    // Start a distinct real registrar session, then unmount while capture is active rather than
+    // after stop has already finalized it. This proves unmount owns exactly one scoped cleanup.
+    fireEvent.click(screen.getByRole("button", { name: "Start voice dictation" }));
+    await waitFor(() => expect(clientSessionIds).toHaveLength(2));
+    await waitFor(() => expect(port.onmessage).toBeTypeOf("function"));
+    const activeSessionId = clientSessionIds[1];
+    view.unmount();
+    await waitFor(() => expect(requests.filter((request) => request === `DELETE /api/voice/session/${activeSessionId}?projectId=voice-project`)).toHaveLength(1));
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(tracks[0].stop).toHaveBeenCalledTimes(2);
+    expect(requests.filter((request) => request.startsWith("DELETE /api/voice/session/"))).toHaveLength(2);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it("fails closed while status is pending or fails", async () => {
       vi.mocked(fetch).mockRejectedValue(new Error("offline"));
     render(<Harness />);
@@ -69,6 +167,53 @@ describe("useVoiceDictation", () => {
     render(<Harness />);
     await waitFor(() => expect(screen.getByTestId("voice").textContent).toContain('"enabled":true'));
     expect(screen.getByTestId("voice").textContent).toContain('"supported":false');
+  });
+
+  it("keeps every session request in the selected project's scope", async () => {
+    const { port } = installAudioCapture();
+    const projectId = "voice project/&";
+    const scope = "?projectId=voice%20project%2F%26";
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === `/api/voice/status${scope}`) return new Response(JSON.stringify({ enabled: true, runtime: { status: "available" }, model: { status: "installed" } }));
+      if (url === `/api/voice/session${scope}`) return new Response(JSON.stringify({ sessionId: "session-1" }), { status: 201 });
+      if (url === `/api/voice/transcribe${scope}`) return new Response(JSON.stringify({ partial: "partial", final: false }));
+      if (url === `/api/voice/session/session-1${scope}` && init?.method === "DELETE") return new Response("{}");
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const view = render(<Harness projectId={projectId} />);
+    await waitFor(() => expect(screen.getByTestId("voice").textContent).toContain('"supported":true'));
+    fireEvent.click(screen.getByText("start"));
+    await waitFor(() => expect(port.onmessage).toBeTypeOf("function"));
+    await act(async () => { port.onmessage?.({ data: new ArrayBuffer(6_400) } as MessageEvent<ArrayBuffer>); });
+    await waitFor(() => expect(screen.getByTestId("voice").textContent).toContain('"partialText":"partial"'));
+    view.unmount();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => url === `/api/voice/session/session-1${scope}` && init?.method === "DELETE")).toBe(true));
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      `/api/voice/status${scope}`,
+      `/api/voice/session${scope}`,
+      `/api/voice/transcribe${scope}`,
+      `/api/voice/session/session-1${scope}`,
+    ]));
+  });
+
+  it("deletes the old scoped session when the selected project changes", async () => {
+    const { port, tracks } = installAudioCapture();
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/voice/status")) return new Response(JSON.stringify({ enabled: true, runtime: { status: "available" }, model: { status: "installed" } }));
+      if (url === "/api/voice/session?projectId=project-a") return new Response(JSON.stringify({ sessionId: "session-a" }), { status: 201 });
+      if (url === "/api/voice/session/session-a?projectId=project-a" && init?.method === "DELETE") return new Response("{}");
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const view = render(<Harness projectId="project-a" />);
+    await waitFor(() => expect(screen.getByTestId("voice").textContent).toContain('"supported":true'));
+    fireEvent.click(screen.getByText("start"));
+    await waitFor(() => expect(port.onmessage).toBeTypeOf("function"));
+    view.rerender(<Harness projectId="project-b" />);
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => url === "/api/voice/session/session-a?projectId=project-a" && init?.method === "DELETE")).toBe(true));
+    expect(tracks[0].stop).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("voice").textContent).not.toContain('"partialText":"partial"');
   });
 
   it("serializes buffered worklet frames and sends a bounded finalization", async () => {
