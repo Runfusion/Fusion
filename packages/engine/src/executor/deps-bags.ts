@@ -1313,6 +1313,15 @@ export function buildTaskLivenessDeps(host: any): any {
   };
 }
 
+/** Feature-video options bag — keeps `as any` off executor.ts facades. */
+export function buildGenerateCompletionFeatureVideoDeps(host: any): any {
+  return { store: host.store, options: host.options };
+}
+
+export function buildStoreRunContextDeps(host: any): any {
+  return { ...facadeFields(host, ["store"]), ...facadeMethods(host, ["getRunContextFor"]) };
+}
+
 export function buildCompletionFinalizationFacadeDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),

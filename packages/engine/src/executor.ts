@@ -3,13 +3,11 @@
 export * from "./executor/public-reexports.js";
 export * from "./executor/free-reexports.js";
 import {
-  type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr,
-  type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
-  type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants,
+  type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes,
+  resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider, type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants,
   pure, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
   bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorState,
 } from "./executor/task-executor-imports.js";
-import "./executor/executor-side-effect-hosts.js";
 export class TaskExecutor extends TaskExecutorState {
   private addActiveWorktree(taskId: string, worktreePath: string): void { impl.addActiveWorktreeImpl(this.activeWorktrees, taskId, worktreePath); }
   private getActiveWorktreePaths(taskId: string): ReturnType<typeof impl.getActiveWorktreePathsImpl> { return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId); }
@@ -40,8 +38,7 @@ export class TaskExecutor extends TaskExecutorState {
   private async shouldDeferWorkflowStepCompletion(...args: FacadeRestArgs<typeof impl.shouldDeferWorkflowStepCompletionImpl>): ReturnType<typeof impl.shouldDeferWorkflowStepCompletionImpl> { return impl.shouldDeferWorkflowStepCompletionImpl(bags.buildShouldDeferWorkflowStepCompletionDeps(this), ...args); }
   private getRunContextFor(taskId: string) { return this.currentRunContexts.get(taskId); }
   private async handoffTaskToReview(...args: FacadeRestArgs<typeof impl.handoffTaskToReviewImpl>): ReturnType<typeof impl.handoffTaskToReviewImpl> { return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), ...args); }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional reviewArtifactGenerator on options
-  private async generateCompletionFeatureVideo(task: Task): ReturnType<typeof impl.generateCompletionFeatureVideoImpl> { return impl.generateCompletionFeatureVideoImpl({ store: this.store, options: this.options as any }, task); }
+  private async generateCompletionFeatureVideo(task: Task): ReturnType<typeof impl.generateCompletionFeatureVideoImpl> { return impl.generateCompletionFeatureVideoImpl(bags.buildGenerateCompletionFeatureVideoDeps(this), task); }
   private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> { return impl.awaitFeatureVideoBoundedImpl(result); }
   private getModelRegistry() { return impl.getModelRegistryImpl({ getModelRegistryCache: () => this._modelRegistry, setModelRegistryCache: (value) => { this._modelRegistry = value; } }); }
   private get approvalRequestStore() { return impl.getApprovalRequestStoreImpl({ getCache: () => this._approvalRequestStore, setCache: (value) => { this._approvalRequestStore = value; }, store: this.store }); }
@@ -59,7 +56,6 @@ export class TaskExecutor extends TaskExecutorState {
   private registerSubagentSession(taskId: string, session: Parameters<typeof impl.registerSubagentSessionImpl>[2]): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private unregisterSubagentSession(taskId: string, session: Parameters<typeof impl.unregisterSubagentSessionImpl>[2]): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  // isBackward body stays on TaskExecutor (inert-sync 2); FNXC host: is-backward-move-out-of-planning.ts
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean { const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId); const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" }; return (from === lanes.hold || from === lanes.intake) && ![lanes.wip, lanes.review, lanes.complete].filter((c): c is string => typeof c === "string").includes(to); }
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
@@ -72,8 +68,7 @@ export class TaskExecutor extends TaskExecutorState {
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> { return impl.runWithExecutorSemaphoreImpl(bags.buildRunWithExecutorSemaphoreDeps(this), taskId, work); }
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) { super(); wireTaskExecutorLifecycle(this); }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
-  private storeRunContextDeps(): any { return { ...facadeFields(this, ["store"]), ...facadeMethods(this, ["getRunContextFor"]) }; }
+  private storeRunContextDeps() { return bags.buildStoreRunContextDeps(this); }
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): ReturnType<typeof impl.resetMergeStateIfNeededImpl> { return impl.resetMergeStateIfNeededImpl(bags.buildResetMergeStateIfNeededDeps(this), task, from); }
   private async cleanupMergeStateForReverification(...args: FacadeRestArgs<typeof impl.cleanupMergeStateForReverificationImpl>): ReturnType<typeof impl.cleanupMergeStateForReverificationImpl> { return impl.cleanupMergeStateForReverificationImpl(this.storeRunContextDeps(), ...args); }
   private async clearResumeFailureState(task: Task): ReturnType<typeof impl.clearResumeFailureStateImpl> { return impl.clearResumeFailureStateImpl({ store: this.store }, task); }

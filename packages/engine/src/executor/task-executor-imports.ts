@@ -2,7 +2,11 @@
  * FNXC:CodeOrganization 2026-08-04-07:20:
  * Collapsed import surface for TaskExecutor facades (U4). Keeps executor.ts free of
  * long multi-module import lists while preserving static analyzable @fusion/* imports.
+ *
+ * FNXC:CodeOrganization 2026-08-04-07:50:
+ * Side-effect FNXC/doc hosts load here so executor.ts does not spend a dedicated import line.
  */
+import "./executor-side-effect-hosts.js";
 export type {
   TaskStore, Task, TaskDetail, TaskTokenUsage, Settings, RunMutationContext,
   Agent, MergeResult, WorkflowIrNode, WorkflowIr, WorkflowColumnAgent, TaskMoveLanes,
