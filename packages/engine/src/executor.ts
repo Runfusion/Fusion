@@ -1045,29 +1045,26 @@ export class TaskExecutor {
    * `abortInFlightTaskWork`, but awaits the async `abort()` / `terminateAllSessions()`
    * calls instead of fire-and-forget.
    */
+  /*
+  FNXC:CodeOrganization 2026-08-04-02:10:
+  Thin facades over awaitAbortInFlight / abortAllInFlight (U4). Shared field/method bags
+  replace hand-written this-bindings so hard-cancel deps stay one compact block.
+  */
   async awaitAbortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): Promise<void> {
     return awaitAbortInFlightTaskWorkImpl(
       {
-        userCanceledTaskIds: this.userCanceledTaskIds,
-        markPausedAborted: (id, provenance, source) => this.markPausedAborted(id, provenance, source),
-        untrackStuckTask: (id) => { this.options.stuckTaskDetector?.untrackTask(id); },
-        clearWorkflowRerunWatchdog: (id) => this.clearWorkflowRerunWatchdog(id),
-        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        activeSessions: this.activeSessions,
-        deleteActiveSession: (id) => this.deleteActiveSession(id),
-        activeStepExecutors: this.activeStepExecutors,
-        deleteActiveStepExecutor: (id) => this.deleteActiveStepExecutor(id),
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        deleteActiveWorkflowStepSession: (id) => this.deleteActiveWorkflowStepSession(id),
         ...facadeFields(this, [
+          "userCanceledTaskIds", "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
           "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
-        ]),
-        disposeSubagentsForTask: (id, r) => this.disposeSubagentsForTask(id, r),
-        ...facadeFields(this, [
           "activeCliTaskSessions", "loopRecoveryState", "stuckAborted",
         ]),
-        safeLogEntry: (id, msg) => this.safeLogEntry(id, msg),
+        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
+        untrackStuckTask: (id: string) => { this.options.stuckTaskDetector?.untrackTask(id); },
+        ...facadeMethods(this, [
+          "markPausedAborted", "clearWorkflowRerunWatchdog", "clearCompletedTaskWatchdog",
+          "deleteActiveSession", "deleteActiveStepExecutor", "deleteActiveWorkflowStepSession",
+          "disposeSubagentsForTask", "safeLogEntry",
+        ]),
       },
       taskId,
       reason,
@@ -1083,7 +1080,7 @@ export class TaskExecutor {
           "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
           "activeCliTaskSessions", "childSessions",
         ]),
-        awaitAbortInFlightTaskWork: (id, r) => this.awaitAbortInFlightTaskWork(id, r),
+        ...facadeMethods(this, ["awaitAbortInFlightTaskWork"]),
       },
       reason,
     );
@@ -3457,11 +3454,9 @@ export class TaskExecutor {
   ): ToolDefinition {
     return createTaskDoneToolImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
+        ...facadeFields(this, ["store", "workflowLifecycleMovesInFlight"]),
         ...facadeMethods(this, [
-          "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
+          "getRunContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
           "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
         ]),
       },
@@ -3790,8 +3785,7 @@ export class TaskExecutor {
   ): Promise<false | "requeue-todo" | "escalate-exhausted"> {
     return recoverMissingWorktreeSessionStartFailureImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
+        ...facadeFields(this, ["rootDir", "store"]),
         ...facadeMethods(this, [
           "getRunContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
         ]),
@@ -3811,8 +3805,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return emitWorktreeReanchoredAuditImpl(
       {
-        store: this.store,
-        getRunContextFor: (id: string) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       fromPath,
@@ -3905,10 +3899,8 @@ export class TaskExecutor {
   ): Promise<string> {
     return normalizeReclaimableWorktreePath(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        hasActiveWorktreeBinding: (tid, p) => this.hasActiveWorktreeBinding(tid, p),
-        isLiveCleanupRefusal: (p, tid) => this.isLiveCleanupRefusal(p, tid),
+        ...facadeFields(this, ["rootDir", "store"]),
+        ...facadeMethods(this, ["hasActiveWorktreeBinding", "isLiveCleanupRefusal"]),
       },
       sourcePath,
       targetPath,
@@ -3999,11 +3991,10 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return cleanupConflictingWorktreeImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        reconcileSelfOwnedBeforeRemove: (p, tid) => this.reconcileSelfOwnedBeforeRemove(p, tid),
-        findActiveWorktreeOwner: (p, tid) => this.findActiveWorktreeOwner(p, tid),
-        removeOwnWorktreeWithReconcile: (input) => this.removeOwnWorktreeWithReconcile(input),
+        ...facadeFields(this, ["rootDir", "store"]),
+        ...facadeMethods(this, [
+          "reconcileSelfOwnedBeforeRemove", "findActiveWorktreeOwner", "removeOwnWorktreeWithReconcile",
+        ]),
       },
       worktreePath,
       branch,
@@ -4073,10 +4064,8 @@ export class TaskExecutor {
   }): Promise<void> {
     return removeOwnWorktreeWithReconcile(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        reconcileSelfOwnedBeforeRemove: (p, tid) => this.reconcileSelfOwnedBeforeRemove(p, tid),
-        hasActiveWorktreeBinding: (tid, p) => this.hasActiveWorktreeBinding(tid, p),
+        ...facadeFields(this, ["rootDir", "store"]),
+        ...facadeMethods(this, ["reconcileSelfOwnedBeforeRemove", "hasActiveWorktreeBinding"]),
       },
       input,
     );
@@ -4292,14 +4281,11 @@ export class TaskExecutor {
     // FNXC:CodeOrganization 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests that mutate priv.totalSpawnedCount still drive the free-fn path.
     return createSpawnAgentToolImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
+        ...facadeFields(this, ["store", "rootDir", "childSessions", "spawnedAgents"]),
         agentStore: this.options.agentStore,
         pluginRunner: this.options.pluginRunner,
         getTotalSpawnedCount: () => this.totalSpawnedCount,
-        setTotalSpawnedCount: (n) => { this.totalSpawnedCount = n; },
-        childSessions: this.childSessions,
-        spawnedAgents: this.spawnedAgents,
+        setTotalSpawnedCount: (n: number) => { this.totalSpawnedCount = n; },
         ...facadeMethods(this, [
           "createWorktree", "resolveInstructionsForRole", "getRunContextFor",
           "resolveMcpServers", "runSpawnedChild",
