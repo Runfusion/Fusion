@@ -217,7 +217,7 @@ export function buildRunImplementationDeps(
       "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
       "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
     ]),
-    sharedWorkerTools: host.sharedWorkerToolsDeps(),
+    sharedWorkerTools: buildSharedWorkerToolsDeps(host),
   };
 }
 
@@ -284,7 +284,7 @@ export function buildExecuteWorkflowStepDeps(host: any): any {
       "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
       "setActiveWorkflowStepSession",
     ]),
-    sharedWorkerTools: host.sharedWorkerToolsDeps(),
+    sharedWorkerTools: buildSharedWorkerToolsDeps(host),
   };
 }
 
