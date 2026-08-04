@@ -29,12 +29,8 @@ import * as bags from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
-/* FNXC host for isBackwardMoveOutOfPlanning requirement history (body stays on TaskExecutor). */
-import "./executor/is-backward-move-out-of-planning.js";
-import "./executor/task-executor-fields.js";
-import "./executor/facade-fnxc-pointers.js";
-import "./executor/executor-product-fnxc.js";
-import "./executor/executor-method-docs.js";
+/* FNXC:CodeOrganization 2026-08-04-07:15: FNXC/doc hosts via executor-side-effect-hosts (isBackward body stays here). */
+import "./executor/executor-side-effect-hosts.js";
 export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-options.js";
 import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./executor/task-executor-options.js";
 import { TaskExecutorState } from "./executor/task-executor-state.js";
@@ -87,13 +83,12 @@ export class TaskExecutor extends TaskExecutorState {
   private registerSubagentSession(taskId: string, session: AgentSession): void { impl.registerSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private unregisterSubagentSession(taskId: string, session: AgentSession): void { impl.unregisterSubagentSessionImpl(this.activeSubagentSessions, taskId, session); }
   private disposeSubagentsForTask(taskId: string, reason: string): void { impl.disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason); }
-  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED (zero production callers; inert sync-lane count drop). */
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED; isBackward body stays (inert-sync 2). */
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
     const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" };
     if (from !== lanes.hold && from !== lanes.intake) return false;
-    const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter((column): column is string => typeof column === "string");
-    return !forwardTargets.includes(to);
+    return ![lanes.wip, lanes.review, lanes.complete].filter((c): c is string => typeof c === "string").includes(to);
   }
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
@@ -107,10 +102,10 @@ export class TaskExecutor extends TaskExecutorState {
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
     super();
-    const wired = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
-    this.unregisterTaskMoveDisposer = wired.unregisterTaskMoveDisposer;
-    this.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
-    this.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
+    const w = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
+    this.unregisterTaskMoveDisposer = w.unregisterTaskMoveDisposer;
+    this.unregisterArchiveWorktreeDisposer = w.unregisterArchiveWorktreeDisposer;
+    this.unregisterArchiveWorkspaceWorktreeDisposer = w.unregisterArchiveWorkspaceWorktreeDisposer;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any { return { ...facadeFields(this, ["store"]), ...facadeMethods(this, ["getRunContextFor"]) }; }
