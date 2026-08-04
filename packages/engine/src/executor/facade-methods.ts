@@ -20,6 +20,10 @@
 /** Args after the deps bag for a free function of shape `(deps, ...args) => R`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- free-fn deps bag is always first
 export type FacadeRestArgs<F> = F extends (deps: any, ...args: infer A) => any ? A : never;
+
+/** Args after the first positional arg (store / rootDir / worktreePath) for free peels. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- first positional is host-owned
+export type FacadeAfterFirst<F> = F extends (first: any, ...args: infer A) => any ? A : never;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see FNXC above
 export function facadeMethods(host: object, names: readonly string[]): any {
   const out: Record<string, (...args: unknown[]) => unknown> = {};

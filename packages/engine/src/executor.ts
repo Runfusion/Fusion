@@ -207,7 +207,7 @@ import {
   buildMarkPausedAbortedDeps,
   buildResumeOrphanedDeps,
 } from "./executor/deps-bags.js";
-import { facadeFields, facadeMethods, type FacadeRestArgs } from "./executor/facade-methods.js";
+import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 
@@ -469,16 +469,14 @@ export class TaskExecutor {
   }
 
   private async shouldDeferCompletionForGlobalPause(
-    taskId: string,
-    context: string,
+    ...args: FacadeRestArgs<typeof shouldDeferCompletionForGlobalPauseImpl>
   ): Promise<boolean> {
     return shouldDeferCompletionForGlobalPauseImpl(
       {
         ...facadeFields(this, ["store"]),
         ...facadeMethods(this, ["getRunContextFor", "clearCompletedTaskWatchdog"]),
       },
-      taskId,
-      context,
+      ...args,
     );
   }
 
@@ -1021,19 +1019,19 @@ export class TaskExecutor {
   // Thin prototype facades for pure token helpers so Object.create(TaskExecutor.prototype) tests and any instance-method call sites keep working after the free-function peel.
   private accumulateTokenUsage(
     ...args: Parameters<typeof accumulateTokenUsageImpl>
-  ): ReturnType<typeof accumulateTokenUsageImpl> {
+  ): ReturnType<typeof accumulateTokenUsageImpl>  {
     return accumulateTokenUsageImpl(...args);
   }
 
   private tokenUsageWithModelSnapshot(
     ...args: Parameters<typeof tokenUsageWithModelSnapshotImpl>
-  ): ReturnType<typeof tokenUsageWithModelSnapshotImpl> {
+  ): ReturnType<typeof tokenUsageWithModelSnapshotImpl>  {
     return tokenUsageWithModelSnapshotImpl(...args);
   }
 
   private async extractSessionTokenUsage(
     ...args: Parameters<typeof extractSessionTokenUsageImpl>
-  ): ReturnType<typeof extractSessionTokenUsageImpl> {
+  ): ReturnType<typeof extractSessionTokenUsageImpl>  {
     return extractSessionTokenUsageImpl(...args);
   }
 
@@ -1994,37 +1992,27 @@ export class TaskExecutor {
   }
 
   private async injectWorkflowStepFailureInstructions(
-    task: Task,
-    failureFeedback: string,
-    stepName: string,
-    retry: { attempt: number; max?: number },
-  ): Promise<void> {
-    return injectWorkflowStepFailureInstructionsImpl(this.store, task, failureFeedback, stepName, retry);
+    ...args: FacadeAfterFirst<typeof injectWorkflowStepFailureInstructionsImpl>
+  ): Promise<void>  {
+    return injectWorkflowStepFailureInstructionsImpl(this.store, ...args);
   }
 
   private async captureModifiedFiles(
-    worktreePath: string,
-    baseCommitSha: string | undefined,
-    taskId: string,
-    audit?: RunAuditor,
-    source = "unspecified",
-  ): Promise<string[]> {
-    return captureModifiedFilesImpl(worktreePath, baseCommitSha, taskId, audit, source);
+    ...args: Parameters<typeof captureModifiedFilesImpl>
+  ): Promise<string[]>  {
+    return captureModifiedFilesImpl(...args);
   }
 
   private async captureWorkspaceModifiedFiles(
-    task: Task,
-    audit?: RunAuditor,
-    source = "post-session",
-  ): Promise<string[]> {
-    return captureWorkspaceModifiedFilesImpl(task, audit, source);
+    ...args: Parameters<typeof captureWorkspaceModifiedFilesImpl>
+  ): Promise<string[]>  {
+    return captureWorkspaceModifiedFilesImpl(...args);
   }
 
   private async reviewWorkspacePerRepo(
-    task: Task,
-    invokeForCwd: (cwd: string) => Promise<ReviewResult>,
-  ): Promise<ReviewResult> {
-    return reviewWorkspacePerRepoImpl(task, invokeForCwd);
+    ...args: Parameters<typeof reviewWorkspacePerRepoImpl>
+  ): Promise<ReviewResult>  {
+    return reviewWorkspacePerRepoImpl(...args);
   }
 
   private async captureUncommittedModifiedFiles(worktreePath: string): Promise<string[]> {
@@ -2079,18 +2067,14 @@ export class TaskExecutor {
   }
 
   private async tryBootstrapMisbindingRecovery(
-    task: Task,
-    contamination: BranchCrossContaminationError,
-    audit: ReturnType<typeof createRunAuditor>,
+    ...args: FacadeRestArgs<typeof tryBootstrapMisbindingRecoveryImpl>
   ): Promise<boolean> {
     return tryBootstrapMisbindingRecoveryImpl(
       {
         ...facadeFields(this, ["rootDir", "store"]),
         ...facadeMethods(this, ["getRunContextFor", "markGraphExecuteSelfRequeued"]),
       },
-      task,
-      contamination,
-      audit,
+      ...args,
     );
   }
 
@@ -2322,20 +2306,15 @@ export class TaskExecutor {
   }
 
   private async squashImportDepIntoWorktree(
-    worktreePath: string,
-    taskId: string,
-    depTip: string,
-    label: string,
-  ): Promise<void> {
-    return squashImportDepIntoWorktreeImpl(this.store, worktreePath, taskId, depTip, label);
+    ...args: FacadeAfterFirst<typeof squashImportDepIntoWorktreeImpl>
+  ): Promise<void>  {
+    return squashImportDepIntoWorktreeImpl(this.store, ...args);
   }
 
   private async rebaseNewWorktreeOntoRemote(
-    worktreePath: string,
-    branch: string,
-    taskId: string,
-  ): Promise<void> {
-    return rebaseNewWorktreeOntoRemoteImpl(this.rootDir, this.store, worktreePath, branch, taskId);
+    ...args: Parameters<typeof rebaseNewWorktreeOntoRemoteImpl> extends [any, any, ...infer R] ? R : never
+  ): Promise<void>  {
+    return rebaseNewWorktreeOntoRemoteImpl(this.rootDir, this.store, ...args);
   }
 
   private async createWorktree(
