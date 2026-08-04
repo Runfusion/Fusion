@@ -115,6 +115,10 @@ ordinary re-dispatch rather than parked.
 const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
+const MAX_WORKTREE_RETRIES = 3;
+const WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
+const MAX_AUTO_RECOVERY_ATTEMPTS = 3;
+const BRANCH_CONFLICT_TRIPWIRE_THRESHOLD = 5;
 
 /* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
 import {
@@ -4087,8 +4091,8 @@ export class TaskExecutor {
         graphSeamSkillName: this.graphSeamSkillName,
         graphStepSessionPinned: this.graphStepSessionPinned,
         outerConcurrencyClaims: this.outerConcurrencyClaims,
-        BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: this.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
-        MAX_AUTO_RECOVERY_ATTEMPTS: this.MAX_AUTO_RECOVERY_ATTEMPTS,
+        BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+        MAX_AUTO_RECOVERY_ATTEMPTS: MAX_AUTO_RECOVERY_ATTEMPTS,
         getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
           "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
@@ -4607,12 +4611,6 @@ export class TaskExecutor {
      
   }
 
-  private MAX_WORKTREE_RETRIES = 3;
-  private WORKTREE_RETRY_DELAYS = [100, 500, 1000]; // ms
-
-  private readonly MAX_AUTO_RECOVERY_ATTEMPTS = 3;
-  private readonly BRANCH_CONFLICT_TRIPWIRE_THRESHOLD = 5;
-
   private async tryBootstrapMisbindingRecovery(
     task: Task,
     contamination: BranchCrossContaminationError,
@@ -4842,7 +4840,7 @@ export class TaskExecutor {
     return buildWorktreeCreateConflictDeps({
       rootDir: this.rootDir,
       store: this.store,
-      maxWorktreeRetries: this.MAX_WORKTREE_RETRIES,
+      maxWorktreeRetries: MAX_WORKTREE_RETRIES,
       recoverIndexLockIfStale: (taskId, path, info) => this.recoverIndexLockIfStale(taskId, path, info),
       recoverStaleRegistration: (taskId, path, info) => this.recoverStaleRegistration(taskId, path, info),
       cleanupStaleBranch: (branch, taskId) => this.cleanupStaleBranch(branch, taskId),
@@ -4953,8 +4951,8 @@ export class TaskExecutor {
       {
         rootDir: this.rootDir,
         store: this.store,
-        maxWorktreeRetries: this.MAX_WORKTREE_RETRIES,
-        worktreeRetryDelaysMs: this.WORKTREE_RETRY_DELAYS,
+        maxWorktreeRetries: MAX_WORKTREE_RETRIES,
+        worktreeRetryDelaysMs: WORKTREE_RETRY_DELAYS,
         resolveWorktreeStartPoint: (sp, tid) => this.resolveWorktreeStartPoint(sp, tid),
         planSquashImportFromDep: (tid, tip, orig) => this.planSquashImportFromDep(tid, tip, orig),
         tryCreateWorktree: (
