@@ -42,6 +42,19 @@ describe("browser layout smoke fixture", () => {
     expect(html).toContain("floating-window--github-import-detail");
   });
 
+  /*
+  FNXC:PlanReviewReplan 2026-08-04-06:35 FN-8768:
+  Keep both production approval surfaces in the real-browser fixture; the executable smoke checks
+  their shared responsive containment rather than treating the presence of markup as layout proof.
+  */
+  it("includes the Plan Review replan-cap approval card and detail surfaces", () => {
+    const html = createSmokeHtml();
+    expect(html).toContain('data-smoke="plan-review-replan-cap-approval"');
+    expect(html).toContain("awaiting-approval--plan-review-replan-cap");
+    expect(html).toContain("detail-plan-approval-banner--replan-cap");
+    expect(html).toContain("Plan Review needs approval");
+  });
+
   it("includes PR flow fixture sections and class hooks", () => {
     const html = createSmokeHtml();
     expect(html).toContain('data-smoke="pr-create-modal"');

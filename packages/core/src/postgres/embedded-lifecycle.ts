@@ -1438,6 +1438,8 @@ export class EmbeddedPostgresLifecycle {
         runtimeUrl: url,
         migrationUrl: url,
         migrationUrlOverridden: false,
+        directSessionUrl: url,
+        directSessionProvenance: "embedded-lifecycle",
       };
     }
     return this.startBounded();
@@ -1631,6 +1633,8 @@ export class EmbeddedPostgresLifecycle {
         runtimeUrl,
         migrationUrl: runtimeUrl,
         migrationUrlOverridden: false,
+        directSessionUrl: runtimeUrl,
+        directSessionProvenance: "embedded-lifecycle",
       };
     }
     /*
@@ -1689,6 +1693,8 @@ export class EmbeddedPostgresLifecycle {
       runtimeUrl,
       migrationUrl: runtimeUrl,
       migrationUrlOverridden: false,
+      directSessionUrl: runtimeUrl,
+      directSessionProvenance: "embedded-lifecycle",
     };
   }
 

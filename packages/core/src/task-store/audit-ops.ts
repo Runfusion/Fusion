@@ -6,6 +6,7 @@
  * behavior-preserving refactor. Each function receives the TaskStore
  * instance as its first parameter and performs byte-identical work.
  */
+import { and, eq, isNull } from "drizzle-orm";
 import {TaskStore} from "../store.js";
 import type { Task, TaskDetail, TaskLogEntry, RunMutationContext } from "../types.js";
 import {findWorkflowColumn} from "../plugins/plugin-gate-verdict.js";
@@ -18,6 +19,7 @@ import {__setTaskActivityLogLimitsForTesting, truncateTaskLogOutcome, getTaskAct
 import {readTaskRow, updateTaskColumns} from "../task-store/async/async-persistence.js";
 import { getLiveTaskColumn } from "./async/async-comments-attachments.js";
 import { resolveArchivedLanes } from "../project-lane-vocabulary.js";
+import * as schema from "../postgres/schema/index.js";
 
 export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskId: string, workflowIr: WorkflowIr, fromColumn: string, toColumn: string,): Promise<void> {
     const registry = getTraitRegistry();
@@ -113,6 +115,58 @@ export async function runPluginColumnTransitionHooksImpl(store: TaskStore, taskI
       await writeMarker(remaining);
     }
   }
+
+/*
+FNXC:PlanningDependencyReseed 2026-08-04-02:10:
+Release gates can be evaluated by multiple schedulers. Claim the project/task
+episode and append its diagnostic in one transaction so a crash cannot leave a
+suppression marker without the operator-visible task-log entry.
+*/
+export async function checkAndRecordUnplannedExecutionBlockImpl(
+  store: TaskStore,
+  id: string,
+  episode: string,
+): Promise<boolean> {
+  const layer = store.asyncLayer!;
+  const projectId = layer.projectId ?? "__legacy_unscoped__";
+  const entry: TaskLogEntry = {
+    timestamp: new Date().toISOString(),
+    action: "Execution dispatch refused — task is still unplanned",
+    outcome: "Waiting for planning lifecycle handoff or Plan Review continuation",
+  };
+  const recorded = await layer.transactionImmediate(async (tx) => {
+    const claimed = await tx
+      .insert(schema.project.unplannedExecutionBlocks)
+      .values({ projectId, taskId: id, episode, createdAt: entry.timestamp })
+      .onConflictDoNothing()
+      .returning({ taskId: schema.project.unplannedExecutionBlocks.taskId });
+    if (claimed.length === 0) return false;
+
+    const rows = await tx.select({ log: schema.project.tasks.log, deletedAt: schema.project.tasks.deletedAt })
+      .from(schema.project.tasks)
+      .where(and(
+        eq(schema.project.tasks.projectId, projectId),
+        eq(schema.project.tasks.id, id),
+        isNull(schema.project.tasks.deletedAt),
+      ));
+    const task = rows[0];
+    if (!task) throw new Error(`Task ${id} not found or archived while recording unplanned dispatch refusal`);
+    const log = Array.isArray(task.log) ? [...task.log as TaskLogEntry[]] : [];
+    log.push(entry);
+    const limit = getTaskActivityLogEntryLimit();
+    if (log.length > limit) log.splice(0, log.length - limit);
+    await tx.update(schema.project.tasks)
+      /*
+       * FNXC:PlanningHandoffRecovery 2026-08-04-06:35:
+       * This diagnostic must not make an old planning handoff look fresh to
+       * recovery grace windows. The marker timestamp records audit recency.
+       */
+      .set({ log })
+      .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
+    return true;
+  });
+  return recorded;
+}
 
 export async function logEntryImpl(store: TaskStore, id: string, action: string, outcome?: string, runContext?: RunMutationContext): Promise<Task> {
     return store.withTaskLock(id, async () => {

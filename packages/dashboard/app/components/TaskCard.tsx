@@ -52,7 +52,7 @@ import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import { getTaskStatusBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
-import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
+import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
@@ -1541,8 +1541,8 @@ function TaskCardComponent({
   know approval is required because Plan Review exhausted automatic REVISE replans without
   converging — Approve keeps the current PROMPT.md; Reject regenerates.
   */
-  const isAwaitingApproval = isIntakeColumn && task.status === "awaiting-approval";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
+  const isAwaitingApproval = isTaskAwaitingPlanApproval(task, isIntakeColumn);
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = isArchivedColumn;
   /*

@@ -35,8 +35,10 @@ import type {
   WorkflowWorkItemState,
   WorkflowWorkItemTransitionPatch,
   WorkflowWorkItemUpsertInput,
+  WorkflowStepResult,
 } from "../../types.js";
 import type { WorkflowWorkItemRow } from "../row-types.js";
+import { isPlanReviewSatisfied } from "../../planner/plan-approval.js";
 
 /**
  * FNXC:TaskStoreWorkflowWorkItems 2026-06-24-08:35:
@@ -319,8 +321,8 @@ export async function seedStrandedPlanReviewContinuation(
       projectScopeFor(schema.project.tasks.projectId, layer.projectId),
       eq(schema.project.tasks.id, input.taskId),
     )).limit(1);
-    const results = taskRows[0]?.workflowStepResults as Array<{ workflowStepId?: string; status?: string }> | null | undefined;
-    if (results?.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) return { seeded: false, reason: "plan-review-passed" as const };
+    const results = taskRows[0]?.workflowStepResults as WorkflowStepResult[] | null | undefined;
+    if (results?.some(isPlanReviewSatisfied)) return { seeded: false, reason: "plan-review-passed" as const };
     const item = await upsertWorkflowWorkItem(layer, input, tx);
     return { seeded: true, workItemId: item.id };
   }));

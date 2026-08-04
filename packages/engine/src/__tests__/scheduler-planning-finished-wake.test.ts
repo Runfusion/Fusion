@@ -174,3 +174,67 @@ describe("Scheduler wakes on the planning -> dispatchable transition", () => {
     expect(schedule).not.toHaveBeenCalled();
   });
 });
+
+describe("Scheduler wakes on the approval-held -> dispatchable transition", () => {
+  it("schedules immediately when plan approval clears in a hold column", async () => {
+    const { emit, schedule } = createScheduler();
+
+    emit("task:updated", createTask({ status: "awaiting-approval" }));
+    expect(schedule).not.toHaveBeenCalled();
+
+    emit("task:updated", createTask({ status: null }));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the durable approval fingerprint when this process missed the hold event", async () => {
+    const { emit, schedule } = createScheduler();
+
+    emit("task:updated", createTask({
+      status: null,
+      approvedPlanFingerprint: "approved-plan",
+    }));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses audited Plan Review evidence when approval could not fingerprint PROMPT.md", async () => {
+    const { emit, schedule } = createScheduler();
+
+    emit("task:updated", createTask({
+      status: null,
+      approvedPlanFingerprint: undefined,
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "skipped",
+        bypassedBy: "dashboard-operator",
+        bypassedAt: "2026-08-04T00:26:00.000Z",
+        bypassReason: "Approved after Plan Review did not converge",
+        bypassedFromStatus: "failed",
+        bypassedFromVerdict: "REVISE",
+      }],
+    }));
+    await flushAsyncHandlers();
+
+    expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wake when approval remains held or clears into a pause/non-hold lane", async () => {
+    for (const terminal of [
+      { status: "awaiting-approval" },
+      { status: null, paused: true },
+      { status: null, userPaused: true },
+      { status: null, column: "in-review" },
+    ]) {
+      const { emit, schedule } = createScheduler();
+      emit("task:updated", createTask({ status: "awaiting-approval" }));
+      emit("task:updated", createTask(terminal));
+      await flushAsyncHandlers();
+      expect(schedule, JSON.stringify(terminal)).not.toHaveBeenCalled();
+    }
+  });
+
+});

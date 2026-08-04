@@ -134,6 +134,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanesForTaskAsync } from "./execution/replan-target.js";
+import { classifyPersistedPlanHandoff, LEGACY_NULL_PLAN_HANDOFF_STALE_MS } from "./planning-handoff-recovery.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -227,6 +228,7 @@ import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
+import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 
@@ -1187,7 +1189,7 @@ export class TriageProcessor {
    * protected regardless of elapsed time; a stuck-aborted session is still
    * reclaimable because its promise may never reach the cleanup `finally`.
    */
-  private static readonly STALE_PROCESSING_THRESHOLD_MS = 30 * 60 * 1000;
+  private static readonly STALE_PROCESSING_THRESHOLD_MS = LEGACY_NULL_PLAN_HANDOFF_STALE_MS;
 
   /**
    * Evict stale tasks from `processing` only when their triage promise is no
@@ -1259,13 +1261,6 @@ export class TriageProcessor {
     return evicted;
   }
 
-  /** True when Plan Review already recorded a passed verdict on this task. */
-  private hasPassedPlanReview(task: Pick<Task, "workflowStepResults">): boolean {
-    return task.workflowStepResults?.some(
-      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
-    ) === true;
-  }
-
   /**
    * Recover a triage task whose PROMPT.md was already written but the final
    * handoff out of planning never completed.
@@ -1277,9 +1272,48 @@ export class TriageProcessor {
    * Do not recover `needs-replan` / `plan-review-unavailable`.
    */
   async recoverApprovedTask(task: Task): Promise<boolean> {
-    const recoverableStatus =
-      task.status === "planning"
-      || (task.status == null && this.hasPassedPlanReview(task));
+    /*
+    FNXC:PlanningDependencyReseed 2026-08-04-00:30:
+    A dependency reseed from older writers could clear status after the planner
+    persisted a valid PROMPT.md but before this handoff ran.  It has neither a
+    fingerprint nor graph evidence, so ordinary discovery considers it planned
+    while release considers it unplanned. Claim this narrow legacy shape here;
+    the validation below still rejects seeds/partial plans and finalization
+    evaluates manual approval before graph continuation.
+    */
+    /*
+    FNXC:PlanningDependencyReseed 2026-08-04-01:04:
+    Null status alone is not a planning handoff. Claim the legacy reseed hole
+    only after its original planner is gone, its row has aged past the normal
+    stuck-processing grace, and no approval or graph continuation evidence
+    exists. This keeps ordinary null-status cards from being re-finalized.
+    */
+    const continuationReader = (this.store as Partial<Pick<TaskStore, "listWorkflowWorkItemsForTask">>).listWorkflowWorkItemsForTask;
+    const stepInstanceReader = (this.store as Partial<Pick<TaskStore, "hasWorkflowRunStepInstancesForTask">>).hasWorkflowRunStepInstancesForTask;
+    const handoffKind = classifyPersistedPlanHandoff(task, {
+      now: Date.now(),
+      hasLivePlanningWork: this.hasLivePlanningWork(task.id),
+      // Legacy unit fixtures have no graph-work-item reader; production always
+      // applies the real stuck-processing grace.
+      legacyStaleMs: continuationReader ? TriageProcessor.STALE_PROCESSING_THRESHOLD_MS : 0,
+    });
+    const legacyNullStatusCandidate = handoffKind === "legacy-null"
+      // FNXC:PlanningDependencyReseed 2026-08-04-01:04: Legacy unit fixtures
+      // have no graph-work-item reader; production always applies this fence.
+      && (!continuationReader || (
+        (await continuationReader.call(this.store, task.id)).length === 0
+        /*
+        FNXC:PlanningDependencyReseed 2026-08-04-02:10:
+        A graph run can persist foreach step-instance rows before it creates a
+        result or continuation. That is still graph handoff evidence, so a
+        legacy null-status repair must defer instead of duplicating finalization.
+        Older narrow unit-store adapters lack this reader; production requires it.
+        */
+        && (!stepInstanceReader || !(await stepInstanceReader.call(this.store, task.id)))
+      ));
+    const recoverableStatus = handoffKind === "planning"
+      || handoffKind === "approved-null"
+      || legacyNullStatusCandidate;
     /* FNXC:WorkflowLifecycleColumns 2026-07-29-09:05 (U11): the INTAKE lane, not
        the literal. Converting only the `todo` sites left this one rejecting every
        card whose workflow renames its planner column, so the release below was
@@ -2932,6 +2966,7 @@ export class TriageProcessor {
           const isReplan = task.status === "needs-replan";
           let existingPrompt: string | undefined;
           let feedback: string | undefined;
+          let planReviewFeedbackHistory: string[] | undefined;
 
           if (isReplan) {
             // Prefer explicit re-specification feedback logged by comment-triggered
@@ -2941,7 +2976,7 @@ export class TriageProcessor {
               .find((entry) =>
                 entry.action === "User comment requested re-specification of planned task"
                 || entry.action === "User comment invalidated spec approval — task needs re-specification"
-                || entry.action === "AI spec revision requested"
+                || (entry.action === "AI spec revision requested" && !isPlanReviewRevisionLog(entry))
                 || entry.action === TRIAGE_STUCK_RESUME_LOG_ACTION
                 || entry.action === TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION
               );
@@ -2980,7 +3015,7 @@ export class TriageProcessor {
             }
 
             /*
-            FNXC:PlanReviewReplan 2026-07-13-00:00:
+            FNXC:PlanReviewReplan 2026-08-04-06:35 (FN-8768):
             When re-planning and neither an explicit user/AI re-specification comment nor a
             user comment supplied feedback, fall back to the most recent Plan Review REVISE
             verdict recorded in `workflowStepResults`. The pre-execution Plan Review gate
@@ -2994,12 +3029,20 @@ export class TriageProcessor {
               const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
                 .reverse()
                 .find((result) =>
-                  result.workflowStepId === PLAN_REVIEW_GROUP_ID
+                  (result.workflowStepId === PLAN_REVIEW_GROUP_ID || result.workflowStepName === "Plan Review")
                   && result.verdict === "REVISE"
-                  && Boolean((result.output ?? result.notes)?.trim()),
+                  && Boolean((result.notes ?? result.output)?.trim()),
                 );
-              feedback = latestPlanReviewRevise?.output ?? latestPlanReviewRevise?.notes ?? feedback;
+              feedback = latestPlanReviewRevise?.notes ?? latestPlanReviewRevise?.output ?? feedback;
             }
+
+            // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): Exclude
+            // the latest feedback because it renders in Revision Feedback; retain
+            // the bounded earlier decisions as a non-duplicated convergence ledger.
+            planReviewFeedbackHistory = collectPlanReviewFeedbackHistory(currentTask.workflowStepResults, {
+              exclude: feedback,
+              includeCurrent: false,
+            });
 
             planLog.log(
               `${task.id} re-planning with feedback: ${feedback?.slice(0, 100)}...`
@@ -3021,6 +3064,7 @@ export class TriageProcessor {
             {
               plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
               originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+              planReviewFeedbackHistory,
             },
           );
           await promptWithFallback(
@@ -4051,13 +4095,54 @@ export class TriageProcessor {
     so this plumbing is inert everywhere except the two sites explicitly marked
     below. Adding a state to an exit is then a deliberate, reviewable act.
     */
-    const report: PlanningHandoffReport = { outcome: "parked" };
+    const finalizeUnderLock = async () => {
+      /*
+      FNXC:PlanningDependencyReseed 2026-08-04-00:43:
+      Finalization publishes approval and graph-continuation handoff state under
+      the same cross-process advisory lock as dependency invalidation. A stale
+      planner therefore cannot recreate approval evidence after a reseed.
+      */
+      const report: PlanningHandoffReport = { outcome: "parked" };
+      this.finalizing.add(task.id);
+      try {
+        /*
+        FNXC:PlanningDependencyReseed 2026-08-04-00:54:
+        The snapshot held by a planner predates the outer lifecycle lock. Re-read
+        after acquiring it so a dependency invalidation committed first fences this
+        stale finalizer before it can restore approval or continuation handoff data.
+        */
+        const reRead = await Promise.resolve(this.store.getTask(task.id)).catch(() => null);
+        // Older pure unit-test adapters expose a no-op getTask; production returns
+        // a Task or rejects. Preserve that fixture seam without treating a failed
+        // production read as permission to publish a stale handoff.
+        if (reRead === null) return report;
+        const live = reRead ?? task;
+        if (live.status === "needs-replan") return report;
+        await this.finalizeApprovedTaskBody(live, writtenInput, settings, options, report);
+      } finally {
+        this.finalizing.delete(task.id);
+      }
+      return report;
+    };
+    // Minimal fixture stores predate the lifecycle-lock surface. Production
+    // TaskStore always supplies it; retaining this compatibility seam keeps
+    // pure triage unit tests from impersonating a PostgreSQL process.
+    const lifecycleLock = (this.store as Partial<TaskStore>).withPlanningLifecycleLock as
+      | (<T>(id: string, callback: () => Promise<T>) => Promise<T>)
+      | undefined;
+    /*
+    FNXC:PlanningDependencyReseed 2026-08-04-01:18:
+    A fail-closed direct-session transport can reject before it invokes the
+    callback. Keep the outer finalizing marker exception-safe so that rejection
+    remains diagnosable and retryable rather than permanently owning the task.
+    */
     try {
-      await this.finalizeApprovedTaskBody(task, writtenInput, settings, options, report);
+      return lifecycleLock
+        ? await lifecycleLock(task.id, finalizeUnderLock)
+        : await finalizeUnderLock();
     } finally {
       this.finalizing.delete(task.id);
     }
-    return report;
   }
 
   /*
@@ -5009,7 +5094,7 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
-  planningContext?: { plan?: string; originalDescription?: string },
+  planningContext?: { plan?: string; originalDescription?: string; planReviewFeedbackHistory?: string[] },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
   const planDocument = planningContext?.plan?.trim();
@@ -5122,6 +5207,15 @@ Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Ori
 
   let revisionSection = "";
   if (isRevision) {
+    // FNXC:PlanningPromptConvergence 2026-08-04-06:35 (FN-8768): Prior review
+    // decisions are first-class revision input. Rendering them separately from
+    // the latest feedback prevents resolved requirements from disappearing;
+    // the full-spec completeness rerun below catches blockers beyond the delta.
+    const cumulativeReviewLedger = (planningContext?.planReviewFeedbackHistory ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry, index) => `### PR${index + 1}\n${entry}`)
+      .join("\n\n");
     /*
     FNXC:PlanReviewReplan 2026-07-15-11:15:
     Plan Review REVISE and user re-spec feedback share this path. Label feedback generically
@@ -5140,7 +5234,8 @@ You are revising an existing task specification based on Plan Review or user fee
 - Apply **surgical** edits that fully resolve every blocking issue in the revision feedback below.
 - Preserve wording, steps, file scope, and acceptance criteria the feedback does not criticize.
 - Do not expand scope, invent new deliverables, or churn File Scope to "improve" an otherwise approved plan.
-- After editing, re-check each blocking item so a subsequent Plan Review can APPROVE without a new round of objections.
+- Treat every item in the cumulative ledger as a durable review decision unless a later entry explicitly supersedes it. Preserve resolved items, address every unresolved item, and do not regress an earlier correction while fixing the latest feedback.
+- After editing, rerun the full Mandatory Planning Completeness Procedure against the entire revised specification — not only the latest feedback — so a subsequent Plan Review can evaluate all remaining blockers in one pass.
 
 ## Existing Specification
 \`\`\`markdown
@@ -5149,6 +5244,8 @@ ${existingPrompt}
 
 ## Revision Feedback
 ${feedback}
+
+${cumulativeReviewLedger ? `## Cumulative Revision Decision Ledger\n${cumulativeReviewLedger}\n` : ""}
 
 Revise the specification above to address this feedback. Persist the complete revised PROMPT.md with \`fn_task_prompt_write\`.`;
   } else if (isFreshRespecification) {

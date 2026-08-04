@@ -31,9 +31,11 @@ vi.mock("../planning.js", () => ({
   formatInterviewQA: vi.fn(() => ""),
   mergePlanningSubtaskDrafts: vi.fn((_sessionId: string, subtasks: unknown[]) => subtasks),
   /*
-  FNXC:PlanningRouteTests 2026-07-23-08:20:
-  The direct registrar fixture must expose the durable create-claim lifecycle because
-  Planning create-task now resolves those exports before dispatching GitHub tracking.
+  FNXC:PlanningRouteTests 2026-08-04-06:29:
+  This direct registrar fixture replaces the whole planning module, so it must expose every
+  create-route contract the production dynamic imports consume. Missing task-handoff formatting
+  turned otherwise valid single and multi-task GitHub tracking requests into synchronous HTTP 500s;
+  retain the epoch-advance seam too so repeated-create and stale-link branches match production.
   */
   updatePlanningCreateClaim: vi.fn(async () => undefined),
   getDurablePlanningSession: vi.fn(async (id: string) => sessions.get(id)),
@@ -41,6 +43,8 @@ vi.mock("../planning.js", () => ({
   finalizePlanningTaskCreation: vi.fn(async () => undefined),
   reconcilePlanningTaskCreation: vi.fn(async () => undefined),
   releasePlanningTaskCreation: vi.fn(async () => undefined),
+  advancePlanningTaskCreationEpoch: vi.fn(async (id: string) => sessions.get(id)),
+  formatPlanningTaskHandoff: vi.fn((summary: { description: string }) => summary.description.trim()),
   // FNXC:PlanningMode 2026-07-23-12:10: create-task terminalizes the session after creation.
   validateSession: vi.fn(async () => undefined),
   // FNXC:PlanningMultiTask 2026-07-24-00:20: create-task derives an epoch-scoped proposalClaimId.

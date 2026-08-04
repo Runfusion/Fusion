@@ -9,7 +9,7 @@ import type {
   WorkflowNodeExtensionResult,
   WorkflowStepResult,
 } from "@fusion/core";
-import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, PLAN_REVIEW_GROUP_ID, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles, isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, isCompletionSummaryNode, classifyReviewLease, isWorkflowOptionalGroupEnabled, isPlanReviewSatisfied } from "@fusion/core";
 import { isNonPlanDefectPlanReviewFailure } from "../errors/transient-error-detector.js";
 import { isSessionContentionError } from "../errors/transient-error-patterns.js";
 import { isRequiredArtifactReadFailedValue, parseRequiredArtifactMissingValue } from "../execution/required-workflow-artifacts.js";
@@ -814,20 +814,21 @@ export class WorkflowGraphExecutor {
             ? node.config.name.trim()
             : node.id;
           /*
-          FNXC:PlanReview 2026-06-29-02:40:
-          Triage runs Plan Review before releasing a task to execution so the task stays in the triage column during review. When the execution graph later reaches the same optional group, treat an existing passed Plan Review result as satisfied and do not launch a duplicate reviewer session.
+          FNXC:PlanReview 2026-08-04-06:35:
+          Triage runs Plan Review before releasing a task to execution so the task stays in the triage column during review. When the execution graph later reaches the same optional group, only an unsuperseded projection may satisfy, repair, or hold the gate; old-episode evidence must never suppress the current reviewer session.
           */
           if (
             node.id === PLAN_REVIEW_GROUP_ID
-            && task.workflowStepResults?.some(
-              (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
-            )
+            && task.workflowStepResults?.some(isPlanReviewSatisfied)
           ) {
             context[`node:${node.id}:outcome`] = "success";
-            this.deps.logTaskEntry?.("[pre-merge] Workflow step already passed: Plan Review");
+            this.deps.logTaskEntry?.("[pre-merge] Workflow step already satisfied: Plan Review");
             return await traverseChildren(node, { outcome: "success", value: "already-passed" });
           }
-          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID
+          const hasPlanReviewProjection = task.workflowStepResults?.some(
+            (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID,
+          ) === true;
+          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID && !hasPlanReviewProjection
             ? recoverPassedPlanReviewFromLatestLog(task)
             : undefined;
           if (repairedPlanReview) {
@@ -857,7 +858,7 @@ export class WorkflowGraphExecutor {
               );
             }
             const lease = classifyReviewLease(
-              task.workflowStepResults,
+              task.workflowStepResults?.filter((result) => result.supersededAt == null),
               node.id,
               this.deps.runLoopNowForTests?.() ?? Date.now(),
             );

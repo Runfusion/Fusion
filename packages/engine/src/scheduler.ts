@@ -4,6 +4,7 @@ import {
   compareTasksByPriorityThenAgeAndId,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
   nonExecutableDuplicateRedirectReason,
+  isPlanReviewSatisfied,
   type TaskStore,
   type Task,
   type MissionStore,
@@ -45,7 +46,7 @@ import type { TaskMoveLanes } from "@fusion/core";
 import { resolveProjectColumnsForRoles, resolveWorkflowIrForTask, resolveWorkflowIrById, resolveColumnFlags, resolveWorktreeCapacityLimit, resolveLifecycleColumns, isWipColumnRole, isReviewColumnRole, isCompleteColumnRole, columnsWithFlag } from "@fusion/core";
 import type { ColumnRoleTraitFlags } from "@fusion/core";
 import type { WorkflowIr, WorkflowIrV2 } from "@fusion/core";
-import { runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./execution/hold-release.js";
+import { checkAndRecordUnplannedExecutionBlock, runHoldReleaseSweep, isUnplannedForExecution, type SlotReservation } from "./execution/hold-release.js";
 import { moveTaskToReplanColumn } from "./execution/replan-target.js";
 import { evaluateParkedAgentTaskLink } from "./agents/task-agent-sync.js";
 import { decideMissionSymbolAdmission, resolveMissionFeatureForTask } from "./missions/mission-symbol-admission.js";
@@ -917,6 +918,13 @@ export class Scheduler {
    * task:moved, so this is the only signal that the card just became executable.
    */
   private planningTaskIds = new Set<string>();
+  /*
+  FNXC:PlanReviewApproval 2026-08-04-00:26:
+  Wake dispatch on the observed hold edge or the durable approval marker. The latter covers a
+  restart or cross-process update that did not deliver the earlier awaiting-approval event.
+  */
+  private approvalHeldTaskIds = new Set<string>();
+  private approvalReleasedTaskIds = new Set<string>();
   /** Tracks mission-linked tasks observed with status=failed before moveTask clears status/error. */
   private failedTaskIds = new Set<string>();
   /** Tracks tasks blocked by unavailable-node policy to deduplicate block log entries. */
@@ -1339,6 +1347,37 @@ export class Scheduler {
         })();
       }
 
+      if (task.status === "awaiting-approval") {
+        this.approvalHeldTaskIds.add(task.id);
+        this.approvalReleasedTaskIds.delete(task.id);
+      } else if (
+        !task.status
+        && !task.paused
+        && !task.userPaused
+        && (
+          this.approvalHeldTaskIds.delete(task.id)
+          || (
+            (Boolean(task.approvedPlanFingerprint) || task.workflowStepResults?.some(isPlanReviewSatisfied) === true)
+            && !this.approvalReleasedTaskIds.has(task.id)
+          )
+        )
+      ) {
+        this.approvalReleasedTaskIds.add(task.id);
+        void (async () => {
+          const approvalParked = await resolveTaskParkedColumns(this.store, task.id);
+          if (
+            this.running
+            && !task.status
+            && !task.paused
+            && !task.userPaused
+            && approvalParked.wake.has(task.column)
+          ) {
+            schedulerLog.log(`Task ${task.id} plan approval cleared — triggering scheduling`);
+            void this.schedule();
+          }
+        })();
+      }
+
       if (!this.options.prMonitor) return;
       // DELIBERATE-LITERAL — runtime bridges drop lanes; never replace this unknown fallback with the sync resolver.
       if (eventLanes ? task.column !== eventLanes.review : task.column !== "in-review") return;
@@ -1364,6 +1403,8 @@ export class Scheduler {
       // FNXC:CodingIdeasWorkflow 2026-07-25-13:10: drop planning tracking with the other per-task
       // sets so a deleted-mid-planning id cannot leak or fire a stale wake if the id is reused.
       this.planningTaskIds.delete(task.id);
+      this.approvalHeldTaskIds.delete(task.id);
+      this.approvalReleasedTaskIds.delete(task.id);
       this.failedTaskIds.delete(task.id);
       this.recentEngineTodoRequeues.delete(task.id);
       this.wasNodeDispatchValidationBlocked.delete(task.id);
@@ -2347,6 +2388,7 @@ export class Scheduler {
           try {
             const ir = await resolveWorkflowIrForTask(this.store, task.id);
             if (await isUnplannedForExecution(this.store, task, ir)) {
+              await checkAndRecordUnplannedExecutionBlock(this.store, task, ir);
               return null;
             }
           } catch {

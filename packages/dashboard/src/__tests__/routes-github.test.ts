@@ -212,6 +212,7 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     createTask: vi.fn(),
     moveTask: vi.fn(),
     updateTask: vi.fn(),
+    withPlanningLifecycleLock: vi.fn(async (_id, fn) => await fn()),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     archiveTask: vi.fn(),

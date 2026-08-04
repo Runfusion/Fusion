@@ -972,6 +972,21 @@ export const workflowWorkItems = projectSchema.table("workflow_work_items", {
     .where(sql`${t.kind} = 'task' AND ${t.state} IN ('runnable', 'running', 'held', 'retrying')`),
 ]);
 
+/*
+FNXC:PlanningDependencyReseed 2026-08-04-02:10:
+An automated release refusal must be visible once per persisted episode across
+scheduler processes. The composite key keeps same task IDs in separate projects
+independent and atomically claims the accompanying task-log append.
+*/
+export const unplannedExecutionBlocks = projectSchema.table("unplanned_execution_blocks", {
+  projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
+  taskId: text("task_id").notNull(),
+  episode: text("episode").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.projectId, t.taskId, t.episode] }),
+]);
+
 export const workflowRunBranches = projectSchema.table("workflow_run_branches", {
   projectId: text("project_id").notNull().default(sql`current_setting('fusion.project_id', true)`),
   taskId: text("task_id").notNull(),

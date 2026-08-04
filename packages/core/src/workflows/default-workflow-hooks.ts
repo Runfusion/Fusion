@@ -377,7 +377,16 @@ export function applyReopenFieldClears(ctx: DefaultWorkflowMoveContext): void {
   const leftReviewForPlanningOrWip =
     fromColumn === reviewLane && (planning.includes(toColumn) || toColumn === wipLane);
   const leftCompleteForPlanning = fromColumn === completeLane && planning.includes(toColumn);
-  if (!graphOwnedReviewToWip && (leftReviewForPlanningOrWip || leftCompleteForPlanning)) {
+  /*
+  FNXC:PlanReviewApproval 2026-08-04-05:35:
+  A split-column manual approval first persists its audited Plan Review bypass,
+  then rebounds while the awaiting-approval hold is deliberately preserved. The
+  move must not erase that evidence before the final hold clear. This provenance
+  is set only by the approve-plan route; ordinary operator reopens still clear
+  prior review results exactly as before.
+  */
+  const preservesApprovedPlanReview = ctx.workflowMoveSource === "plan-approval";
+  if (!preservesApprovedPlanReview && !graphOwnedReviewToWip && (leftReviewForPlanningOrWip || leftCompleteForPlanning)) {
     task.workflowStepResults = undefined;
   }
   if (fromColumn === reviewLane && planning.includes(toColumn)) {

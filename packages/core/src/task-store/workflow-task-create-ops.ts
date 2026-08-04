@@ -35,6 +35,7 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
 import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async/async-persistence.js";
 import {preserveResolvedTaskWedgeEpisode} from "../task-store/persistence.js";
+import {isPlanReviewSatisfied} from "../planner/plan-approval.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync, withTaskWorkflowSerialization} from "../task-store/async/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async/async-audit.js";
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async/async-comments-attachments.js";
@@ -138,7 +139,7 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
       sole terminal result writer, so a plan-review pass must take that same
       lock as the first transaction lock before its row write can commit.
       */
-      if (task.workflowStepResults?.some((result) => result.workflowStepId === "plan-review" && result.status === "passed")) {
+      if (task.workflowStepResults?.some(isPlanReviewSatisfied)) {
         await withTaskWorkflowSerialization(tx, layer.projectId, id, persist);
       } else {
         await persist();

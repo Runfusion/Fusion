@@ -441,6 +441,12 @@ describe("buildSpecificationPrompt", () => {
       [],
       existingPrompt,
       feedback,
+      {
+        planReviewFeedbackHistory: [
+          "Round one: enumerate every lifecycle writer.",
+          "Round two: define the lock order and both race orderings.",
+        ],
+      },
     );
 
     expect(prompt).toContain("Revise this task");
@@ -448,6 +454,12 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("Existing Specification");
     expect(prompt).toContain("Revision Feedback");
     expect(prompt).toContain("Converge — do not rewrite from scratch");
+    expect(prompt).toContain("Cumulative Revision Decision Ledger");
+    expect(prompt).toContain("### PR1");
+    expect(prompt).toContain("Round one: enumerate every lifecycle writer.");
+    expect(prompt).toContain("### PR2");
+    expect(prompt).toContain("Round two: define the lock order and both race orderings.");
+    expect(prompt).toContain("rerun the full Mandatory Planning Completeness Procedure");
     expect(prompt).toContain("surgical");
     expect(prompt).toContain(existingPrompt);
     expect(prompt).toContain(feedback);
@@ -3022,6 +3034,28 @@ describe("specified triage recovery", () => {
     await cleanupTriageFixtureRoot(rootDir);
   });
 
+  it("claims a dependency-reseeded real specification with null status for approval", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2, maxWorktrees: 4, pollIntervalMs: 10_000,
+        groupOverlappingFiles: false, autoMerge: true, requirePlanApproval: true,
+      } as Settings),
+      parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+    const recovered = await processor.recoverApprovedTask({
+      id: "FN-001", description: "Recovered triage task", column: "triage", status: null,
+      dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    });
+
+    expect(recovered).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001", expect.objectContaining({ status: "awaiting-approval" }),
+    );
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("moves approved planning task to todo during recovery", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
@@ -3187,7 +3221,7 @@ describe("specified triage recovery", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
-  it("does not recover a null-status triage draft that never passed Plan Review", async () => {
+  it("recovers the legacy null-status real specification with no handoff evidence", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -3213,7 +3247,47 @@ describe("specified triage recovery", () => {
       updatedAt: "2026-01-01T00:02:00.000Z",
     });
 
-    expect(recovered).toBe(false);
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
+  it("defers legacy null-status recovery when graph step instances already exist", async () => {
+    const store = createMockStore({
+      listWorkflowWorkItemsForTask: vi.fn().mockResolvedValue([]),
+      hasWorkflowRunStepInstancesForTask: vi.fn().mockResolvedValue(true),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    await expect(processor.recoverApprovedTask({
+      id: "FN-INSTANCE",
+      description: "Graph-owned plan",
+      column: "triage",
+      status: null,
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:02:00.000Z",
+    } as any)).resolves.toBe(false);
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.hasWorkflowRunStepInstancesForTask).toHaveBeenCalledWith("FN-INSTANCE");
+  });
+
+  it("fences a stale finalizer after dependency re-seed commits before lifecycle-lock acquisition", async () => {
+    const stalePlannerSnapshot = createTriageTask({ status: "planning" });
+    const store = createMockStore({
+      withPlanningLifecycleLock: vi.fn(async (_id, callback) => callback()),
+      getTask: vi.fn().mockResolvedValue({ ...stalePlannerSnapshot, status: "needs-replan" }),
+    });
+    const processor = new TriageProcessor(store, rootDir);
+
+    await (processor as unknown as {
+      finalizeApprovedTask(task: Task, prompt: string, settings: Settings): Promise<unknown>;
+    }).finalizeApprovedTask(stalePlannerSnapshot, "# already persisted", { requirePlanApproval: true } as Settings);
+
+    expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 

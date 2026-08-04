@@ -350,6 +350,11 @@ const quarantinedDashboardTests: string[] = [
   loaded CI samples. Quarantine it with the ledger row rather than widen its 15s
   budget; the reusable beforeAll seam is landed, while FN-8669 owns the budget
   decision and CI re-measurement before the deletion deadline.
+
+  FNXC:DashboardTestQuarantine 2026-08-04-06:33:
+  FN-8774 must retain the Kimi K3 route test, its exclusion, and its ledger row
+  through the 2026-08-15 deletion-ratchet deadline. Do not delete dashboard
+  /api/models coverage or remove the paired quarantine records before then.
   */
   "src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
   /*

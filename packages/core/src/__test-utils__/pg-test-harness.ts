@@ -760,6 +760,14 @@ export async function createTaskStoreForTest(options?: {
     runtimeUrl: testUrl,
     migrationUrl: testUrl,
     migrationUrlOverridden: false,
+    /*
+    FNXC:PlanningDependencyReseed 2026-08-04-00:54:
+    The harness creates this local postmaster endpoint itself, making it the
+    test equivalent of an embedded lifecycle-proven direct session transport.
+    Dependency mutation tests must exercise the real advisory-lock path.
+    */
+    directSessionUrl: testUrl,
+    directSessionProvenance: "migration-override",
   };
   const connections = await createConnectionSetFromUrl(schemaBackend, {
     poolMax,
@@ -901,6 +909,8 @@ export async function usePgTaskStore(
 export interface SharedPgTaskStoreHarness {
   readonly rootDir: () => string;
   readonly globalDir: () => string;
+  /** Direct connection URL for session-level PostgreSQL primitive tests. */
+  readonly testUrl: () => string;
   readonly store: () => TaskStore;
   readonly layer: () => AsyncDataLayer;
   readonly adminDb: () => PostgresJsDatabase;
@@ -970,6 +980,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
   return {
     rootDir: () => harness?.rootDir ?? "",
     globalDir: () => harness?.rootDir ?? "",
+    testUrl: () => harness?.testUrl ?? "",
     store: () => {
       if (!store) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
       return store;
@@ -1095,4 +1106,3 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     },
   };
 }
-

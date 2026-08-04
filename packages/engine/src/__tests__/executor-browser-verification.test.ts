@@ -389,5 +389,252 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(cap.last?.tools).toBe("readonly");
     expect(cap.last?.customTools?.map((tool) => tool.name)).toContain("fn_task_prompt_write");
     expect(cap.last?.systemPrompt).toContain("fn_task_prompt_write");
+    expect(cap.last?.systemPrompt).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("gives graph-owned Plan Review cumulative feedback and an attempt-three convergence ratchet", async () => {
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): The prompt must
+    // carry full durable reviewer prose (not truncated activity previews), in
+    // chronological order, while deriving the next attempt from raw results.
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+    const task = baseTask({
+      log: [
+        {
+          timestamp: "2026-08-03T00:00:01.000Z",
+          action: "Plan Review failed — moved to todo for automatic replan (attempt 1/unbounded)",
+          outcome: "PRIOR-BLOCKER-ONE\nWorkflow revision key: spec-gate",
+        },
+        {
+          timestamp: "2026-08-03T00:00:03.000Z",
+          action: "Plan Review failed — moved to todo for automatic replan (attempt 2/unbounded)",
+          outcome: "PRIOR-BLOCKER-TWO\nWorkflow revision key: spec-gate",
+        },
+        {
+          timestamp: "2026-08-03T00:00:04.000Z",
+          action: "AI spec revision requested",
+          outcome: "UNRELATED-PARSE-RECOVERY-MUST-NOT-LEAK",
+        },
+      ],
+      workflowStepResults: [{
+        workflowStepId: "spec-gate",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        notes: `PRIOR-BLOCKER-TWO: define the lock ordering.\n${"x".repeat(4_100)}TAIL-BLOCKER`,
+        priorAttempts: [{
+          workflowStepId: "spec-gate",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "failed",
+          verdict: "REVISE",
+          notes: "PRIOR-BLOCKER-ONE: enumerate every lifecycle writer.",
+        }],
+      }],
+    });
+
+    const result = await (executor as any).executeWorkflowStep(
+      task,
+      planReviewStep({ optionalGroupId: "spec-gate" }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.systemPrompt).toContain("## Convergence — Plan Review attempt 3");
+    expect(cap.last?.systemPrompt).toContain("### Cumulative prior Plan Review ledger");
+    expect(cap.last?.systemPrompt).toContain("PRIOR-BLOCKER-ONE");
+    expect(cap.last?.systemPrompt).toContain("PRIOR-BLOCKER-TWO");
+    expect(cap.last?.systemPrompt).toContain("TAIL-BLOCKER");
+    expect(cap.last?.systemPrompt).not.toContain("UNRELATED-PARSE-RECOVERY-MUST-NOT-LEAK");
+    expect(cap.last?.systemPrompt).toContain("Severity ratchet (attempt 3+)");
+    expect(cap.last?.systemPrompt).toContain("must identify the revision that introduced it");
+    expect(cap.last?.systemPrompt).toContain("never demote a critical defect merely because it was missed before");
+  });
+
+  it("stops Plan Review convergence history at a superseded planning-episode boundary", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+    const task = baseTask({
+      log: [
+        {
+          timestamp: "2026-08-03T00:00:01.000Z",
+          action: "Plan Review failed — moved to todo for automatic replan (attempt 7/unbounded)",
+          outcome: "OLD-LOG-MUST-NOT-COUNT\nWorkflow revision key: plan-review",
+        },
+      ],
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        notes: "CURRENT-EPISODE-BLOCKER",
+        priorAttempts: [
+          {
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            phase: "pre-merge",
+            status: "failed",
+            verdict: "REVISE",
+            notes: "SUPERSEDED-BOUNDARY",
+            supersededAt: "2026-08-03T00:00:00.000Z",
+          },
+          {
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            phase: "pre-merge",
+            status: "failed",
+            verdict: "REVISE",
+            notes: "OLDER-EPISODE-BLOCKER",
+          },
+        ],
+      }],
+    });
+
+    const result = await (executor as any).executeWorkflowStep(
+      task,
+      planReviewStep({ optionalGroupId: "plan-review" }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.systemPrompt).toContain("## Convergence — Plan Review attempt 2");
+    expect(cap.last?.systemPrompt).toContain("CURRENT-EPISODE-BLOCKER");
+    expect(cap.last?.systemPrompt).not.toContain("SUPERSEDED-BOUNDARY");
+    expect(cap.last?.systemPrompt).not.toContain("OLDER-EPISODE-BLOCKER");
+    expect(cap.last?.systemPrompt).not.toContain("OLD-LOG-MUST-NOT-COUNT");
+    expect(cap.last?.systemPrompt).not.toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("excludes provider failures without a REVISE verdict from the Plan Review ledger", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+    const task = baseTask({
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        status: "failed",
+        verdict: "REVISE",
+        notes: "REAL-PLAN-BLOCKER",
+        priorAttempts: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "failed",
+          output: "PROVIDER-DIAGNOSTIC-MUST-NOT-BECOME-A-DECISION",
+        }],
+      }],
+    });
+
+    const result = await (executor as any).executeWorkflowStep(
+      task,
+      planReviewStep({ optionalGroupId: "plan-review" }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.systemPrompt).toContain("## Convergence — Plan Review attempt 2");
+    expect(cap.last?.systemPrompt).toContain("REAL-PLAN-BLOCKER");
+    expect(cap.last?.systemPrompt).not.toContain("PROVIDER-DIAGNOSTIC-MUST-NOT-BECOME-A-DECISION");
+  });
+
+  it("counts repeated identical Plan Review feedback as distinct attempts while deduplicating display", async () => {
+    // FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768): Display
+    // deduplication is readability-only and must not reduce admission budgets.
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+    const repeatedAttempt = {
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      phase: "pre-merge",
+      status: "failed",
+      verdict: "REVISE",
+      notes: "REPEATED-BLOCKER",
+    };
+    const task = baseTask({
+      workflowStepResults: [{
+        ...repeatedAttempt,
+        priorAttempts: [{ ...repeatedAttempt }, { ...repeatedAttempt }],
+      }],
+    });
+
+    const result = await (executor as any).executeWorkflowStep(
+      task,
+      planReviewStep({ optionalGroupId: "plan-review" }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.systemPrompt).toContain("## Convergence — Plan Review attempt 4");
+    expect(cap.last?.systemPrompt?.match(/REPEATED-BLOCKER/g)).toHaveLength(1);
+    expect(cap.last?.systemPrompt).toContain("Severity ratchet (attempt 3+)");
+  });
+
+  it("does not leak Plan Review convergence history into code review", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+    const task = baseTask({
+      log: [{
+        timestamp: "2026-08-03T00:00:00.000Z",
+        action: "AI spec revision requested",
+        outcome: "PLAN-REVIEW-HISTORY-MUST-NOT-LEAK",
+      }],
+    });
+
+    const result = await (executor as any).executeWorkflowStep(
+      task,
+      codeReviewStep(),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.systemPrompt).not.toContain("PLAN-REVIEW-HISTORY-MUST-NOT-LEAK");
+    expect(cap.last?.systemPrompt).not.toContain("## Convergence — Plan Review attempt");
+  });
+
+  it("recognizes a renamed inner step from the canonical Plan Review optional group", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+
+    const result = await (executor as any).executeWorkflowStep(
+      baseTask(),
+      planReviewStep({
+        id: "graph:renamed-spec-check",
+        name: "Specification Quality",
+        optionalGroupId: "plan-review",
+      }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.tools).toBe("readonly");
+    expect(cap.last?.customTools?.map((tool) => tool.name)).toContain("fn_task_prompt_write");
+    expect(cap.last?.systemPrompt).toContain("Plan Review Scope:");
   });
 });

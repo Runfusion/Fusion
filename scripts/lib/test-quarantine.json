@@ -3,7 +3,7 @@
   "entries": [
     {
       "file": "packages/dashboard/src/__tests__/register-model-routes-kimi-k3-supplemental.test.ts",
-      "reason": "Real Pi SDK ModelRuntime catalog construction timed out at the 15s test budget in 2/6 sampled loaded CI runs; failing run https://github.com/Runfusion/Fusion/actions/runs/30664201149 and issue https://github.com/Runfusion/Fusion/issues/3245. FN-8647 landed a reusable shared-construction seam without widening timeouts. FN-8669 must obtain an owner budget decision and re-measure CI before the 14-day deletion deadline.",
+      "reason": "Real Pi SDK ModelRuntime catalog construction timed out at the 15s test budget in 2/6 sampled loaded CI runs; failing run https://github.com/Runfusion/Fusion/actions/runs/30664201149 and issue https://github.com/Runfusion/Fusion/issues/3245. FN-8647 landed a reusable shared-construction seam without widening timeouts. FN-8669 must obtain an owner budget decision and re-measure CI before the 14-day deletion deadline; this entry and its paired exclusion must remain through 2026-08-15.",
       "quarantinedAt": "2026-08-01"
     }
   ]

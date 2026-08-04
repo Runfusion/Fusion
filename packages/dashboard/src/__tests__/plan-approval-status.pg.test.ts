@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { computePlanApprovalFingerprint, isTaskBlockedOnApproval, type TaskStore } from "@fusion/core";
+import { BUILTIN_CODING_WORKFLOW_IR, computePlanApprovalFingerprint, isTaskBlockedOnApproval, TaskStore } from "@fusion/core";
 import {
   createTaskStoreForTest,
   pgDescribe,
@@ -24,11 +24,17 @@ pgDescribe("plan approval status persistence", () => {
     await harness.teardown();
   });
 
-  function createApp() {
+  function createApp(appStore = store) {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store));
+    app.use("/api", createApiRoutes(appStore));
     return app;
+  }
+
+  function barrier() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
   }
 
   it("clears the approval hold and persists the approved plan fingerprint", async () => {
@@ -52,6 +58,318 @@ pgDescribe("plan approval status persistence", () => {
     expect(isTaskBlockedOnApproval(persisted)).toBe(false);
     expect(persisted.approvedPlanFingerprint).toBe(computePlanApprovalFingerprint(prompt));
     expect(response.body.approvedPlanFingerprint).toBe(persisted.approvedPlanFingerprint);
+  });
+
+  it.each(["failed", "advisory_failure"] as const)(
+    "durably bypasses an exhausted %s Plan Review before clearing its approval hold",
+    async (reviewStatus) => {
+    const task = await store.createTask({ description: "Approve after Plan Review did not converge" });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        source: "optional-group",
+        status: reviewStatus,
+        verdict: "REVISE",
+        output: "The plan still needs revision.",
+        priorAttempts: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "failed",
+          verdict: "REVISE",
+          output: "Earlier revision request.",
+        }],
+      }],
+    } as never);
+
+    const taskDir = join(harness.rootDir, ".fusion", "tasks", task.id);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "# Human-approved plan\n", "utf8");
+
+    const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+
+    expect(response.status).toBe(200);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.status).toBeUndefined();
+    expect(persisted.awaitingApprovalReason).toBeUndefined();
+    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "skipped",
+      bypassedBy: "dashboard-operator",
+      bypassReason: "Approved after Plan Review did not converge",
+      bypassedFromStatus: reviewStatus,
+      bypassedFromVerdict: "REVISE",
+      priorAttempts: [expect.objectContaining({ output: "Earlier revision request." })],
+    }));
+    expect(persisted.workflowStepResults?.[0]?.verdict).toBeUndefined();
+    },
+  );
+
+  it("approves an exhausted Plan Review from a split workflow's review column", async () => {
+    const task = await store.createTask({ description: "Approve legacy split-column review" });
+    await store.writeTaskWorkflowSelection(task.id, "builtin:legacy-coding", []);
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "failed",
+        verdict: "REVISE",
+      }],
+    } as never);
+
+    const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+
+    expect(response.status).toBe(200);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.column).toBe("todo");
+    expect(persisted.status).toBeUndefined();
+    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "skipped",
+      bypassedFromStatus: "failed",
+      bypassedFromVerdict: "REVISE",
+    }));
+  });
+
+  it("keeps a split-column approval blocked and retryable when the final hold clear fails", async () => {
+    const task = await store.createTask({ description: "Retry interrupted split-column approval" });
+    const splitWorkflow = await store.createWorkflowDefinition({
+      name: "Split Plan Review approval",
+      ir: {
+        ...BUILTIN_CODING_WORKFLOW_IR,
+        id: "split-plan-review-approval",
+        nodes: BUILTIN_CODING_WORKFLOW_IR.nodes.map((node) =>
+          node.id === "plan-review" ? { ...node, column: "in-review" } : node
+        ),
+      },
+    });
+    await store.selectTaskWorkflow(task.id, splitWorkflow.id);
+    await store.moveTask(task.id, "in-review", {
+      moveSource: "engine",
+      recoveryRehome: true,
+      bypassGuards: true,
+    });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "failed",
+        verdict: "REVISE",
+      }],
+    } as never);
+
+    const originalUpdate = store.updateTask.bind(store);
+    let approvalUpdates = 0;
+    store.updateTask = (async (id, updates, runContext) => {
+      if (id === task.id && updates.status !== undefined) {
+        approvalUpdates += 1;
+        if (approvalUpdates === 2) throw new Error("injected final approval write failure");
+      }
+      return originalUpdate(id, updates, runContext);
+    }) as typeof store.updateTask;
+
+    try {
+      const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+      expect(interrupted.status).toBe(500);
+      const persisted = await store.getTask(task.id);
+      expect(persisted.column).toBe("todo");
+      expect(persisted.status).toBe("awaiting-approval");
+      expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+        workflowStepId: "plan-review",
+        status: "skipped",
+        bypassedBy: "dashboard-operator",
+      }));
+    } finally {
+      store.updateTask = originalUpdate;
+    }
+
+    const retried = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+    expect(retried.status).toBe(200);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.status).toBeUndefined();
+    expect(persisted.workflowStepResults).toContainEqual(expect.objectContaining({
+      workflowStepId: "plan-review",
+      status: "skipped",
+      bypassedBy: "dashboard-operator",
+    }));
+  });
+
+  it("rejects an exhausted Plan Review from a split workflow's review column", async () => {
+    const task = await store.createTask({ description: "Reject split-column review" });
+    const splitWorkflow = await store.createWorkflowDefinition({
+      name: "Split Plan Review rejection",
+      ir: {
+        ...BUILTIN_CODING_WORKFLOW_IR,
+        id: "split-plan-review-rejection",
+        nodes: BUILTIN_CODING_WORKFLOW_IR.nodes.map((node) =>
+          node.id === "plan-review" ? { ...node, column: "in-review" } : node
+        ),
+      },
+    });
+    await store.selectTaskWorkflow(task.id, splitWorkflow.id);
+    const intakeColumn = BUILTIN_CODING_WORKFLOW_IR.columns.find((column) =>
+      column.traits.some((trait) => trait.trait === "intake")
+    )!.id;
+    await store.moveTask(task.id, "in-review", {
+      moveSource: "engine",
+      recoveryRehome: true,
+      bypassGuards: true,
+    });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+    });
+
+    const originalUpdate = store.updateTask.bind(store);
+    let interruptFinalClear = true;
+    store.updateTask = (async (id, updates, runContext) => {
+      if (interruptFinalClear && updates.status === null && updates.approvedPlanFingerprint === null) {
+        interruptFinalClear = false;
+        throw new Error("simulated final reject clear interruption");
+      }
+      return originalUpdate(id, updates, runContext);
+    }) as typeof store.updateTask;
+
+    try {
+      const interrupted = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
+      expect(interrupted.status).toBe(500);
+      const partiallyRejected = await store.getTask(task.id);
+      expect(partiallyRejected.column).toBe(intakeColumn);
+      expect(partiallyRejected.status).toBe("awaiting-approval");
+      expect(partiallyRejected.awaitingApprovalReason).toBe("plan-review-replan-cap");
+    } finally {
+      store.updateTask = originalUpdate;
+    }
+
+    const response = await request(createApp(), "POST", `/api/tasks/${task.id}/reject-plan`);
+
+    expect(response.status).toBe(200);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.column).toBe(intakeColumn);
+    expect(persisted.status).toBeUndefined();
+  });
+
+  it.each(["approve-plan", "reject-plan"] as const)(
+    "does not let stale %s overwrite dependency-first invalidation",
+    async (endpoint) => {
+      const task = await store.createTask({ description: "Dependency wins approval race" });
+      const dependency = await store.createTask({ description: "New prerequisite", column: "done" });
+      await store.updateTask(task.id, { status: "awaiting-approval" });
+
+      const mutationStore = new TaskStore(harness.rootDir, undefined, { asyncLayer: harness.layer });
+      await mutationStore.init();
+      const mutationEntered = barrier();
+      const allowMutation = barrier();
+      const originalMutationLock = mutationStore.withPlanningLifecycleLock.bind(mutationStore);
+      mutationStore.withPlanningLifecycleLock = async <T>(id: string, fn: () => Promise<T>): Promise<T> =>
+        originalMutationLock(id, async () => {
+          mutationEntered.release();
+          await allowMutation.promise;
+          return await fn();
+        });
+
+      const approvalAttempted = barrier();
+      const originalApprovalLock = store.withPlanningLifecycleLock.bind(store);
+      store.withPlanningLifecycleLock = async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+        approvalAttempted.release();
+        return await originalApprovalLock(id, fn);
+      };
+
+      try {
+        const mutation = mutationStore.updateTaskDependencies(task.id, {
+          operation: "add",
+          dependency: dependency.id,
+        });
+        await mutationEntered.promise;
+        const approval = request(createApp(), "POST", `/api/tasks/${task.id}/${endpoint}`);
+        await approvalAttempted.promise;
+        allowMutation.release();
+
+        await mutation;
+        const response = await approval;
+        expect(response.status).toBe(400);
+        expect(response.body.error).toContain("awaiting-approval");
+        const persisted = await store.getTask(task.id);
+        expect(persisted.status).toBe("needs-replan");
+        expect(persisted.dependencies).toContain(dependency.id);
+        expect(persisted.approvedPlanFingerprint).toBeUndefined();
+      } finally {
+        allowMutation.release();
+        mutationStore.withPlanningLifecycleLock = originalMutationLock;
+        store.withPlanningLifecycleLock = originalApprovalLock;
+      }
+    },
+  );
+
+  it("lets a later dependency invalidation supersede approval-first state", async () => {
+    const task = await store.createTask({ description: "Approval precedes dependency" });
+    const dependency = await store.createTask({ description: "Later prerequisite", column: "done" });
+    await store.updateTask(task.id, { status: "awaiting-approval" });
+
+    const mutationStore = new TaskStore(harness.rootDir, undefined, { asyncLayer: harness.layer });
+    await mutationStore.init();
+    const approvalEntered = barrier();
+    const allowApproval = barrier();
+    const originalApprovalLock = store.withPlanningLifecycleLock.bind(store);
+    store.withPlanningLifecycleLock = async <T>(id: string, fn: () => Promise<T>): Promise<T> =>
+      originalApprovalLock(id, async () => {
+        approvalEntered.release();
+        await allowApproval.promise;
+        return await fn();
+      });
+
+    const mutationAttempted = barrier();
+    const originalMutationLock = mutationStore.withPlanningLifecycleLock.bind(mutationStore);
+    mutationStore.withPlanningLifecycleLock = async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+      mutationAttempted.release();
+      return await originalMutationLock(id, fn);
+    };
+
+    try {
+      const approval = request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+      await approvalEntered.promise;
+      const mutation = mutationStore.updateTaskDependencies(task.id, {
+        operation: "add",
+        dependency: dependency.id,
+      });
+      await mutationAttempted.promise;
+      allowApproval.release();
+
+      const response = await approval;
+      expect(response.status).toBe(200);
+      await mutation;
+      const persisted = await store.getTask(task.id);
+      expect(persisted.status).toBe("needs-replan");
+      expect(persisted.dependencies).toContain(dependency.id);
+      expect(persisted.approvedPlanFingerprint).toBeUndefined();
+    } finally {
+      allowApproval.release();
+      store.withPlanningLifecycleLock = originalApprovalLock;
+      mutationStore.withPlanningLifecycleLock = originalMutationLock;
+    }
+  });
+
+  it("keeps the approval hold when cap metadata has no failed REVISE result", async () => {
+    const task = await store.createTask({ description: "Malformed exhausted review state" });
+    await store.updateTask(task.id, {
+      status: "awaiting-approval",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [],
+    } as never);
+
+    const response = await request(createApp(), "POST", `/api/tasks/${task.id}/approve-plan`);
+
+    expect(response.status).toBe(409);
+    const persisted = await store.getTask(task.id);
+    expect(persisted.status).toBe("awaiting-approval");
+    expect(persisted.awaitingApprovalReason).toBe("plan-review-replan-cap");
   });
 
   it("clears a prior fingerprint when the approved plan cannot be read", async () => {

@@ -62,28 +62,40 @@ describe("resolveAgentPrompt", () => {
     expect(result).not.toContain("turn it into short, actionable task specs or follow-up tickets");
   });
 
+  /*
+  FNXC:ReviewPromptBoundaries 2026-08-04-06:35:
+  The base reviewer remains role-neutral. Planning and code-review completeness
+  policies are injected only at their workflow seams, avoiding mixed contracts.
+  */
   it("returns the correct built-in prompt for reviewer when no config provided", () => {
     const result = resolveAgentPrompt("reviewer");
     expect(result).toBeTruthy();
     expect(result).toContain("independent code and plan reviewer");
-    // FNXC:PlanReviewReplan 2026-07-15-11:15: convergence guidance for Plan Review REVISE thrash.
-    expect(result).toContain("Spec / Plan Review Convergence");
-    expect(result).toContain("concrete PROMPT.md edit");
+    expect(result).not.toContain("## Mandatory Plan Review Procedure");
+    expect(result).not.toContain("Mandatory Code Review Procedure");
   });
 
-  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new triage-side planner sections.
   it("includes the front-loaded File Scope and Storage architecture sections in the triage prompt", () => {
     const result = resolveAgentPrompt("triage");
+    expect(result).toContain("## Mandatory Planning Completeness Procedure");
+    expect(result).toContain("planning ledger");
+    expect(result).toContain("participant graph and both relevant orderings");
+    expect(result).toContain("fresh holistic completeness pass");
     expect(result).toContain("## File Scope — front-load surface enumeration");
     expect(result).toContain("## Storage architecture");
   });
 
-  // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new reviewer-side spec convergence sections.
+  it("keeps the fast planning seam lean while preserving completeness invariants", () => {
+    const result = builtinSeamPrompt("planning-fast");
+    expect(result).toContain("## Fast Planning Completeness Check");
+    expect(result).toContain("both relevant orderings and failure cleanup");
+    expect(result).toContain("complete cumulative ledger");
+  });
+
   it("includes Spec Altitude and re-review convergence sections in the reviewer prompt", () => {
     const result = resolveAgentPrompt("reviewer");
     expect(result).toContain("## Spec Altitude");
-    expect(result).toContain("Converging on re-review");
-    expect(result).toContain("Severity ratchet at attempt 3+");
+    expect(result).not.toContain("prior-review ledger as a decision primer");
   });
 
   it("returns the correct built-in prompt for merger when no config provided", () => {
@@ -339,9 +351,12 @@ describe("resolveAgentPrompt", () => {
     expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
-    // FNXC:OriginalDescriptionInPrompt 2026-07-14-23:35: Original Description contract
-    // adds a few lines to fast planning; keep lean but allow the new mandatory section.
-    expect(fastPrompt.length).toBeLessThan(6500);
+    /*
+     * FNXC:FastPlanningPrompt 2026-08-04-06:35:
+     * The compact ledger may add one bounded paragraph, while both relative and
+     * absolute caps keep fast planning materially smaller than the full prompt.
+     */
+    expect(fastPrompt.length).toBeLessThan(7500);
     expect(fastPrompt.split("\n").length).toBeLessThan(120);
   });
 

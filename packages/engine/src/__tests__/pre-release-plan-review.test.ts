@@ -73,6 +73,29 @@ describe("pre-release Plan Review readiness", () => {
     await expect(isUnplannedForExecution(store, task, workflow())).resolves.toBe(true);
   });
 
+  it("treats an operator-bypassed Plan Review as satisfied without another continuation", async () => {
+    const task = {
+      id: "T-HUMAN",
+      column: "todo",
+      enabledWorkflowSteps: ["plan-review"],
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        source: "optional-group",
+        status: "skipped",
+        bypassedBy: "operator",
+        bypassedAt: "2026-08-03T23:53:04.539Z",
+        bypassReason: "Approved after Plan Review did not converge",
+        bypassedFromStatus: "failed",
+        bypassedFromVerdict: "REVISE",
+      }],
+    } as any;
+    const store = { listWorkflowWorkItemsForTask: async () => [] } as any;
+
+    await expect(isUnplannedForExecution(store, task, workflow())).resolves.toBe(false);
+  });
+
   it("does not filter active continuations to task kind", async () => {
     const task = { id: "T-5", column: "todo" } as any;
     const store = {

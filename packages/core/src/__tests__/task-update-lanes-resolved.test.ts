@@ -118,14 +118,144 @@ describe("adding a dependency never parks a card in a deleted column", () => {
   });
 
   it("still records the re-specification when the card does not move", async () => {
-    // The status reset and log entry are the operator-visible signal; only the teleport is dropped.
+    // A durable replan claim and log entry make an interrupted planner rediscoverable; only the teleport is dropped.
     const { store, row } = harness({ column: "todo", dependencies: [], status: "queued" }, DEFAULT_IR);
 
     await run(store, { dependencies: ["FN-2"] });
 
-    expect(row.status).toBeUndefined();
+    expect(row.status).toBe("needs-replan");
     expect(row.log.some((e) => e.action.includes("re-specification"))).toBe(true);
   });
+
+  it("clears approval evidence when a new dependency supersedes the plan", async () => {
+    const { store, row } = harness({
+      column: "todo",
+      dependencies: [],
+      status: "awaiting-approval",
+      approvedPlanFingerprint: "sha256:stale",
+      awaitingApprovalReason: "plan-review-replan-cap",
+    }, DEFAULT_IR);
+
+    await run(store, { dependencies: ["FN-2"] });
+
+    expect(row.status).toBe("needs-replan");
+    expect(row.approvedPlanFingerprint).toBeUndefined();
+    expect(row.awaitingApprovalReason).toBeUndefined();
+  });
+
+  it("keeps dependency invalidation authoritative over a combined status clear", async () => {
+    const { store, row } = harness({
+      column: "todo",
+      dependencies: [],
+      status: "awaiting-approval",
+    }, DEFAULT_IR);
+
+    await run(store, { dependencies: ["FN-2"], status: null });
+
+    expect(row.status).toBe("needs-replan");
+  });
+
+  it("keeps dependency invalidation authoritative over combined current approval evidence", async () => {
+    const currentResult = {
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "passed",
+      completedAt: "2026-08-04T02:00:00.000Z",
+    };
+    const { store, row } = harness({
+      column: "todo",
+      dependencies: [],
+    }, DEFAULT_IR);
+
+    await run(store, {
+      dependencies: ["FN-2"],
+      status: "awaiting-approval",
+      approvedPlanFingerprint: "sha256:current",
+      awaitingApprovalReason: "plan-review-replan-cap",
+      workflowStepResults: [currentResult],
+    });
+
+    expect(row.status).toBe("needs-replan");
+    expect(row.approvedPlanFingerprint).toBeUndefined();
+    expect(row.awaitingApprovalReason).toBeUndefined();
+    expect(row.workflowStepResults).toEqual([
+      expect.objectContaining({
+        ...currentResult,
+        supersededAt: expect.any(String),
+        supersededReason: "dependency-change",
+      }),
+    ]);
+  });
+
+  it.each(["passed", "pending"] as const)(
+    "preserves but supersedes an old %s Plan Review projection when a dependency starts a new planning episode",
+    async (status) => {
+      const oldResult = {
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status,
+        ...(status === "pending"
+          ? { startedAt: "2026-08-04T01:00:00.000Z", leaseOwner: "planner:old-episode" }
+          : { completedAt: "2026-08-04T01:00:00.000Z" }),
+      };
+      const { store, row } = harness({
+        column: "todo",
+        dependencies: [],
+        workflowStepResults: [oldResult],
+      }, DEFAULT_IR);
+
+      await run(store, { dependencies: ["FN-2"] });
+
+      expect(row.workflowStepResults).toEqual([
+        expect.objectContaining({
+          ...oldResult,
+          supersededAt: expect.any(String),
+          supersededReason: "dependency-change",
+        }),
+      ]);
+    },
+  );
+
+  it.each([
+    ["null", null],
+    ["empty", []],
+    ["unrelated replacement", [{
+      workflowStepId: "code-review",
+      workflowStepName: "Code Review",
+      status: "passed",
+      completedAt: "2026-08-04T02:00:00.000Z",
+    }]],
+  ] as const)(
+    "retains the superseded prior Plan Review when a combined patch supplies %s workflow results",
+    async (label, workflowStepResults) => {
+      const oldPlanReview = {
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status: "passed" as const,
+        completedAt: "2026-08-04T01:00:00.000Z",
+      };
+      const { store, row } = harness({
+        column: "todo",
+        dependencies: [],
+        workflowStepResults: [oldPlanReview],
+      }, DEFAULT_IR);
+
+      await run(store, { dependencies: ["FN-2"], workflowStepResults });
+
+      expect(row.workflowStepResults).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          ...oldPlanReview,
+          supersededAt: expect.any(String),
+          supersededReason: "dependency-change",
+        }),
+      ]));
+      if (label === "unrelated replacement") {
+        expect(row.workflowStepResults).toEqual(expect.arrayContaining([
+          expect.objectContaining({ workflowStepId: "code-review", status: "passed" }),
+        ]));
+      }
+    },
+  );
 
   it("moves a RENAMED board's hold card to its own intake lane", async () => {
     // Here intake and hold ARE different columns, so the move is real — and it goes to `inbox`,

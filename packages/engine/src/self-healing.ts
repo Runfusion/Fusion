@@ -77,6 +77,7 @@ import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./m
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import { isTaskStillInPlanningStage } from "./execution/replan-target.js";
+import { classifyPersistedPlanHandoff, LEGACY_NULL_PLAN_HANDOFF_STALE_MS } from "./planning-handoff-recovery.js";
 import { getPromptPath } from "./execution/spec-staleness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation } from "./plan-review-continuation.js";
 /*
@@ -7403,6 +7404,7 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
             stepResults: task.workflowStepResults, effectiveSettings: { autoMerge: resolveEffectiveAutoMerge(task, freshSettings) },
             enginePaused: freshEnginePaused, promptContent, live: live(task.id),
             stalenessMs: Date.now() - new Date(task.columnMovedAt ?? task.updatedAt).getTime(), graceMs,
+            now: Date.now(),
           }),
         };
       };
@@ -7420,19 +7422,30 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               if (type.endsWith("no-action")) this.strandedHoldContinuationNoActionAudited.add(key);
             };
             if (!initial.result.stranded) { await audit("task:reconcile-stranded-hold-continuation-no-action", initial.result.reason); continue; }
-            // FNXC:StrandedHoldContinuation 2026-07-26-14:15:
-            // Re-read every predicate input immediately before the atomic insert.
-            // This reduces stale pause/liveness/settings decisions; the shared
-            // store lock remains the correctness guard for continuation/results.
-            const fresh = await evaluate(snapshot.id);
-            if (!fresh || !fresh.result.stranded) {
-              if (fresh) await audit("task:reconcile-stranded-hold-continuation-no-action", fresh.result.reason, fresh);
-              continue;
-            }
-            const seeded = await seedPreReleasePlanReviewContinuation(this.store, fresh.task, fresh.ir, { atomic: true });
-            if (!seeded.seeded) { await audit("task:reconcile-stranded-hold-continuation-no-action", seeded.reason, fresh); continue; }
-            repaired += 1;
-            await audit("task:reconcile-stranded-hold-continuation", undefined, fresh);
+            // FNXC:PlanningDependencyReseed 2026-08-04-04:10:
+            // Re-read and seed under the same cross-process lifecycle lock used
+            // by dependency invalidation and planning finalization. A dependency
+            // mutation that wins first is therefore visible to this predicate;
+            // one that wins second supersedes the continuation after it commits.
+            const reconcileUnderLifecycleLock = async () => {
+              const fresh = await evaluate(snapshot.id);
+              if (!fresh || !fresh.result.stranded) {
+                if (fresh) await audit("task:reconcile-stranded-hold-continuation-no-action", fresh.result.reason, fresh);
+                return false;
+              }
+              const seeded = await seedPreReleasePlanReviewContinuation(this.store, fresh.task, fresh.ir, { atomic: true });
+              if (!seeded.seeded) {
+                await audit("task:reconcile-stranded-hold-continuation-no-action", seeded.reason, fresh);
+                return false;
+              }
+              await audit("task:reconcile-stranded-hold-continuation", undefined, fresh);
+              return true;
+            };
+            const lifecycleLock = (this.store as Partial<TaskStore>).withPlanningLifecycleLock;
+            const seeded = lifecycleLock
+              ? await lifecycleLock.call(this.store, snapshot.id, reconcileUnderLifecycleLock)
+              : await reconcileUnderLifecycleLock();
+            if (seeded) repaired += 1;
           } catch (error) { log.warn(`reconcileStrandedHoldContinuations: failed for ${snapshot.id}: ${error instanceof Error ? error.message : String(error)}`); }
         }
         if (tasks.length < 500) break;
@@ -14375,12 +14388,16 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
-      const orphanedApproved = tasks.filter((t) =>
-        t.status === "planning" &&
-        !t.paused &&
-        !planningIds.has(t.id) &&
-        now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS
-      );
+      const orphanedApproved = tasks.filter((task) => {
+        const handoffKind = classifyPersistedPlanHandoff(task, {
+          now,
+          hasLivePlanningWork: planningIds.has(task.id),
+          legacyStaleMs: LEGACY_NULL_PLAN_HANDOFF_STALE_MS,
+          requirePersistedSteps: true,
+        });
+        return handoffKind != null
+          && now - new Date(task.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS;
+      });
 
       if (orphanedApproved.length === 0) return 0;
 
@@ -14395,7 +14412,17 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         // Narrow test/legacy adapters can return an unrelated fixture row; only use a
         // re-read when it identifies the requested candidate.
         const recoveryTask = live?.id === task.id ? live : task;
-        if (!isTaskStillInPlanningStage(recoveryTask)) continue;
+        const handoffKind = classifyPersistedPlanHandoff(recoveryTask, {
+          now,
+          hasLivePlanningWork: planningIds.has(recoveryTask.id),
+          legacyStaleMs: LEGACY_NULL_PLAN_HANDOFF_STALE_MS,
+          requirePersistedSteps: true,
+        });
+        if (!handoffKind) continue;
+        // The legacy null handoff deliberately contains parsed task steps; the
+        // generic planning-stage predicate interprets null+steps as execution
+        // progress, so its exact classifier owns that one compatibility shape.
+        if (handoffKind !== "legacy-null" && !isTaskStillInPlanningStage(recoveryTask)) continue;
         log.log(`Recovering specified triage task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(recoveryTask);
         if (success) recovered++;

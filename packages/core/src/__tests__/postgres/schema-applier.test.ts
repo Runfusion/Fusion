@@ -85,6 +85,7 @@ import {
   TASK_LIFECYCLE_OUTBOX_VERSION,
   TASK_LIFECYCLE_CONSUMERS_VERSION,
   VALIDATOR_INPUT_FINGERPRINT_VERSION,
+  UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -103,7 +104,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_LIFECYCLE_OUTBOX_VERSION).toBe("0040");
     expect(TASK_LIFECYCLE_CONSUMERS_VERSION).toBe("0041");
     expect(VALIDATOR_INPUT_FINGERPRINT_VERSION).toBe("0042");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0042");
+    expect(UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION).toBe("0043");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0043");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -718,7 +720,7 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     ctx = null;
   });
 
-  it("creates all 104 project tables, 17 central tables, 1 archive table", async () => {
+  it("creates all 105 project tables, 17 central tables, 1 archive table", async () => {
     ctx = await setupFreshDb();
     // FNXC:PostgresCutover 2026-07-05-15:55: apply the BASELINE only.
     // applySchemaBaseline now runs the plugin schema-init hooks by default,
@@ -736,10 +738,10 @@ pgDescribe("schema-applier: VAL-SCHEMA-001 final-schema parity (table counts)", 
     /*
     FNXC:PgSchemaApplier 2026-08-03-02:16:
     Project table count = historical core baseline plus later migrations. 0040 adds 2 lifecycle
-    outbox tables; 0041 adds 4 lifecycle consumer tables (100 → 104). Plugin tables are added
-    separately by the schema-init hook and are excluded here.
+    outbox tables; 0041 adds 4 lifecycle consumer tables; 0043 adds the durable unplanned-dispatch
+    refusal marker (100 → 105). Plugin tables are added separately by the schema-init hook and are excluded here.
     */
-    expect(bySchema.project).toBe(104);
+    expect(bySchema.project).toBe(105);
     /*
     FNXC:CapacityModel 2026-07-29-08:10 (drop the cross-project cap — table half):
     17, not 18: `central.global_concurrency` is dropped by migration 0037. A fresh
@@ -1758,6 +1760,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_OUTBOX_VERSION,
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
+      UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1826,6 +1829,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_OUTBOX_VERSION,
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
+      UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
     ]);
   });
 
@@ -2027,6 +2031,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_OUTBOX_VERSION,
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
+      UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
     ]);
   });
 
@@ -2109,6 +2114,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_OUTBOX_VERSION,
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
+      UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
     ]);
   });
 
@@ -2191,6 +2197,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_OUTBOX_VERSION,
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
+      UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
     ]);
   });
 });

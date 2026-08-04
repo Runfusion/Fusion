@@ -8493,6 +8493,78 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverApprovedTriageTasks", () => {
+    it("selects the stale legacy null-status persisted-plan handoff reported in #3325", async () => {
+      const legacy = {
+        id: "FN-8768-LEGACY",
+        column: "todo",
+        status: null,
+        paused: false,
+        approvedPlanFingerprint: undefined,
+        awaitingApprovalReason: undefined,
+        workflowStepResults: undefined,
+        steps: [{ title: "Implement", status: "pending" }],
+        log: [],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      } as unknown as Task;
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([legacy]),
+        getTask: vi.fn().mockResolvedValue(legacy),
+      });
+      const managerWithRecovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        recoverApprovedTriageTask: recoverFn,
+        getPlanningTaskIds: () => new Set<string>(),
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+      await expect(managerWithRecovery.recoverApprovedTriageTasks()).resolves.toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(legacy);
+      managerWithRecovery.stop();
+    });
+
+    it.each([
+      ["recent", { updatedAt: "2026-01-01T00:04:30.000Z" }, new Set<string>()],
+      ["paused", { paused: true }, new Set<string>()],
+      ["user-paused", { userPaused: true }, new Set<string>()],
+      ["actively planning", {}, new Set(["FN-8768-CONTROL"])],
+      ["approval evidence", { approvedPlanFingerprint: "current-plan" }, new Set<string>()],
+      ["approval hold", { awaitingApprovalReason: "plan-review-replan-cap" }, new Set<string>()],
+      ["unsatisfied graph evidence", { workflowStepResults: [{ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "failed" }] }, new Set<string>()],
+      ["missing persisted steps", { steps: [] }, new Set<string>()],
+      ["worktree", { worktree: "/tmp/executing" }, new Set<string>()],
+      ["execution stamp", { firstExecutionAt: "2026-01-01T00:10:00.000Z" }, new Set<string>()],
+    ])("does not select a %s null-status task as the legacy handoff", async (_label, patch, planningIds) => {
+      const candidate = {
+        id: "FN-8768-CONTROL",
+        column: "todo",
+        status: null,
+        paused: false,
+        approvedPlanFingerprint: undefined,
+        awaitingApprovalReason: undefined,
+        workflowStepResults: undefined,
+        steps: [{ title: "Implement", status: "pending" }],
+        log: [],
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        ...patch,
+      } as unknown as Task;
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const recoveryStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([candidate]),
+        getTask: vi.fn().mockResolvedValue(candidate),
+      });
+      const managerWithRecovery = new SelfHealingManager(recoveryStore, {
+        rootDir: "/tmp/test-project",
+        recoverApprovedTriageTask: recoverFn,
+        getPlanningTaskIds: () => planningIds,
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:31:00.000Z"));
+
+      await expect(managerWithRecovery.recoverApprovedTriageTasks()).resolves.toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
     it("recovers specified planning triage tasks that are not actively processing", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const getPlanning = vi.fn().mockReturnValue(new Set<string>());

@@ -51,6 +51,7 @@ import {
   isWorkflowOptionalGroupEnabled,
   resolveEffectiveAutoMerge,
   isTaskBlockedOnApproval,
+  isPlanReviewSatisfied,
   type TaskStore,
   type Task,
   type WorkflowIr,
@@ -58,6 +59,7 @@ import {
   type WorkflowIrV2,
   type WorkflowIrColumn,
 } from "@fusion/core";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
 import { getPromptPath } from "./spec-staleness.js";
@@ -173,6 +175,48 @@ export function resolvePreReleasePlanReviewNode(ir: WorkflowIr): WorkflowIrNode 
   return planReviewNode;
 }
 
+/*
+FNXC:PlanningDependencyReseed 2026-08-04-02:14:
+A release refusal is otherwise invisible after scheduler dispatch returns early.
+Hash only durable state that changes the planning/Plan-Review episode; the core
+store atomically claims this project/task episode and appends one task-log entry.
+*/
+export async function checkAndRecordUnplannedExecutionBlock(
+  store: TaskStore,
+  task: Task,
+  ir: WorkflowIr,
+): Promise<void> {
+  const recorder = (store as Partial<Pick<TaskStore, "checkAndRecordUnplannedExecutionBlock">>).checkAndRecordUnplannedExecutionBlock;
+  if (!recorder) return;
+  const planReviewNode = resolvePreReleasePlanReviewNode(ir)?.id ?? "none";
+  let promptContent = typeof task.prompt === "string" ? task.prompt : "";
+  const tasksDir = typeof store.getTasksDir === "function" ? store.getTasksDir() : undefined;
+  if (tasksDir) {
+    try {
+      promptContent = await readFile(getPromptPath(tasksDir, task.id), "utf8");
+    } catch {
+      promptContent = "";
+    }
+  }
+  const promptMarker = promptContent.length > 0
+    ? createHash("sha256").update(promptContent).digest("hex")
+    : "missing";
+  const dependencies = [...(task.dependencies ?? [])].sort();
+  const episode = createHash("sha256").update(JSON.stringify({
+    planReviewNode,
+    promptMarker,
+    dependencies,
+    status: task.status ?? null,
+    handoffFingerprint: task.approvedPlanFingerprint ?? null,
+  })).digest("hex");
+  try {
+    await recorder.call(store, task.id, episode);
+  } catch (error) {
+    // The gate is safety-critical; its diagnostic must not turn an otherwise-safe refusal into a dispatch failure.
+    schedulerLog.warn(`Could not persist unplanned dispatch refusal for ${task.id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: WorkflowIr): Promise<boolean> {
   /*
   FNXC:PlanReview 2026-07-19-00:40 (U3):
@@ -212,10 +256,8 @@ export async function isUnplannedForExecution(store: TaskStore, task: Task, ir: 
   if (preReleaseReview && preReleaseReviewEnabled && preReleaseReview.column === task.column) {
     // Compatibility for tasks planned before durable continuations existed and
     // for narrow store adapters that expose only the legacy review result.
-    const legacyPassed = task.workflowStepResults?.some(
-      (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.status === "passed",
-    );
-    if (!legacyPassed) {
+    const legacySatisfied = task.workflowStepResults?.some(isPlanReviewSatisfied);
+    if (!legacySatisfied) {
       if (typeof store.listWorkflowWorkItemsForTask !== "function") return true;
       // FNXC:StrandedHoldContinuation 2026-07-26-15:45:
       // FN-8592 defines graph idleness over every active continuation kind;
@@ -723,6 +765,7 @@ async function issueRelease(
   }
 
   if (targetIsProcessing && !options.allowUnplanned && (await isUnplannedForExecution(store, task, ir))) {
+    await checkAndRecordUnplannedExecutionBlock(store, task, ir);
     /*
     FNXC:StrandedHoldContinuation 2026-07-26-14:15:
     Before FN-8592 this was an undeduplicated `schedulerLog.log`, not debug.
@@ -752,6 +795,7 @@ async function issueRelease(
           live,
           stalenessMs: deps.now() - new Date(task.columnMovedAt ?? task.updatedAt).getTime(),
           graceMs: 60_000,
+          now: deps.now(),
         });
         const key = `${task.id}:${task.column}`;
         if (stranded.stranded && !strandedHoldWarningMemo.has(key)) {
@@ -884,6 +928,7 @@ export async function promoteHeldTask(
     : false;
   const unplanned = targetIsProcessing && (await isUnplannedForExecution(store, task, ir));
   if (unplanned && options.force !== true) {
+    await checkAndRecordUnplannedExecutionBlock(store, task, ir);
     return { released: false, rejection: "unplanned-for-execution", toColumn: target };
   }
 

@@ -6,8 +6,49 @@ import {
 } from "../tasks/original-description-policy.js";
 import { FRONTEND_UX_CRITERIA_SECTION } from "../tasks/frontend-ux-policy.js";
 import type { ProjectSettings } from "../types.js";
+import type { WorkflowStepResult } from "../types/workflow/workflow-steps.js";
+import { PLAN_REVIEW_GROUP_ID } from "../workflows/builtin-plan-review-group.js";
 
 export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
+
+/*
+FNXC:PlanReviewApproval 2026-08-04-00:26:
+Plan Review is terminal when the reviewer passed it or an operator durably accepted the final
+failed REVISE after the revision cap. Require the full audited source state so a malformed skip
+cannot silently open the execution gate.
+*/
+export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
+  if (result.workflowStepId !== PLAN_REVIEW_GROUP_ID) return false;
+  if (result.supersededAt != null) return false;
+  if (result.status === "passed") return true;
+  return result.status === "skipped"
+    && (result.bypassedFromStatus === "failed" || result.bypassedFromStatus === "advisory_failure")
+    && result.bypassedFromVerdict === "REVISE"
+    && typeof result.bypassedBy === "string"
+    && result.bypassedBy.trim().length > 0
+    && typeof result.bypassedAt === "string"
+    && result.bypassedAt.trim().length > 0
+    && typeof result.bypassReason === "string"
+    && result.bypassReason.trim().length > 0;
+}
+
+/*
+ * FNXC:PlanReviewSupersession 2026-08-04-06:35:
+ * A dependency change preserves Plan Review history for audit while retiring
+ * every current gate projection, including an in-flight lease. Superseded
+ * evidence belongs to the old planning episode and cannot satisfy the new gate.
+ */
+export function supersedePlanReviewResults(
+  results: WorkflowStepResult[] | undefined,
+  supersededAt: string,
+): WorkflowStepResult[] | undefined {
+  if (!results?.some((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null)) {
+    return results;
+  }
+  return results.map((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null
+    ? { ...result, supersededAt, supersededReason: "dependency-change" }
+    : result);
+}
 
 /**
  * FNXC:PlanApproval 2026-07-04-22:41:

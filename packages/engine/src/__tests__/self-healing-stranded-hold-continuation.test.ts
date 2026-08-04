@@ -12,7 +12,7 @@ vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
   resolveWorkflowIrForTask: resolveWorkflowIrForTaskMock,
 }));
-vi.mock("../run-audit.js", async (importOriginal) => ({
+vi.mock("../util/run-audit.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../util/run-audit.js")>()),
   createRunAuditor: vi.fn(() => ({ database: recordRunAuditEventMock })),
 }));
@@ -57,6 +57,7 @@ function storeFor(task: Task, settings: Partial<Settings> = {}) {
       items.push(item);
       return { seeded: true, workItemId: item.id };
     }),
+    withPlanningLifecycleLock: vi.fn(async (_id: string, callback: () => Promise<unknown>) => callback()),
     getTasksDir: vi.fn(() => ""),
     // FNXC:StrandedHoldContinuation 2026-08-02-00:15: 713e9320b0 routed continuation dispatch through createPlanningContinuationDispatcher, whose capacity gate reads projectId from store.getRootDir(); the mock must expose it so drainWorkflowContinuations does not throw.
     getRootDir: vi.fn(() => "fn8592-project"),
@@ -94,12 +95,57 @@ describe("FN-8592 stranded hold continuation recovery", () => {
 
     await expect(manager.reconcileStrandedHoldContinuations()).resolves.toBe(1);
     expect(store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+    expect(store.withPlanningLifecycleLock).toHaveBeenCalledWith(task.id, expect.any(Function));
     expect(store._items).toHaveLength(1);
     expect(recordRunAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       type: "task:reconcile-stranded-hold-continuation",
       metadata: expect.objectContaining({ taskId: task.id, column: "holding-area" }),
     }));
     expect(JSON.stringify(recordRunAuditEventMock.mock.calls)).not.toContain("Real work");
+  });
+
+  it("defers the exact stale null-status persisted-plan episode to lifecycle recovery", () => {
+    const stale = new Date(Date.now() - 31 * 60_000).toISOString();
+    const task = strandedTask({
+      status: null as never,
+      steps: [{ name: "Persisted planner step", status: "pending" }],
+      updatedAt: stale,
+      columnMovedAt: stale,
+    });
+
+    expect(evaluateStrandedHoldContinuation({
+      task,
+      columnFlags: { hold: true, intake: true },
+      ir: workflow,
+      continuations: [],
+      stepResults: [],
+      effectiveSettings: {},
+      enginePaused: false,
+      promptContent: "# Task\n\n## Steps\n\n### Step 0: Persisted planner step",
+      live: false,
+      stalenessMs: 31 * 60_000,
+      graceMs: 60_000,
+      now: Date.now(),
+    })).toMatchObject({ stranded: false, candidate: false, reason: "planning-recovery-owned" });
+  });
+
+  it("keeps ordinary null-status continuation recovery outside the conservative legacy shape", () => {
+    const task = strandedTask({ status: null as never, steps: [] });
+
+    expect(evaluateStrandedHoldContinuation({
+      task,
+      columnFlags: { hold: true, intake: true },
+      ir: workflow,
+      continuations: [],
+      stepResults: [],
+      effectiveSettings: {},
+      enginePaused: false,
+      promptContent: "# Task\n\n## Steps\n\n### Step 0: Ordinary continuation",
+      live: false,
+      stalenessMs: 120_000,
+      graceMs: 60_000,
+      now: Date.now(),
+    })).toMatchObject({ stranded: true, candidate: true, reason: "ready" });
   });
 
   it("drives the repaired continuation through the runtime processor and graph reviewer seam", async () => {

@@ -515,11 +515,11 @@ describe("TaskDetailModal", () => {
      * Replan-cap escalations must explain that Plan Review did not converge so the
      * operator knows why approval is required (not a generic require-all gate).
      */
-    it("explains Plan Review non-convergence when awaitingApprovalReason is plan-review-replan-cap", () => {
+    it("offers both decisions in a split Plan Review column after the replan cap", () => {
       render(
         <TaskDetailModal
           task={makeTask({
-            column: "triage",
+            column: "todo",
             status: "awaiting-approval",
             awaitingApprovalReason: "plan-review-replan-cap",
             prompt: "# Task Spec",
@@ -540,6 +540,8 @@ describe("TaskDetailModal", () => {
       expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-actions"))).toBe(true);
       expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-approve"))).toBe(true);
       expect(banner.contains(screen.getByTestId("detail-plan-approval-banner-reject"))).toBe(true);
+      expect(screen.getByTestId("detail-plan-approval-footer-approve")).toBeTruthy();
+      expect(screen.getByTestId("detail-plan-approval-footer-reject")).toBeTruthy();
       expect(screen.getByText("Approval needed: Plan Review did not converge")).toBeTruthy();
       expect(screen.getByText(/exhausted|without approving|stopped the replan loop/i)).toBeTruthy();
     });

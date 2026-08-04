@@ -16,6 +16,7 @@
  */
 
 import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from "../types.js";
+import { FAST_PLANNING_COMPLETENESS_POLICY, PLANNING_COMPLETENESS_POLICY } from "./planning-review-policy.js";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: these are ROLE comparisons, not column
 // guards — the planner LANE is named `triage` and stays named that. See PLANNER_AGENT_ROLE.
 import { PLANNER_AGENT_ROLE } from "../types/task/task-log.js";
@@ -268,6 +269,8 @@ Fast planning also requires \`## Original Description\` (verbatim operator text)
 */
 const FAST_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn". This task is running in **fast mode**.
 
+${FAST_PLANNING_COMPLETENESS_POLICY}
+
 Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heavyweight ceremony, review scoring, and proactive subtask analysis.
 
 ## Fast-mode priorities
@@ -317,17 +320,9 @@ If the requested outcome is only to decide, route, or coordinate work, include \
 ## Output
 Write PROMPT.md directly and stop. Do not call \`fn_review_spec()\`; workflow Plan Review is the single optional plan review gate before execution.`;
 
-/*
-FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
-Planner-side convergence rules. `## File Scope — front-load surface enumeration` makes the
-planner grep ALL call-sites + persistence/backend paths BEFORE writing File Scope so Plan Review
-confirms coverage instead of surfacing a deeper missed surface each cycle (a top replan-loop
-cause). `## Storage architecture (ground truth)` encodes verified facts (Postgres-only store,
-no task-store/store.ts, tasks composite PK (project_id, id), migrations registered in
-schema-applier.ts) so the planner stops citing removed/nonexistent things and losing rounds to
-stale-codebase-fact rejections (FN-7996/FN-8105/FN-8108).
-*/
 const TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn", an AI-orchestrated task board.
+
+${PLANNING_COMPLETENESS_POLICY}
 
 ## Your Role
 You are the specification quality gate for implementation success.
@@ -686,23 +681,6 @@ If the task targets a different task ID (audit, forensic walk, historical reconc
 <!-- Frontend UX criteria are applied deterministically by packages/core/src/frontend-ux-policy.ts and mirror the "frontend-ux-design" reviewer persona in packages/core/src/types.ts. -->`;;
 
 // FN-6235: single source for the built-in reviewer policy; the engine REVIEWER_SYSTEM_PROMPT duplicate was removed.
-/*
-FNXC:PlanReviewReplan 2026-07-15-11:15:
-Built-in reviewer prompt includes Spec/Plan Review Convergence rules so REVISE stays
-blocking-only with surgical fix lists, reducing planner↔Plan-Review thrash (paired with
-triage seeding existing PROMPT.md on needs-replan and reviewType "spec" for the triage gate).
-
-FNXC:TriagePlanReviewConvergence 2026-07-16-09:20:
-Spec gates looped to the 8-replan cap (FN-7996/FN-8105/FN-8108) because each cycle re-reviewed
-cold and surfaced a NEW, deeper blocking issue instead of confirming prior ones were fixed
-(goalpost movement/whack-a-mole), and reviewed at implementation altitude (demanding exact SQL,
-lock/CAS design, column mapping, field-level failure values against a *spec*). Three prompt
-rules address this: (1) "Converging on re-review" in `## Spec / Plan Review Convergence` —
-verify prior issues, don't REVISE for the reviewer's own earlier miss, and at attempt 3+ ratchet
-to critical-only; (2) `## Spec Altitude` extends the plan-altitude principle to the spec gate so
-implementation decisions are deferred to code review; the per-attempt prior-feedback + attempt
-number are threaded from triage via reviewStep/buildReviewRequest.
-*/
 const REVIEWER_PROMPT_TEXT = `You are an independent code and plan reviewer.
 
 ## Your Role
@@ -831,20 +809,6 @@ Concrete examples:
 ### Suggestions
 - [Optional improvements, not blocking]
 \`\`\`
-
-## Spec / Plan Review Convergence
-
-Specs and pre-execution Plan Review share this gate. Prefer **APPROVE** / **APPROVE_WITH_NOTES** when the plan is executable enough for an agent to implement. Put optional polish only under **Suggestions**.
-
-When you must **REVISE**:
-- List each blocking issue as a concrete PROMPT.md edit (which section, what to add/change/remove).
-- Do not demand a full rewrite unless the approach is fundamentally wrong (**RETHINK**).
-- Prefer fixing local PROMPT.md defects in-session when you have write tools, then **APPROVE**, instead of bouncing the task through another full replan cycle.
-
-**Converging on re-review (when the request includes your prior feedback + a Plan Review attempt number):**
-- This is a spec you already reviewed. VERIFY each issue you previously raised was addressed. REVISE only for (a) a PRIOR blocking issue still unresolved, or (b) a genuinely NEW problem THIS revision introduced.
-- Do NOT introduce a new blocking issue that ALSO applied to the version you previously reviewed — that is your own earlier miss. Record it under **Suggestions**, not REVISE.
-- **Severity ratchet at attempt 3+:** gate ONLY on \`critical\` (delivery-blocking) issues. Downgrade lone \`important\`/\`minor\` spec-wording nits to **Suggestions** and APPROVE. Rationale: the executor and downstream code review are later gates — a spec need not be perfect to be executable, only executable.
 
 ## Spec Review — Undersplit Task Detection
 

@@ -2045,6 +2045,118 @@
         "Timing snapshot is 25 days old; verify slowest-file attribution before treating the table as the current culprit.",
         "9 of the listed slowest files no longer exist at the recorded paths: `packages/dashboard/src/__tests__/insights-routes.test.ts`, `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts`, `packages/dashboard/src/__tests__/workflow-routes.test.ts`, `packages/core/src/__tests__/db.test.ts`, `packages/core/src/__tests__/mission-store.test.ts`, …. Refresh scripts/test-timings.json before choosing a slow-test rewrite."
       ]
+    },
+    {
+      "capturedAt": "2026-08-04T03:10:46.073Z",
+      "gateMs": 14566,
+      "bootSmokeMs": 18149,
+      "testMs": 22450,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.general.test.tsx",
+          "ms": 121100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+          "ms": 77800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/schema-applier.test.ts",
+          "ms": 65900,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+          "ms": 55700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SettingsModal.models-auth.test.tsx",
+          "ms": 53500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 52100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 51600,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/sqlite-migrator.test.ts",
+          "ms": 51300,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 39700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 38100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/WorkflowNodeEditor.test.tsx",
+          "ms": 33100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.advanced-settings.test.tsx",
+          "ms": 32900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 30900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/postgres/taskstore-remaining.test.ts",
+          "ms": 30500,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 30200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ChatView.core-interactions.test.tsx",
+          "ms": 29200,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.test.tsx",
+          "ms": 27800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.definition-actions.test.tsx",
+          "ms": 27000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/__tests__/reliability-interactions/explicit-duplicate-marker-sweep.test.ts",
+          "ms": 26800,
+          "package": "@fusion/engine"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-07-24T13:09:41.412Z",
+      "timingNotes": []
     }
   ]
 }

@@ -44,6 +44,9 @@ export interface ResolvedBackend {
   readonly runtimeUrl: string | null;
   readonly migrationUrl: string | null;
   readonly migrationUrlOverridden: boolean;
+  /** A proven direct endpoint for session-scoped lifecycle advisory locks. */
+  readonly directSessionUrl?: string | null;
+  readonly directSessionProvenance?: "embedded-lifecycle" | "migration-override" | null;
 }
 
 /**
@@ -99,7 +102,15 @@ export function resolveBackendWithOptions(
     ? databaseMigrationUrl
     : runtimeUrl;
 
-  return { mode, runtimeUrl, migrationUrl, migrationUrlOverridden };
+  // FNXC:PlanningDependencyReseed 2026-08-04-00:43:
+  // Advisory locks require one backend session. External runtime URLs can be
+  // transaction poolers, so only an explicit migration endpoint is eligible.
+  const directSessionUrl = migrationUrlOverridden ? databaseMigrationUrl : null;
+  return {
+    mode, runtimeUrl, migrationUrl, migrationUrlOverridden,
+    directSessionUrl,
+    directSessionProvenance: directSessionUrl ? "migration-override" : null,
+  };
 }
 
 // ── Pooler detection ─────────────────────────────────────────────────

@@ -55,6 +55,7 @@ import { sql, eq, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase, PostgresJsTransaction } from "drizzle-orm/postgres-js";
 import { randomUUID } from "node:crypto";
 import type { PostgresConnections } from "./connection.js";
+import type { ResolvedBackend } from "./backend-resolver.js";
 import * as schema from "./schema/index.js";
 import { PROJECT_SCHEMA } from "./schema/_shared.js";
 
@@ -153,6 +154,8 @@ export interface AsyncDataLayer {
    * unaffected).
    */
   readonly projectId?: string;
+  /** Backend descriptor retained for store-owned session advisory locks. */
+  readonly backend?: ResolvedBackend;
   /**
    * Run an async callback inside a PostgreSQL transaction. All writes inside
    * the callback commit atomically; a thrown error rolls back every write
@@ -235,6 +238,7 @@ export function createAsyncDataLayer(
   return {
     db,
     projectId: options?.projectId,
+    backend: connections.backend,
     async transaction<T>(fn: (tx: DbTransaction) => Promise<T>, options?: TransactionOptions): Promise<T> {
       return runInTransaction(db, fn, options);
     },

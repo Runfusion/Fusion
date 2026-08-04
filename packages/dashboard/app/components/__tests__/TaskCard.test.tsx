@@ -3070,11 +3070,11 @@ describe("TaskCard", () => {
     expect(container.querySelector(".awaiting-approval--plan-review-replan-cap")).toBeNull();
   });
 
-  it("renders a distinct review-budget-exhausted badge when awaitingApprovalReason is plan-review-replan-cap", () => {
+  it("renders review-budget approval metadata outside the intake column", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
-          column: "triage",
+          column: "todo",
           status: "awaiting-approval",
           awaitingApprovalReason: "plan-review-replan-cap",
         } as any)}

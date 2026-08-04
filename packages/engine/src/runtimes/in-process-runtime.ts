@@ -23,6 +23,7 @@ import {
   AsyncCentralClaimStore,
   ChatStore,
   isEphemeralAgent,
+  isPlanReviewSatisfied,
   isTaskBlockedOnApproval,
   resolveWorkflowIrForTask,
   resolveTaskLifecycleColumns,
@@ -293,6 +294,43 @@ export function resolveParkedContinuationDeferral(
     expectedState: resolution.item.state,
     retryAfter: new Date(nowMs + deferMs).toISOString(),
   };
+}
+
+/*
+FNXC:PlanReviewApproval 2026-08-04-00:26:
+An operator decision must remove the one-minute human-wait deferral immediately. Clear every
+runnable planning continuation for the task, preserve CAS ownership, and wake the drain even when
+inspection fails so the normal classifier remains authoritative.
+*/
+export async function wakeApprovedPlanningContinuations(deps: {
+  taskId: string;
+  list: (taskId: string) => Promise<WorkflowWorkItem[]>;
+  transition: (
+    itemId: string,
+    state: WorkflowWorkItemState,
+    patch: { expectedState: WorkflowWorkItemState; retryAfter: null },
+  ) => Promise<unknown>;
+  kick: () => void;
+  warn: (message: string) => void;
+}): Promise<number> {
+  let released = 0;
+  try {
+    const items = await deps.list(deps.taskId);
+    for (const item of items) {
+      if (item.state !== "runnable" || item.waitReason !== "planning" || !item.retryAfter) continue;
+      try {
+        await deps.transition(item.id, item.state, { expectedState: item.state, retryAfter: null });
+        released += 1;
+      } catch (error) {
+        deps.warn(`Failed to clear approval deferral for workflow work item ${item.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  } catch (error) {
+    deps.warn(`Failed to inspect approval-deferred workflow work for ${deps.taskId}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    deps.kick();
+  }
+  return released;
 }
 
 /** The FIFO due-poll batch size. Named because the starvation the deferral above
@@ -748,6 +786,13 @@ export class InProcessRuntime
   private workflowContinuationTimer?: ReturnType<typeof setInterval>;
   private workflowContinuationDrainActive = false;
   private workflowContinuationDrainSince = 0;
+  /*
+  FNXC:PlanReviewApproval 2026-08-04-00:26:
+  Track the event edge and the durable approval marker. The marker covers engine restarts and
+  cross-process updates that did not deliver the earlier awaiting-approval event.
+  */
+  private approvalHeldTaskIds = new Set<string>();
+  private approvalReleasedTaskIds = new Set<string>();
   private messageStore?: MessageStore;
   /** FNXC:TaskDeleteNotice 2026-07-26-16:10: identity-guarded teardown for the delete-notice mailbox seam. */
   private unregisterTaskDeleteNoticeMailbox?: () => void;
@@ -2697,6 +2742,30 @@ export class InProcessRuntime
     // Forward task:updated events
     this.taskStore.on("task:updated", (task: Task) => {
       this.recordActivity();
+      if (task.status === "awaiting-approval") {
+        this.approvalHeldTaskIds.add(task.id);
+        this.approvalReleasedTaskIds.delete(task.id);
+      } else if (
+        !task.status
+        && !task.paused
+        && !task.userPaused
+        && (
+          this.approvalHeldTaskIds.delete(task.id)
+          || (
+            (Boolean(task.approvedPlanFingerprint) || task.workflowStepResults?.some(isPlanReviewSatisfied) === true)
+            && !this.approvalReleasedTaskIds.has(task.id)
+          )
+        )
+      ) {
+        this.approvalReleasedTaskIds.add(task.id);
+        void wakeApprovedPlanningContinuations({
+          taskId: task.id,
+          list: (taskId) => this.taskStore.listWorkflowWorkItemsForTask(taskId),
+          transition: (itemId, state, patch) => this.taskStore.transitionWorkflowWorkItem(itemId, state, patch),
+          kick: () => this.kickWorkflowContinuationProcessor(),
+          warn: (message) => runtimeLog.warn(message),
+        });
+      }
       this.emit("task:updated", task);
     });
 
@@ -2707,6 +2776,8 @@ export class InProcessRuntime
     */
     this.taskStore.on("task:deleted", (task: Task, meta?: { githubIssueAction?: GithubIssueAction; observed?: boolean; outboxEventId?: string }) => {
       this.recordActivity();
+      this.approvalHeldTaskIds.delete(task.id);
+      this.approvalReleasedTaskIds.delete(task.id);
       this.emit("task:deleted", task, meta);
     });
 

@@ -46,6 +46,25 @@ function revisionLog(stepName: string, key: string, attempt: number) {
   };
 }
 
+function repeatedPlanReviewResult(attemptCount: number): NonNullable<Task["workflowStepResults"]>[number] {
+  const attempt = {
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    phase: "pre-merge" as const,
+    status: "failed" as const,
+    verdict: "REVISE" as const,
+    notes: "same unresolved blocker",
+  };
+  return {
+    ...attempt,
+    planReviewAttemptCount: attemptCount,
+    priorAttempts: Array.from(
+      { length: Math.min(attemptCount - 1, 15) },
+      () => ({ ...attempt }),
+    ),
+  };
+}
+
 describe("TaskExecutor pre-merge optional-step fix seam", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -409,12 +428,14 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     const cappedStore = createMockStore();
     const exhaustedTask = task({
-      postReviewFixCount: 2,
+      postReviewFixCount: 20,
       column: "in-progress",
-      log: [revisionLog("Plan Review", "plan-review", 1), revisionLog("Plan Review", "plan-review", 2)],
+      // The rendered/audit window is capped at 15, but the persisted scalar
+      // must still exhaust a valid finite budget above that cap.
+      workflowStepResults: [repeatedPlanReviewResult(21)],
     });
     cappedStore.getTask.mockResolvedValue(exhaustedTask);
-    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 2 });
+    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 20 });
     const cappedExecutor = new TaskExecutor(cappedStore, "/tmp/test");
 
     await expect((cappedExecutor as any).requestPreMergeOptionalStepFix(exhaustedTask.id, exhaustedTask, {
@@ -451,7 +472,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
   it("keeps replanning an unbounded Plan Review loop just below the safety cap", async () => {
     const store = createMockStore();
     const belowLog = Array.from({ length: 14 }, (_, i) => revisionLog("Plan Review", "plan-review", i + 1));
-    const loopingTask = task({ postReviewFixCount: 14, column: "in-progress", log: belowLog });
+    const loopingTask = task({
+      postReviewFixCount: 14,
+      column: "in-progress",
+      log: belowLog,
+      workflowStepResults: [repeatedPlanReviewResult(15)],
+    });
     store.getTask.mockResolvedValue(loopingTask);
     store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 }); // no planReviewMaxRevisions → unbounded
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -480,7 +506,12 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
   it("halts the unbounded Plan Review replan loop at the safety cap and leaves the task for a human", async () => {
     const store = createMockStore();
     const cappedLog = Array.from({ length: 15 }, (_, i) => revisionLog("Plan Review", "plan-review", i + 1));
-    const loopingTask = task({ postReviewFixCount: 15, column: "in-progress", log: cappedLog });
+    const loopingTask = task({
+      postReviewFixCount: 15,
+      column: "in-progress",
+      log: cappedLog,
+      workflowStepResults: [repeatedPlanReviewResult(16)],
+    });
     store.getTask.mockResolvedValue(loopingTask);
     store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 }); // unbounded default
     const executor = new TaskExecutor(store, "/tmp/test");

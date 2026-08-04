@@ -314,6 +314,23 @@ export interface WorkflowStepResult {
   /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
   bypassedFromVerdict?: WorkflowStepResult["verdict"];
   /*
+   * FNXC:PlanReviewSupersession 2026-08-04-06:35:
+   * Persist the boundary that invalidated this planning episode. Superseded
+   * results remain auditable but cannot satisfy or repair the current gate and
+   * a superseded pending result cannot be adopted as a live lease.
+   */
+  supersededAt?: string;
+  /** Machine-readable reason the result stopped being current. */
+  supersededReason?: "dependency-change";
+  /*
+   * FNXC:PlanReviewConvergence 2026-08-04-06:35 (FN-8768):
+   * Number of terminal REVISE results recorded in the current Plan Review
+   * episode. Unlike `priorAttempts`, this scalar is not capped and is the
+   * durable authority for revision-budget accounting and attempt numbering.
+   * Reset when a superseded planning episode is replaced.
+   */
+  planReviewAttemptCount?: number;
+  /*
    * FNXC:WorkflowStepResults 2026-07-09-00:10:
    * FN-7727: self-healing recovery re-runs a failed pre-merge review node
    * (`code-review`, `code-review-remediation`, `plan-review`,

@@ -17,6 +17,8 @@ describe("backend-resolver: resolveBackend (env-based)", () => {
     expect(backend.runtimeUrl).toBeNull();
     expect(backend.migrationUrl).toBeNull();
     expect(backend.migrationUrlOverridden).toBe(false);
+    expect(backend.directSessionUrl).toBeNull();
+    expect(backend.directSessionProvenance).toBeNull();
   });
 
   it("resolves to embedded mode when DATABASE_URL is empty", () => {
@@ -64,6 +66,8 @@ describe("backend-resolver: resolveBackendWithOptions", () => {
     expect(backend.runtimeUrl).toBe(runtimeUrl);
     expect(backend.migrationUrl).toBe(migrationUrl);
     expect(backend.migrationUrlOverridden).toBe(true);
+    expect(backend.directSessionUrl).toBe(migrationUrl);
+    expect(backend.directSessionProvenance).toBe("migration-override");
   });
 
   it("migrationUrl falls back to runtimeUrl when DATABASE_MIGRATION_URL is not set", () => {
@@ -74,6 +78,7 @@ describe("backend-resolver: resolveBackendWithOptions", () => {
     });
     expect(backend.migrationUrl).toBe(url);
     expect(backend.migrationUrlOverridden).toBe(false);
+    expect(backend.directSessionUrl).toBeNull();
   });
 
   it("DATABASE_MIGRATION_URL without DATABASE_URL still resolves to embedded mode", () => {

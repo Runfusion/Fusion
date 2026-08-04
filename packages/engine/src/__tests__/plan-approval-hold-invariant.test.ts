@@ -65,6 +65,7 @@ ADDED IN REVIEW ROUND 1 (PR #2491), because correctly HOLDING a card is not free
                                                                 [describe #5]
 */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import type { Task, TaskStore, WorkflowIr, WorkflowWorkItem } from "@fusion/core";
 import { AWAITING_APPROVAL_PAUSE_REASON, PLAN_REVIEW_GROUP_ID } from "@fusion/core";
 
@@ -78,6 +79,8 @@ import {
   PARKED_CONTINUATION_DEFER_MS,
   resolveParkedContinuationDeferral,
   resolvePlanningContinuationCandidate,
+  wakeApprovedPlanningContinuations,
+  InProcessRuntime,
   type DuePlanningContinuationDrainDeps,
 } from "../runtimes/in-process-runtime.js";
 import { schedulerLog } from "../logger.js";
@@ -492,6 +495,81 @@ describe("#4 an operator-parked item leaves the due window instead of starving t
 
     expect(resolved.kind).toBe("orphan");
     expect(resolveParkedContinuationDeferral(resolved, NOW)).toBeNull();
+  });
+});
+
+describe("#4b an approval decision removes the human-wait delay", () => {
+  it("clears retryAfter on runnable planning continuations and kicks the drain", async () => {
+    const transition = vi.fn().mockResolvedValue(undefined);
+    const kick = vi.fn();
+    const retryAfter = new Date(Date.now() + PARKED_CONTINUATION_DEFER_MS).toISOString();
+
+    await expect(wakeApprovedPlanningContinuations({
+      taskId: "FN-1",
+      list: async () => [
+        dueItem({ retryAfter }),
+        dueItem({ id: "capacity", waitReason: "capacity", retryAfter }),
+      ],
+      transition,
+      kick,
+      warn: vi.fn(),
+    })).resolves.toBe(1);
+
+    expect(transition).toHaveBeenCalledWith("wi-1", "runnable", {
+      expectedState: "runnable",
+      retryAfter: null,
+    });
+    expect(transition).not.toHaveBeenCalledWith("capacity", expect.anything(), expect.anything());
+    expect(kick).toHaveBeenCalledOnce();
+  });
+
+  it("keeps releasing after one transition fails and always kicks the drain", async () => {
+    const retryAfter = new Date(Date.now() + PARKED_CONTINUATION_DEFER_MS).toISOString();
+    const transition = vi.fn()
+      .mockRejectedValueOnce(new Error("lost CAS"))
+      .mockResolvedValueOnce(undefined);
+    const warn = vi.fn();
+    const kick = vi.fn();
+
+    await expect(wakeApprovedPlanningContinuations({
+      taskId: "FN-1",
+      list: async () => [dueItem({ id: "first", retryAfter }), dueItem({ id: "second", retryAfter })],
+      transition,
+      kick,
+      warn,
+    })).resolves.toBe(1);
+
+    expect(transition).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("first"));
+    expect(kick).toHaveBeenCalledOnce();
+  });
+
+  it("wires an approval task update through the runtime to the deferred continuation", async () => {
+    const retryAfter = new Date(Date.now() + PARKED_CONTINUATION_DEFER_MS).toISOString();
+    const transitionWorkflowWorkItem = vi.fn().mockResolvedValue(undefined);
+    const store = Object.assign(new EventEmitter(), {
+      listWorkflowWorkItemsForTask: vi.fn().mockResolvedValue([dueItem({ retryAfter })]),
+      transitionWorkflowWorkItem,
+    });
+    const runtime = new InProcessRuntime({
+      projectId: "test-project",
+      projectName: "Test",
+      workingDirectory: "/test/project",
+      isolationMode: "in-process",
+    }, {} as never);
+    (runtime as any).taskStore = store;
+    const kick = vi.spyOn(runtime as any, "kickWorkflowContinuationProcessor").mockImplementation(() => undefined);
+    (runtime as any).setupEventForwarding();
+
+    store.emit("task:updated", task({ status: "awaiting-approval" }));
+    store.emit("task:updated", task({ status: null, approvedPlanFingerprint: "approved" }));
+
+    await vi.waitFor(() => expect(transitionWorkflowWorkItem).toHaveBeenCalledWith(
+      "wi-1",
+      "runnable",
+      { expectedState: "runnable", retryAfter: null },
+    ));
+    expect(kick).toHaveBeenCalledOnce();
   });
 });
 

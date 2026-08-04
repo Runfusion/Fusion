@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computePlanApprovalFingerprint, resolvePlanApprovalRequired, type PlanApprovalMode } from "../planner/plan-approval.js";
+import { computePlanApprovalFingerprint, isPlanReviewSatisfied, resolvePlanApprovalRequired, type PlanApprovalMode } from "../planner/plan-approval.js";
 import { applyFrontendUxCriteria } from "../tasks/frontend-ux-policy.js";
 import { applyOriginalDescription } from "../tasks/original-description-policy.js";
 
@@ -35,6 +35,60 @@ describe("resolvePlanApprovalRequired", () => {
         requirePlanApproval: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("isPlanReviewSatisfied", () => {
+  it("accepts either a reviewer pass or an explicit operator bypass", () => {
+    expect(isPlanReviewSatisfied({ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "passed" })).toBe(true);
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "skipped",
+      bypassedBy: "operator",
+      bypassedAt: "2026-08-03T23:53:04.539Z",
+      bypassReason: "Approved after Plan Review did not converge",
+      bypassedFromStatus: "failed",
+      bypassedFromVerdict: "REVISE",
+    })).toBe(true);
+  });
+
+  it("rejects unrelated, failed, or unaudited skipped results", () => {
+    expect(isPlanReviewSatisfied({ workflowStepId: "code-review", workflowStepName: "Code Review", status: "passed" })).toBe(false);
+    expect(isPlanReviewSatisfied({ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "failed" })).toBe(false);
+    expect(isPlanReviewSatisfied({ workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "skipped" })).toBe(false);
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "skipped",
+      bypassedBy: "operator",
+      bypassedAt: "2026-08-03T23:53:04.539Z",
+      bypassReason: "Malformed override",
+      bypassedFromStatus: "passed",
+      bypassedFromVerdict: "REVISE",
+    })).toBe(false);
+  });
+
+  it("rejects a historical pass or bypass superseded by a later planning episode", () => {
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "passed",
+      supersededAt: "2026-08-04T02:00:00.000Z",
+      supersededReason: "dependency-change",
+    })).toBe(false);
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "skipped",
+      bypassedBy: "operator",
+      bypassedAt: "2026-08-04T01:00:00.000Z",
+      bypassReason: "Approved at the old revision cap",
+      bypassedFromStatus: "failed",
+      bypassedFromVerdict: "REVISE",
+      supersededAt: "2026-08-04T02:00:00.000Z",
+      supersededReason: "dependency-change",
+    })).toBe(false);
   });
 });
 
