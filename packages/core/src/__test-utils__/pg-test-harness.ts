@@ -909,6 +909,8 @@ export async function usePgTaskStore(
 export interface SharedPgTaskStoreHarness {
   readonly rootDir: () => string;
   readonly globalDir: () => string;
+  /** Direct connection URL for session-level PostgreSQL primitive tests. */
+  readonly testUrl: () => string;
   readonly store: () => TaskStore;
   readonly layer: () => AsyncDataLayer;
   readonly adminDb: () => PostgresJsDatabase;
@@ -978,6 +980,7 @@ export function createSharedPgTaskStoreTestHarness(options?: {
   return {
     rootDir: () => harness?.rootDir ?? "",
     globalDir: () => harness?.rootDir ?? "",
+    testUrl: () => harness?.testUrl ?? "",
     store: () => {
       if (!store) throw new Error("SharedPgTaskStoreHarness: beforeAll not called yet");
       return store;
@@ -1103,4 +1106,3 @@ export function createSharedPgTaskStoreTestHarness(options?: {
     },
   };
 }
-

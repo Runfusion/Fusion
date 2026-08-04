@@ -30,6 +30,38 @@ export class PlanningLifecycleLockTransportError extends Error {
   }
 }
 
+const DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS = 5_000;
+
+type DedicatedPostgresClient = ReturnType<typeof postgres>;
+
+async function runBoundedTransportPhase<T>(
+  client: DedicatedPostgresClient,
+  timeoutMs: number,
+  timeoutMessage: string,
+  failureMessage: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          void client.end({ timeout: 0 }).catch(() => undefined);
+          reject(new PlanningLifecycleLockTransportError(timeoutMessage));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof PlanningLifecycleLockTransportError) throw error;
+    // Do not retain the driver error as `cause`: connection failures can carry
+    // endpoint credentials, while this error is operator-visible.
+    throw new PlanningLifecycleLockTransportError(failureMessage);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
 /**
  * FNXC:PlanningDependencyReseed 2026-08-04-00:43:
  * Planning handoff and dependency re-seed cross processes, so their outer lock
@@ -45,10 +77,13 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     provenance: "embedded-lifecycle" | "migration-override" | null;
     runtimeUrl?: string | null;
     migrationUrl?: string | null;
+    /** Bounds dedicated-session setup and lock acquisition, not callback work. */
+    timeoutMs?: number;
   },
   callback: () => Promise<T>,
 ): Promise<T> {
   const directUrl = input.directSessionUrl;
+  const timeoutMs = Math.max(1, input.timeoutMs ?? DEFAULT_PLANNING_LIFECYCLE_LOCK_TIMEOUT_MS);
   if (!directUrl || !input.provenance || looksLikePoolerUrl(directUrl)) {
     throw new PlanningLifecycleLockTransportError("Planning lifecycle lock requires a direct PostgreSQL session endpoint");
   }
@@ -81,7 +116,12 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     }
   }
 
-  const client = postgres(directUrl, { max: 1, prepare: false, onnotice: () => {} });
+  const client = postgres(directUrl, {
+    max: 1,
+    connect_timeout: Math.max(1, Math.ceil(timeoutMs / 1_000)),
+    prepare: false,
+    onnotice: () => {},
+  });
   const key = `fusion:planning-lifecycle:${input.projectId}:${input.taskId}`;
   let acquired = false;
   try {
@@ -91,12 +131,22 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     database before locking so an accidental migration endpoint cannot serialize
     one database while task writes target another.
     */
-    const identity = await client<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
-      SELECT current_database() AS database,
-             inet_server_addr()::text AS host,
-             inet_server_port() AS port,
-             current_setting('cluster_name', true) AS cluster
-    `;
+    const identity = await runBoundedTransportPhase(
+      client,
+      timeoutMs,
+      `Planning lifecycle lock session setup timed out after ${timeoutMs}ms`,
+      "Planning lifecycle lock could not establish its dedicated session",
+      async () => {
+        const rows = await client<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
+          SELECT current_database() AS database,
+                 inet_server_addr()::text AS host,
+                 inet_server_port() AS port,
+                 current_setting('cluster_name', true) AS cluster
+        `;
+        await client`SELECT set_config('lock_timeout', ${`${timeoutMs}ms`}, false)`;
+        return rows;
+      },
+    );
     if (identity[0]?.database !== directDatabase) {
       throw new PlanningLifecycleLockTransportError("Planning lifecycle lock session selected an unexpected database");
     }
@@ -109,14 +159,25 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     cluster with the same database cannot serialize the wrong task lifecycle.
     */
     if (operationalUrl && operationalUrl !== directUrl) {
-      const operationalClient = postgres(operationalUrl, { max: 1, prepare: false, onnotice: () => {} });
+      const operationalClient = postgres(operationalUrl, {
+        max: 1,
+        connect_timeout: Math.max(1, Math.ceil(timeoutMs / 1_000)),
+        prepare: false,
+        onnotice: () => {},
+      });
       try {
-        const operationalIdentity = await operationalClient<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
-          SELECT current_database() AS database,
-                 inet_server_addr()::text AS host,
-                 inet_server_port() AS port,
-                 current_setting('cluster_name', true) AS cluster
-        `;
+        const operationalIdentity = await runBoundedTransportPhase(
+          operationalClient,
+          timeoutMs,
+          `Planning lifecycle lock backend identity check timed out after ${timeoutMs}ms`,
+          "Planning lifecycle lock could not verify the resolved backend server identity",
+          () => operationalClient<{ database: string; host: string | null; port: number | null; cluster: string | null }[]>`
+            SELECT current_database() AS database,
+                   inet_server_addr()::text AS host,
+                   inet_server_port() AS port,
+                   current_setting('cluster_name', true) AS cluster
+          `,
+        );
         const expected = operationalIdentity[0];
         const actual = identity[0];
         if (!expected || !actual
@@ -133,7 +194,13 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
         await operationalClient.end({ timeout: 5 }).catch(() => undefined);
       }
     }
-    await client`SELECT pg_advisory_lock(hashtext(${key}))`;
+    await runBoundedTransportPhase(
+      client,
+      timeoutMs,
+      `Planning lifecycle lock acquisition timed out after ${timeoutMs}ms`,
+      "Planning lifecycle lock acquisition failed",
+      () => client`SELECT pg_advisory_lock(hashtext(${key}))`,
+    );
     acquired = true;
     return await callback();
   } finally {

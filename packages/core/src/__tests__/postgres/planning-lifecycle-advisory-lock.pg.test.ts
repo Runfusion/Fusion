@@ -1,0 +1,173 @@
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+
+import {
+  createSharedPgTaskStoreTestHarness,
+  pgDescribe,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
+import {
+  PlanningLifecycleLockTransportError,
+  withPlanningLifecycleAdvisoryLock,
+} from "../../postgres/advisory-locks.js";
+
+const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+  prefix: "fusion_planning_lock",
+  poolMax: 1,
+});
+
+function lock(
+  projectId: string,
+  taskId: string,
+  callback: () => Promise<void>,
+  timeoutMs = 1_000,
+): Promise<void> {
+  return withPlanningLifecycleAdvisoryLock({
+    projectId,
+    taskId,
+    directSessionUrl: h.testUrl(),
+    provenance: "migration-override",
+    runtimeUrl: h.testUrl(),
+    migrationUrl: h.testUrl(),
+    timeoutMs,
+  }, callback);
+}
+
+pgDescribe("planning lifecycle advisory lock", () => {
+  beforeAll(h.beforeAll);
+  afterAll(h.afterAll);
+  afterEach(h.afterEach);
+
+  it("serializes the same project/task key on dedicated sessions", async () => {
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstEntered!: () => void;
+    const firstIsHolding = new Promise<void>((resolve) => { firstEntered = resolve; });
+    const order: string[] = [];
+
+    const first = lock("project-a", "FN-1", async () => {
+      order.push("first-enter");
+      firstEntered();
+      await firstCanFinish;
+      order.push("first-exit");
+    });
+    await firstIsHolding;
+
+    const second = lock("project-a", "FN-1", async () => {
+      order.push("second-enter");
+    });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const admin = h.adminSql();
+      const waiting = await admin<Array<{ waiting: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND wait_event_type = 'Lock'
+            AND wait_event = 'advisory'
+        ) AS waiting
+      `;
+      if (waiting[0]?.waiting) break;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(order).toEqual(["first-enter"]);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first-enter", "first-exit", "second-enter"]);
+  });
+
+  it("does not contend across project or task keys", async () => {
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstEntered!: () => void;
+    const firstIsHolding = new Promise<void>((resolve) => { firstEntered = resolve; });
+
+    const first = lock("project-a", "FN-1", async () => {
+      firstEntered();
+      await firstCanFinish;
+    });
+    await firstIsHolding;
+
+    await Promise.all([
+      lock("project-b", "FN-1", async () => {}),
+      lock("project-a", "FN-2", async () => {}),
+    ]);
+    releaseFirst();
+    await first;
+  });
+
+  it("unlocks and closes the dedicated session when the callback throws", async () => {
+    await expect(lock("project-a", "FN-1", async () => {
+      throw new Error("callback failed");
+    })).rejects.toThrow("callback failed");
+
+    await expect(lock("project-a", "FN-1", async () => {})).resolves.toBeUndefined();
+  });
+
+  it.each(["embedded-lifecycle", "migration-override"] as const)(
+    "accepts a verified %s direct-session provenance",
+    async (provenance) => {
+      await expect(withPlanningLifecycleAdvisoryLock({
+        projectId: "project-a",
+        taskId: "FN-1",
+        directSessionUrl: h.testUrl(),
+        provenance,
+        runtimeUrl: h.testUrl(),
+        migrationUrl: h.testUrl(),
+        timeoutMs: 1_000,
+      }, async () => {})).resolves.toBeUndefined();
+    },
+  );
+
+  it("bounds lock contention with a typed transport error", async () => {
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstEntered!: () => void;
+    const firstIsHolding = new Promise<void>((resolve) => { firstEntered = resolve; });
+    const first = lock("project-a", "FN-1", async () => {
+      firstEntered();
+      await firstCanFinish;
+    });
+    await firstIsHolding;
+
+    await expect(lock("project-a", "FN-1", async () => {}, 50))
+      .rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
+    releaseFirst();
+    await first;
+  });
+
+  it("fails closed for unavailable, pooled, missing, and mismatched endpoints", async () => {
+    const base = {
+      projectId: "project-a",
+      taskId: "FN-1",
+      provenance: "migration-override" as const,
+      timeoutMs: 50,
+    };
+    const callback = async () => {};
+
+    await expect(withPlanningLifecycleAdvisoryLock({
+      ...base,
+      directSessionUrl: null,
+      runtimeUrl: h.testUrl(),
+      migrationUrl: h.testUrl(),
+    }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
+    await expect(withPlanningLifecycleAdvisoryLock({
+      ...base,
+      directSessionUrl: "postgresql://localhost:5432/db?pgbouncer=true",
+      runtimeUrl: "postgresql://localhost:5432/db?pgbouncer=true",
+      migrationUrl: "postgresql://localhost:5432/db?pgbouncer=true",
+    }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
+    await expect(withPlanningLifecycleAdvisoryLock({
+      ...base,
+      directSessionUrl: h.testUrl(),
+      runtimeUrl: h.testUrl(),
+      migrationUrl: `${h.testUrl()}_other`,
+    }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
+    await expect(withPlanningLifecycleAdvisoryLock({
+      ...base,
+      directSessionUrl: "postgresql://127.0.0.1:1/unavailable",
+      runtimeUrl: "postgresql://127.0.0.1:1/unavailable",
+      migrationUrl: "postgresql://127.0.0.1:1/unavailable",
+    }, callback)).rejects.toBeInstanceOf(PlanningLifecycleLockTransportError);
+  });
+});

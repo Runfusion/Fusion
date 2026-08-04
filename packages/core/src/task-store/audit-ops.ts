@@ -156,7 +156,9 @@ export async function checkAndRecordUnplannedExecutionBlockImpl(
     const limit = getTaskActivityLogEntryLimit();
     if (log.length > limit) log.splice(0, log.length - limit);
     await tx.update(schema.project.tasks)
-      .set({ log, updatedAt: entry.timestamp })
+      // This diagnostic must not make an old planning handoff look fresh to
+      // recovery grace windows. The marker timestamp records audit recency.
+      .set({ log })
       .where(and(eq(schema.project.tasks.projectId, projectId), eq(schema.project.tasks.id, id)));
     return true;
   });
