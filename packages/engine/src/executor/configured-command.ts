@@ -63,3 +63,19 @@ export async function runConfiguredCommand(
     spawnError: result.spawnError,
   };
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-06:25:
+Test-only wrapper re-exported from executor.ts so sandbox wiring tests import a stable
+facade path without holding the helper body on TaskExecutor's module surface.
+*/
+export async function __runConfiguredCommandForTests(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  extraEnv?: NodeJS.ProcessEnv,
+  auditor?: RunAuditor,
+  signal?: AbortSignal,
+): Promise<RunCommandResult> {
+  return runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
+}

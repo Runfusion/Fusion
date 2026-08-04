@@ -147,7 +147,11 @@ export type { StaleLockAuditEvent } from "./worktree-stale-lock-recovery.js";
 export { normalizeReclaimableWorktreePath } from "./worktree-reclaim-path.js";
 export { removeOwnWorktreeWithReconcile } from "./worktree-remove-own.js";
 export { tryFreshWorktreeAfterLiveConflict } from "./worktree-fresh-after-conflict.js";
-export { truncateWorkflowScriptOutput, runConfiguredCommand } from "./configured-command.js";
+export {
+  truncateWorkflowScriptOutput,
+  runConfiguredCommand,
+  __runConfiguredCommandForTests,
+} from "./configured-command.js";
 export {
   parseAwaitInputSentinel,
   parseAwaitInputQuestionToolCall,

@@ -5,7 +5,7 @@ import {
   type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
   type ThinkingLevel,
   type WorkflowIr, type WorkflowFieldDefinition, type WorkflowColumnAgent, type TaskMoveLanes,
-  type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult,
+  type ApprovalRequestStore, type WorkspaceConfig,
 } from "@fusion/core";
 import type { ImplementationExit } from "./executor/implementation-exit.js";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
@@ -64,17 +64,6 @@ import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/wo
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 /* FNXC host for isBackwardMoveOutOfPlanning requirement history (body stays on TaskExecutor). */
 import "./executor/is-backward-move-out-of-planning.js";
-
-export async function __runConfiguredCommandForTests(
-  command: string,
-  cwd: string,
-  timeoutMs: number,
-  extraEnv?: NodeJS.ProcessEnv,
-  auditor?: RunAuditor,
-  signal?: AbortSignal,
-): Promise<RunCommandResult> {
-  return pure.runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal);
-}
 
 /* FNXC:CodeOrganization 2026-08-04-02:35: Orphan await-input/conventions JSDoc removed — lives on await-input-parse.ts + workflow-step-verdict.ts peels. */
 import type {
@@ -373,13 +362,10 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-06:15: isTaskLiveForOverseerRetry FNXC lives on is-task-live-for-overseer-retry.ts. */
   isTaskLiveForOverseerRetry(taskId: string): boolean {
-    return impl.isTaskLiveForOverseerRetryImpl(
-      {
-        ...facadeFields(this, ["resumingUnpaused"]),
-        ...facadeMethods(this, ["isTaskActive", "hasLiveTaskSessionSurface"]),
-      },
-      taskId,
-    );
+    return impl.isTaskLiveForOverseerRetryImpl({
+      ...facadeFields(this, ["resumingUnpaused"]),
+      ...facadeMethods(this, ["isTaskActive", "hasLiveTaskSessionSurface"]),
+    }, taskId);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:15: hasLiveSessionSurface / clearPhantom FNXC on has-live-session-surface.ts + clear-phantom-executor-binding.ts. */
