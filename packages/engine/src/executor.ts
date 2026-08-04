@@ -19,7 +19,6 @@ import { type VerificationResult } from "./execution/verification-utils.js";
 import type { ReviewResult } from "./execution/reviewer.js";
 import { ModelRegistry, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
-/* FNXC:Workspace 2026-06-21-15:00: F5/F8 workspace-path helpers are consumed via free peels / pure-bindings, not direct imports here. */
 import { activeSessionRegistry } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
@@ -50,6 +49,7 @@ import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executo
 import "./executor/is-backward-move-out-of-planning.js";
 import "./executor/task-executor-fields.js";
 import "./executor/facade-fnxc-pointers.js";
+import "./executor/executor-product-fnxc.js";
 
 import type { WorkflowStepOutcome } from "./executor/workflow-step-verdict.js";
 
@@ -77,7 +77,6 @@ export class TaskExecutor {
   private activeStepExecutorSeenSteeringIds = new Map<string, Set<string>>();
   private effectiveColumnAgentByTask = new Map<string, string>();
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
-  /** FNXC:TaskTiming 2026-07-30-21:40: graph-owned Plan Review sessions only (self-healing liveness). */
   private activePlanningWorkflowSessions = new Set<string>();
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
   private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
@@ -134,7 +133,6 @@ export class TaskExecutor {
   private currentRunContexts = new Map<string, RunMutationContext>();
   private getRunContextFor(taskId: string): RunMutationContext | undefined { return this.currentRunContexts.get(taskId); }
   private async handoffTaskToReview(...args: FacadeRestArgs<typeof impl.handoffTaskToReviewImpl>): Promise<Task> { return impl.handoffTaskToReviewImpl(bags.buildHandoffTaskToReviewDeps(this), ...args); }
-  /* FNXC:ReviewArtifacts 2026-07-19-10:00: best-effort feature-video before review handoff (never delays transition). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- optional reviewArtifactGenerator on options
   private async generateCompletionFeatureVideo(task: Task): Promise<void> { return impl.generateCompletionFeatureVideoImpl({ store: this.store, options: this.options as any }, task); }
   private async awaitFeatureVideoBounded(result: Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult>): Promise<import("./review-artifacts/feature-video.js").FeatureVideoResult> { return impl.awaitFeatureVideoBoundedImpl(result); }
@@ -145,7 +143,6 @@ export class TaskExecutor {
   /** Returns the set of task IDs currently being executed. */
   private taskLivenessDeps(): TaskLivenessDeps { return bags.buildTaskLivenessDeps(this, TaskExecutor.processWideGraphRouting); }
   getExecutingTaskIds(): Set<string> { return impl.getExecutingTaskIdsImpl(this.taskLivenessDeps()); }
-  /** FNXC:TaskTiming 2026-07-30-21:40: Plan Review liveness (narrower than isTaskActive). */
   hasActivePlanningWorkflowSession(taskId: string): boolean { return impl.hasActivePlanningWorkflowSessionImpl(this.taskLivenessDeps(), taskId); }
   isTaskActive(taskId: string): boolean { return impl.isTaskActiveImpl(this.taskLivenessDeps(), taskId); }
   isTaskLiveForOverseerRetry(taskId: string): boolean { return impl.isTaskLiveForOverseerRetryImpl({ ...facadeFields(this, ["resumingUnpaused"]), ...facadeMethods(this, ["isTaskActive", "hasLiveTaskSessionSurface"]) }, taskId); }
@@ -183,10 +180,7 @@ export class TaskExecutor {
   private async resumeApprovalAfterUnwindIfNeeded(...args: FacadeRestArgs<typeof impl.resumeApprovalAfterUnwindIfNeededImpl>): Promise<boolean> { return impl.resumeApprovalAfterUnwindIfNeededImpl(bags.buildResumeApprovalAfterUnwindDeps(this), ...args); }
   private async resolveMcpServers(agentId?: string | null) { return impl.resolveMcpServersImpl({ store: this.store }, agentId); }
   private outerConcurrencyClaims = new Set<string>();
-
-  /* FNXC:GlobalConcurrencyControls 2026-07-14-18:30: share scheduler pre-held global slot; no second top-level acquire under full cap. */
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> { return impl.runWithExecutorSemaphoreImpl(bags.buildRunWithExecutorSemaphoreDeps(this), taskId, work); }
-  /* FNXC:PlannerOversight 2026-07-13-23:05: session-advisor flush setter (options captured at construct). */
   setOnExecutorLogFlushed(cb: TaskExecutorOptions["onExecutorLogFlushed"]): void { this.options = { ...this.options, onExecutorLogFlushed: cb }; }
   constructor(private store: TaskStore, private rootDir: string, private options: TaskExecutorOptions = {}) {
     const wired = wireExecutorLifecycle(buildWireExecutorLifecycleDeps(this));
@@ -215,9 +209,7 @@ export class TaskExecutor {
   private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): Promise<boolean> { return impl.handleNonContinuableSessionErrorImpl(this.nonContinuableSessionDeps(), task, taskDone, errorMessage); }
   private async handleNonContinuableSessionRetry(task: Task, errorMessage: string): Promise<boolean> { return impl.handleNonContinuableSessionRetryImpl(this.nonContinuableSessionDeps(), task, errorMessage); }
   private async getTaskCompletionBlocker(task: Task): Promise<string | undefined> { return getTaskCompletionBlockerForStore(this.store, task); }
-  /** FNXC:TokenBudget 2026-07-16-00:00: persist-time budget enforcement for all executor token writes. */
   private async persistTaskTokenUsage(taskId: string, tokenUsage: TaskTokenUsage): Promise<void> { return impl.persistTaskTokenUsageImpl(this.storeRunContextDeps(), taskId, tokenUsage); }
-  /* FNXC:TokenAnalytics 2026-07-17-14:00: persistTokenUsage sole central writer; baselines feed that delta seam (no double-credit). */
   private async captureExecutorTokenUsageBaseline(taskId: string, session: AgentSession): Promise<void> { return impl.captureExecutorTokenUsageBaselineImpl({ tokenUsageBaselines: this.tokenUsageBaselines }, taskId, session); }
   private async persistTokenUsage(...args: FacadeRestArgs<typeof impl.persistTokenUsageImpl>): Promise<void> { return impl.persistTokenUsageImpl(bags.buildPersistTokenUsageDeps(this), ...args); }
   private accumulateTokenUsage(...args: Parameters<typeof impl.accumulateTokenUsageImpl>): ReturnType<typeof impl.accumulateTokenUsageImpl> { return impl.accumulateTokenUsageImpl(...args); }
@@ -246,17 +238,11 @@ export class TaskExecutor {
   private graphStepSessionPinned = new Set<string>();
   private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
   private graphStepActiveContext = new Map<string, ForeachActiveContext>();
-
-  /** FNXC:ProactiveChatStatus 2026-07-16-12:30: RETHINK summary held until rework reset succeeds. */
   private graphRethinkNarrations = new Map<string, string>();
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
   private graphUnattendedRuns = new Set<string>();
   private graphSeamGoverningNodeId = new Map<string, string>();
-
-  /** FNXC:Settings-ThinkingLevel 2026-07-10-00:00: per-run thinking pin for execute/step-execute seams. */
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
-
-  /** FNXC:WorkflowStepSkills 2026-07-22-00:00: FN-8490 skill pin for pass-initiating foreach instance. */
   private graphSeamSkillName = new Map<string, string>();
 
   /** FN-4811 process-wide graph routing (cross-instance execute() races). */
@@ -295,7 +281,6 @@ export class TaskExecutor {
   private async evaluateWorkflowMergeBoundary(...args: FacadeRestArgs<typeof impl.evaluateWorkflowMergeBoundaryImpl>): ReturnType<typeof impl.evaluateWorkflowMergeBoundaryImpl> { return impl.evaluateWorkflowMergeBoundaryImpl(bags.buildEvaluateWorkflowMergeBoundaryDeps(this), ...args); }
   private async loadMergeBoundaryInstances(...args: FacadeRestArgs<typeof impl.loadMergeBoundaryInstancesImpl>): ReturnType<typeof impl.loadMergeBoundaryInstancesImpl> { return impl.loadMergeBoundaryInstancesImpl({ store: this.store }, ...args); }
   private async getWorkflowMergeImplementationProofFailure(...args: FacadeRestArgs<typeof impl.getWorkflowMergeImplementationProofFailureImpl>): Promise<string | undefined> { return impl.getWorkflowMergeImplementationProofFailureImpl(bags.buildWorkflowMergeImplementationProofFailureDeps(this), ...args); }
-  /** FNXC:WorkflowMerge 2026-07-27-12:00: FN-8601 checklist/foreach merge admission gate. */
   private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): boolean { return impl.shouldCompleteChecklistAtWorkflowMergeImpl(task, proof); }
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings); }
   private async updateStepGraph(...args: FacadeRestArgs<typeof impl.updateStepGraphImpl>): Promise<void> { return impl.updateStepGraphImpl({ store: this.store }, ...args); }
@@ -393,7 +378,6 @@ export class TaskExecutor {
   private async handleBranchConflict(...args: FacadeRestArgs<typeof impl.handleBranchConflictImpl>): Promise<"retry" | "reclaimed" | "sticky"> { return impl.handleBranchConflictImpl(this.branchConflictHandleDeps(), ...args); }
   private async recoverMissingWorktreeSessionStartFailure(...args: FacadeRestArgs<typeof impl.recoverMissingWorktreeSessionStartFailureImpl>): Promise<false | "requeue-todo" | "escalate-exhausted"> { return impl.recoverMissingWorktreeSessionStartFailureImpl(bags.buildRecoverMissingWorktreeSessionStartFailureDeps(this), ...args); }
   private async emitWorktreeReanchoredAudit(...args: FacadeRestArgs<typeof impl.emitWorktreeReanchoredAuditImpl>): Promise<void> { return impl.emitWorktreeReanchoredAuditImpl(this.storeRunContextDeps(), ...args); }
-  /* FNXC:Workspace 2026-06-21-12:00: KTD2 flat-map each task Set to holder rows; reaper keys taskId (idempotent multi-row). */
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> { return impl.listWorktreeHoldersImpl(this.activeWorktrees); }
   private hasActiveWorktreeBinding(taskId: string, worktreePath: string): boolean { return pure.hasActiveWorktreeBinding(this.activeWorktrees, taskId, worktreePath); }
   private async shouldGenerateNewWorktreeName(conflictPath: string, currentTaskId: string): Promise<boolean> { return pure.shouldGenerateNewWorktreeName(this.activeWorktrees, this.store, conflictPath, currentTaskId); }
