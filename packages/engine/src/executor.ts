@@ -192,6 +192,12 @@ import {
   buildHandleLoopDetectedDeps,
   buildSendTaskBackForFixDeps,
   buildAbortAllInFlightDeps,
+  buildPerformWorkflowRerunBounceDeps,
+  buildExecuteReviewHandoffDeps,
+  buildHandleImplicitTaskDoneRefusalDeps,
+  buildCleanupTaskWorktreeDeps,
+  buildResumeTaskForAgentDeps,
+  buildHasLiveSessionSurfaceDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -815,13 +821,7 @@ export class TaskExecutor {
   */
   hasLiveSessionSurface(taskId: string): boolean {
     return hasLiveSessionSurfaceImpl(
-      {
-        ...facadeFields(this, [
-          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
-          "activeCliTaskSessions",
-        ]),
-        pathsForTask: (id) => activeSessionRegistry.pathsForTask(id),
-      },
+      buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)),
       taskId,
     );
   }
@@ -1260,12 +1260,7 @@ export class TaskExecutor {
     preserveResumeState: boolean = true,
   ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
     return performWorkflowRerunBounceImpl(
-      {
-        ...facadeFields(this, ["store", "workflowRerunPending"]),
-        ...facadeMethods(this, [
-          "getExecutionPauseLabel", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
-        ]),
-      },
+      buildPerformWorkflowRerunBounceDeps(this),
       taskId,
       worktreePath,
       preserveResumeState,
@@ -1399,12 +1394,7 @@ export class TaskExecutor {
     _sessionEntry: { session: AgentSession; seenSteeringIds: Set<string>; lastResolvedModelProvider?: string; lastResolvedModelId?: string; lastTaskModelProvider?: string | null; lastTaskModelId?: string | null; lastAssignedAgentId?: string | null },
   ): Promise<void> {
     return executeReviewHandoffImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ...facadeMethods(this, ["persistTokenUsage", "handoffTaskToReview", "deleteActiveSession"]),
-        activeSessions: this.activeSessions,
-        untrackStuckTask: (id) => { this.options.stuckTaskDetector?.untrackTask(id); },
-      },
+      buildExecuteReviewHandoffDeps(this),
       task,
       _session,
       _sessionEntry,
@@ -1616,13 +1606,7 @@ export class TaskExecutor {
 
   async resumeTaskForAgent(agentId: string): Promise<void> {
     return resumeTaskForAgentImpl(
-      {
-        ...facadeFields(this, [
-          "store", "executing", "activeSessions",
-          "activeStepExecutors", "activeWorkflowStepSessions",
-        ]),
-        ...facadeMethods(this, ["listWipLaneTasks", "taskEffectiveAgentMatches", "execute"]),
-      },
+      buildResumeTaskForAgentDeps(this),
       agentId,
     );
   }
@@ -3071,14 +3055,7 @@ export class TaskExecutor {
     refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
   ): Promise<void> {
     return handleImplicitTaskDoneRefusalImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
-          "deleteActiveSession",
-        ]),
-        clearTokenUsageBaseline: (taskId: string) => { this.tokenUsageBaselines.delete(taskId); },
-      },
+      buildHandleImplicitTaskDoneRefusalDeps(this),
       task,
       refusal,
     );
@@ -3661,18 +3638,10 @@ export class TaskExecutor {
   }
 
   async cleanup(taskId: string): Promise<void> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return cleanupTaskWorktreeImpl(
-      {
-        ...facadeFields(this, [
-          "store", "workspaceConfig", "activeWorktrees",
-        ]),
-        getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
-        removeOwnWorktreeWithReconcile: (...args: unknown[]) => (this as any).removeOwnWorktreeWithReconcile(...args),
-      },
+      buildCleanupTaskWorktreeDeps(this),
       taskId,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
   /**

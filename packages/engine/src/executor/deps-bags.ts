@@ -600,4 +600,61 @@ export function buildAbortAllInFlightDeps(host: any): any {
     ...facadeMethods(host, ["awaitAbortInFlightTaskWork"]),
   };
 }
+
+export function buildPerformWorkflowRerunBounceDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "workflowRerunPending"]),
+    ...facadeMethods(host, [
+      "getExecutionPauseLabel", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
+    ]),
+  };
+}
+
+export function buildExecuteReviewHandoffDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    ...facadeMethods(host, ["persistTokenUsage", "handoffTaskToReview", "deleteActiveSession"]),
+    activeSessions: host.activeSessions,
+    untrackStuckTask: (id: string) => { host.options.stuckTaskDetector?.untrackTask(id); },
+  };
+}
+
+export function buildHandleImplicitTaskDoneRefusalDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
+      "deleteActiveSession",
+    ]),
+    clearTokenUsageBaseline: (taskId: string) => { host.tokenUsageBaselines.delete(taskId); },
+  };
+}
+
+export function buildCleanupTaskWorktreeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "workspaceConfig", "activeWorktrees"]),
+    getActiveWorktreePaths: (id: string) => host.getActiveWorktreePaths(id),
+    removeOwnWorktreeWithReconcile: (...args: unknown[]) => host.removeOwnWorktreeWithReconcile(...args),
+  };
+}
+
+export function buildResumeTaskForAgentDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "store", "executing", "activeSessions",
+      "activeStepExecutors", "activeWorkflowStepSessions",
+    ]),
+    ...facadeMethods(host, ["listWipLaneTasks", "taskEffectiveAgentMatches", "execute"]),
+  };
+}
+
+export function buildHasLiveSessionSurfaceDeps(host: any, pathsForTask: (id: string) => unknown): any {
+  return {
+    ...facadeFields(host, [
+      "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+      "activeCliTaskSessions",
+    ]),
+    pathsForTask,
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
