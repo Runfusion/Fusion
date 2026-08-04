@@ -2,7 +2,7 @@
 export * from "./executor/executor-reexports.js";
 import {
   type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
-  dropPreHeldExecutorSlot, constants, impl, bags, type FacadeRestArgs, type FacadeAfterFirst,
+  dropPreHeldExecutorSlot, impl, bags, type FacadeRestArgs, type FacadeAfterFirst,
   wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorSessionFacades,
 } from "./executor/task-executor-imports.js";
 export class TaskExecutor extends TaskExecutorSessionFacades {
@@ -98,26 +98,4 @@ export class TaskExecutor extends TaskExecutorSessionFacades {
   async execute(task: Task): Promise<void> { try { await this.executeCore(task); } finally { if (dropPreHeldExecutorSlot(task.id)) this.options.semaphore?.release(); } }
   private async executeCore(task: Task): ReturnType<typeof impl.executeCoreImpl> { return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task); }
   private async runImplementation(...args: FacadeRestArgs<typeof impl.runImplementationImpl>): ReturnType<typeof impl.runImplementationImpl> { return impl.runImplementationImpl(bags.buildRunImplementationFacadeDeps(this), ...args); }
-  private createTaskUpdateTool(...args: FacadeRestArgs<typeof impl.createTaskUpdateToolImpl>): ReturnType<typeof impl.createTaskUpdateToolImpl> { return impl.createTaskUpdateToolImpl(bags.buildCreateTaskUpdateToolDeps(this), ...args); }
-  private createTaskAddDepTool(taskId: string): ReturnType<typeof impl.createTaskAddDepToolImpl> { return impl.createTaskAddDepToolImpl(bags.buildCreateTaskAddDepToolDeps(this), taskId); }
-  private async transitionReviewAddressing(taskId: string, from: Array<"queued" | "in-progress" | "addressed" | "failed">, to: "queued" | "in-progress" | "addressed" | "failed"): ReturnType<typeof impl.transitionReviewAddressingImpl> { return impl.transitionReviewAddressingImpl(this.store, taskId, from, to); }
-  private async verifyWorktreeInvariants(...args: FacadeRestArgs<typeof impl.verifyWorktreeInvariantsImpl>): ReturnType<typeof impl.verifyWorktreeInvariantsImpl> { return impl.verifyWorktreeInvariantsImpl(bags.buildWorktreeInvariantFacadeDeps(this), ...args); }
-  private async evaluateTaskDoneScopeLeak(...args: FacadeRestArgs<typeof impl.evaluateTaskDoneScopeLeakImpl>): ReturnType<typeof impl.evaluateTaskDoneScopeLeakImpl> { return impl.evaluateTaskDoneScopeLeakImpl(bags.buildEvaluateTaskDoneScopeLeakDeps(this), ...args); }
-  private async handleImplicitTaskDoneRefusal(...args: FacadeRestArgs<typeof impl.handleImplicitTaskDoneRefusalImpl>): ReturnType<typeof impl.handleImplicitTaskDoneRefusalImpl> { return impl.handleImplicitTaskDoneRefusalImpl(bags.buildHandleImplicitTaskDoneRefusalDeps(this), ...args); }
-  private createTaskDoneTool(...args: FacadeRestArgs<typeof impl.createTaskDoneToolImpl>): ReturnType<typeof impl.createTaskDoneToolImpl> { return impl.createTaskDoneToolImpl(bags.buildCreateTaskDoneToolDeps(this), ...args); }
-  private async handleDepAbortCleanup(taskId: string, worktreePath: string): ReturnType<typeof impl.handleDepAbortCleanupImpl> { return impl.handleDepAbortCleanupImpl(bags.buildHandleDepAbortCleanupDeps(this), taskId, worktreePath); }
-  private async reopenLastStepForRevision(...args: FacadeAfterFirst<typeof impl.reopenLastStepForRevisionImpl>): Promise<{ index: number; name: string; indexes: number[] } | null> { return impl.reopenLastStepForRevisionImpl(this.store, ...args); }
-  private async runExecutorDeterministicVerification(...args: FacadeRestArgs<typeof impl.runExecutorDeterministicVerificationImpl>): ReturnType<typeof impl.runExecutorDeterministicVerificationImpl> { return impl.runExecutorDeterministicVerificationImpl(bags.buildStoreRunContextDeps(this), ...args); }
-  private async attemptExecutorVerificationFix(...args: FacadeRestArgs<typeof impl.attemptExecutorVerificationFixImpl>): ReturnType<typeof impl.attemptExecutorVerificationFixImpl> { return impl.attemptExecutorVerificationFixImpl(bags.buildAttemptExecutorVerificationFixDeps(this), ...args); }
-  private async sendTaskBackForFix(...args: FacadeRestArgs<typeof impl.sendTaskBackForFixImpl>): ReturnType<typeof impl.sendTaskBackForFixImpl> { return impl.sendTaskBackForFixImpl(bags.buildSendTaskBackForFixDeps(this, constants.MAX_WORKFLOW_STEP_RETRIES), ...args); }
-  private async injectWorkflowStepFailureInstructions(...args: FacadeAfterFirst<typeof impl.injectWorkflowStepFailureInstructionsImpl>): ReturnType<typeof impl.injectWorkflowStepFailureInstructionsImpl> { return impl.injectWorkflowStepFailureInstructionsImpl(this.store, ...args); }
-  private async executeScriptWorkflowStep(...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>): Promise<{ success: boolean; output?: string; error?: string }> { return impl.executeScriptWorkflowStepImpl(bags.buildExecuteScriptWorkflowStepDeps(this), ...args); }
-  private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> { return impl.workflowInputRepliesAfterWatermarkImpl(task, marker); }
-  private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): ReturnType<typeof impl.resolveWorkflowInputMarkerForGraphNodeImpl> { return impl.resolveWorkflowInputMarkerForGraphNodeImpl(bags.buildStoreRunContextDeps(this), live, nodeId); }
-  private async executeWorkflowStep(...args: FacadeRestArgs<typeof impl.executeWorkflowStepImpl>): ReturnType<typeof impl.executeWorkflowStepImpl> { return impl.executeWorkflowStepImpl(bags.buildExecuteWorkflowStepDeps(this), ...args); }
-  private async tryBootstrapMisbindingRecovery(...args: FacadeRestArgs<typeof impl.tryBootstrapMisbindingRecoveryImpl>): ReturnType<typeof impl.tryBootstrapMisbindingRecoveryImpl> { return impl.tryBootstrapMisbindingRecoveryImpl(bags.buildTryBootstrapMisbindingRecoveryDeps(this), ...args); }
-  private async recoverApprovedStepsOnResume(taskId: string): ReturnType<typeof impl.recoverApprovedStepsOnResumeImpl> { return impl.recoverApprovedStepsOnResumeImpl(this.store, taskId); }
-  private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): ReturnType<typeof impl.reconcileStepsFromGitHistoryImpl> { return impl.reconcileStepsFromGitHistoryImpl(bags.buildReconcileStepsFromGitHistoryDeps(this), taskId, detail, worktreePath); }
-  private async resetStepsIfWorkLost(task: Task): ReturnType<typeof impl.resetStepsIfWorkLostImpl> { return impl.resetStepsIfWorkLostImpl(bags.buildResetStepsIfWorkLostDeps(this), task); }
-  private async resetLostWorkStepProgress(task: Task, completedStepCount: number, reason: string): ReturnType<typeof impl.resetLostWorkStepProgressImpl> { return impl.resetLostWorkStepProgressImpl({ store: this.store }, task, completedStepCount, reason); }
 }
