@@ -39,6 +39,7 @@ import "./executor/is-backward-move-out-of-planning.js";
 import "./executor/task-executor-fields.js";
 import "./executor/facade-fnxc-pointers.js";
 import "./executor/executor-product-fnxc.js";
+import "./executor/executor-method-docs.js";
 export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-options.js";
 import type { TaskExecutorOptions, ActiveExecutorSessionState } from "./executor/task-executor-options.js";
 export class TaskExecutor {
@@ -125,7 +126,6 @@ export class TaskExecutor {
   private get approvalRequestStore(): ApprovalRequestStore { return impl.getApprovalRequestStoreImpl({ getCache: () => this._approvalRequestStore, setCache: (value) => { this._approvalRequestStore = value; }, store: this.store }); }
   private buildActionGateContext(...args: FacadeRestArgs<typeof impl.buildActionGateContextImpl>): ReturnType<typeof impl.buildActionGateContextImpl> { return impl.buildActionGateContextImpl(bags.buildBuildActionGateContextDeps(this), ...args); }
   private buildPermanentAgentGatingContext(...args: FacadeRestArgs<typeof impl.buildPermanentAgentGatingContextImpl>): ReturnType<typeof impl.buildPermanentAgentGatingContextImpl> { return impl.buildPermanentAgentGatingContextImpl(bags.buildBuildPermanentAgentGatingContextDeps(this), ...args); }
-  /** Returns the set of task IDs currently being executed. */
   private taskLivenessDeps(): TaskLivenessDeps { return bags.buildTaskLivenessDeps(this, TaskExecutor.processWideGraphRouting); }
   getExecutingTaskIds(): Set<string> { return impl.getExecutingTaskIdsImpl(this.taskLivenessDeps()); }
   hasActivePlanningWorkflowSession(taskId: string): boolean { return impl.hasActivePlanningWorkflowSessionImpl(this.taskLivenessDeps(), taskId); }
@@ -155,7 +155,6 @@ export class TaskExecutor {
     );
     return !forwardTargets.includes(to);
   }
-  /** FN-5256: register in-flight disposal so re-dispatch awaits prior session reap. */
   private trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   async awaitAbortInFlightTaskWork(...args: FacadeRestArgs<typeof impl.awaitAbortInFlightTaskWorkImpl>): ReturnType<typeof impl.awaitAbortInFlightTaskWorkImpl> { return impl.awaitAbortInFlightTaskWorkImpl(bags.buildAwaitAbortInFlightTaskWorkDeps(this), ...args); }
   async abortAllInFlight(reason: string): Promise<void> { return impl.abortAllInFlightImpl(bags.buildAbortAllInFlightDeps(this), reason); }
@@ -201,22 +200,18 @@ export class TaskExecutor {
   private tokenUsageWithModelSnapshot(...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl> { return impl.tokenUsageWithModelSnapshotImpl(...args); }
   private async extractSessionTokenUsage(...args: Parameters<typeof impl.extractSessionTokenUsageImpl>): ReturnType<typeof impl.extractSessionTokenUsageImpl> { return impl.extractSessionTokenUsageImpl(...args); }
   private async executeReviewHandoff(...args: FacadeRestArgs<typeof impl.executeReviewHandoffImpl>): ReturnType<typeof impl.executeReviewHandoffImpl> { return impl.executeReviewHandoffImpl(bags.buildExecuteReviewHandoffDeps(this), ...args); }
-  /** Fast-path completed task → in-review without a new agent session. */
   async recoverCompletedTask(task: Task): Promise<boolean> { return impl.recoverCompletedTaskImpl(bags.buildRecoverCompletedTaskDeps(this), task); }
   private async parkPlanReviewReplanCapExhausted(...args: FacadeRestArgs<typeof impl.parkPlanReviewReplanCapExhaustedImpl>): ReturnType<typeof impl.parkPlanReviewReplanCapExhaustedImpl> { return impl.parkPlanReviewReplanCapExhaustedImpl(this.storeRunContextDeps(), ...args); }
   private async requestPreMergeOptionalStepFix(...args: FacadeRestArgs<typeof impl.requestPreMergeOptionalStepFixImpl>): ReturnType<typeof impl.requestPreMergeOptionalStepFixImpl> { return impl.requestPreMergeOptionalStepFixImpl(bags.buildRequestPreMergeOptionalStepFixDeps(this), ...args); }
   private async recoverMissingRequiredArtifacts(...args: FacadeRestArgs<typeof impl.recoverMissingRequiredArtifactsImpl>): ReturnType<typeof impl.recoverMissingRequiredArtifactsImpl> { return impl.recoverMissingRequiredArtifactsImpl(bags.buildRecoverMissingRequiredArtifactsDeps(this), ...args); }
   private async isRequiredArtifactRecoveryProtected(task: Task): ReturnType<typeof impl.isRequiredArtifactRecoveryProtectedImpl> { return impl.isRequiredArtifactRecoveryProtectedImpl(this.store, (taskId: string) => this.resolveResumeLanes(taskId), task); }
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> { return impl.recoverFailedPreMergeWorkflowStepImpl(bags.buildRecoverFailedPreMergeWorkflowStepDeps(this), task); }
-  /** Defer execute when permanent agent has active heartbeat and allowParallelExecution=false. */
   private async shouldDeferForHeartbeat(agentId: string): ReturnType<typeof impl.shouldDeferForHeartbeatImpl> { return impl.shouldDeferForHeartbeatImpl({ agentStore: this.options.agentStore }, agentId); }
   private async getAuthoritativeAssignedAgent(...args: FacadeRestArgs<typeof impl.getAuthoritativeAssignedAgentImpl>): ReturnType<typeof impl.getAuthoritativeAssignedAgentImpl> { return impl.getAuthoritativeAssignedAgentImpl(bags.buildGetAuthoritativeAssignedAgentDeps(this), ...args); }
   private async getAssignedAgentRuntimeConfig(...args: FacadeRestArgs<typeof impl.getAssignedAgentRuntimeConfigImpl>): ReturnType<typeof impl.getAssignedAgentRuntimeConfigImpl> { return impl.getAssignedAgentRuntimeConfigImpl(bags.buildGetAssignedAgentRuntimeConfigDeps(this), ...args); }
   private async listWipLaneTasks(): ReturnType<typeof impl.listWipLaneTasksImpl> { return impl.listWipLaneTasksImpl(this.store); }
   async resumeTaskForAgent(agentId: string): Promise<void> { return impl.resumeTaskForAgentImpl(bags.buildResumeTaskForAgentDeps(this), agentId); }
-  /** Column-agent U5/R6: effective principal matches agentId (fail-soft → false). */
   private async taskEffectiveAgentMatches(task: Task, agentId: string): ReturnType<typeof impl.taskEffectiveAgentMatchesImpl> { return impl.taskEffectiveAgentMatchesImpl(this.store, task, agentId); }
-  /** Resume orphaned in-progress tasks after crash/restart (complete → in-review fast path). */
   async resumeOrphaned(): Promise<void> { return impl.resumeOrphanedImpl(bags.buildResumeOrphanedDeps(this, TaskExecutor.processWideGraphRouting)); }
   private async resolveInstructionsForRole(role: string, settings?: Settings): ReturnType<typeof impl.resolveInstructionsForRoleImpl> { return impl.resolveInstructionsForRoleImpl(bags.buildResolveInstructionsForRoleDeps(this), role, settings); }
   private graphToolFailureRunCursors = new Map<string, number>();
@@ -230,7 +225,6 @@ export class TaskExecutor {
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
   private graphSeamSkillName = new Map<string, string>();
 
-  /** FN-4811 process-wide graph routing (cross-instance execute() races). */
   private get graphRouting(): Set<string> { return TaskExecutor.processWideGraphRouting; }
   private static processWideGraphRouting = new Set<string>();
   private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
@@ -238,27 +232,20 @@ export class TaskExecutor {
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void { this.mergeRequester = requestMerge; }
   private async executeWorkflowGraph(...args: FacadeRestArgs<typeof impl.executeWorkflowGraphImpl>): ReturnType<typeof impl.executeWorkflowGraphImpl> { return impl.executeWorkflowGraphImpl(bags.buildExecuteWorkflowGraphDeps(this), ...args); }
   private buildBranchPersistence(): ReturnType<typeof impl.buildBranchPersistenceImpl> { return impl.buildBranchPersistenceImpl({ store: this.store }); }
-  /** Graph foreach instance persistence (KTD-6); undefined on pre-CRUD stores. */
   private buildStepInstancePersistence(): ReturnType<typeof impl.buildStepInstancePersistenceImpl> { return impl.buildStepInstancePersistenceImpl({ store: this.store }); }
   private async advanceNoMergeWorkflowToCompleteColumn(task: TaskDetail): ReturnType<typeof impl.advanceNoMergeWorkflowToCompleteColumnImpl> { return impl.advanceNoMergeWorkflowToCompleteColumnImpl(this.store, task); }
   private buildColumnBoundaryHooks(task: Pick<Task, "id">, workflowRunId?: string): ReturnType<typeof impl.buildColumnBoundaryHooksImpl> { return impl.buildColumnBoundaryHooksImpl(bags.buildColumnBoundaryHooksFacadeDeps(this), task, workflowRunId); }
-  /** KTD-12 parse-steps artifact/parser for graph-owned step lists (undefined = legacy). */
   private resolveTaskStepSource(ir: WorkflowIr | undefined): { artifact: string; parser: string } | undefined { return impl.resolveTaskStepSourceImpl(ir); }
-  /** KTD-13 workflow custom field defs for prompt surface (fail-soft → undefined). */
   private async resolveTaskCustomFieldDefs(taskId: string): ReturnType<typeof impl.resolveTaskCustomFieldDefsImpl> { return impl.resolveTaskCustomFieldDefsImpl({ store: this.store }, taskId); }
-  /** Task artifact by key (PROMPT.md falls back to task PROMPT content). */
   private async readTaskArtifact(taskId: string, key: string): ReturnType<typeof impl.readTaskArtifactImpl> { return impl.readTaskArtifactImpl({ store: this.store }, taskId, key); }
   private buildParseStepsDeps(runId?: string): ReturnType<typeof impl.buildParseStepsDepsImpl> { return impl.buildParseStepsDepsImpl(bags.buildParseStepsFacadeDeps(this), runId); }
-  /** KTD-15/U14 code-node runner (worktree cwd, artifact pre-read, customFields). */
   private buildCodeNodeRunner(): ReturnType<typeof impl.buildCodeNodeRunnerImpl> { return impl.buildCodeNodeRunnerImpl(bags.buildCodeNodeRunnerFacadeDeps(this)); }
   private buildForeachWorktreeDeps(...args: FacadeRestArgs<typeof impl.buildForeachWorktreeDepsImpl>): ReturnType<typeof impl.buildForeachWorktreeDepsImpl> { return impl.buildForeachWorktreeDepsImpl(bags.buildBuildForeachWorktreeDepsDeps(this), ...args); }
   private async applyGraphRethinkReset(...args: FacadeRestArgs<typeof impl.applyGraphRethinkResetImpl>): ReturnType<typeof impl.applyGraphRethinkResetImpl> { return impl.applyGraphRethinkResetImpl(bags.buildApplyGraphRethinkResetDeps(this), ...args); }
   private async runImplementationPhase(...args: FacadeRestArgs<typeof impl.runImplementationPhaseImpl>): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> { return impl.runImplementationPhaseImpl(bags.buildRunImplementationPhaseDeps(this), ...args); }
   private async runGraphTaskStep(...args: FacadeRestArgs<typeof impl.runGraphTaskStepImpl>): Promise<{ success: boolean; error?: string; exit?: ImplementationExit }> { return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args); }
-  /** Active foreach instance for graph-owned task (undefined outside foreach body). */
   private foreachActiveForTask(taskId: string, instanceId?: string): ReturnType<typeof impl.foreachActiveForTaskImpl> { return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId); }
   private async runProjectedGraphTaskStep(...args: FacadeRestArgs<typeof impl.runProjectedGraphTaskStepImpl>): ReturnType<typeof impl.runProjectedGraphTaskStepImpl> { return impl.runProjectedGraphTaskStepImpl(bags.buildRunProjectedGraphTaskStepDeps(this), ...args); }
-  /** Public authoritative-driver seam factory (same real lifecycle seams as internal graph runner). */
   public createAuthoritativeWorkflowPrimitives(settings: Settings): WorkflowRuntimePrimitives { return createWorkflowRuntimePrimitiveProvider((providerSettings) => this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings)).create(settings); }
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): ReturnType<typeof impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl> { return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings); }
   private async resolveMergeBoundaryColumn(taskId: string, nodeId: string): ReturnType<typeof impl.resolveMergeBoundaryColumnImpl> { return impl.resolveMergeBoundaryColumnImpl({ store: this.store }, taskId, nodeId); }
@@ -269,27 +256,21 @@ export class TaskExecutor {
   private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail, proof?: { complete: boolean }): ReturnType<typeof impl.shouldCompleteChecklistAtWorkflowMergeImpl> { return impl.shouldCompleteChecklistAtWorkflowMergeImpl(task, proof); }
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams { return impl.createAuthoritativeWorkflowSeamsImpl(bags.buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings); }
   private async updateStepGraph(...args: FacadeRestArgs<typeof impl.updateStepGraphImpl>): ReturnType<typeof impl.updateStepGraphImpl> { return impl.updateStepGraphImpl({ store: this.store }, ...args); }
-  /** Await-input node: park awaiting-user-input; resume consumes steering as answer. */
   private async runAwaitInputNode(node: WorkflowIrNode, live: TaskDetail): ReturnType<typeof impl.runAwaitInputNodeImpl> { return impl.runAwaitInputNodeImpl(this.storeRunContextDeps(), node, live); }
   private async pauseForCliApproval(node: WorkflowIrNode, live: TaskDetail, command: string): ReturnType<typeof impl.pauseForCliApprovalImpl> { return impl.pauseForCliApprovalImpl(this.storeRunContextDeps(), node, live, command); }
-  /** Run an arbitrary (approved) CLI command in the task worktree, supervised. */
   private async runRawCliCommand(...args: FacadeRestArgs<typeof impl.runRawCliCommandImpl>): Promise<{ success: boolean; output?: string; error?: string }> { return impl.runRawCliCommandImpl(bags.buildRunRawCliCommandDeps(this, pure.runConfiguredCommand), ...args); }
-  /** Column-agent U3 adoption for custom nodes (R8 fail-soft → undefined). */
   private async adoptColumnAgentForNode(...args: FacadeRestArgs<typeof impl.adoptColumnAgentForNodeImpl>): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> { return impl.adoptColumnAgentForNodeImpl(bags.buildAdoptColumnAgentForNodeDeps(this), ...args); }
   private async resolveSeamColumnAgent(...args: FacadeRestArgs<typeof impl.resolveSeamColumnAgentImpl>): Promise<{ agent: Agent; mode: WorkflowColumnAgent["mode"] | undefined } | undefined> { return impl.resolveSeamColumnAgentImpl(bags.buildResolveSeamColumnAgentDeps(this), ...args); }
   private resolveEffectivePrincipalId(...args: FacadeRestArgs<typeof impl.resolveEffectivePrincipalIdImpl>): ReturnType<typeof impl.resolveEffectivePrincipalIdImpl> { return impl.resolveEffectivePrincipalIdImpl(bags.buildResolveEffectivePrincipalIdDeps(this), ...args); }
   isAgentEffectivelyExecuting(agentId: string): boolean { return impl.isAgentEffectivelyExecutingImpl(this.effectiveColumnAgentByTask, agentId); }
-  /** Plugin-injected taskEnv (scoped; never mutates process.env). Shared by agentWork + graph skill steps. */
   private async buildInjectedRuntimeEnv(...args: FacadeRestArgs<typeof impl.buildInjectedRuntimeEnvImpl>): Promise<{ env: NodeJS.ProcessEnv; injectedKeyCount: number; pathEntryCount: number }> { return impl.buildInjectedRuntimeEnvImpl(bags.buildInjectedRuntimeEnvDeps(this), ...args); }
   private async ensureGraphCustomNodeWorktree(...args: FacadeRestArgs<typeof impl.ensureGraphCustomNodeWorktreeImpl>): ReturnType<typeof impl.ensureGraphCustomNodeWorktreeImpl> { return impl.ensureGraphCustomNodeWorktreeImpl(bags.buildEnsureGraphCustomNodeWorktreeDeps(this, pure.runConfiguredCommand), ...args); }
   public async releasePreExecutionWorktree(...args: FacadeRestArgs<typeof impl.releasePreExecutionWorktreeImpl>): ReturnType<typeof impl.releasePreExecutionWorktreeImpl> { return impl.releasePreExecutionWorktreeImpl(bags.buildReleasePreExecutionWorktreeDeps(this), ...args); }
   public async ensureTaskWorktreeForPlanning(taskId: string): Promise<string | null> { return impl.ensureTaskWorktreeForPlanningImpl(bags.buildEnsureTaskWorktreeForPlanningDeps(this), taskId); }
   private async prepareGraphNodeExecution(...args: FacadeRestArgs<typeof impl.prepareGraphNodeExecutionImpl>): ReturnType<typeof impl.prepareGraphNodeExecutionImpl> { return impl.prepareGraphNodeExecutionImpl(bags.buildPrepareGraphNodeExecutionDeps(this), ...args); }
   private async finalizeMergeConfirmedWorkflowGraphTask(...args: FacadeRestArgs<typeof impl.finalizeMergeConfirmedWorkflowGraphTaskImpl>): ReturnType<typeof impl.finalizeMergeConfirmedWorkflowGraphTaskImpl> { return impl.finalizeMergeConfirmedWorkflowGraphTaskImpl(bags.buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(this), ...args); }
-  /** Custom (non-seam) graph node via WorkflowStep machinery; columnBinding U3/R precedence. */
   private async runGraphCustomNode(...args: FacadeRestArgs<typeof impl.runGraphCustomNodeImpl>): ReturnType<typeof impl.runGraphCustomNodeImpl> { return impl.runGraphCustomNodeImpl(bags.buildRunGraphCustomNodeDeps(this), ...args); }
   private async runCliAgentNode(...args: FacadeRestArgs<typeof impl.runCliAgentNodeImpl>): ReturnType<typeof impl.runCliAgentNodeImpl> { return impl.runCliAgentNodeImpl(bags.buildRunCliAgentNodeDeps(this), ...args); }
-  /** U7 CLI handoff: graceful PTY reap as completed (best-effort; never blocks advancement). */
   private async reapCliTaskSessionForHandoff(session: CliTaskSession, taskId: string): ReturnType<typeof impl.reapCliTaskSessionForHandoffImpl> { return impl.reapCliTaskSessionForHandoffImpl(session, taskId); }
   private sessionContentionHoldAttempts = new Map<string, number>();
   private clearSessionContentionHold(taskId: string): void { this.sessionContentionHoldAttempts.delete(taskId); }
@@ -301,7 +282,6 @@ export class TaskExecutor {
   private async resolveFailedPreMergeWorkflowStepBudget(...args: FacadeAfterFirst<typeof impl.resolveFailedPreMergeWorkflowStepBudgetImpl>): ReturnType<typeof impl.resolveFailedPreMergeWorkflowStepBudgetImpl> { return impl.resolveFailedPreMergeWorkflowStepBudgetImpl({ store: this.store }, ...args); }
   private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): ReturnType<typeof impl.isLiveSharedBranchGroupMemberImpl> { return impl.isLiveSharedBranchGroupMemberImpl({ store: this.store, rootDir: this.rootDir }, live); }
   private async routeRetryableRemediationGraphFailureToPreMergeFix(...args: FacadeRestArgs<typeof impl.routeRetryableRemediationGraphFailureToPreMergeFixImpl>): ReturnType<typeof impl.routeRetryableRemediationGraphFailureToPreMergeFixImpl> { return impl.routeRetryableRemediationGraphFailureToPreMergeFixImpl(bags.buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(this), ...args); }
-  /* Shared resumeLanesMemo: one snapshot for handleGraphFailure recovery paths (avoid disagreeing re-resolve). */
   private async isRetryableBenignMergePauseAbort(...args: FacadeRestArgs<typeof impl.isRetryableBenignMergePauseAbortImpl>): ReturnType<typeof impl.isRetryableBenignMergePauseAbortImpl> { return impl.isRetryableBenignMergePauseAbortImpl(bags.buildResumeLaneClassifierDeps(this), ...args); }
   private async isBenignManualMergeHoldPauseAbort(...args: FacadeRestArgs<typeof impl.isBenignManualMergeHoldPauseAbortImpl>): ReturnType<typeof impl.isBenignManualMergeHoldPauseAbortImpl> { return impl.isBenignManualMergeHoldPauseAbortImpl(bags.buildResumeLaneClassifierDeps(this), ...args); }
   private async handleStaleInReviewPlanPauseAbortReplay(...args: FacadeRestArgs<typeof impl.handleStaleInReviewPlanPauseAbortReplayImpl>): ReturnType<typeof impl.handleStaleInReviewPlanPauseAbortReplayImpl> { return impl.handleStaleInReviewPlanPauseAbortReplayImpl(bags.buildHandleStaleInReviewPlanPauseAbortReplayDeps(this), ...args); }
@@ -312,7 +292,6 @@ export class TaskExecutor {
   private async routeGraphMergeFailureToRetry(...args: FacadeRestArgs<typeof impl.routeGraphMergeFailureToRetryImpl>): ReturnType<typeof impl.routeGraphMergeFailureToRetryImpl> { return impl.routeGraphMergeFailureToRetryImpl(bags.buildRouteGraphMergeFailureToRetryDeps(this), ...args); }
   private async routeImplementationIncompleteMergeGraphFailure(...args: FacadeRestArgs<typeof impl.routeImplementationIncompleteMergeGraphFailureImpl>): ReturnType<typeof impl.routeImplementationIncompleteMergeGraphFailureImpl> { return impl.routeImplementationIncompleteMergeGraphFailureImpl(bags.buildRouteImplementationIncompleteMergeGraphFailureDeps(this), ...args); }
   private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): ReturnType<typeof impl.hasTrailingConsecutiveToolFailuresImpl> { return impl.hasTrailingConsecutiveToolFailuresImpl({ store: this.store }, taskId, cursor, threshold); }
-  /** Terminal graph failure: park in review for human action (never leave invisible in-progress). */
   private async handleGraphFailure(task: Task, result: WorkflowGraphTaskRunResult): ReturnType<typeof impl.handleGraphFailureImpl> { return impl.handleGraphFailureImpl(bags.buildHandleGraphFailureDeps(this), task, result); }
   private async routeGraphFailureToExecutionResume(...args: FacadeRestArgs<typeof impl.routeGraphFailureToExecutionResumeImpl>): ReturnType<typeof impl.routeGraphFailureToExecutionResumeImpl> { return impl.routeGraphFailureToExecutionResumeImpl(bags.buildRouteGraphFailureToExecutionResumeDeps(this), ...args); }
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): ReturnType<typeof impl.routeResetParsePinMismatchToRetryImpl> { return impl.routeResetParsePinMismatchToRetryImpl(bags.buildRouteResetParsePinMismatchToRetryDeps(this), live); }
@@ -330,7 +309,6 @@ export class TaskExecutor {
   private async executeCore(task: Task): ReturnType<typeof impl.executeCoreImpl> { return impl.executeCoreImpl(bags.buildExecuteCoreDeps(this), task); }
   private async runImplementation(...args: FacadeRestArgs<typeof impl.runImplementationImpl>): ReturnType<typeof impl.runImplementationImpl> { return impl.runImplementationImpl(bags.buildRunImplementationFacadeDeps(this), ...args); }
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps { return bags.buildSharedWorkerToolsDeps(this); }
-  // Custom tools for the worker agent
 
   private createTaskUpdateTool(...args: FacadeRestArgs<typeof impl.createTaskUpdateToolImpl>): ReturnType<typeof impl.createTaskUpdateToolImpl> { return impl.createTaskUpdateToolImpl(bags.buildCreateTaskUpdateToolDeps(this), ...args); }
   private createTaskAddDepTool(taskId: string): ReturnType<typeof impl.createTaskAddDepToolImpl> { return impl.createTaskAddDepToolImpl(bags.buildCreateTaskAddDepToolDeps(this), taskId); }
@@ -350,9 +328,7 @@ export class TaskExecutor {
   private async captureWorkspaceModifiedFiles(...args: Parameters<typeof impl.captureWorkspaceModifiedFilesImpl>): ReturnType<typeof impl.captureWorkspaceModifiedFilesImpl> { return impl.captureWorkspaceModifiedFilesImpl(...args); }
   private async reviewWorkspacePerRepo(...args: Parameters<typeof impl.reviewWorkspacePerRepoImpl>): ReturnType<typeof impl.reviewWorkspacePerRepoImpl> { return impl.reviewWorkspacePerRepoImpl(...args); }
   private async captureUncommittedModifiedFiles(worktreePath: string): ReturnType<typeof impl.captureUncommittedModifiedFilesImpl> { return impl.captureUncommittedModifiedFilesImpl(worktreePath); }
-  // Worktree management
 
-  /** Execute a script-mode workflow step (scriptName → project settings command in worktree). */
   private async executeScriptWorkflowStep(...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>): Promise<{ success: boolean; output?: string; error?: string }> { return impl.executeScriptWorkflowStepImpl(bags.buildExecuteScriptWorkflowStepDeps(this, pure.runConfiguredCommand), ...args); }
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> { return impl.workflowInputRepliesAfterWatermarkImpl(task, marker); }
   private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): ReturnType<typeof impl.resolveWorkflowInputMarkerForGraphNodeImpl> { return impl.resolveWorkflowInputMarkerForGraphNodeImpl(this.storeRunContextDeps(), live, nodeId); }
@@ -386,22 +362,18 @@ export class TaskExecutor {
   private async rebaseNewWorktreeOntoRemote(...args: FacadeAfterSecond<typeof impl.rebaseNewWorktreeOntoRemoteImpl>): ReturnType<typeof impl.rebaseNewWorktreeOntoRemoteImpl> { return impl.rebaseNewWorktreeOntoRemoteImpl(this.rootDir, this.store, ...args); }
   private async createWorktree(...args: FacadeRestArgs<typeof impl.createWorktreeImpl>): Promise<{ path: string; branch: string }> { return impl.createWorktreeImpl(bags.buildCreateWorktreeFacadeDeps(this, bindTryCreateWorktree(this)), ...args); }
   private async removeOwnWorktreeWithReconcile(...args: FacadeRestArgs<typeof pure.removeOwnWorktreeWithReconcile>): ReturnType<typeof pure.removeOwnWorktreeWithReconcile> { return pure.removeOwnWorktreeWithReconcile(bags.buildRemoveOwnWorktreeWithReconcileDeps(this), ...args); }
-  /** Remove only this executor's store-scoped lifecycle disposer registrations. */
   disposeStoreLifecycleDisposers(): void { impl.disposeStoreLifecycleDisposersImpl(bags.buildDisposeStoreLifecycleDisposersDeps(this)); }
   async cleanup(taskId: string): Promise<void> { return impl.cleanupTaskWorktreeImpl(bags.buildCleanupTaskWorktreeDeps(this), taskId); }
   private async recoverApprovedStepsOnResume(taskId: string): ReturnType<typeof impl.recoverApprovedStepsOnResumeImpl> { return impl.recoverApprovedStepsOnResumeImpl(this.store, taskId); }
   private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): ReturnType<typeof impl.reconcileStepsFromGitHistoryImpl> { return impl.reconcileStepsFromGitHistoryImpl(bags.buildReconcileStepsFromGitHistoryDeps(this), taskId, detail, worktreePath); }
-  /** Stuck-kill: reset done steps when branch has no unique commits (lost uncommitted work). */
   private async resetStepsIfWorkLost(task: Task): ReturnType<typeof impl.resetStepsIfWorkLostImpl> { return impl.resetStepsIfWorkLostImpl(bags.buildResetStepsIfWorkLostDeps(this), task); }
   private async resetLostWorkStepProgress(task: Task, completedStepCount: number, reason: string): ReturnType<typeof impl.resetLostWorkStepProgressImpl> { return impl.resetLostWorkStepProgressImpl({ store: this.store }, task, completedStepCount, reason); }
   markStuckAborted(...args: FacadeRestArgs<typeof impl.markStuckAbortedImpl>): ReturnType<typeof impl.markStuckAbortedImpl> { return impl.markStuckAbortedImpl(bags.buildMarkStuckAbortedDeps(this), ...args); }
   async handleLoopDetected(...args: FacadeRestArgs<typeof impl.handleLoopDetectedImpl>): ReturnType<typeof impl.handleLoopDetectedImpl> { return impl.handleLoopDetectedImpl(bags.buildHandleLoopDetectedDeps(this), ...args); }
   getWorktreePath(taskId: string): string | undefined { return impl.getWorktreePathImpl(this.workspaceConfig, (id) => this.getActiveWorktreePaths(id), taskId); }
-  // Agent spawning
 
   private async terminateAllChildren(parentTaskId: string): ReturnType<typeof impl.terminateAllChildrenImpl> { return impl.terminateAllChildrenImpl(bags.buildTerminateAllChildrenDeps(this), parentTaskId); }
   private async terminateChildAgent(childId: string): ReturnType<typeof impl.terminateChildAgentImpl> { return impl.terminateChildAgentImpl(bags.buildTerminateChildAgentDeps(this), childId); }
-  /** Run a spawned child agent's task to completion (state transitions + cleanup). */
   private async runSpawnedChild(...args: FacadeRestArgs<typeof impl.runSpawnedChildImpl>): ReturnType<typeof impl.runSpawnedChildImpl> { return impl.runSpawnedChildImpl(bags.buildRunSpawnedChildDeps(this), ...args); }
   private createSpawnAgentTool(...args: FacadeRestArgs<typeof impl.createSpawnAgentToolImpl>): ReturnType<typeof impl.createSpawnAgentToolImpl> { return impl.createSpawnAgentToolImpl(bags.buildCreateSpawnAgentToolDeps(this), ...args); }
 }
