@@ -152,9 +152,7 @@ export class TaskExecutor {
   private userCanceledTaskIds = new Set<string>();
   /** Run-local marker: graph execute self-requeued for recoverable repair (outer failure sink must not overwrite). */
   private graphExecuteSelfRequeued = new Set<string>();
-  /** In-memory loop recovery state per task. Keyed by taskId, not persisted.
-   *  Tracks compact-and-resume attempt count per execute() lifecycle.
-   *  Reset at execute() lifecycle end (finally block). */
+  /** In-memory loop recovery state per task (compact-and-resume attempts; reset at execute finally). */
   private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
   /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
   private spawnedAgents = new Map<string, Set<string>>();
@@ -418,10 +416,7 @@ export class TaskExecutor {
   private async resolveMcpServers(agentId?: string | null) {
     return impl.resolveMcpServersImpl({ store: this.store }, agentId);
   }
-  /**
-   * Tasks whose graph run already owns a top-level concurrency slot (scheduler pre-held handoff).
-   * Seam re-entry under that graph must not acquire a second slot.
-   */
+  /** Tasks whose graph run already owns a top-level concurrency slot (scheduler pre-held handoff). */
   private outerConcurrencyClaims = new Set<string>();
 
   /* FNXC:GlobalConcurrencyControls 2026-07-14-18:30: share scheduler pre-held global slot; no second top-level acquire under full cap. */
@@ -717,10 +712,7 @@ export class TaskExecutor {
     return impl.runGraphTaskStepImpl(bags.buildRunGraphTaskStepDeps(this), ...args);
   }
 
-  /** Read the active foreach instance context for a graph-owned task (if any) so
-   *  the step driver can honor `deferDoneToReview`. The active context is threaded
-   *  through the foreach sub-walk; we surface it via a per-task slot the
-   *  step-execute seam stamps. Returns undefined outside a foreach instance. */
+  /** Active foreach instance for graph-owned task (undefined outside foreach body). */
   private foreachActiveForTask(taskId: string, instanceId?: string): ForeachActiveContext | undefined {
     return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId);
   }
@@ -1087,10 +1079,7 @@ export class TaskExecutor {
 
   // ── Worktree management ────────────────────────────────────────────
 
-  /**
-   * Execute a script-mode workflow step by resolving the scriptName to a command
-   * from project settings and running it in the task worktree.
-   */
+  /** Execute a script-mode workflow step (scriptName → project settings command in worktree). */
   private async executeScriptWorkflowStep(
     ...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
@@ -1286,10 +1275,7 @@ export class TaskExecutor {
   private async terminateChildAgent(childId: string): Promise<void> {
     return impl.terminateChildAgentImpl(bags.buildTerminateChildAgentDeps(this), childId);
   }
-  /**
-   * Run a spawned child agent's task to completion.
-   * Handles state transitions and cleanup.
-   */
+  /** Run a spawned child agent's task to completion (state transitions + cleanup). */
   private async runSpawnedChild(
     ...args: FacadeRestArgs<typeof impl.runSpawnedChildImpl>
   ): Promise<void>  {
