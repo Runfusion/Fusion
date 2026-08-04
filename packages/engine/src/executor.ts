@@ -2,7 +2,7 @@
 export * from "./executor/executor-reexports.js";
 import {
   type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider, type AgentSession,
-  dropPreHeldExecutorSlot, getTaskCompletionBlockerForStore, constants, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
+  dropPreHeldExecutorSlot, getTaskCompletionBlockerForStore, constants, impl, bags, facadeFields, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
   bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorSessionFacades,
 } from "./executor/task-executor-imports.js";
 export class TaskExecutor extends TaskExecutorSessionFacades {
