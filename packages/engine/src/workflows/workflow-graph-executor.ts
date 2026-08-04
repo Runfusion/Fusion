@@ -825,7 +825,10 @@ export class WorkflowGraphExecutor {
             this.deps.logTaskEntry?.("[pre-merge] Workflow step already satisfied: Plan Review");
             return await traverseChildren(node, { outcome: "success", value: "already-passed" });
           }
-          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID
+          const hasPlanReviewProjection = task.workflowStepResults?.some(
+            (result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID,
+          ) === true;
+          const repairedPlanReview = node.id === PLAN_REVIEW_GROUP_ID && !hasPlanReviewProjection
             ? recoverPassedPlanReviewFromLatestLog(task)
             : undefined;
           if (repairedPlanReview) {
@@ -855,7 +858,7 @@ export class WorkflowGraphExecutor {
               );
             }
             const lease = classifyReviewLease(
-              task.workflowStepResults,
+              task.workflowStepResults?.filter((result) => result.supersededAt == null),
               node.id,
               this.deps.runLoopNowForTests?.() ?? Date.now(),
             );

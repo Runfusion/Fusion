@@ -77,6 +77,7 @@ import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./m
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./agents/active-session-registry.js";
 import { isTaskStillInPlanningStage } from "./execution/replan-target.js";
+import { classifyPersistedPlanHandoff, LEGACY_NULL_PLAN_HANDOFF_STALE_MS } from "./planning-handoff-recovery.js";
 import { getPromptPath } from "./execution/spec-staleness.js";
 import { evaluateStrandedHoldContinuation, seedPreReleasePlanReviewContinuation } from "./plan-review-continuation.js";
 /*
@@ -14376,8 +14377,9 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       const now = Date.now();
 
       const orphanedApproved = tasks.filter((t) =>
-        t.status === "planning" &&
+        (t.status === "planning" || t.status == null) &&
         !t.paused &&
+        !t.userPaused &&
         !planningIds.has(t.id) &&
         now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS
       );
@@ -14395,7 +14397,17 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
         // Narrow test/legacy adapters can return an unrelated fixture row; only use a
         // re-read when it identifies the requested candidate.
         const recoveryTask = live?.id === task.id ? live : task;
-        if (!isTaskStillInPlanningStage(recoveryTask)) continue;
+        const handoffKind = classifyPersistedPlanHandoff(recoveryTask, {
+          now,
+          hasLivePlanningWork: planningIds.has(recoveryTask.id),
+          legacyStaleMs: LEGACY_NULL_PLAN_HANDOFF_STALE_MS,
+          requirePersistedSteps: true,
+        });
+        if (!handoffKind) continue;
+        // The legacy null handoff deliberately contains parsed task steps; the
+        // generic planning-stage predicate interprets null+steps as execution
+        // progress, so its exact classifier owns that one compatibility shape.
+        if (handoffKind !== "legacy-null" && !isTaskStillInPlanningStage(recoveryTask)) continue;
         log.log(`Recovering specified triage task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
         const success = await recoverFn(recoveryTask);
         if (success) recovered++;

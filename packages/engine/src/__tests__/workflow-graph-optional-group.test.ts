@@ -738,7 +738,66 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(result.outcome).toBe("success");
     expect(calls).toEqual(["execute"]);
     expect(requestFix).not.toHaveBeenCalled();
-    expect(logs).toContain("[pre-merge] Workflow step already passed: Plan Review");
+    expect(logs).toContain("[pre-merge] Workflow step already satisfied: Plan Review");
+  });
+
+  it("reruns Plan Review when a dependency superseded the prior pass and its old completion log", async () => {
+    const calls: string[] = [];
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "plan-review-superseded",
+      columns: [{ id: "work", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "plan-review",
+          kind: "optional-group",
+          config: {
+            name: "Plan Review",
+            defaultOn: true,
+            template: {
+              nodes: [{ id: "plan-review-step", kind: "prompt", config: { prompt: "review replanned spec" } }],
+              edges: [],
+            },
+          },
+        },
+        { id: "execute", kind: "prompt", config: { prompt: "execute" } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "plan-review" },
+        { from: "plan-review", to: "execute", condition: "success" },
+        { from: "execute", to: "end" },
+      ],
+    };
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          calls.push(node.id);
+          return { outcome: "success" };
+        },
+      },
+    });
+
+    const result = await executor.run({
+      ...taskWith(["plan-review"]),
+      id: "FN-plan-review-superseded",
+      workflowStepResults: [{
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        phase: "pre-merge",
+        status: "passed",
+        supersededAt: "2026-08-04T02:00:00.000Z",
+        supersededReason: "dependency-change",
+      }],
+      log: [{
+        timestamp: "2026-08-04T01:00:00.000Z",
+        action: "[pre-merge] Workflow step completed: Plan Review",
+      }],
+    } as TaskDetail, settingsOn(), ir);
+
+    expect(result.outcome).toBe("success");
+    expect(calls).toEqual(["plan-review-step", "execute"]);
   });
 
   it("repairs missing Plan Review result from the latest completed log before execution", async () => {

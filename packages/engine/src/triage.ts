@@ -42,7 +42,6 @@ import {
   workflowHasColumn,
   getStepParser,
   computePlanApprovalFingerprint,
-  isPlanReviewSatisfied,
   extractIntentSignature,
   findNearDuplicates,
   isNearDuplicateCanonicalInactive, resolveColumnFlags,
@@ -135,6 +134,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import { hasAdvancedPastPlanning, isTaskStillInPlanningStage, resolvePlannerLanesForTaskAsync } from "./execution/replan-target.js";
+import { classifyPersistedPlanHandoff, LEGACY_NULL_PLAN_HANDOFF_STALE_MS } from "./planning-handoff-recovery.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -1188,7 +1188,7 @@ export class TriageProcessor {
    * protected regardless of elapsed time; a stuck-aborted session is still
    * reclaimable because its promise may never reach the cleanup `finally`.
    */
-  private static readonly STALE_PROCESSING_THRESHOLD_MS = 30 * 60 * 1000;
+  private static readonly STALE_PROCESSING_THRESHOLD_MS = LEGACY_NULL_PLAN_HANDOFF_STALE_MS;
 
   /**
    * Evict stale tasks from `processing` only when their triage promise is no
@@ -1260,15 +1260,6 @@ export class TriageProcessor {
     return evicted;
   }
 
-  /*
-  FNXC:PlanReviewApproval 2026-08-04-00:26:
-  Recovery treats an audited operator acceptance as terminal Plan Review evidence, without
-  fabricating a reviewer pass or allowing an unaudited skip to release the task.
-  */
-  private hasSatisfiedPlanReview(task: Pick<Task, "workflowStepResults">): boolean {
-    return task.workflowStepResults?.some(isPlanReviewSatisfied) === true;
-  }
-
   /**
    * Recover a triage task whose PROMPT.md was already written but the final
    * handoff out of planning never completed.
@@ -1289,8 +1280,6 @@ export class TriageProcessor {
     the validation below still rejects seeds/partial plans and finalization
     evaluates manual approval before graph continuation.
     */
-    const hasNoPlanningHandoffEvidence = task.approvedPlanFingerprint == null
-      && !(task.workflowStepResults?.length);
     /*
     FNXC:PlanningDependencyReseed 2026-08-04-01:04:
     Null status alone is not a planning handoff. Claim the legacy reseed hole
@@ -1300,15 +1289,18 @@ export class TriageProcessor {
     */
     const continuationReader = (this.store as Partial<Pick<TaskStore, "listWorkflowWorkItemsForTask">>).listWorkflowWorkItemsForTask;
     const stepInstanceReader = (this.store as Partial<Pick<TaskStore, "hasWorkflowRunStepInstancesForTask">>).hasWorkflowRunStepInstancesForTask;
-    const legacyNullStatusCandidate = task.status == null
-      && hasNoPlanningHandoffEvidence
-      && !task.awaitingApprovalReason
-      && !this.hasLivePlanningWork(task.id)
+    const handoffKind = classifyPersistedPlanHandoff(task, {
+      now: Date.now(),
+      hasLivePlanningWork: this.hasLivePlanningWork(task.id),
+      // Legacy unit fixtures have no graph-work-item reader; production always
+      // applies the real stuck-processing grace.
+      legacyStaleMs: continuationReader ? TriageProcessor.STALE_PROCESSING_THRESHOLD_MS : 0,
+    });
+    const legacyNullStatusCandidate = handoffKind === "legacy-null"
       // FNXC:PlanningDependencyReseed 2026-08-04-01:04: Legacy unit fixtures
       // have no graph-work-item reader; production always applies this fence.
       && (!continuationReader || (
-        Date.now() - new Date(task.updatedAt).getTime() >= TriageProcessor.STALE_PROCESSING_THRESHOLD_MS
-        && (await continuationReader.call(this.store, task.id)).length === 0
+        (await continuationReader.call(this.store, task.id)).length === 0
         /*
         FNXC:PlanningDependencyReseed 2026-08-04-02:10:
         A graph run can persist foreach step-instance rows before it creates a
@@ -1318,9 +1310,9 @@ export class TriageProcessor {
         */
         && (!stepInstanceReader || !(await stepInstanceReader.call(this.store, task.id)))
       ));
-    const recoverableStatus =
-      task.status === "planning"
-      || (task.status == null && (this.hasSatisfiedPlanReview(task) || legacyNullStatusCandidate));
+    const recoverableStatus = handoffKind === "planning"
+      || handoffKind === "approved-null"
+      || legacyNullStatusCandidate;
     /* FNXC:WorkflowLifecycleColumns 2026-07-29-09:05 (U11): the INTAKE lane, not
        the literal. Converting only the `todo` sites left this one rejecting every
        card whose workflow renames its planner column, so the release below was

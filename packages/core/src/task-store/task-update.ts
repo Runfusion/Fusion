@@ -32,6 +32,7 @@ import {applyOriginalDescription} from "../tasks/original-description-policy.js"
 import {normalizeTaskReviewState} from "../task-store/review-state.js";
 import {hasOwnDeclaredSymbols, normalizeDeclaredSymbols, extractDeclaredSymbolsFromPrompt, resolveTaskSymbolsForTask} from "../tasks/task-symbol-resolution.js";
 import {assertValidProviderInstanceId} from "../provider-instance.js";
+import {supersedePlanReviewResults} from "../planner/plan-approval.js";
 
 export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updates: Parameters<TaskStore["updateTask"]>[1], runContext?: RunMutationContext,): Promise<Task> {
   /* FNXC:CredentialInstanceSelection 2026-08-01-05:43: validate task authoring input before persistence; ids are stored but runtime credential resolution remains unchanged. */
@@ -238,6 +239,10 @@ export async function updateTaskUnlockedImpl(store: TaskStore, id: string, updat
           */
           task.approvedPlanFingerprint = undefined;
           task.awaitingApprovalReason = undefined;
+          task.workflowStepResults = supersedePlanReviewResults(
+            task.workflowStepResults,
+            new Date().toISOString(),
+          );
           const depLogEntry: TaskLogEntry = {
             timestamp: new Date().toISOString(),
             action: relocating

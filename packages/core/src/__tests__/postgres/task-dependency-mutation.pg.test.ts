@@ -126,6 +126,39 @@ pgTest("TaskStore dependency mutations (PostgreSQL)", () => {
     expect((await store.getWorkflowWorkItem(pending.id))?.state).toBe("cancelled");
   });
 
+  it.each(["dedicated", "generic"] as const)(
+    "preserves but supersedes Plan Review approval through the %s dependency API",
+    async (api) => {
+      const prerequisite = await store.createTask({ description: `${api} prerequisite`, column: "done" });
+      const dependent = await store.createTask({ description: `${api} dependent`, column: "todo" });
+      await store.updateTask(dependent.id, {
+        workflowStepResults: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "passed",
+          completedAt: "2026-08-04T01:00:00.000Z",
+        }],
+      });
+
+      if (api === "dedicated") {
+        await store.updateTaskDependencies(dependent.id, { operation: "add", dependency: prerequisite.id });
+      } else {
+        await store.updateTask(dependent.id, { dependencies: [prerequisite.id] });
+      }
+
+      const updated = await store.getTask(dependent.id);
+      expect(updated.status).toBe("needs-replan");
+      expect(updated.workflowStepResults).toEqual([
+        expect.objectContaining({
+          workflowStepId: "plan-review",
+          status: "passed",
+          supersededAt: expect.any(String),
+          supersededReason: "dependency-change",
+        }),
+      ]);
+    },
+  );
+
   /*
   FNXC:WorkflowLifecycleColumns 2026-07-31-02:05 (PR #2720 review — greptile):
   DISTINCT HOLD AND INTAKE LANES, the configuration the default lineage does not exercise.

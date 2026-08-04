@@ -31,6 +31,10 @@ function isTerminalFailure(result: WorkflowStepResult): boolean {
   return TERMINAL_FAILURE_STATUSES.has(result.status);
 }
 
+function isSupersededPlanningEvidence(result: WorkflowStepResult): boolean {
+  return result.supersededAt != null;
+}
+
 /**
  * Strip a result down to a single-level history snapshot: its own
  * `priorAttempts` are dropped so nesting never grows beyond one level deep.
@@ -51,8 +55,9 @@ function toSnapshot(result: WorkflowStepResult): WorkflowStepResult {
  *   carried forward onto the incoming result. If the existing entry represents
  *   a DIFFERENT attempt (deduped by `startedAt` — a same-run `pending`→`failed`
  *   transition of the same attempt is not a new attempt) and its status is a
- *   terminal failure (`failed` | `advisory_failure`), a single-level snapshot
- *   of it is pushed onto the incoming result's `priorAttempts`.
+ *   terminal failure (`failed` | `advisory_failure`) or superseded planning
+ *   projection, a single-level snapshot of it is pushed onto the incoming
+ *   result's `priorAttempts`.
  * - `priorAttempts` is bounded to `opts.maxPriorAttempts` (default
  *   `MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS`), newest-first, oldest dropped.
  *
@@ -79,7 +84,7 @@ export function upsertWorkflowStepResult(
     && previous.startedAt === incoming.startedAt;
 
   let priorAttempts = previous.priorAttempts ? [...previous.priorAttempts] : [];
-  if (!isSameAttempt && isTerminalFailure(previous)) {
+  if (!isSameAttempt && (isTerminalFailure(previous) || isSupersededPlanningEvidence(previous))) {
     priorAttempts = [toSnapshot(previous), ...priorAttempts];
   }
   if (priorAttempts.length > maxPriorAttempts) {

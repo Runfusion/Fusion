@@ -68,6 +68,28 @@ describe("isPlanReviewSatisfied", () => {
       bypassedFromVerdict: "REVISE",
     })).toBe(false);
   });
+
+  it("rejects a historical pass or bypass superseded by a later planning episode", () => {
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "passed",
+      supersededAt: "2026-08-04T02:00:00.000Z",
+      supersededReason: "dependency-change",
+    })).toBe(false);
+    expect(isPlanReviewSatisfied({
+      workflowStepId: "plan-review",
+      workflowStepName: "Plan Review",
+      status: "skipped",
+      bypassedBy: "operator",
+      bypassedAt: "2026-08-04T01:00:00.000Z",
+      bypassReason: "Approved at the old revision cap",
+      bypassedFromStatus: "failed",
+      bypassedFromVerdict: "REVISE",
+      supersededAt: "2026-08-04T02:00:00.000Z",
+      supersededReason: "dependency-change",
+    })).toBe(false);
+  });
 });
 
 /*

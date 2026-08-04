@@ -25,6 +25,7 @@ import {generateTaskLineageId} from "../tasks/task-lineage.js";
 import {deriveFallbackTaskTitle} from "../ai/ai-summarize.js";
 import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
+import {supersedePlanReviewResults} from "../planner/plan-approval.js";
 
 export async function refineTaskImpl(store: TaskStore, id: string, feedback: string): Promise<Task> {
     const sourceTask = await store.getTask(id);
@@ -463,6 +464,10 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
         task.status = "needs-replan";
         task.approvedPlanFingerprint = undefined;
         task.awaitingApprovalReason = undefined;
+        task.workflowStepResults = supersedePlanReviewResults(
+          task.workflowStepResults,
+          task.updatedAt,
+        );
       }
       if (hasNewDependencies && task.column === holdColumn && intakeColumn !== undefined) {
         task.column = intakeColumn;
@@ -551,4 +556,3 @@ async function updateTaskDependenciesWithTaskLockImpl(store: TaskStore, id: stri
       return task;
     });
   }
-

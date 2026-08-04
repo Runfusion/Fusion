@@ -19,6 +19,7 @@ cannot silently open the execution gate.
 */
 export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
   if (result.workflowStepId !== PLAN_REVIEW_GROUP_ID) return false;
+  if (result.supersededAt != null) return false;
   if (result.status === "passed") return true;
   return result.status === "skipped"
     && (result.bypassedFromStatus === "failed" || result.bypassedFromStatus === "advisory_failure")
@@ -29,6 +30,22 @@ export function isPlanReviewSatisfied(result: WorkflowStepResult): boolean {
     && result.bypassedAt.trim().length > 0
     && typeof result.bypassReason === "string"
     && result.bypassReason.trim().length > 0;
+}
+
+/**
+ * Preserve Plan Review history while retiring every gate projection (including
+ * an in-flight lease) from the planning episode invalidated by a new dependency.
+ */
+export function supersedePlanReviewResults(
+  results: WorkflowStepResult[] | undefined,
+  supersededAt: string,
+): WorkflowStepResult[] | undefined {
+  if (!results?.some((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null)) {
+    return results;
+  }
+  return results.map((result) => result.workflowStepId === PLAN_REVIEW_GROUP_ID && result.supersededAt == null
+    ? { ...result, supersededAt, supersededReason: "dependency-change" }
+    : result);
 }
 
 /**

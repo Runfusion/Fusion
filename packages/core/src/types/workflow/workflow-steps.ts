@@ -313,6 +313,14 @@ export interface WorkflowStepResult {
   bypassedFromStatus?: WorkflowStepResult["status"];
   /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
   bypassedFromVerdict?: WorkflowStepResult["verdict"];
+  /**
+   * The planning episode that produced this result was invalidated later.
+   * Superseded results remain available for audit but cannot satisfy the
+   * current workflow gate.
+   */
+  supersededAt?: string;
+  /** Machine-readable reason the result stopped being current. */
+  supersededReason?: "dependency-change";
   /*
    * FNXC:WorkflowStepResults 2026-07-09-00:10:
    * FN-7727: self-healing recovery re-runs a failed pre-merge review node

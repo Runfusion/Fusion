@@ -143,6 +143,33 @@ describe("adding a dependency never parks a card in a deleted column", () => {
     expect(row.awaitingApprovalReason).toBeUndefined();
   });
 
+  it.each(["passed", "pending"] as const)(
+    "preserves but supersedes an old %s Plan Review projection when a dependency starts a new planning episode",
+    async (status) => {
+      const oldResult = {
+        workflowStepId: "plan-review",
+        workflowStepName: "Plan Review",
+        status,
+        completedAt: "2026-08-04T01:00:00.000Z",
+      };
+      const { store, row } = harness({
+        column: "todo",
+        dependencies: [],
+        workflowStepResults: [oldResult],
+      }, DEFAULT_IR);
+
+      await run(store, { dependencies: ["FN-2"] });
+
+      expect(row.workflowStepResults).toEqual([
+        expect.objectContaining({
+          ...oldResult,
+          supersededAt: expect.any(String),
+          supersededReason: "dependency-change",
+        }),
+      ]);
+    },
+  );
+
   it("moves a RENAMED board's hold card to its own intake lane", async () => {
     // Here intake and hold ARE different columns, so the move is real — and it goes to `inbox`,
     // a column this board actually declares.
