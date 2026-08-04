@@ -531,22 +531,16 @@ export class TaskExecutor {
     });
   }
 
-  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
-    return buildActionGateContextImpl(
-      buildBuildActionGateContextDeps(this),
-      taskId,
-      agent,
-      projectDefaultPolicy,
-    );
+  private buildActionGateContext(
+    ...args: FacadeRestArgs<typeof buildActionGateContextImpl>
+  ): AgentActionGateContext | undefined {
+    return buildActionGateContextImpl(buildBuildActionGateContextDeps(this), ...args);
   }
 
-  private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
-    return buildPermanentAgentGatingContextImpl(
-      buildBuildPermanentAgentGatingContextDeps(this),
-      taskId,
-      agent,
-      projectDefaultPolicy,
-    );
+  private buildPermanentAgentGatingContext(
+    ...args: FacadeRestArgs<typeof buildPermanentAgentGatingContextImpl>
+  ): import("@fusion/core").PermanentAgentGatingContext | undefined {
+    return buildPermanentAgentGatingContextImpl(buildBuildPermanentAgentGatingContextDeps(this), ...args);
   }
 
   /** Returns the set of task IDs currently being executed. */
