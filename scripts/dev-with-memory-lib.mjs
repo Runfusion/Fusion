@@ -17,6 +17,66 @@ export function buildDevNodeArgs({
   ];
 }
 
+export function createDevWatchRestartCoordinator({ log = console.log, warn = console.warn } = {}) {
+  let child;
+  let armed = false;
+  let queued = false;
+  let pendingPaths = [];
+
+  const sendRestart = (changedPaths) => {
+    const preview = changedPaths.slice(0, 3).join(", ");
+    const remainder = Math.max(0, changedPaths.length - 3);
+    log(`[fusion:dev] source changed (${preview}${remainder > 0 ? ` +${remainder} more` : ""}) — restart queued…`);
+    queued = true;
+    try {
+      child.send({ type: "fusion:dev-source-changed" }, (error) => {
+        if (!error) return;
+        queued = false;
+        warn(`[fusion:dev] source restart message failed: ${error.message}`);
+      });
+    } catch (error) {
+      queued = false;
+      warn(`[fusion:dev] source restart message failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  return {
+    attach(nextChild) {
+      child = nextChild;
+      armed = false;
+      queued = false;
+    },
+    request(changedPaths) {
+      if (queued) return;
+      if (!armed) {
+        pendingPaths = [...new Set([...pendingPaths, ...changedPaths])];
+        log("[fusion:dev] source changed while the engine child is starting — restart will queue when watch is armed");
+        return;
+      }
+      if (!child?.connected) {
+        warn("[fusion:dev] source changed while the engine child was unavailable; the next start will load it");
+        return;
+      }
+      sendRestart(changedPaths);
+    },
+    onMessage(message) {
+      if (!message || typeof message !== "object" || message.type !== "fusion:dev-source-restart-armed") return;
+      armed = true;
+      if (pendingPaths.length === 0) return;
+      const paths = pendingPaths;
+      pendingPaths = [];
+      sendRestart(paths);
+    },
+    detach(nextChild) {
+      if (child !== nextChild) return false;
+      const sourceRestart = queued;
+      child = undefined;
+      armed = false;
+      return sourceRestart;
+    },
+  };
+}
+
 const VALID_PREBUILD_MODES = new Set(["auto", "none", "client", "full"]);
 
 export function normalizePrebuildMode(value) {
@@ -50,6 +110,8 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
   const inspectFlags = [];
   const args = [];
   let requestedPrebuild = env.FUSION_DEV_PREBUILD ?? "auto";
+  let watchSource = env.FUSION_DEV_WATCH === "1";
+  let watchSourceFromFlag = false;
 
   for (let i = 0; i < rawArgs.length; i += 1) {
     const arg = rawArgs[i];
@@ -78,6 +140,12 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
       continue;
     }
 
+    if (arg === "--watch") {
+      watchSource = true;
+      watchSourceFromFlag = true;
+      continue;
+    }
+
     args.push(arg);
   }
 
@@ -85,6 +153,8 @@ export function parseDevWrapperArgs(rawArgs, env = process.env) {
     inspectFlags,
     args,
     requestedPrebuild: normalizePrebuildMode(requestedPrebuild),
+    watchSource,
+    watchSourceFromFlag,
   };
 }
 

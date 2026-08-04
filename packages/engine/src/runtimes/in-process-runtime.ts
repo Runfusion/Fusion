@@ -1935,6 +1935,31 @@ export class InProcessRuntime
   }
 
   /**
+   * Close every process-local admission source without aborting work that is
+   * already running. Development source reload uses this boundary before it
+   * waits for the live-agent count to reach zero.
+   */
+  beginDrain(): void {
+    if (this.status !== "active") return;
+
+    this.setStatus("paused");
+    if (this.workflowContinuationTimer) {
+      clearInterval(this.workflowContinuationTimer);
+      this.workflowContinuationTimer = undefined;
+    }
+    this.selfHealingManager?.stop();
+    this.routineScheduler?.stop();
+    this.triggerScheduler?.stop();
+    this.stuckTaskDetector?.stop();
+    this.heartbeatMonitor?.stop();
+    this.triageProcessor?.stop();
+    this.scheduler?.stop();
+    this.missionAutopilot?.stop();
+    this.missionExecutionLoop?.stop();
+    runtimeLog.log(`InProcessRuntime draining for ${this.config.projectId}`);
+  }
+
+  /**
    * Stop the runtime with graceful shutdown.
    *
    * Shutdown sequence:

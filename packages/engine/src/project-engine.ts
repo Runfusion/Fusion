@@ -1459,6 +1459,12 @@ export class ProjectEngine {
     runtimeLog.log(`ProjectEngine stopped for ${this.config.projectId}`);
   }
 
+  /** Stop new lifecycle admission while allowing active work to finish. */
+  beginDrain(): void {
+    this.shuttingDown = true;
+    this.runtime.beginDrain();
+  }
+
   // ── Public accessors ──
 
   /** Get the underlying InProcessRuntime. */

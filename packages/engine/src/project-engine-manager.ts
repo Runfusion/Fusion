@@ -257,7 +257,7 @@ export class ProjectEngineManager {
   }
 
   /** Gracefully stop all engines and reconciliation. */
-  async stopAll(): Promise<void> {
+  beginDrain(): void {
     this.stopped = true;
     this.reconciliationStopped = true;
 
@@ -266,6 +266,18 @@ export class ProjectEngineManager {
       clearInterval(this.reconciliationInterval);
       this.reconciliationInterval = null;
     }
+
+    for (const engine of this.engines.values()) {
+      engine.beginDrain?.();
+    }
+    for (const starting of this.starting.values()) {
+      void starting.then((engine) => engine.beginDrain?.()).catch(() => undefined);
+    }
+  }
+
+  /** Gracefully stop all engines and reconciliation. */
+  async stopAll(): Promise<void> {
+    this.beginDrain();
 
     /*
     FNXC:PostgresResourceLifecycle 2026-07-14-18:42:

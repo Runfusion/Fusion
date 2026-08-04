@@ -34,6 +34,7 @@
     "smoke:boot": "node scripts/boot-smoke.mjs",
     "local": "node scripts/start-local.mjs",
     "dev": "node scripts/dev-with-memory.mjs",
+    "dev:watch": "node scripts/dev-with-memory.mjs --watch",
     "start": "node scripts/dev-with-memory.mjs",
     "dev:ui": "pnpm --filter @fusion/dashboard dev",
     "dev:hmr": "node scripts/dev-hmr.mjs",

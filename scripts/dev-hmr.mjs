@@ -11,8 +11,8 @@
  *            (serves app/ with HMR; proxies /api and WS to the API)
  *
  * Open the URL Vite prints (e.g. http://localhost:5173), NOT the API URL.
- * Edits to packages/dashboard/app/** hot-reload. Edits to src/** (server
- * code) still require restarting this script.
+ * Edits to packages/dashboard/app/** hot-reload in Vite. Runtime source edits
+ * gracefully restart the API/engine child while Vite stays available.
  *
  * Env:
  *   FUSION_API_PORT   API port (default 4050). Vite's proxy reads the same
@@ -94,7 +94,7 @@ launch(
   "api",
   "32",
   "pnpm",
-  ["dev", "--prebuild=none", "dashboard", "--no-auth", "--port", API_PORT, "--host", "127.0.0.1"],
+  ["dev", "--watch", "--prebuild=none", "dashboard", "--no-auth", "--port", API_PORT, "--host", "127.0.0.1"],
   { cwd: repoRoot, env: { ...globalThis.process.env, FUSION_API_PORT: API_PORT } },
 );
 

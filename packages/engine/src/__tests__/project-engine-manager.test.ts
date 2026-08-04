@@ -18,6 +18,7 @@ vi.mock("../project-engine.js", () => {
     ProjectEngine: vi.fn().mockImplementation(function (config: any) {
       return {
         start: vi.fn().mockResolvedValue(undefined),
+        beginDrain: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
         getTaskStore: vi.fn().mockReturnValue({ projectId: config.projectId }),
         getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
@@ -295,6 +296,21 @@ describe("ProjectEngineManager", () => {
   });
 
   describe("stopAll", () => {
+    it("closes admission on every engine before asynchronous shutdown work", async () => {
+      const manager = new ProjectEngineManager(centralCore);
+      await manager.startAll();
+      const engineA = manager.getEngine("proj_aaa")!;
+      engineA.beginDrain = vi.fn();
+
+      manager.beginDrain();
+
+      expect(engineA.beginDrain).toHaveBeenCalledOnce();
+      await expect(manager.ensureEngine("proj_aaa")).rejects.toThrow(
+        "ProjectEngineManager is stopped",
+      );
+      expect(centralCore.markLocalNodeOffline).not.toHaveBeenCalled();
+    });
+
     it("stops all engines and clears state", async () => {
       const manager = new ProjectEngineManager(centralCore);
       await manager.startAll();

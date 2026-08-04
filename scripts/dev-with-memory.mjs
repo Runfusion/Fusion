@@ -11,10 +11,12 @@
 import {
   buildForwardedDevArgs,
   buildDevNodeArgs,
+  createDevWatchRestartCoordinator,
   getPrebuildCommand,
   parseDevWrapperArgs,
   resolvePrebuildMode,
 } from "./dev-with-memory-lib.mjs";
+import { createDevSourceWatcher } from "./lib/dev-source-watch.mjs";
 
 // Set increased heap size (8GB) to prevent OOM during initial build/start
 const MEMORY_MB = process.env.FUSION_DEV_MEMORY_MB || "8192";
@@ -29,7 +31,8 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const { inspectFlags, args, requestedPrebuild } = parsedArgs;
+const { inspectFlags, args, requestedPrebuild, watchSourceFromFlag } = parsedArgs;
+let { watchSource } = parsedArgs;
 
 // NODE_OPTIONS is shared with every spawned node process (build + run +
 // agents). Heap size belongs here. Inspector flags do NOT — see comment above.
@@ -41,6 +44,13 @@ process.env.NODE_OPTIONS = nodeOptions;
 // builds default to 127.0.0.1; this override only applies when starting
 // the dashboard via `pnpm dev dashboard` and only if no --host was passed.
 const forwardedArgs = buildForwardedDevArgs(args);
+if (watchSource && forwardedArgs[0] !== "dashboard") {
+  if (watchSourceFromFlag) {
+    console.error("[fusion:dev] --watch is supported for the dashboard engine process only");
+    process.exit(1);
+  }
+  watchSource = false;
+}
 const prebuildMode = resolvePrebuildMode(requestedPrebuild, forwardedArgs);
 const prebuildCommand = getPrebuildCommand(prebuildMode);
 
@@ -71,6 +81,18 @@ is what makes the dashboard advertise restart support. Any other exit code
 propagates unchanged (no crash-restart loop here — `--supervise` owns that).
 */
 const RESTART_EXIT_CODE = 86;
+let appChild;
+let sourceWatcher;
+const watchRestart = createDevWatchRestartCoordinator();
+
+function ensureSourceWatcher() {
+  if (!watchSource || sourceWatcher) return;
+  sourceWatcher = createDevSourceWatcher({
+    rootDir: process.cwd(),
+    onRestart: (paths) => watchRestart.request(paths),
+  });
+  console.log(`[fusion:dev] source watch active (${sourceWatcher.watchedPaths.join(", ")})`);
+}
 
 function runApp(extraArgs) {
   const tsx = spawn(process.execPath, buildDevNodeArgs({
@@ -80,19 +102,43 @@ function runApp(extraArgs) {
     entry: ENTRY,
     args: extraArgs,
   }), {
-    stdio: "inherit",
+    stdio: watchSource ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
     // FNXC:SystemPanel 2026-07-25-10:05: stamp the supervisor pid alongside the
     // flag so the child can tell a real supervising parent from an inherited
     // copy of the variable (see hasLiveSupervisingParent in commands/dashboard.ts).
-    env: { ...process.env, FUSION_RESTART_SUPERVISED: "1", FUSION_SUPERVISOR_PID: String(process.pid) },
+    env: {
+      ...process.env,
+      FUSION_RESTART_SUPERVISED: "1",
+      FUSION_SUPERVISOR_PID: String(process.pid),
+      ...(watchSource ? { FUSION_DEV_WATCH: "1" } : {}),
+    },
   });
+  appChild = tsx;
+  watchRestart.attach(tsx);
+  tsx.on("message", (message) => watchRestart.onMessage(message));
+  ensureSourceWatcher();
   tsx.on("close", (c) => {
+    const sourceRestart = watchRestart.detach(tsx);
+    if (appChild === tsx) appChild = undefined;
     if (c === RESTART_EXIT_CODE) {
       console.log("[fusion:dev] restart requested — restarting…");
-      runApp(extraArgs);
+      if (sourceRestart && prebuildCommand) {
+        runPrebuild(() => runApp(extraArgs));
+      } else {
+        runApp(extraArgs);
+      }
       return;
     }
     process.exit(c ?? 1);
+  });
+}
+
+function runPrebuild(onSuccess) {
+  console.log(`[fusion] Running ${prebuildCommand.label} (${prebuildMode}) before source startup...`);
+  const build = spawn(prebuildCommand.command, prebuildCommand.args, { stdio: "inherit", shell: true });
+  build.on("close", (code) => {
+    if (code !== 0) process.exit(code ?? 1);
+    onSuccess();
   });
 }
 
@@ -177,10 +223,5 @@ await warnIfDistStale();
 if (!prebuildCommand) {
   runApp(forwardedArgs);
 } else {
-  console.log(`[fusion] Running ${prebuildCommand.label} (${prebuildMode}) before source startup...`);
-  const build = spawn(prebuildCommand.command, prebuildCommand.args, { stdio: "inherit", shell: true });
-  build.on("close", (code) => {
-    if (code !== 0) process.exit(code ?? 1);
-    runApp(forwardedArgs);
-  });
+  runPrebuild(() => runApp(forwardedArgs));
 }
