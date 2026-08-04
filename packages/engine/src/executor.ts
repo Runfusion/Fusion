@@ -212,6 +212,17 @@ import {
   buildHasLiveTaskSessionSurfaceDeps,
   buildRecoverMissingWorktreeSessionStartFailureDeps,
   buildCleanupConflictingWorktreeDeps,
+  buildClearStalePauseAbortBeforeDispatchDeps,
+  buildRenewTaskLeaseDeps,
+  buildBuildPermanentAgentGatingContextDeps,
+  buildPersistTokenUsageDeps,
+  buildRecoverMissingRequiredArtifactsDeps,
+  buildBuildForeachWorktreeDepsDeps,
+  buildRouteGraphMergeFailureToRetryDeps,
+  buildRouteImplementationIncompleteMergeGraphFailureDeps,
+  buildBlockOuterDispatchWhenEphemeralDisabledDeps,
+  buildCreateTaskAddDepToolDeps,
+  buildTerminateChildAgentDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -472,11 +483,7 @@ export class TaskExecutor {
 
   private async clearStalePauseAbortBeforeDispatch(task: Task): Promise<void> {
     return clearStalePauseAbortBeforeDispatchImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        hasPausedAborted: (taskId: string) => this.pausedAborted.has(taskId),
-        ...facadeMethods(this, ["clearPausedAborted"]),
-      },
+      buildClearStalePauseAbortBeforeDispatchDeps(this),
       task,
     );
   }
@@ -614,11 +621,7 @@ export class TaskExecutor {
     runId: string | undefined,
   ): Promise<void> {
     return renewTaskLeaseImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        options: this.options as { agentStore?: import("@fusion/core").AgentStore | null; [k: string]: unknown },
-        ...facadeMethods(this, ["getRunContextFor"]),
-      },
+      buildRenewTaskLeaseDeps(this),
       taskId,
       agentId,
       leaseEpoch,
@@ -747,11 +750,7 @@ export class TaskExecutor {
 
   private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
     return buildPermanentAgentGatingContextImpl(
-      {
-        ...this.storeRunContextDeps(),
-        approvalSuspended: this.approvalSuspended,
-        approvalRequestStore: this.approvalRequestStore,
-      },
+      buildBuildPermanentAgentGatingContextDeps(this),
       taskId,
       agent,
       projectDefaultPolicy,
@@ -1361,11 +1360,7 @@ export class TaskExecutor {
 
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
     return persistTokenUsageImpl(
-      {
-        ...this.storeRunContextDeps(),
-        tokenUsageBaselines: this.tokenUsageBaselines,
-        getActiveSession: (id) => this.activeSessions.get(id)?.session,
-      },
+      buildPersistTokenUsageDeps(this),
       taskId,
       session,
     );
@@ -1489,11 +1484,7 @@ export class TaskExecutor {
     source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
   ): Promise<void> {
     return recoverMissingRequiredArtifactsImpl(
-      {
-        ...this.storeRunContextDeps(),
-        isRequiredArtifactRecoveryProtected: (t: Task) => this.isRequiredArtifactRecoveryProtected(t),
-        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
-      },
+      buildRecoverMissingRequiredArtifactsDeps(this),
       task,
       artifactKeys,
       source,
@@ -1964,11 +1955,7 @@ export class TaskExecutor {
 
   private buildForeachWorktreeDeps(task: Task, runId?: string): ReturnType<typeof buildForeachWorktreeDepsImpl> {
     return buildForeachWorktreeDepsImpl(
-      {
-        ...facadeFields(this, ["store", "rootDir"]),
-        ...facadeMethods(this, ["createWorktree"]),
-        semaphoreAvailableCount: () => this.options.semaphore?.availableCount ?? 1,
-      },
+      buildBuildForeachWorktreeDepsDeps(this),
       task,
       runId,
     );
@@ -2726,11 +2713,7 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
   ): Promise<boolean> {
     return routeGraphMergeFailureToRetryImpl(
-      {
-        ...this.storeRunContextDeps(),
-        mergeRequester: this.mergeRequester,
-        ...facadeMethods(this, ["ensureWorkflowMergeBoundaryTask", "persistTokenUsage"]),
-      },
+      buildRouteGraphMergeFailureToRetryDeps(this),
       live,
       result,
       abortProvenance,
@@ -2739,11 +2722,7 @@ export class TaskExecutor {
 
   private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
     return routeImplementationIncompleteMergeGraphFailureImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ...facadeMethods(this, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
-        activeWorktrees: this.activeWorktrees,
-      },
+      buildRouteImplementationIncompleteMergeGraphFailureDeps(this),
       live,
       failedNode,
     );
@@ -2813,11 +2792,7 @@ export class TaskExecutor {
   */
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): Promise<boolean> {
     return blockOuterDispatchWhenEphemeralDisabledImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        agentStore: this.options.agentStore,
-        ...facadeMethods(this, ["getRunContextFor"]),
-      },
+      buildBlockOuterDispatchWhenEphemeralDisabledDeps(this),
       task,
     );
   }
@@ -2935,11 +2910,7 @@ export class TaskExecutor {
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {
     return createTaskAddDepToolImpl(
-      {
-        ...facadeFields(this, ["store", "depAborted"]),
-        getActiveSession: (id: string) => this.activeSessions.get(id),
-        getActiveStepExecutor: (id: string) => this.activeStepExecutors.get(id),
-      },
+      buildCreateTaskAddDepToolDeps(this),
       taskId,
     );
   }
@@ -3702,14 +3673,7 @@ export class TaskExecutor {
    */
   private async terminateChildAgent(childId: string): Promise<void> {
     return terminateChildAgentImpl(
-      {
-        options: this.options as { agentStore?: import("@fusion/core").AgentStore | null; [k: string]: unknown },
-         
-        ...facadeFields(this, [
-          "childSessions", "pendingEphemeralDeletions", "totalSpawnedCount",
-        ]),
-        setTotalSpawnedCount: (n) => { this.totalSpawnedCount = n; },
-      },
+      buildTerminateChildAgentDeps(this),
       childId,
     );
   }

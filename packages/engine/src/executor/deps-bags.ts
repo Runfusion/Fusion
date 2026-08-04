@@ -789,4 +789,92 @@ export function buildCleanupConflictingWorktreeDeps(host: any): any {
     ]),
   };
 }
+
+export function buildClearStalePauseAbortBeforeDispatchDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    hasPausedAborted: (taskId: string) => host.pausedAborted.has(taskId),
+    ...facadeMethods(host, ["clearPausedAborted"]),
+  };
+}
+
+export function buildRenewTaskLeaseDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    options: host.options as { agentStore?: unknown; [k: string]: unknown },
+    ...facadeMethods(host, ["getRunContextFor"]),
+  };
+}
+
+export function buildBuildPermanentAgentGatingContextDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    approvalSuspended: host.approvalSuspended,
+    approvalRequestStore: host.approvalRequestStore,
+  };
+}
+
+export function buildPersistTokenUsageDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    tokenUsageBaselines: host.tokenUsageBaselines,
+    getActiveSession: (id: string) => host.activeSessions.get(id)?.session,
+  };
+}
+
+export function buildRecoverMissingRequiredArtifactsDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    isRequiredArtifactRecoveryProtected: (t: unknown) => host.isRequiredArtifactRecoveryProtected(t),
+    workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
+  };
+}
+
+export function buildBuildForeachWorktreeDepsDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir"]),
+    ...facadeMethods(host, ["createWorktree"]),
+    semaphoreAvailableCount: () => host.options.semaphore?.availableCount ?? 1,
+  };
+}
+
+export function buildRouteGraphMergeFailureToRetryDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    mergeRequester: host.mergeRequester,
+    ...facadeMethods(host, ["ensureWorkflowMergeBoundaryTask", "persistTokenUsage"]),
+  };
+}
+
+export function buildRouteImplementationIncompleteMergeGraphFailureDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    ...facadeMethods(host, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
+    activeWorktrees: host.activeWorktrees,
+  };
+}
+
+export function buildBlockOuterDispatchWhenEphemeralDisabledDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    agentStore: host.options.agentStore,
+    ...facadeMethods(host, ["getRunContextFor"]),
+  };
+}
+
+export function buildCreateTaskAddDepToolDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "depAborted"]),
+    getActiveSession: (id: string) => host.activeSessions.get(id),
+    getActiveStepExecutor: (id: string) => host.activeStepExecutors.get(id),
+  };
+}
+
+export function buildTerminateChildAgentDeps(host: any): any {
+  return {
+    options: host.options as { agentStore?: unknown; [k: string]: unknown },
+    ...facadeFields(host, ["childSessions", "pendingEphemeralDeletions", "totalSpawnedCount"]),
+    setTotalSpawnedCount: (n: number) => { host.totalSpawnedCount = n; },
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
