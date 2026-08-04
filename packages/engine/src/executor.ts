@@ -282,30 +282,13 @@ export class TaskExecutor {
   private approvalResumeAfterUnwind = new Set<string>();
   /** Completed orphan recovery tasks currently running during startup. */
   private recoveringCompleted = new Set<string>();
-  /**
-   * FNXC:AgentReflection 2026-07-04-00:00:
-   * FN-7528: taskIds for which a non-LLM post-task performance capture has already been fired via
-   * `signalTaskComplete`. `onComplete` fires from several completion call sites (fresh completion,
-   * duplicate in-review re-entry, auto-recovery, paused-after-completion finalize, retry-completed),
-   * so this in-memory guard keeps capture to once per completion instead of once per call site.
-   */
+  /** FN-7528: once-per-completion reflection capture guard (see signal-task-complete.ts). */
   private capturedReflectionTaskIds = new Set<string>();
-  /** Tracks tasks whose workflow-rerun bounce is in flight (todo→in-progress).
-   *  Prevents the task:moved handler from dispatching execute() before the
-   *  bounce finishes its own dispatch. */
+  /** Workflow-rerun bounce in flight (todo→in-progress); blocks premature task:moved execute(). */
   private workflowRerunPending = new Set<string>();
-  /**
-   * Task ids whose current `task:moved` event is being emitted by this
-   * executor's workflow lifecycle handling (column boundaries or Plan Review
-   * replans). The store emits synchronously, so this narrowly distinguishes a
-   * graph's own transition from an external engine/user move that must still
-   * hard-cancel the active run.
-   */
+  /** Graph-owned task:moved emissions so external moves still hard-cancel. */
   private workflowLifecycleMovesInFlight = new Set<string>();
-  /** FN-5256: in-flight session-disposal promises keyed by taskId. The
-   *  task:moved (away from in-progress) and task:deleted listeners populate
-   *  this so a fast re-dispatch (task:moved → in-progress) awaits the prior
-   *  session being fully reaped before creating/acquiring a new worktree. */
+  /** FN-5256: in-flight session-disposal promises (await before re-dispatch worktree). */
   private pendingTaskDisposals = new Map<string, Promise<void>>();
   private unregisterTaskMoveDisposer: (() => void) | undefined;
   private unregisterArchiveWorktreeDisposer: (() => void) | undefined;
@@ -320,36 +303,20 @@ export class TaskExecutor {
   private effectiveColumnAgentByTask = new Map<string, string>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
-  /**
-   * FNXC:TaskTiming 2026-07-30-21:40:
-   * Only graph-owned Plan Review sessions appear here. Self-healing uses this
-   * narrow liveness proof so it never finalizes an in-flight planning segment.
-   */
+  /** FNXC:TaskTiming 2026-07-30-21:40: graph-owned Plan Review sessions only (self-healing liveness). */
   private activePlanningWorkflowSessions = new Set<string>();
   /** Steering comments already observed for active workflow step sessions. */
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
   /** Active configured-command abort controllers keyed by task. */
   private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
-  /** Lazily-created root-project reader used only when an execution lookup is handed an agents-less worktree store. */
+  /** Lazy root-project AgentStore when execution is handed an agents-less worktree store. */
   private authoritativeAssignedAgentStore: AgentStore | null = null;
   /** Active workflow-graph runner abort controllers keyed by task. */
   private activeWorkflowGraphAbortControllers = new Map<string, AbortController>();
-  /**
-   * Active CLI agent task sessions per task (U7). Mirrors activeSessions for the
-   * cli-agent executor kind so the hard-cancel / abort path can SIGKILL the PTY
-   * and mark `killed` (never resume-eligible), and the in-review handoff can reap
-   * the PTY. A task has at most one live CLI session at a time.
-   */
+  /** CLI agent task sessions (U7) — hard-cancel SIGKILL + in-review PTY reap. */
   private activeCliTaskSessions = new Map<string, CliTaskSession>();
   private readonlyWorkflowStepAuditDone = false;
-  /**
-   * Reviewer subagent sessions per task. Reviewers (`reviewer.ts`) create their
-   * own AgentSessions that aren't part of `activeSessions`/`activeStepExecutors`,
-   * so without this map they survive when the parent task is stopped — they
-   * keep producing log entries and step transitions after the user thinks they
-   * killed the task. Disposed alongside the main session in the move-out,
-   * pause, and global-pause handlers below.
-   */
+  /** Reviewer subagent sessions — disposed with parent kill paths. */
   private activeSubagentSessions = new Map<string, Set<AgentSession>>();
   /** Tasks that were paused mid-execution (to avoid marking them as "failed"). */
   private pausedAborted = new Set<string>();
@@ -1413,57 +1380,25 @@ export class TaskExecutor {
    *  (executeWorkflowGraph finally). */
   private graphStepSessionPinned = new Set<string>();
 
-  /** Step-inversion (U6/U8): caches the per-run implementation-phase result for a
-   *  graph-owned task so the foreach sub-walk's per-step `runTaskStep` driver runs
-   *  the (step-session) implementation exactly once per run and lets later step
-   *  instances observe the projection rather than re-running execute() per step.
-   *  Keyed by task id; cleared alongside the pin. */
+  /** Step-inversion (U6/U8): once-per-run implementation-phase cache keyed by task id. */
   private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
 
-  /** Step-inversion (KTD-4): the foreach instance the step-execute seam is
-   *  currently driving for a graph-owned task, so `runGraphTaskStep` can honor
-   *  `deferDoneToReview` when deciding whether a non-terminal step is a success
-   *  (review will author done) or a failure (implementation left it incomplete).
-   *  Stamped by the stepExecute seam around the runTaskStep call; cleared with the
-   *  per-run pins. Keyed by `${task.id}:${instanceId}` so parallel foreach
-   *  instances of the same task cannot clobber each other's active context
-   *  (the read path threads the same instanceId through `runGraphTaskStep`). */
+  /** Step-inversion (KTD-4): active foreach context for deferDoneToReview (`taskId:instanceId`). */
   private graphStepActiveContext = new Map<string, ForeachActiveContext>();
 
-  /**
-   * FNXC:ProactiveChatStatus 2026-07-16-12:30:
-   * Keep a graph RETHINK summary until its rework reset succeeds. The status wording says the step
-   * was rolled back, so it must not reach the task chat before resetStepToBaseline completes.
-   */
+  /** FNXC:ProactiveChatStatus 2026-07-16-12:30: RETHINK summary held until rework reset succeeds. */
   private graphRethinkNarrations = new Map<string, string>();
 
-  /** Column-agent seam wiring (column-agent plan U4, R2/R3/R4). Per-run binding
-   *  resolver keyed by task id: maps a governing node id to its column-agent
-   *  binding (if any), computed once per run in executeWorkflowGraph from the
-   *  resolved IR. The execute / step-execute seams consume it to decide whether the
-   *  coding/step session runs as a column agent. Cleared in the run's finally. */
+  /** Per-run column-agent binding resolver (nodeId → binding); cleared in graph finally. */
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
 
-  /** (U3) Task ids whose current graph run is genuinely unattended (LFG /
-   *  pipeline / disable-model-invocation — no human will ever answer). Set only
-   *  by an explicit `unattended` workflow-run option; default-absent means a
-   *  board run. runGraphCustomNode reads this to set FUSION_HEADLESS on skill
-   *  steps. Cleared in executeWorkflowGraph's finally alongside the resolver. */
+  /** (U3) Unattended graph runs (LFG/pipeline) — FUSION_HEADLESS for skill steps. */
   private graphUnattendedRuns = new Set<string>();
 
-  /** Column-agent seam wiring (column-agent plan U4). The governing graph node id
-   *  for the implementation pass currently in flight for a task — the execute-seam
-   *  prompt node's id (execute seam), or the foreach instance node id (step-execute
-   *  seam, which the core resolver maps through template inheritance). Stamped by
-   *  the seam from the reserved {@link SEAM_GOVERNING_NODE_CONTEXT_KEY} context key
-   *  right before it drives the implementation phase, read inside execute()'s
-   *  session build, and cleared by the seam afterward. Keyed by task id. */
+  /** Governing seam node id for in-flight implementation pass (column-agent plan U4). */
   private graphSeamGoverningNodeId = new Map<string, string>();
 
-  /**
-   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
-   * Execute and step-execute seam nodes can pin reasoning effort for the implementation session; keep it per graph run so session creation applies node/step > task > settings precedence.
-   */
+  /** FNXC:Settings-ThinkingLevel 2026-07-10-00:00: per-run thinking pin for execute/step-execute seams. */
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
 
   /**
@@ -2863,15 +2798,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:CodeOrganization 2026-08-03-15:10:
-  Thin facades over tryCreateWorktree / handleWorktreeConflict / cleanupConflictingWorktree
-  (U4 Slice B). Shared deps bag wires circular callbacks through this.
-
-  FNXC:CodeOrganization 2026-08-04-02:05:
-  Multi-arg create/conflict defaults fill via bindTryCreateWorktree / bindHandleWorktreeConflict
-  so the three call sites stay one-liners without changing arity semantics.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:45: worktree create/conflict deps bag + binders (U4). */
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
     return buildWorktreeCreateConflictFacadeDeps(
       this,
