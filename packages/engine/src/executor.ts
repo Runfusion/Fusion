@@ -116,7 +116,14 @@ const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
-import { isTaskWorkComplete, createSeenSteeringIds } from "./executor/task-predicates.js";
+/* FNXC:CodeOrganization 2026-08-03-21:45: Pure free-helper bindings (U4). */
+import {
+  isTaskWorkComplete, createSeenSteeringIds, extractOwnSettings, evaluateTaskDoneRefusal,
+  hasActiveWorktreeBinding, shouldGenerateNewWorktreeName, findActiveWorktreeOwner, isLiveCleanupRefusal,
+  cleanupStaleBranch, planSquashImportFromDep, reconcileSelfOwnedBeforeRemove, emitStaleLockAudit,
+  recoverIndexLockIfStale, recoverExecutorStaleRegistration, normalizeReclaimableWorktreePath, removeOwnWorktreeWithReconcile,
+  tryFreshWorktreeAfterLiveConflict, formatCommentForInjection, detectReviewHandoffIntent, runConfiguredCommand,
+} from "./executor/pure-bindings.js";
 /* FNXC:CodeOrganization 2026-08-03-21:15: Impl bindings barrel (U4). */
 import {
   accumulateTokenUsageImpl, tokenUsageWithModelSnapshotImpl, extractSessionTokenUsageImpl,
@@ -188,37 +195,14 @@ import {
   isRemediationGraphNodeImpl, isPreMergeRemediationGraphNodeImpl, executeWorkflowStepImpl,
   isEphemeralDeletionPendingImpl, disposeEphemeralTimersImpl,
 } from "./executor/impl-bindings.js";
-import { extractOwnSettings } from "./executor/agent-binding-pure.js";
 
 
 
-import {
-  evaluateTaskDoneRefusal,
-} from "./executor/task-done-refusal.js";
 
 
 
-import {
-  hasActiveWorktreeBinding,
-  shouldGenerateNewWorktreeName,
-  findActiveWorktreeOwner,
-  isLiveCleanupRefusal,
-} from "./executor/worktree-ownership.js";
-import { cleanupStaleBranch } from "./executor/worktree-stale-branch.js";
-import { planSquashImportFromDep } from "./executor/worktree-squash-import-plan.js";
-import { reconcileSelfOwnedBeforeRemove } from "./executor/worktree-self-owned-reconcile.js";
-import {
-  emitStaleLockAudit,
-  recoverIndexLockIfStale,
-  recoverExecutorStaleRegistration,
-} from "./executor/worktree-stale-lock-recovery.js";
-import { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
-import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
-import { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
 /* FNXC:CodeOrganization 2026-08-03-20:40: Free re-exports live in executor/free-reexports.ts (U4 barrel). */
 export * from "./executor/free-reexports.js";
-import { formatCommentForInjection } from "./executor/execution-prompt.js";
-import { detectReviewHandoffIntent } from "./executor/pseudo-pause.js";
 import type { ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
 import type { ActiveSessionBookkeepingDeps } from "./executor/active-session-bookkeeping.js";
 import type { TaskLivenessDeps } from "./executor/task-liveness.js";
@@ -230,7 +214,6 @@ import {
 } from "./executor/deps-bags.js";
 import { facadeMethods } from "./executor/facade-methods.js";
 
-import { runConfiguredCommand } from "./executor/configured-command.js";
 
 export async function __runConfiguredCommandForTests(
   command: string,
