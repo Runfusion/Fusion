@@ -797,6 +797,25 @@ async function startFixtureServer() {
   };
 }
 
+/*
+FNXC:DashboardBrowserSmoke 2026-08-04-12:24:
+Prepare emitted client CSS and bind the fixture server before starting Chrome's supervised 60-second lifetime. A cold client build can take several minutes on supported development hosts; that build time must not consume the browser's geometry-check budget or kill Chrome before the first named assertion.
+*/
+export async function prepareBrowserSmoke(executable, {
+  startFixture = startFixtureServer,
+  launch = launchBrowser,
+  closeFixture = (fixture) => closeServer(fixture.server),
+} = {}) {
+  const fixture = await startFixture();
+  try {
+    const launched = await launch(executable);
+    return { fixture, launched };
+  } catch (error) {
+    await closeFixture(fixture);
+    throw error;
+  }
+}
+
 async function findBrowserExecutable() {
   const envCandidates = [
     process.env.FUSION_BROWSER_SMOKE_BROWSER,
@@ -2019,11 +2038,11 @@ async function main() {
   }
 
   log("using local browser; this fixture smoke checks real CSS layout but does not replace full dashboard E2E coverage.");
-  const launched = await launchBrowser(executable);
   let fixture;
+  let launched;
   let page;
   try {
-    fixture = await startFixtureServer();
+    ({ fixture, launched } = await prepareBrowserSmoke(executable));
     page = await createPage(launched.wsUrl);
     await runSmokeChecks(page, fixture.url);
   } finally {
@@ -2031,8 +2050,10 @@ async function main() {
     if (fixture) {
       await closeServer(fixture.server);
     }
-    await stopBrowser(launched.browser);
-    await rm(launched.userDataDir, { recursive: true, force: true });
+    if (launched) {
+      await stopBrowser(launched.browser);
+      await rm(launched.userDataDir, { recursive: true, force: true });
+    }
   }
 }
 

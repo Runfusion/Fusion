@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { createSmokeHtml } from "../../scripts/browser-layout-smoke.mjs";
+import { createSmokeHtml, prepareBrowserSmoke } from "../../scripts/browser-layout-smoke.mjs";
 
 describe("browser layout smoke fixture", () => {
+  /*
+  FNXC:DashboardBrowserSmoke 2026-08-04-12:24:
+  Client CSS preparation may run a multi-minute build, so it must finish before Chrome's supervised lifetime begins. Otherwise the 60-second browser cap can expire before the fixture or any named geometry assertion is reached.
+  */
+  it("prepares the fixture before starting the supervised browser lifetime", async () => {
+    const events: string[] = [];
+    const fixture = { server: {}, url: "http://127.0.0.1:1234/" };
+    const launched = { browser: {}, userDataDir: "/tmp/browser-smoke", wsUrl: "ws://browser" };
+    let resolveFixture!: (value: typeof fixture) => void;
+    const fixtureReady = new Promise<typeof fixture>((resolve) => {
+      resolveFixture = resolve;
+    });
+
+    const preparing = prepareBrowserSmoke("/browser", {
+      startFixture: async () => {
+        events.push("fixture:start");
+        const result = await fixtureReady;
+        events.push("fixture:ready");
+        return result;
+      },
+      launch: async () => {
+        events.push("browser:launch");
+        return launched;
+      },
+    });
+
+    await Promise.resolve();
+    expect(events).toEqual(["fixture:start"]);
+
+    resolveFixture(fixture);
+    await expect(preparing).resolves.toEqual({ fixture, launched });
+    expect(events).toEqual(["fixture:start", "fixture:ready", "browser:launch"]);
+  });
+
   it("includes standalone and embedded Git Manager shell fixtures", () => {
     const html = createSmokeHtml();
     for (const hook of [
