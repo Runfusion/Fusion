@@ -306,4 +306,68 @@ export function buildMarkStuckAbortedDeps(host: any): any {
     ]),
   };
 }
+
+export function buildRunGraphTaskStepDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, ["foreachActiveForTask", "runImplementationPhase"]),
+    ...facadeFields(host, [
+      "graphStepSessionPinned", "graphStepRunOnce", "graphSeamGoverningNodeId",
+      "graphSeamThinkingLevel", "graphSeamSkillName",
+    ]),
+  };
+}
+
+export function buildRecoverCompletedTaskDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    ...facadeFields(host, [
+      "executing", "activeSessions", "activeStepExecutors",
+      "activeWorkflowStepSessions", "resumingUnpaused",
+      "workflowRerunWatchdogs", "workflowRerunPending", "recoveringCompleted",
+    ]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    captureModifiedFiles: (wt: string, base: string | undefined, id: string, audit: unknown, source: unknown) =>
+      host.captureModifiedFiles(wt, base ?? undefined, id, audit, source),
+    ...facadeMethods(host, [
+      "shouldDeferCompletionForGlobalPause", "executeWorkflowGraph", "clearCompletedTaskWatchdog",
+      "persistTokenUsage", "handoffTaskToReview", "signalTaskComplete",
+    ]),
+  };
+}
+
+export function buildExecuteScriptWorkflowStepDeps(
+  host: any,
+  runConfiguredCommand: any,
+): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+    ]),
+    runConfiguredCommand,
+  };
+}
+
+export function buildEnsureGraphCustomNodeWorktreeDeps(
+  host: any,
+  runConfiguredCommand: any,
+): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    getWorkspaceConfig: () => host.workspaceConfig,
+    setWorkspaceConfig: (c: unknown) => { host.workspaceConfig = c; },
+    ...facadeMethods(host, [
+      "getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+    ]),
+    pool: host.options.pool,
+    secretsStore: host.options.secretsStore,
+    createWorktree: (
+      branch: string, path: string, taskId: string, startPoint?: string, allowSibling?: boolean,
+    ) => host.createWorktree(branch, path, taskId, startPoint, allowSibling),
+    runConfiguredCommand,
+    onStart: host.options.onStart,
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -170,6 +170,10 @@ import {
   buildExecuteWorkflowStepDeps,
   buildCreateTaskDoneToolDeps,
   buildMarkStuckAbortedDeps,
+  buildRunGraphTaskStepDeps,
+  buildRecoverCompletedTaskDeps,
+  buildExecuteScriptWorkflowStepDeps,
+  buildEnsureGraphCustomNodeWorktreeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -1460,22 +1464,7 @@ export class TaskExecutor {
    */
   async recoverCompletedTask(task: Task): Promise<boolean> {
     return recoverCompletedTaskImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ...facadeFields(this, [
-          "executing", "activeSessions", "activeStepExecutors",
-          "activeWorkflowStepSessions", "resumingUnpaused",
-        ]),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        ...facadeFields(this, [
-          "workflowRerunWatchdogs", "workflowRerunPending", "recoveringCompleted",
-        ]),
-        captureModifiedFiles: (wt, base, id, audit, source) => this.captureModifiedFiles(wt, base ?? undefined, id, audit, source),
-        ...facadeMethods(this, [
-          "shouldDeferCompletionForGlobalPause", "executeWorkflowGraph", "clearCompletedTaskWatchdog",
-          "persistTokenUsage", "handoffTaskToReview", "signalTaskComplete",
-        ]),
-      },
+      buildRecoverCompletedTaskDeps(this),
       task,
     );
   }
@@ -2115,14 +2104,7 @@ export class TaskExecutor {
     skillName?: string,
   ): Promise<{ success: boolean; error?: string; exit?: ImplementationExit }> {
     return runGraphTaskStepImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, ["foreachActiveForTask", "runImplementationPhase"]),
-        ...facadeFields(this, [
-          "graphStepSessionPinned", "graphStepRunOnce", "graphSeamGoverningNodeId",
-          "graphSeamThinkingLevel", "graphSeamSkillName",
-        ]),
-      },
+      buildRunGraphTaskStepDeps(this),
       task,
       stepIndex,
       instanceId,
@@ -2466,20 +2448,7 @@ export class TaskExecutor {
     refreshStaleBase = false,
   ): Promise<TaskDetail> {
     return ensureGraphCustomNodeWorktreeImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        getWorkspaceConfig: () => this.workspaceConfig,
-        setWorkspaceConfig: (c) => { this.workspaceConfig = c; },
-        ...facadeMethods(this, ["getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController"]),
-        pool: this.options.pool,
-        secretsStore: this.options.secretsStore,
-        createWorktree: (branch, path, taskId, startPoint, allowSibling) =>
-          this.createWorktree(branch, path, taskId, startPoint, allowSibling),
-        runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
-          runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
-        onStart: this.options.onStart,
-      },
+      buildEnsureGraphCustomNodeWorktreeDeps(this, runConfiguredCommand),
       task,
       settings,
       nodeId,
@@ -3412,13 +3381,7 @@ export class TaskExecutor {
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return executeScriptWorkflowStepImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
-        ]),
-        runConfiguredCommand,
-      },
+      buildExecuteScriptWorkflowStepDeps(this, runConfiguredCommand),
       task,
       workflowStep,
       worktreePath,
