@@ -199,10 +199,7 @@ export class TaskExecutor {
   private clearPausedAborted(taskId: string): void { impl.clearPausedAbortedImpl(this.pauseAbortMarkerDeps(), taskId); }
 
   private async clearStalePauseAbortBeforeDispatch(task: Task): Promise<void> {
-    return impl.clearStalePauseAbortBeforeDispatchImpl(
-      bags.buildClearStalePauseAbortBeforeDispatchDeps(this),
-      task,
-    );
+    return impl.clearStalePauseAbortBeforeDispatchImpl(bags.buildClearStalePauseAbortBeforeDispatchDeps(this), task);
   }
 
   clearPauseAbortStateForManualRetry(taskId: string): void {
@@ -285,10 +282,7 @@ export class TaskExecutor {
   private async shouldDeferCompletionForGlobalPause(
     ...args: FacadeRestArgs<typeof impl.shouldDeferCompletionForGlobalPauseImpl>
   ): Promise<boolean> {
-    return impl.shouldDeferCompletionForGlobalPauseImpl(
-      bags.buildShouldDeferCompletionForGlobalPauseDeps(this),
-      ...args,
-    );
+    return impl.shouldDeferCompletionForGlobalPauseImpl(bags.buildShouldDeferCompletionForGlobalPauseDeps(this), ...args);
   }
 
   private async shouldDeferWorkflowStepCompletion(
@@ -388,18 +382,11 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:15: hasLiveSessionSurface / clearPhantom FNXC on has-live-session-surface.ts + clear-phantom-executor-binding.ts. */
   hasLiveSessionSurface(taskId: string): boolean {
-    return impl.hasLiveSessionSurfaceImpl(
-      bags.buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)),
-      taskId,
-    );
+    return impl.hasLiveSessionSurfaceImpl(bags.buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)), taskId);
   }
 
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
-    return impl.clearPhantomExecutorBindingImpl(
-      bags.buildClearPhantomExecutorBindingDeps(this),
-      taskId,
-      options,
-    );
+    return impl.clearPhantomExecutorBindingImpl(bags.buildClearPhantomExecutorBindingDeps(this), taskId, options);
   }
 
   isEphemeralDeletionPending(agentId: string): boolean {
@@ -738,11 +725,7 @@ export class TaskExecutor {
   }
 
   private async isRequiredArtifactRecoveryProtected(task: Task): Promise<boolean> {
-    return impl.isRequiredArtifactRecoveryProtectedImpl(
-      this.store,
-      (taskId: string) => this.resolveResumeLanes(taskId),
-      task,
-    );
+    return impl.isRequiredArtifactRecoveryProtectedImpl(this.store, (taskId: string) => this.resolveResumeLanes(taskId), task);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:30: recoverFailedPreMerge FNXC lives on recover-failed-pre-merge-step.ts. */
@@ -752,10 +735,7 @@ export class TaskExecutor {
 
   /** Defer execute when permanent agent has active heartbeat and allowParallelExecution=false. */
   private async shouldDeferForHeartbeat(agentId: string): Promise<boolean> {
-    return impl.shouldDeferForHeartbeatImpl(
-      { agentStore: this.options.agentStore },
-      agentId,
-    );
+    return impl.shouldDeferForHeartbeatImpl({ agentStore: this.options.agentStore }, agentId);
   }
 
   private async getAuthoritativeAssignedAgent(
@@ -776,10 +756,7 @@ export class TaskExecutor {
   }
 
   async resumeTaskForAgent(agentId: string): Promise<void> {
-    return impl.resumeTaskForAgentImpl(
-      bags.buildResumeTaskForAgentDeps(this),
-      agentId,
-    );
+    return impl.resumeTaskForAgentImpl(bags.buildResumeTaskForAgentDeps(this), agentId);
   }
 
   /** Column-agent U5/R6: effective principal matches agentId (fail-soft → false). */
@@ -921,11 +898,7 @@ export class TaskExecutor {
    *  through the foreach sub-walk; we surface it via a per-task slot the
    *  step-execute seam stamps. Returns undefined outside a foreach instance. */
   private foreachActiveForTask(taskId: string, instanceId?: string): ForeachActiveContext | undefined {
-    return impl.foreachActiveForTaskImpl(
-      { graphStepActiveContext: this.graphStepActiveContext },
-      taskId,
-      instanceId,
-    );
+    return impl.foreachActiveForTaskImpl({ graphStepActiveContext: this.graphStepActiveContext }, taskId, instanceId);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: projected step worktree-gating FNXC lives on run-projected-graph-task-step.ts. */
@@ -945,10 +918,7 @@ export class TaskExecutor {
 
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
      
-    return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(
-      bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this),
-      settings,
-    );
+    return impl.createAuthoritativeWorkflowPrimitivesFromExecutorImpl(bags.buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this), settings);
      
   }
 
@@ -977,10 +947,7 @@ export class TaskExecutor {
   private async getWorkflowMergeImplementationProofFailure(
     ...args: FacadeRestArgs<typeof impl.getWorkflowMergeImplementationProofFailureImpl>
   ): Promise<string | undefined> {
-    return impl.getWorkflowMergeImplementationProofFailureImpl(
-      bags.buildWorkflowMergeImplementationProofFailureDeps(this),
-      ...args,
-    );
+    return impl.getWorkflowMergeImplementationProofFailureImpl(bags.buildWorkflowMergeImplementationProofFailureDeps(this), ...args);
   }
 
   /** FNXC:WorkflowMerge 2026-07-27-12:00: FN-8601 checklist/foreach merge admission gate. */
@@ -1018,10 +985,7 @@ export class TaskExecutor {
   private async adoptColumnAgentForNode(
     ...args: FacadeRestArgs<typeof impl.adoptColumnAgentForNodeImpl>
   ): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> {
-    return impl.adoptColumnAgentForNodeImpl(
-      bags.buildAdoptColumnAgentForNodeDeps(this),
-      ...args,
-    );
+    return impl.adoptColumnAgentForNodeImpl(bags.buildAdoptColumnAgentForNodeDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:30: column-agent seam FNXC lives on resolve-seam-column-agent.ts / resolve-effective-principal-id.ts / is-agent-effectively-executing.ts. */
@@ -1074,10 +1038,7 @@ export class TaskExecutor {
   private async finalizeMergeConfirmedWorkflowGraphTask(
     ...args: FacadeRestArgs<typeof impl.finalizeMergeConfirmedWorkflowGraphTaskImpl>
   ): Promise<boolean> {
-    return impl.finalizeMergeConfirmedWorkflowGraphTaskImpl(
-      bags.buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(this),
-      ...args,
-    );
+    return impl.finalizeMergeConfirmedWorkflowGraphTaskImpl(bags.buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(this), ...args);
   }
 
   /** Custom (non-seam) graph node via WorkflowStep machinery; columnBinding U3/R precedence. */
@@ -1240,10 +1201,7 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: ephemeral-off dispatch guard FNXC lives on block-outer-dispatch-when-ephemeral-disabled.ts. */
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): Promise<boolean> {
-    return impl.blockOuterDispatchWhenEphemeralDisabledImpl(
-      bags.buildBlockOuterDispatchWhenEphemeralDisabledDeps(this),
-      task,
-    );
+    return impl.blockOuterDispatchWhenEphemeralDisabledImpl(bags.buildBlockOuterDispatchWhenEphemeralDisabledDeps(this), task);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: execute wrapper + executeCore routing FNXC lives on execute-core.ts. */
@@ -1373,10 +1331,7 @@ export class TaskExecutor {
   private async executeScriptWorkflowStep(
     ...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
-    return impl.executeScriptWorkflowStepImpl(
-      bags.buildExecuteScriptWorkflowStepDeps(this, pure.runConfiguredCommand),
-      ...args,
-    );
+    return impl.executeScriptWorkflowStepImpl(bags.buildExecuteScriptWorkflowStepDeps(this, pure.runConfiguredCommand), ...args);
   }
 
   private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
@@ -1494,20 +1449,12 @@ export class TaskExecutor {
   private async tryFreshWorktreeAfterLiveConflict(
     ...args: FacadeRestArgs<typeof pure.tryFreshWorktreeAfterLiveConflict>
   ): Promise<{ path: string; branch: string }> {
-    return pure.tryFreshWorktreeAfterLiveConflict(
-      bags.buildTryFreshWorktreeAfterLiveConflictDeps(this, bindTryCreateWorktree(this)),
-      ...args,
-    );
+    return pure.tryFreshWorktreeAfterLiveConflict(bags.buildTryFreshWorktreeAfterLiveConflictDeps(this, bindTryCreateWorktree(this)), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:45: worktree create/conflict deps bag + binders (U4). */
   private worktreeCreateConflictDeps(): import("./executor/worktree-create-conflict.js").WorktreeCreateConflictDeps {
-    return bags.buildWorktreeCreateConflictFacadeDeps(
-      this,
-      constants.MAX_WORKTREE_RETRIES,
-      bindHandleWorktreeConflict(this),
-      bindTryCreateWorktree(this),
-    );
+    return bags.buildWorktreeCreateConflictFacadeDeps(this, constants.MAX_WORKTREE_RETRIES, bindHandleWorktreeConflict(this), bindTryCreateWorktree(this));
   }
 
   private async tryCreateWorktree(
@@ -1548,10 +1495,7 @@ export class TaskExecutor {
   private async createWorktree(
     ...args: FacadeRestArgs<typeof impl.createWorktreeImpl>
   ): Promise<{ path: string; branch: string }> {
-    return impl.createWorktreeImpl(
-      bags.buildCreateWorktreeFacadeDeps(this, bindTryCreateWorktree(this)),
-      ...args,
-    );
+    return impl.createWorktreeImpl(bags.buildCreateWorktreeFacadeDeps(this, bindTryCreateWorktree(this)), ...args);
   }
 
   private async removeOwnWorktreeWithReconcile(
@@ -1570,10 +1514,7 @@ export class TaskExecutor {
   }
 
   async cleanup(taskId: string): Promise<void> {
-    return impl.cleanupTaskWorktreeImpl(
-      bags.buildCleanupTaskWorktreeDeps(this),
-      taskId,
-    );
+    return impl.cleanupTaskWorktreeImpl(bags.buildCleanupTaskWorktreeDeps(this), taskId);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:40: recoverApprovedSteps FNXC lives on recover-approved-steps-on-resume.ts. */
@@ -1583,12 +1524,7 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:40: reconcileStepsFromGitHistory FNXC lives on reconcile-steps-from-git-history.ts. */
   private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): Promise<void> {
-    return impl.reconcileStepsFromGitHistoryImpl(
-      bags.buildReconcileStepsFromGitHistoryDeps(this),
-      taskId,
-      detail,
-      worktreePath,
-    );
+    return impl.reconcileStepsFromGitHistoryImpl(bags.buildReconcileStepsFromGitHistoryDeps(this), taskId, detail, worktreePath);
   }
 
   /** Stuck-kill: reset done steps when branch has no unique commits (lost uncommitted work). */
@@ -1621,10 +1557,7 @@ export class TaskExecutor {
   }
 
   private async terminateChildAgent(childId: string): Promise<void> {
-    return impl.terminateChildAgentImpl(
-      bags.buildTerminateChildAgentDeps(this),
-      childId,
-    );
+    return impl.terminateChildAgentImpl(bags.buildTerminateChildAgentDeps(this), childId);
   }
 
   /**
