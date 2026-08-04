@@ -1201,11 +1201,10 @@ export class TaskExecutor {
         activeWorkflowStepSessions: this.activeWorkflowStepSessions,
         graphRouting: this.graphRouting,
         approvalSuspended: this.approvalSuspended,
-        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
-        clearResumeFailureState: (t: Task) => this.clearResumeFailureState(t),
-        recoverApprovedStepsOnResume: (taskId: string) => this.recoverApprovedStepsOnResume(taskId),
-        recoverCompletedTask: (t: Task) => this.recoverCompletedTask(t),
-        execute: (t: Task) => this.execute(t),
+        ...facadeMethods(this, [
+          "getExecutionPauseLabel", "clearResumeFailureState", "recoverApprovedStepsOnResume",
+          "recoverCompletedTask", "execute",
+        ]),
       },
       task,
     );
@@ -2081,10 +2080,10 @@ export class TaskExecutor {
         activeWorkflowStepSessions: this.activeWorkflowStepSessions,
         resumingUnpaused: this.resumingUnpaused,
         completedTaskWatchdogMs: COMPLETED_TASK_WATCHDOG_MS,
-        clearCompletedTaskWatchdog: (id: string) => this.clearCompletedTaskWatchdog(id),
-        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
-        resolveResumeLanes: (id: string) => this.resolveResumeLanes(id),
-        recoverCompletedTask: (task: Task) => this.recoverCompletedTask(task),
+        ...facadeMethods(this, [
+          "clearCompletedTaskWatchdog", "getExecutionPauseLabel", "resolveResumeLanes",
+          "recoverCompletedTask",
+        ]),
       },
       taskId,
       trigger,
@@ -2145,10 +2144,10 @@ export class TaskExecutor {
         store: this.store,
         workflowRerunWatchdogs: this.workflowRerunWatchdogs,
         workflowRerunWatchdogMs: WORKFLOW_RERUN_WATCHDOG_MS,
-        clearWorkflowRerunWatchdog: (id: string) => this.clearWorkflowRerunWatchdog(id),
-        performWorkflowRerunBounce: (id, wp, preserve) => this.performWorkflowRerunBounce(id, wp, preserve),
-        getExecutionPauseLabel: () => this.getExecutionPauseLabel(),
-        resolveResumeLanes: (id: string) => this.resolveResumeLanes(id),
+        ...facadeMethods(this, [
+          "clearWorkflowRerunWatchdog", "performWorkflowRerunBounce", "getExecutionPauseLabel",
+          "resolveResumeLanes",
+        ]),
       },
       taskId,
       worktreePath,
@@ -2180,13 +2179,11 @@ export class TaskExecutor {
   private nonContinuableSessionDeps() {
     return buildNonContinuableSessionDeps({
       store: this.store,
-      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-      resolveResumeLanes: (taskId: string) => this.resolveResumeLanes(taskId),
-      persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
-      clearCompletedTaskWatchdog: (taskId: string) => this.clearCompletedTaskWatchdog(taskId),
-      signalTaskComplete: (task: Task) => this.signalTaskComplete(task),
-      handoffTaskToReview: (task: Task, reason: string) => this.handoffTaskToReview(task, reason),
-      markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
+      ...facadeMethods(this, [
+        "getRunContextFor", "resolveResumeLanes", "persistTokenUsage",
+        "clearCompletedTaskWatchdog", "signalTaskComplete", "handoffTaskToReview",
+        "markGraphExecuteSelfRequeued",
+      ]),
     });
   }
 
@@ -2310,12 +2307,10 @@ export class TaskExecutor {
         workflowRerunPending: this.workflowRerunPending,
         recoveringCompleted: this.recoveringCompleted,
         captureModifiedFiles: (wt, base, id, audit, source) => this.captureModifiedFiles(wt, base ?? undefined, id, audit, source),
-        shouldDeferCompletionForGlobalPause: (id, ctx) => this.shouldDeferCompletionForGlobalPause(id, ctx),
-        executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
-        clearCompletedTaskWatchdog: (id) => this.clearCompletedTaskWatchdog(id),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-        handoffTaskToReview: (t, reason) => this.handoffTaskToReview(t, reason),
-        signalTaskComplete: (t) => this.signalTaskComplete(t),
+        ...facadeMethods(this, [
+          "shouldDeferCompletionForGlobalPause", "executeWorkflowGraph", "clearCompletedTaskWatchdog",
+          "persistTokenUsage", "handoffTaskToReview", "signalTaskComplete",
+        ]),
       },
       task,
     );
@@ -2562,11 +2557,10 @@ export class TaskExecutor {
       executing: this.executing,
       recoveringCompleted: this.recoveringCompleted,
       processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-      listWipLaneTasks: () => this.listWipLaneTasks(),
-      clearResumeFailureState: (t) => this.clearResumeFailureState(t),
-      recoverApprovedStepsOnResume: (id) => this.recoverApprovedStepsOnResume(id),
-      recoverCompletedTask: (t) => this.recoverCompletedTask(t),
-      execute: (t) => this.execute(t),
+      ...facadeMethods(this, [
+        "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
+        "recoverCompletedTask", "execute",
+      ]),
     });
   }
 
@@ -2731,7 +2725,7 @@ export class TaskExecutor {
    * (completed or failed); false when the legacy pipeline should run.
    */
   private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor state/methods into free-function deps bag */
+     
     return executeWorkflowGraphImpl(
       {
         store: this.store,
@@ -2759,12 +2753,12 @@ export class TaskExecutor {
           "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
           "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
           "requestPreMergeOptionalStepFix", "runGraphCustomNode", "terminateAllChildren",
-        ] as const) as any,
+        ]),
       },
       task,
       opts,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
@@ -3085,7 +3079,7 @@ export class TaskExecutor {
   }
 
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into the free-function deps bag */
+     
     return createAuthoritativeWorkflowPrimitivesFromExecutorImpl(
       {
         store: this.store,
@@ -3099,11 +3093,11 @@ export class TaskExecutor {
           "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
           "getWorkflowMergeImplementationProofFailure", "handoffTaskToReview", "markPausedAborted",
           "persistTokenUsage", "runImplementationPhase", "runProjectedGraphTaskStep",
-        ] as const) as any,
+        ]),
       },
       settings,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private async resolveMergeBoundaryColumn(taskId: string, nodeId: string): Promise<string> {
@@ -3173,7 +3167,7 @@ export class TaskExecutor {
   }
 
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into free-function deps bag */
+     
     return createAuthoritativeWorkflowSeamsImpl(
       {
         store: this.store,
@@ -3192,11 +3186,11 @@ export class TaskExecutor {
           "ensureWorkflowMergeBoundaryTask", "getWorkflowMergeImplementationProofFailure", "runProjectedGraphTaskStep",
           "updateStepGraph", "reviewWorkspacePerRepo", "registerSubagentSession",
           "unregisterSubagentSession",
-        ] as const) as any,
+        ]),
       },
       _settings,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private async updateStepGraph(
@@ -3499,7 +3493,7 @@ export class TaskExecutor {
     columnBinding?: WorkflowColumnAgent,
     graphContext?: Record<string, unknown>,
   ): Promise<WorkflowNodeResult> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into free-function deps bag */
+     
     return runGraphCustomNodeImpl(
       {
         store: this.store,
@@ -3513,7 +3507,7 @@ export class TaskExecutor {
           "executeScriptWorkflowStep", "executeWorkflowStep", "pauseForCliApproval",
           "resolveWorkflowInputMarkerForGraphNode", "runAwaitInputNode", "runCliAgentNode",
           "runRawCliCommand",
-        ] as const) as any,
+        ]),
       },
       node,
       nodeTask,
@@ -3521,7 +3515,7 @@ export class TaskExecutor {
       columnBinding,
       graphContext,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private async runCliAgentNode(
@@ -3662,12 +3656,10 @@ export class TaskExecutor {
     return routeRetryableRemediationGraphFailureToPreMergeFixImpl(
       {
         store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        isPreMergeRemediationGraphNode: (id, node) => this.isPreMergeRemediationGraphNode(id, node),
-        isLiveSharedBranchGroupMember: (live) => this.isLiveSharedBranchGroupMember(live),
-        resolveFailedPreMergeWorkflowStepBudget: (t, target) => this.resolveFailedPreMergeWorkflowStepBudget(t, target),
-        recoverFailedPreMergeWorkflowStep: (t) => this.recoverFailedPreMergeWorkflowStep(t),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        ...facadeMethods(this, [
+          "getRunContextFor", "isPreMergeRemediationGraphNode", "isLiveSharedBranchGroupMember",
+          "resolveFailedPreMergeWorkflowStepBudget", "recoverFailedPreMergeWorkflowStep", "persistTokenUsage",
+        ]),
       },
       live,
       failedNode,
@@ -3734,10 +3726,10 @@ export class TaskExecutor {
     return handleStaleInReviewPlanPauseAbortReplayImpl(
       {
         store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        ...facadeMethods(this, [
+          "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+          "clearPausedAborted",
+        ]),
         activeWorktrees: this.activeWorktrees,
         persistTokenUsage: (id) => this.persistTokenUsage(id),
       },
@@ -3763,10 +3755,10 @@ export class TaskExecutor {
     return handleStaleInReviewParsePauseAbortReplayImpl(
       {
         store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        ...facadeMethods(this, [
+          "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+          "clearPausedAborted",
+        ]),
         activeWorktrees: this.activeWorktrees,
         activeSessions: this.activeSessions,
         activeStepExecutors: this.activeStepExecutors,
@@ -3910,7 +3902,7 @@ export class TaskExecutor {
   /** Terminal failure of a graph run: record the error and park the task in
    *  review so a human can act — never leave it invisible in in-progress. */
   private async handleGraphFailure(task: Task, result: WorkflowGraphTaskRunResult): Promise<void> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- facadeMethods binds private methods into free-fn deps */
+     
     return handleGraphFailureImpl(
       {
         store: this.store,
@@ -3936,12 +3928,12 @@ export class TaskExecutor {
           "routeImplementationIncompleteMergeGraphFailure", "routeResetParsePinMismatchToRetry",
           "routeRetryableRemediationGraphFailureToPreMergeFix", "routeUnusableWorktreeGraphFailureToRecovery",
           "safeLogEntry",
-        ] as const) as any,
+        ]),
       },
       task,
       result,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private async routeGraphFailureToExecutionResume(
@@ -3954,10 +3946,10 @@ export class TaskExecutor {
     return routeGraphFailureToExecutionResumeImpl(
       {
         store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        clearTerminalStepFailuresForRetry: (id) => this.clearTerminalStepFailuresForRetry(id),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        ...facadeMethods(this, [
+          "getRunContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
+          "persistTokenUsage",
+        ]),
       },
       live,
       failedNode,
@@ -4050,10 +4042,10 @@ export class TaskExecutor {
         completionFinalizedTaskIds: this.completionFinalizedTaskIds,
         graphRouting: this.graphRouting,
         releaseSemaphore: () => { this.options.semaphore?.release(); },
-        clearStalePauseAbortBeforeDispatch: (t) => this.clearStalePauseAbortBeforeDispatch(t),
-        blockOuterDispatchWhenDependenciesUnmet: (t) => this.blockOuterDispatchWhenDependenciesUnmet(t),
-        blockOuterDispatchWhenEphemeralDisabled: (t) => this.blockOuterDispatchWhenEphemeralDisabled(t),
-        executeWorkflowGraph: (t, opts) => this.executeWorkflowGraph(t, opts),
+        ...facadeMethods(this, [
+          "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet", "blockOuterDispatchWhenEphemeralDisabled",
+          "executeWorkflowGraph",
+        ]),
       },
       task,
     );
@@ -4152,7 +4144,7 @@ export class TaskExecutor {
           "createWorkflowUpdateTool", "createWorkflowDeleteTool", "createWorkflowSettingsTool",
           "createTraitListTool", "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
           "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
-        ] as const) as any,
+        ]),
       },
       task,
       graphCompletion,
@@ -4353,10 +4345,10 @@ export class TaskExecutor {
     return handleImplicitTaskDoneRefusalImpl(
       {
         store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
-        persistTokenUsage: (taskId: string) => this.persistTokenUsage(taskId),
-        deleteActiveSession: (taskId: string) => this.deleteActiveSession(taskId),
+        ...facadeMethods(this, [
+          "getRunContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
+          "deleteActiveSession",
+        ]),
         clearTokenUsageBaseline: (taskId: string) => { this.tokenUsageBaselines.delete(taskId); },
       },
       task,
@@ -4377,12 +4369,10 @@ export class TaskExecutor {
         store: this.store,
         getRunContextFor: (id) => this.getRunContextFor(id),
         workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-        getTaskCompletionBlocker: (task) => this.getTaskCompletionBlocker(task),
-        evaluateTaskVerdictProviders: (task, opts) => this.evaluateTaskVerdictProviders(task, opts),
-        verifyWorktreeInvariants: (task, wt, strict, opts) => this.verifyWorktreeInvariants(task, wt, strict, opts),
-        evaluateTaskDoneScopeLeak: (task, wt, prompt, settings, a) => this.evaluateTaskDoneScopeLeak(task, wt, prompt, settings, a),
-        scheduleCompletedTaskWatchdog: (id, source) => this.scheduleCompletedTaskWatchdog(id, source),
+        ...facadeMethods(this, [
+          "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
+          "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
+        ]),
       },
       taskId,
       worktreePath,
@@ -4504,10 +4494,10 @@ export class TaskExecutor {
     return sendTaskBackForFixImpl(
       {
         store: this.store,
-        clearCompletedTaskWatchdog: (taskId: string) => this.clearCompletedTaskWatchdog(taskId),
-        injectWorkflowStepFailureInstructions: (t, fb, sn, r) => this.injectWorkflowStepFailureInstructions(t, fb, sn, r),
-        reopenLastStepForRevision: (taskId, t) => this.reopenLastStepForRevision(taskId, t),
-        scheduleWorkflowRerun: (taskId, wp, msg, preserve) => this.scheduleWorkflowRerun(taskId, wp, msg, preserve),
+        ...facadeMethods(this, [
+          "clearCompletedTaskWatchdog", "injectWorkflowStepFailureInstructions", "reopenLastStepForRevision",
+          "scheduleWorkflowRerun",
+        ]),
         maxWorkflowStepRetries: MAX_WORKFLOW_STEP_RETRIES,
       },
       task,
@@ -4617,7 +4607,7 @@ export class TaskExecutor {
     taskEnv?: NodeJS.ProcessEnv,
     stepOptions?: { unattended?: boolean },
   ): Promise<WorkflowStepOutcome> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor methods into free-function deps bag */
+     
     return executeWorkflowStepImpl(
       {
         store: this.store,
@@ -4631,7 +4621,7 @@ export class TaskExecutor {
           "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
           "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
           "setActiveWorkflowStepSession",
-        ] as const) as any,
+        ]),
       },
       task,
       workflowStep,
@@ -4640,7 +4630,7 @@ export class TaskExecutor {
       taskEnv,
       stepOptions,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   private MAX_WORKTREE_RETRIES = 3;
@@ -5124,13 +5114,11 @@ export class TaskExecutor {
         executing: this.executing,
         activeWorktrees: this.activeWorktrees,
         loopRecoveryState: this.loopRecoveryState,
-        resolveResumeLanes: (id) => this.resolveResumeLanes(id),
-        getWorktreePath: (id) => this.getWorktreePath(id),
-        terminateAllChildren: (id) => this.terminateAllChildren(id),
-        awaitAbortInFlightTaskWork: (id, reason) => this.awaitAbortInFlightTaskWork(id, reason),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
-        resetStepsIfWorkLost: (t) => this.resetStepsIfWorkLost(t),
-        hasActiveWorktreeBinding: (owner, path) => this.hasActiveWorktreeBinding(owner, path),
+        ...facadeMethods(this, [
+          "resolveResumeLanes", "getWorktreePath", "terminateAllChildren",
+          "awaitAbortInFlightTaskWork", "clearPausedAborted", "resetStepsIfWorkLost",
+          "hasActiveWorktreeBinding",
+        ]),
       },
       taskId,
       shouldRequeue,
@@ -5250,11 +5238,10 @@ export class TaskExecutor {
         setTotalSpawnedCount: (n) => { this.totalSpawnedCount = n; },
         childSessions: this.childSessions,
         spawnedAgents: this.spawnedAgents,
-        createWorktree: (branch, path, tid, startPoint) => this.createWorktree(branch, path, tid, startPoint),
-        resolveInstructionsForRole: (role, s) => this.resolveInstructionsForRole(role, s),
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        resolveMcpServers: (agentId) => this.resolveMcpServers(agentId),
-        runSpawnedChild: (agentId, session, prompt) => this.runSpawnedChild(agentId, session, prompt),
+        ...facadeMethods(this, [
+          "createWorktree", "resolveInstructionsForRole", "getRunContextFor",
+          "resolveMcpServers", "runSpawnedChild",
+        ]),
       },
       taskId,
       worktreePath,
