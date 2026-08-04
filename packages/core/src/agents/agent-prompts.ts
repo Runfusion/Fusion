@@ -16,7 +16,6 @@
  */
 
 import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from "../types.js";
-import { CODE_REVIEW_COMPLETENESS_POLICY } from "./code-review-policy.js";
 // FNXC:WorkflowLifecycleColumns 2026-07-30-11:00: these are ROLE comparisons, not column
 // guards — the planner LANE is named `triage` and stays named that. See PLANNER_AGENT_ROLE.
 import { PLANNER_AGENT_ROLE } from "../types/task/task-log.js";
@@ -723,8 +722,6 @@ access to the codebase and can run commands to inspect code.
 
 Review efficiently: prioritize high-impact correctness/risk issues first. Do not spend blocking attention on style nits when substantive defects exist.
 
-${CODE_REVIEW_COMPLETENESS_POLICY}
-
 ## Verdict Criteria
 
 - **APPROVE** — Step will achieve its stated outcomes. Minor suggestions go in
@@ -1091,8 +1088,6 @@ const STRICT_REVIEWER_PROMPT_TEXT = `You are a strict code and plan reviewer wit
 You provide quality assessment for task implementations. You have full read
 access to the codebase and can run commands to inspect code. You hold all
 submissions to a high bar for correctness, security, and maintainability.
-
-${CODE_REVIEW_COMPLETENESS_POLICY}
 
 ## Verdict Criteria
 

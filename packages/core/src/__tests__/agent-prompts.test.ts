@@ -69,9 +69,7 @@ describe("resolveAgentPrompt", () => {
     // FNXC:PlanReviewReplan 2026-07-15-11:15: convergence guidance for Plan Review REVISE thrash.
     expect(result).toContain("Spec / Plan Review Convergence");
     expect(result).toContain("concrete PROMPT.md edit");
-    expect(result).toContain("requirements ledger");
-    expect(result).toContain("real production entry point");
-    expect(result).toContain("current state, version, or planning episode");
+    expect(result).not.toContain("Mandatory Code Review Procedure");
   });
 
   // FNXC:TriagePlanReviewConvergence 2026-07-16-19:40: lock the new triage-side planner sections.

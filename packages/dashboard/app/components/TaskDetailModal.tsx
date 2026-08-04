@@ -85,7 +85,7 @@ import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/t
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
-import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
+import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 import type { TaskContextMenuColumnFlags, TaskContextMenuColumnMetadata } from "./TaskContextMenu";
@@ -3409,8 +3409,7 @@ export function TaskDetailContent({
     ? detailColumnFlags.intake === true
     : task.column === "triage";
   const isPlanReviewReplanCapApproval = isReviewBudgetExhaustedApproval(task);
-  const isAwaitingApproval = (isIntakeColumn && task.status === "awaiting-approval")
-    || isPlanReviewReplanCapApproval;
+  const isAwaitingApproval = isTaskAwaitingPlanApproval(task, isIntakeColumn);
 
   const handleTogglePause = useCallback(async () => {
     try {

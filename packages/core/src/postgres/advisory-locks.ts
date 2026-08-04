@@ -204,7 +204,18 @@ export async function withPlanningLifecycleAdvisoryLock<T>(
     acquired = true;
     return await callback();
   } finally {
-    if (acquired) await client`SELECT pg_advisory_unlock(hashtext(${key}))`.catch(() => undefined);
-    await client.end({ timeout: 5 }).catch(() => undefined);
+    try {
+      if (acquired) {
+        await runBoundedTransportPhase(
+          client,
+          timeoutMs,
+          `Planning lifecycle lock cleanup timed out after ${timeoutMs}ms`,
+          "Planning lifecycle lock cleanup failed",
+          () => client`SELECT pg_advisory_unlock(hashtext(${key}))`,
+        ).catch(() => undefined);
+      }
+    } finally {
+      await client.end({ timeout: 5 }).catch(() => undefined);
+    }
   }
 }

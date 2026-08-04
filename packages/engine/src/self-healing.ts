@@ -14376,13 +14376,16 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
       const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
-      const orphanedApproved = tasks.filter((t) =>
-        (t.status === "planning" || t.status == null) &&
-        !t.paused &&
-        !t.userPaused &&
-        !planningIds.has(t.id) &&
-        now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS
-      );
+      const orphanedApproved = tasks.filter((task) => {
+        const handoffKind = classifyPersistedPlanHandoff(task, {
+          now,
+          hasLivePlanningWork: planningIds.has(task.id),
+          legacyStaleMs: LEGACY_NULL_PLAN_HANDOFF_STALE_MS,
+          requirePersistedSteps: true,
+        });
+        return handoffKind != null
+          && now - new Date(task.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS;
+      });
 
       if (orphanedApproved.length === 0) return 0;
 
