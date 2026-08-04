@@ -198,6 +198,13 @@ import {
   buildCleanupTaskWorktreeDeps,
   buildResumeTaskForAgentDeps,
   buildHasLiveSessionSurfaceDeps,
+  buildBuildActionGateContextDeps,
+  buildHandleStaleInReviewPlanPauseAbortReplayDeps,
+  buildExecuteCoreDeps,
+  buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps,
+  buildRouteGraphFailureToExecutionResumeDeps,
+  buildApplyGraphRethinkResetDeps,
+  buildRunCliAgentNodeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -724,13 +731,7 @@ export class TaskExecutor {
 
   private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
     return buildActionGateContextImpl(
-      {
-        ...this.storeRunContextDeps(),
-        approvalSuspended: this.approvalSuspended,
-        awaitAbortInFlightTaskWork: (id, reason) => this.awaitAbortInFlightTaskWork(id, reason),
-        agentStore: this.options.agentStore,
-        approvalRequestStore: this.approvalRequestStore,
-      },
+      buildBuildActionGateContextDeps(this),
       taskId,
       agent,
       projectDefaultPolicy,
@@ -1968,12 +1969,7 @@ export class TaskExecutor {
 
   private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
     return applyGraphRethinkResetImpl(
-      {
-        ...facadeFields(this, [
-          "rootDir", "store", "graphStepRunOnce",
-          "graphRethinkNarrations",
-        ]),
-      },
+      buildApplyGraphRethinkResetDeps(this),
       taskId,
       active,
     );
@@ -2467,12 +2463,7 @@ export class TaskExecutor {
     cfg: Record<string, unknown>,
   ): Promise<WorkflowNodeResult> {
     return runCliAgentNodeImpl(
-      {
-        ...this.storeRunContextDeps(),
-        activeCliTaskSessions: this.activeCliTaskSessions,
-        cliAgentRuntime: this.options.cliAgentRuntime,
-        reapCliTaskSessionForHandoff: (session, id) => this.reapCliTaskSessionForHandoff(session, id),
-      },
+      buildRunCliAgentNodeDeps(this),
       node,
       live,
       cfg,
@@ -2587,13 +2578,7 @@ export class TaskExecutor {
     failureValue: string | undefined,
   ): Promise<boolean> {
     return routeRetryableRemediationGraphFailureToPreMergeFixImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, [
-          "getRunContextFor", "isPreMergeRemediationGraphNode", "isLiveSharedBranchGroupMember",
-          "resolveFailedPreMergeWorkflowStepBudget", "recoverFailedPreMergeWorkflowStep", "persistTokenUsage",
-        ]),
-      },
+      buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(this),
       live,
       failedNode,
       failureValue,
@@ -2655,15 +2640,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return handleStaleInReviewPlanPauseAbortReplayImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, [
-          "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
-          "clearPausedAborted",
-        ]),
-        activeWorktrees: this.activeWorktrees,
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-      },
+      buildHandleStaleInReviewPlanPauseAbortReplayDeps(this),
       live,
       result,
       abortProvenance,
@@ -2808,13 +2785,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return routeGraphFailureToExecutionResumeImpl(
-      {
-        store: this.store,
-        ...facadeMethods(this, [
-          "getRunContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
-          "persistTokenUsage",
-        ]),
-      },
+      buildRouteGraphFailureToExecutionResumeDeps(this),
       live,
       failedNode,
       failureValue,
@@ -2898,15 +2869,7 @@ export class TaskExecutor {
   */
   private async executeCore(task: Task): Promise<void> {
     return executeCoreImpl(
-      {
-        completionFinalizedTaskIds: this.completionFinalizedTaskIds,
-        graphRouting: this.graphRouting,
-        releaseSemaphore: () => { this.options.semaphore?.release(); },
-        ...facadeMethods(this, [
-          "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet", "blockOuterDispatchWhenEphemeralDisabled",
-          "executeWorkflowGraph",
-        ]),
-      },
+      buildExecuteCoreDeps(this),
       task,
     );
   }

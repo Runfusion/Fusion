@@ -657,4 +657,75 @@ export function buildHasLiveSessionSurfaceDeps(host: any, pathsForTask: (id: str
     pathsForTask,
   };
 }
+
+export function buildBuildActionGateContextDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    approvalSuspended: host.approvalSuspended,
+    awaitAbortInFlightTaskWork: (id: string, reason: string) => host.awaitAbortInFlightTaskWork(id, reason),
+    agentStore: host.options.agentStore,
+    approvalRequestStore: host.approvalRequestStore,
+  };
+}
+
+export function buildHandleStaleInReviewPlanPauseAbortReplayDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+      "clearPausedAborted", "persistTokenUsage",
+    ]),
+    activeWorktrees: host.activeWorktrees,
+  };
+}
+
+export function buildExecuteCoreDeps(host: any): any {
+  return {
+    completionFinalizedTaskIds: host.completionFinalizedTaskIds,
+    graphRouting: host.graphRouting,
+    releaseSemaphore: () => { host.options.semaphore?.release(); },
+    ...facadeMethods(host, [
+      "clearStalePauseAbortBeforeDispatch", "blockOuterDispatchWhenDependenciesUnmet",
+      "blockOuterDispatchWhenEphemeralDisabled", "executeWorkflowGraph",
+    ]),
+  };
+}
+
+export function buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, [
+      "getRunContextFor", "isPreMergeRemediationGraphNode", "isLiveSharedBranchGroupMember",
+      "resolveFailedPreMergeWorkflowStepBudget", "recoverFailedPreMergeWorkflowStep", "persistTokenUsage",
+    ]),
+  };
+}
+
+export function buildRouteGraphFailureToExecutionResumeDeps(host: any): any {
+  return {
+    store: host.store,
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
+      "persistTokenUsage",
+    ]),
+  };
+}
+
+export function buildApplyGraphRethinkResetDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "rootDir", "store", "graphStepRunOnce",
+      "graphRethinkNarrations",
+    ]),
+  };
+}
+
+export function buildRunCliAgentNodeDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    activeCliTaskSessions: host.activeCliTaskSessions,
+    cliAgentRuntime: host.options.cliAgentRuntime,
+    reapCliTaskSessionForHandoff: (session: unknown, id: string) => host.reapCliTaskSessionForHandoff(session, id),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
