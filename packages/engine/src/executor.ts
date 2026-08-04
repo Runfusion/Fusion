@@ -4549,16 +4549,11 @@ export class TaskExecutor {
     return buildBranchConflictHandleDeps({
       rootDir: this.rootDir,
       store: this.store,
-      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-      findActiveWorktreeOwner: (worktreePath, requestingTaskId) =>
-        this.findActiveWorktreeOwner(worktreePath, requestingTaskId),
-      normalizeReclaimableWorktreePath: (sourcePath, targetPath, taskId, settings) =>
-        this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
-      cleanupConflictingWorktree: (worktreePath, branch, taskId) =>
-        this.cleanupConflictingWorktree(worktreePath, branch, taskId),
-      getAutoRecoveryDispatcher: (audit) => this.getAutoRecoveryDispatcher(audit),
-      persistTokenUsage: (taskId) => this.persistTokenUsage(taskId),
       onError: this.options.onError,
+      ...facadeMethods(this, [
+        "getRunContextFor", "findActiveWorktreeOwner", "normalizeReclaimableWorktreePath",
+        "cleanupConflictingWorktree", "getAutoRecoveryDispatcher", "persistTokenUsage",
+      ]),
     });
   }
 
@@ -4595,9 +4590,9 @@ export class TaskExecutor {
       {
         rootDir: this.rootDir,
         store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        hasActiveWorktreeBinding: (taskId: string, path: string) => this.hasActiveWorktreeBinding(taskId, path),
-        markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
+        ...facadeMethods(this, [
+          "getRunContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
+        ]),
       },
       task,
       worktreePath,
@@ -4753,9 +4748,7 @@ export class TaskExecutor {
       rootDir: this.rootDir,
       store: this.store,
       maxWorktreeRetries: MAX_WORKTREE_RETRIES,
-      recoverIndexLockIfStale: (taskId, path, info) => this.recoverIndexLockIfStale(taskId, path, info),
-      recoverStaleRegistration: (taskId, path, info) => this.recoverStaleRegistration(taskId, path, info),
-      cleanupStaleBranch: (branch, taskId) => this.cleanupStaleBranch(branch, taskId),
+      // Multi-arg create/conflict paths need default-filling; others bind via facadeMethods.
       handleWorktreeConflict: (
         conflictPath, branch, path, taskId, startPoint, attemptNumber, allowSiblingBranchRename, settings,
       ) => this.handleWorktreeConflict(
@@ -4766,12 +4759,11 @@ export class TaskExecutor {
       ) => this.tryCreateWorktree(
         branch, path, taskId, startPoint, attemptNumber, recoveryDepth, allowSiblingBranchRename ?? false, settings ?? {},
       ),
-      tryFreshWorktreeAfterLiveConflict: (input) => this.tryFreshWorktreeAfterLiveConflict(input),
-      shouldGenerateNewWorktreeName: (conflictPath, taskId) => this.shouldGenerateNewWorktreeName(conflictPath, taskId),
-      cleanupConflictingWorktree: (worktreePath, branch, taskId) => this.cleanupConflictingWorktree(worktreePath, branch, taskId),
-      normalizeReclaimableWorktreePath: (sourcePath, targetPath, taskId, settings) =>
-        this.normalizeReclaimableWorktreePath(sourcePath, targetPath, taskId, settings),
-      isLiveCleanupRefusal: (worktreePath, taskId) => this.isLiveCleanupRefusal(worktreePath, taskId),
+      ...facadeMethods(this, [
+        "recoverIndexLockIfStale", "recoverStaleRegistration", "cleanupStaleBranch",
+        "tryFreshWorktreeAfterLiveConflict", "shouldGenerateNewWorktreeName", "cleanupConflictingWorktree",
+        "normalizeReclaimableWorktreePath", "isLiveCleanupRefusal",
+      ]),
     });
   }
 
@@ -4865,15 +4857,15 @@ export class TaskExecutor {
         store: this.store,
         maxWorktreeRetries: MAX_WORKTREE_RETRIES,
         worktreeRetryDelaysMs: WORKTREE_RETRY_DELAYS,
-        resolveWorktreeStartPoint: (sp, tid) => this.resolveWorktreeStartPoint(sp, tid),
-        planSquashImportFromDep: (tid, tip, orig) => this.planSquashImportFromDep(tid, tip, orig),
         tryCreateWorktree: (
           b, p, tid, start, attempt, recoveryDepth, allowSibling, settings,
         ) => this.tryCreateWorktree(
           b, p, tid, start, attempt, recoveryDepth, allowSibling ?? false, settings ?? {},
         ),
-        squashImportDepIntoWorktree: (wp, tid, tip, label) => this.squashImportDepIntoWorktree(wp, tid, tip, label),
-        rebaseNewWorktreeOntoRemote: (wp, b, tid) => this.rebaseNewWorktreeOntoRemote(wp, b, tid),
+        ...facadeMethods(this, [
+          "resolveWorktreeStartPoint", "planSquashImportFromDep",
+          "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",
+        ]),
       },
       branch,
       path,
