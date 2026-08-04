@@ -35,6 +35,27 @@ import {
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
+  createArtifactListTool,
+  createArtifactRegisterTool,
+  createArtifactViewTool,
+  createTaskCreateTool,
+  createTaskDocumentReadTool,
+  createTaskDocumentWriteTool,
+  createTaskFileScopeAddTool,
+  createTaskLogTool,
+  createTaskLogsReadTool,
+  createTaskPromoteTool,
+  createTraitListTool,
+  createWorkflowCreateTool,
+  createWorkflowDeleteTool,
+  createWorkflowGetTool,
+  createWorkflowListTool,
+  createWorkflowSelectTool,
+  createWorkflowSettingsTool,
+  createWorkflowUpdateTool,
+  createWorkflowValidateTool,
+} from "./shared-worker-tools.js";
+import {
   createAcquireRepoWorktreeTool,
   createAgentCreateTool,
   createAgentDeleteTool,
@@ -200,29 +221,12 @@ export type RunImplementationDeps = {
   cleanupMergeStateForReverification: AnyFn;
   clearCompletedTaskWatchdog: AnyFn;
   clearPausedAborted: AnyFn;
-  createArtifactListTool: AnyFn;
-  createArtifactRegisterTool: AnyFn;
-  createArtifactViewTool: AnyFn;
+  /** FNXC:CodeOrganization 2026-08-03-22:05: simple shared tools use free factories in shared-worker-tools.ts */
+  sharedWorkerTools: import("./shared-worker-tools.js").SharedWorkerToolsDeps;
   createSpawnAgentTool: AnyFn;
   createTaskAddDepTool: AnyFn;
-  createTaskCreateTool: AnyFn;
-  createTaskDocumentReadTool: AnyFn;
-  createTaskDocumentWriteTool: AnyFn;
   createTaskDoneTool: AnyFn;
-  createTaskFileScopeAddTool: AnyFn;
-  createTaskLogTool: AnyFn;
-  createTaskLogsReadTool: AnyFn;
-  createTaskPromoteTool: AnyFn;
   createTaskUpdateTool: AnyFn;
-  createTraitListTool: AnyFn;
-  createWorkflowCreateTool: AnyFn;
-  createWorkflowDeleteTool: AnyFn;
-  createWorkflowGetTool: AnyFn;
-  createWorkflowListTool: AnyFn;
-  createWorkflowSelectTool: AnyFn;
-  createWorkflowSettingsTool: AnyFn;
-  createWorkflowUpdateTool: AnyFn;
-  createWorkflowValidateTool: AnyFn;
   createWorktree: AnyFn;
   deleteActiveSession: AnyFn;
   deleteActiveStepExecutor: AnyFn;
@@ -1721,13 +1725,14 @@ export async function runImplementation(
         settingsProvider: async () => await deps.store.getSettings(),
         ...(provisioningApprovalLayer ? { approvalRequestStore: deps.approvalRequestStore } : {}),
       };
+      const tools = deps.sharedWorkerTools;
       const customTools = [
         deps.createTaskUpdateTool(task.id, codeReviewVerdicts, sessionRef, stuckDetector),
-        deps.createTaskLogTool(task.id),
-        deps.createTaskLogsReadTool(task.id),
+        createTaskLogTool(tools, task.id),
+        createTaskLogsReadTool(tools, task.id),
         ...(taskCreateWithheld
           ? []
-          : [deps.createTaskCreateTool(executionCallerIsEphemeral, task.id, identityAgent?.id)]),
+          : [createTaskCreateTool(tools, executionCallerIsEphemeral, task.id, identityAgent?.id)]),
         deps.createTaskAddDepTool(task.id),
         deps.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", codeReviewVerdicts, () => { taskDone = true; }, audit),
         createRunVerificationTool({
@@ -1753,12 +1758,12 @@ export async function runImplementation(
         as a tombstone marker so a future reader does not re-add a second review authority.
         */
         deps.createSpawnAgentTool(task.id, worktreePath, settings, taskEnv),
-        deps.createTaskDocumentWriteTool(task.id),
-        deps.createTaskDocumentReadTool(task.id),
+        createTaskDocumentWriteTool(tools, task.id),
+        createTaskDocumentReadTool(tools, task.id),
         // FNXC:FileScope 2026-07-08-22:40: let the coding agent extend its own declared ## File Scope at runtime (fn_task_file_scope_add) so edits beyond the initial scope are not stranded by the scope-aware squash merge.
-        deps.createTaskFileScopeAddTool(task.id),
-        deps.createArtifactListTool(),
-        deps.createArtifactViewTool(),
+        createTaskFileScopeAddTool(tools, task.id),
+        createArtifactListTool(tools),
+        createArtifactViewTool(tools),
         /*
         FNXC:ArtifactRegistry 2026-07-10-14:30:
         fn_artifact_register was previously gated on assignedAgentId, but default ephemeral mode never
@@ -1766,17 +1771,17 @@ export async function runImplementation(
         all and agent-produced screenshots/wireframes could not reach the Artifacts gallery. Always
         expose it, attributing ephemeral runs to the established "executor" fallback author.
         */
-        deps.createArtifactRegisterTool(assignedAgentId ?? "executor", task.id, worktreePath),
-        deps.createWorkflowListTool(),
-        deps.createWorkflowGetTool(),
-        deps.createWorkflowValidateTool(),
-        deps.createWorkflowSelectTool(task.id),
-        deps.createTaskPromoteTool(task.id),
-        deps.createWorkflowCreateTool(),
-        deps.createWorkflowUpdateTool(),
-        deps.createWorkflowDeleteTool(),
-        deps.createWorkflowSettingsTool(),
-        deps.createTraitListTool(),
+        createArtifactRegisterTool(tools, assignedAgentId ?? "executor", task.id, worktreePath),
+        createWorkflowListTool(tools),
+        createWorkflowGetTool(tools),
+        createWorkflowValidateTool(tools),
+        createWorkflowSelectTool(tools, task.id),
+        createTaskPromoteTool(tools, task.id),
+        createWorkflowCreateTool(tools),
+        createWorkflowUpdateTool(tools),
+        createWorkflowDeleteTool(tools),
+        createWorkflowSettingsTool(tools),
+        createTraitListTool(),
         ...(isResearchToolSurfaceEnabled(settings)
           ? createResearchTools({
             store: deps.store,

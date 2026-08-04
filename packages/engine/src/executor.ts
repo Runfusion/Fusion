@@ -64,7 +64,7 @@ import {
 
 import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
-import { createArtifactListTool as sharedCreateArtifactListTool, createArtifactRegisterTool as sharedCreateArtifactRegisterTool, createArtifactViewTool as sharedCreateArtifactViewTool, createTaskCreateTool as sharedCreateTaskCreateTool, createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool, createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool, createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool, createTaskFileScopeAddTool as sharedCreateTaskFileScopeAddTool, createTaskLogTool as sharedCreateTaskLogTool, createTaskLogsReadTool as sharedCreateTaskLogsReadTool, createWorkflowListTool as sharedCreateWorkflowListTool, createWorkflowGetTool as sharedCreateWorkflowGetTool, createWorkflowValidateTool as sharedCreateWorkflowValidateTool, createWorkflowSelectTool as sharedCreateWorkflowSelectTool, createTaskPromoteTool as sharedCreateTaskPromoteTool, createWorkflowCreateTool as sharedCreateWorkflowCreateTool, createWorkflowUpdateTool as sharedCreateWorkflowUpdateTool, createWorkflowDeleteTool as sharedCreateWorkflowDeleteTool, createWorkflowSettingsTool as sharedCreateWorkflowSettingsTool, createTraitListTool as sharedCreateTraitListTool } from "./agent-tools.js";
+import { createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
@@ -4113,16 +4113,16 @@ export class TaskExecutor {
           "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
           "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
           "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
-          "createTaskLogTool", "createTaskLogsReadTool", "createTaskCreateTool",
           "createTaskAddDepTool", "createTaskDoneTool", "createSpawnAgentTool",
-          "createTaskDocumentWriteTool", "createTaskDocumentReadTool", "createTaskFileScopeAddTool",
-          "createArtifactListTool", "createArtifactViewTool", "createArtifactRegisterTool",
-          "createWorkflowListTool", "createWorkflowGetTool", "createWorkflowValidateTool",
-          "createWorkflowSelectTool", "createTaskPromoteTool", "createWorkflowCreateTool",
-          "createWorkflowUpdateTool", "createWorkflowDeleteTool", "createWorkflowSettingsTool",
-          "createTraitListTool", "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
+          "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
           "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
         ]),
+        sharedWorkerTools: {
+          store: this.store,
+          rootDir: this.rootDir,
+          messageStore: this.options.messageStore,
+          getRunContextFor: (id) => this.getRunContextFor(id),
+        },
       },
       task,
       graphCompletion,
@@ -4152,97 +4152,9 @@ export class TaskExecutor {
     );
   }
 
-  private createTaskLogTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskLogTool(this.store, taskId);
-  }
-
-  private createTaskLogsReadTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskLogsReadTool(this.store, taskId);
-  }
-
-  /*
-  FNXC:EphemeralAgentTaskCreation 2026-07-01-00:00:
-  A task-execution session is an ephemeral worker when no permanent identity agent governs it (default executor-FN-XXXX worker) or the governing agent is itself ephemeral. Pass that through so fn_task_create honors the project `ephemeralAgentsCanCreateTasks` toggle; permanent-agent sessions are never gated.
-  */
-  private createTaskCreateTool(callerIsEphemeral: boolean, sourceTaskId?: string, sourceAgentId?: string): ToolDefinition {
-    return sharedCreateTaskCreateTool(this.store, { sourceType: "api", sourceAgentId, sourceParentTaskId: sourceTaskId }, { rootDir: this.rootDir, callerIsEphemeral, sourceTaskId, sourceAgentId, messageStore: this.options.messageStore });
-  }
-
-  private createTaskDocumentWriteTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskDocumentWriteTool(this.store, taskId);
-  }
-
-  private createTaskDocumentReadTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskDocumentReadTool(this.store, taskId);
-  }
-
+  /** Plan-review workflow steps may inject fn_task_prompt_write for inline fixes. */
   private createTaskPromptWriteTool(taskId: string): ToolDefinition {
     return sharedCreateTaskPromptWriteTool(this.store, taskId, this.getRunContextFor(taskId));
-  }
-
-  private createTaskFileScopeAddTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskFileScopeAddTool(this.store, taskId, this.getRunContextFor(taskId));
-  }
-
-  /*
-  FNXC:ArtifactRegistry 2026-07-10-14:30:
-  Executor-lane registration anchors relative `path` payloads at the task worktree (where the agent
-  saves screenshots/wireframes/mocks) and defaults taskId to the executing task so agent-produced
-  media surfaces in the per-task Artifacts tab without the agent having to repeat its own task id.
-  */
-  private createArtifactRegisterTool(authorId: string, taskId: string, worktreePath: string): ToolDefinition {
-    return sharedCreateArtifactRegisterTool(this.store, authorId, this.options.messageStore, {
-      baseDir: worktreePath,
-      defaultTaskId: taskId,
-    });
-  }
-
-  private createArtifactListTool(): ToolDefinition {
-    return sharedCreateArtifactListTool(this.store);
-  }
-
-  private createArtifactViewTool(): ToolDefinition {
-    return sharedCreateArtifactViewTool(this.store);
-  }
-
-  private createWorkflowListTool(): ToolDefinition {
-    return sharedCreateWorkflowListTool(this.store);
-  }
-
-  private createWorkflowGetTool(): ToolDefinition {
-    return sharedCreateWorkflowGetTool(this.store);
-  }
-
-  private createWorkflowValidateTool(): ToolDefinition {
-    return sharedCreateWorkflowValidateTool(this.store);
-  }
-
-  private createWorkflowSelectTool(taskId: string): ToolDefinition {
-    return sharedCreateWorkflowSelectTool(this.store, taskId);
-  }
-
-  private createTaskPromoteTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskPromoteTool(this.store, taskId);
-  }
-
-  private createWorkflowCreateTool(): ToolDefinition {
-    return sharedCreateWorkflowCreateTool(this.store);
-  }
-
-  private createWorkflowUpdateTool(): ToolDefinition {
-    return sharedCreateWorkflowUpdateTool(this.store);
-  }
-
-  private createWorkflowDeleteTool(): ToolDefinition {
-    return sharedCreateWorkflowDeleteTool(this.store);
-  }
-
-  private createWorkflowSettingsTool(): ToolDefinition {
-    return sharedCreateWorkflowSettingsTool(this.store);
-  }
-
-  private createTraitListTool(): ToolDefinition {
-    return sharedCreateTraitListTool();
   }
 
   private createTaskAddDepTool(taskId: string): ToolDefinition {
