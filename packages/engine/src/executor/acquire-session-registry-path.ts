@@ -2,9 +2,15 @@
  * FNXC:CodeOrganization 2026-08-03-17:30:
  * acquireSessionRegistryPath peeled from TaskExecutor (U4).
  *
- * FNXC:SessionContention 2026-07-25-21:30:
- * Every executor session registration goes through acquireActiveSessionPath so a LEAKED entry
- * owned by a task with no live session surface is RECLAIMED rather than blocking the newcomer.
+ * FNXC:SessionContention 2026-07-25-21:30 (contention prevention at the registration seam):
+ * Every executor session registration goes through acquireActiveSessionPath instead of the raw
+ * registerPath, so a LEAKED entry owned by a task with no live session surface in this process is
+ * RECLAIMED rather than throwing at the newcomer. That closes the second contention class (a dead
+ * holder can never release, so waiting on it is waiting forever). A genuinely live holder still throws
+ * the typed error — that case is real serialization, and callers classify it as a retryable contention
+ * hold (SESSION_CONTENTION_HOLD_VALUE), never as a provider/model failure.
+ * The probe reports LIVE on any uncertainty: an unknown holder with a fresh entry is treated as live by
+ * the staleness floor, so the reclaim only ever fires on proven-dead, aged entries.
  */
 import type { TaskStore } from "@fusion/core";
 import {

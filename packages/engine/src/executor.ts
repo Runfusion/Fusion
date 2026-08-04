@@ -498,36 +498,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-  FNXC:Workspace 2026-06-24-15:45 (concurrent workspace tasks — shared browse-root collision):
-  In workspace mode `this.rootDir` is the SHARED browse-only (non-git) workspace root, and EVERY
-  workspace task runs its agent session rooted there (per-sub-repo worktrees are acquired on demand).
-  The session registrations below are keyed in the GLOBAL path-keyed activeSessionRegistry, whose
-  foreign-task guard rejects a second task registering a path already held by a different task. With
-  the bare root as the key, the second concurrent workspace task fails with "active-session path
-  <root> is held by task <other>; task <self> may not overwrite it" — so only ONE task per workspace
-  could ever run. Per-task session liveness does NOT require path-exclusivity on the shared root
-  (real per-sub-repo exclusivity is enforced separately by the workspace-repo-acquire lease in
-  worktree-acquisition.ts, keyed by sub-repo path). Give each task a task-scoped synthetic session
-  key so the registry stays per-task. The in-memory activeWorktrees Set still holds the REAL root, so
-  getActiveWorktreePaths() consumers that cd into a path are unaffected; only the registry key changes.
-  Non-workspace tasks (unique worktree path != rootDir) are returned unchanged.
-  */
-  /*
-  FNXC:PlanReviewWorktree 2026-07-25-20:40 (concurrent root-rooted step sessions — single-repo collision):
-  The task-scoped key must apply to the shared repo root in EVERY project mode, not only workspace mode.
-  Read-only graph nodes that need no worktree (Plan Review is the canonical one — it reviews the
-  store-injected PROMPT.md, see FNXC:PlanReviewSpecInjection) run rooted at `this.rootDir`, and a todo
-  task has no worktree of its own. With the bare root as the registry key, two tasks reaching Plan Review
-  at the same time collided: the second failed with "active-session path <root> is held by task <other>;
-  task <self> may not overwrite it", which surfaced as a Plan Review provider failure, burned the
-  in-place retry budget against a hold that retrying can never clear, and left the task parked
-  (reported: FN-1398 holding /home/ubuntu/dev/freemap-svelte while FN-1403 planned).
-  Path-exclusivity on the shared root is not what keeps these sessions correct: write-capable nodes are
-  refused at the root outright (no-worktree-for-write-node above), real per-sub-repo exclusivity is the
-  workspace-repo-acquire lease, and every isPathActive consumer guards removable WORKTREE paths — the
-  root is never one. Liveness still works because the synthetic key stays in the registry under the task.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:00: Full Workspace/PlanReviewWorktree FNXC lives on session-registry-path.ts. */
   private sessionRegistryPath(taskId: string, worktreePath: string): string {
     return sessionRegistryPathImpl(this.rootDir, taskId, worktreePath);
   }
@@ -545,17 +516,7 @@ export class TaskExecutor {
     };
   }
 
-  /*
-  FNXC:SessionContention 2026-07-25-21:30 (contention prevention at the registration seam):
-  Every executor session registration goes through `acquireActiveSessionPath` instead of the raw
-  `registerPath`, so a LEAKED entry owned by a task with no live session surface in this process is
-  RECLAIMED rather than throwing at the newcomer. That closes the second contention class (a dead
-  holder can never release, so waiting on it is waiting forever). A genuinely live holder still throws
-  the typed error — that case is real serialization, and callers classify it as a retryable contention
-  hold (SESSION_CONTENTION_HOLD_VALUE), never as a provider/model failure.
-  The probe reports LIVE on any uncertainty: an unknown holder with a fresh entry is treated as live by
-  the staleness floor, so the reclaim only ever fires on proven-dead, aged entries.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:00: Full SessionContention FNXC lives on acquire-session-registry-path.ts. */
   private acquireSessionRegistryPath(taskId: string, registryPath: string, kind: ActiveSessionKind, ownerKey: string): void {
     acquireSessionRegistryPathImpl(
       {
