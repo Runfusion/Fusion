@@ -728,4 +728,65 @@ export function buildRunCliAgentNodeDeps(host: any): any {
     reapCliTaskSessionForHandoff: (session: unknown, id: string) => host.reapCliTaskSessionForHandoff(session, id),
   };
 }
+
+export function buildEnsureWorkflowMergeBoundaryTaskDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    ...facadeMethods(host, ["resolveMergeBoundaryColumn", "evaluateWorkflowMergeBoundary"]),
+    shouldCompleteChecklistAtWorkflowMerge: (live: unknown, mergeProof: unknown) =>
+      host.shouldCompleteChecklistAtWorkflowMerge(live, mergeProof),
+  };
+}
+
+export function buildResolveSeamColumnAgentDeps(host: any): any {
+  return {
+    ...host.storeRunContextDeps(),
+    agentStore: host.options.agentStore,
+    graphSeamGoverningNodeId: host.graphSeamGoverningNodeId,
+    graphColumnAgentResolver: host.graphColumnAgentResolver,
+  };
+}
+
+export function buildReleasePreExecutionWorktreeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir", "activeWorktrees"]),
+    ...facadeMethods(host, ["getRunContextFor", "hasLiveTaskSessionSurface"]),
+  };
+}
+
+export function buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "pausedAborted"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "resolveResumeLanes", "recoverMissingWorktreeSessionStartFailure",
+    ]),
+  };
+}
+
+export function buildHasLiveTaskSessionSurfaceDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+      "activeCliTaskSessions",
+    ]),
+  };
+}
+
+export function buildRecoverMissingWorktreeSessionStartFailureDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
+    ]),
+  };
+}
+
+export function buildCleanupConflictingWorktreeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, [
+      "reconcileSelfOwnedBeforeRemove", "findActiveWorktreeOwner", "removeOwnWorktreeWithReconcile",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

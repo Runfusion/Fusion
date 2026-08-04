@@ -205,6 +205,13 @@ import {
   buildRouteGraphFailureToExecutionResumeDeps,
   buildApplyGraphRethinkResetDeps,
   buildRunCliAgentNodeDeps,
+  buildEnsureWorkflowMergeBoundaryTaskDeps,
+  buildResolveSeamColumnAgentDeps,
+  buildReleasePreExecutionWorktreeDeps,
+  buildRouteUnusableWorktreeGraphFailureToRecoveryDeps,
+  buildHasLiveTaskSessionSurfaceDeps,
+  buildRecoverMissingWorktreeSessionStartFailureDeps,
+  buildCleanupConflictingWorktreeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -2116,12 +2123,7 @@ export class TaskExecutor {
     metadata: { reason: string; nodeId: string; workflowId: string; runId: string },
   ): Promise<TaskDetail> {
     return ensureWorkflowMergeBoundaryTaskImpl(
-      {
-        ...this.storeRunContextDeps(),
-        ...facadeMethods(this, ["resolveMergeBoundaryColumn", "evaluateWorkflowMergeBoundary"]),
-        shouldCompleteChecklistAtWorkflowMerge: (live, mergeProof) =>
-          this.shouldCompleteChecklistAtWorkflowMerge(live, mergeProof),
-      },
+      buildEnsureWorkflowMergeBoundaryTaskDeps(this),
       task,
       metadata,
     );
@@ -2275,12 +2277,7 @@ export class TaskExecutor {
     detail: TaskDetail,
   ): Promise<{ agent: Agent; mode: WorkflowColumnAgent["mode"] | undefined } | undefined> {
     return resolveSeamColumnAgentImpl(
-      {
-        ...this.storeRunContextDeps(),
-        agentStore: this.options.agentStore,
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphColumnAgentResolver: this.graphColumnAgentResolver,
-      },
+      buildResolveSeamColumnAgentDeps(this),
       task,
       detail,
     );
@@ -2378,12 +2375,7 @@ export class TaskExecutor {
   */
   public async releasePreExecutionWorktree(taskId: string, reason: string): Promise<boolean> {
     return releasePreExecutionWorktreeImpl(
-      {
-        ...facadeFields(this, [
-          "store", "rootDir", "activeWorktrees",
-        ]),
-        ...facadeMethods(this, ["getRunContextFor", "hasLiveTaskSessionSurface"]),
-      },
+      buildReleasePreExecutionWorktreeDeps(this),
       taskId,
       reason,
     );
@@ -2516,12 +2508,7 @@ export class TaskExecutor {
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return routeUnusableWorktreeGraphFailureToRecoveryImpl(
-      {
-        ...facadeFields(this, ["store", "pausedAborted"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "resolveResumeLanes", "recoverMissingWorktreeSessionStartFailure",
-        ]),
-      },
+      buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(this),
       task,
       live,
       result,
@@ -2535,12 +2522,7 @@ export class TaskExecutor {
   */
   private hasLiveTaskSessionSurface(taskId: string): boolean {
     return hasLiveTaskSessionSurfaceImpl(
-      {
-        ...facadeFields(this, [
-          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
-          "activeCliTaskSessions",
-        ]),
-      },
+      buildHasLiveTaskSessionSurfaceDeps(this),
       taskId,
     );
   }
@@ -3312,12 +3294,7 @@ export class TaskExecutor {
     audit: RunAuditor,
   ): Promise<false | "requeue-todo" | "escalate-exhausted"> {
     return recoverMissingWorktreeSessionStartFailureImpl(
-      {
-        ...facadeFields(this, ["rootDir", "store"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
-        ]),
-      },
+      buildRecoverMissingWorktreeSessionStartFailureDeps(this),
       task,
       worktreePath,
       error,
@@ -3516,12 +3493,7 @@ export class TaskExecutor {
     taskId: string,
   ): Promise<boolean> {
     return cleanupConflictingWorktreeImpl(
-      {
-        ...facadeFields(this, ["rootDir", "store"]),
-        ...facadeMethods(this, [
-          "reconcileSelfOwnedBeforeRemove", "findActiveWorktreeOwner", "removeOwnWorktreeWithReconcile",
-        ]),
-      },
+      buildCleanupConflictingWorktreeDeps(this),
       worktreePath,
       branch,
       taskId,
