@@ -6,6 +6,7 @@
  */
 import type {
   AgentStore,
+  TaskStore,
   RunMutationContext,
   MergeResult,
   ThinkingLevel,
@@ -20,9 +21,17 @@ import { CliTaskSession } from "../cli-agent/task-session.js";
 import { TokenCapDetector } from "../errors/token-cap-detector.js";
 import { StepSessionExecutor } from "../execution/step-session-executor.js";
 import type { PausedAbortProvenance } from "./paused-abort-provenance.js";
-import type { ActiveExecutorSessionState } from "./task-executor-options.js";
+import type { ActiveExecutorSessionState, TaskExecutorOptions } from "./task-executor-options.js";
 
 export abstract class TaskExecutorState {
+  /**
+   * FNXC:CodeOrganization 2026-08-04-08:05:
+   * Constructor-injected store/rootDir/options live on the state base (U4) so pure
+   * worktree facades and bags can share them without TaskExecutor parameter properties.
+   */
+  protected store!: TaskStore;
+  protected rootDir!: string;
+  protected options: TaskExecutorOptions = {};
   protected activeWorktrees = new Map<string, Set<string>>();
   protected executing = new Set<string>();
   protected resumingUnpaused = new Set<string>();
