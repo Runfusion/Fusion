@@ -164,6 +164,7 @@ import {
   buildNonContinuableSessionDeps,
   buildExecuteWorkflowGraphDeps,
   buildHandleGraphFailureDeps,
+  buildRunImplementationDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -3120,47 +3121,10 @@ export class TaskExecutor {
     reportImplementationExit?: ImplementationExitReporter,
   ): Promise<void> {
     return runImplementationImpl(
-      {
-        ...facadeFields(this, [
-          "store", "rootDir", "workspaceConfig",
-        ]),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions is structural superset of RunImplementationDeps.options
-        options: this.options as any,
+      buildRunImplementationDeps(this, {
         BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
         MAX_AUTO_RECOVERY_ATTEMPTS,
-        approvalRequestStore: this.approvalRequestStore,
-        ...facadeFields(this, [
-          "stuckAborted", "executing", "depAborted", "tokenUsageBaselines", "loopRecoveryState",
-          "branchConflictErrorCount", "pausedAborted", "userCanceledTaskIds", "tokenCapDetector",
-          "activeSessions", "activeWorktrees", "activeWorkflowGraphAbortControllers", "currentRunContexts",
-          "effectiveColumnAgentByTask", "graphSeamThinkingLevel", "graphSeamSkillName",
-          "graphStepSessionPinned", "outerConcurrencyClaims",
-        ]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
-          "deleteActiveSession", "hasActiveWorktreeBinding", "persistTaskTokenUsage",
-          "handleDepAbortCleanup", "parkApprovalSuspension", "scheduleCompletedTaskWatchdog",
-          "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
-          "transitionReviewAddressing", "buildActionGateContext", "buildPermanentAgentGatingContext",
-          "resolveMcpServers", "captureModifiedFiles", "handleNonContinuableSessionError",
-          "signalTaskComplete", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
-          "unregisterConfiguredCommandController", "tryBootstrapMisbindingRecovery", "addActiveWorktree",
-          "getAuthoritativeAssignedAgent", "resolveSeamColumnAgent", "sendTaskBackForFix",
-          "runWithExecutorSemaphore", "resetStepsIfWorkLost", "recoverMissingWorktreeSessionStartFailure",
-          "captureExecutorTokenUsageBaseline", "setActiveSession", "renewTaskLease",
-          "resolveTaskCustomFieldDefs", "getCompletedTaskFinalizationDecision", "markCompletionFinalized",
-          "handoffTaskToReview", "handleImplicitTaskDoneRefusal", "terminateAllChildren",
-          "maybeDispatchWorkflowWorkEngine", "resolveEffectivePrincipalId", "shouldDeferForHeartbeat",
-          "finalizeMergeConfirmedWorkflowGraphTask", "cleanupMergeStateForReverification", "createWorktree",
-          "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
-          "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
-          "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
-          "createTaskAddDepTool", "createTaskDoneTool", "createSpawnAgentTool",
-          "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
-          "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
-        ]),
-        sharedWorkerTools: this.sharedWorkerToolsDeps(),
-      },
+      }),
       task,
       graphCompletion,
       reportImplementationExit,

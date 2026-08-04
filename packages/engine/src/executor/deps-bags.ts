@@ -166,3 +166,54 @@ export function buildHandleGraphFailureDeps(host: any): any {
     ]),
   };
 }
+
+/**
+ * FNXC:CodeOrganization 2026-08-04-02:45:
+ * runImplementation deps bag peeled from TaskExecutor (U4). Constants are injected by the
+ * façade so the free builder stays free of executor-constants coupling.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
+export function buildRunImplementationDeps(
+  host: any,
+  constants: { BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number; MAX_AUTO_RECOVERY_ATTEMPTS: number },
+): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir", "workspaceConfig"]),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions structural superset
+    options: host.options as any,
+    BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: constants.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+    MAX_AUTO_RECOVERY_ATTEMPTS: constants.MAX_AUTO_RECOVERY_ATTEMPTS,
+    approvalRequestStore: host.approvalRequestStore,
+    ...facadeFields(host, [
+      "stuckAborted", "executing", "depAborted", "tokenUsageBaselines", "loopRecoveryState",
+      "branchConflictErrorCount", "pausedAborted", "userCanceledTaskIds", "tokenCapDetector",
+      "activeSessions", "activeWorktrees", "activeWorkflowGraphAbortControllers", "currentRunContexts",
+      "effectiveColumnAgentByTask", "graphSeamThinkingLevel", "graphSeamSkillName",
+      "graphStepSessionPinned", "outerConcurrencyClaims",
+    ]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
+      "deleteActiveSession", "hasActiveWorktreeBinding", "persistTaskTokenUsage",
+      "handleDepAbortCleanup", "parkApprovalSuspension", "scheduleCompletedTaskWatchdog",
+      "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
+      "transitionReviewAddressing", "buildActionGateContext", "buildPermanentAgentGatingContext",
+      "resolveMcpServers", "captureModifiedFiles", "handleNonContinuableSessionError",
+      "signalTaskComplete", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
+      "unregisterConfiguredCommandController", "tryBootstrapMisbindingRecovery", "addActiveWorktree",
+      "getAuthoritativeAssignedAgent", "resolveSeamColumnAgent", "sendTaskBackForFix",
+      "runWithExecutorSemaphore", "resetStepsIfWorkLost", "recoverMissingWorktreeSessionStartFailure",
+      "captureExecutorTokenUsageBaseline", "setActiveSession", "renewTaskLease",
+      "resolveTaskCustomFieldDefs", "getCompletedTaskFinalizationDecision", "markCompletionFinalized",
+      "handoffTaskToReview", "handleImplicitTaskDoneRefusal", "terminateAllChildren",
+      "maybeDispatchWorkflowWorkEngine", "resolveEffectivePrincipalId", "shouldDeferForHeartbeat",
+      "finalizeMergeConfirmedWorkflowGraphTask", "cleanupMergeStateForReverification", "createWorktree",
+      "emitWorktreeReanchoredAudit", "buildInjectedRuntimeEnv", "reconcileStepsFromGitHistory",
+      "setActiveStepExecutor", "captureWorkspaceModifiedFiles", "runExecutorDeterministicVerification",
+      "attemptExecutorVerificationFix", "deleteActiveStepExecutor", "createTaskUpdateTool",
+      "createTaskAddDepTool", "createTaskDoneTool", "createSpawnAgentTool",
+      "resolveInstructionsForRole", "finalizeAlreadyReviewedTask",
+      "handleBranchConflict", "handleNonContinuableSessionRetry", "resumeApprovalAfterUnwindIfNeeded",
+    ]),
+    sharedWorkerTools: host.sharedWorkerToolsDeps(),
+  };
+}
