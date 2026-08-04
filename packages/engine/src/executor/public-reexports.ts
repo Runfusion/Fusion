@@ -138,3 +138,25 @@ export {
   resolveCompleteColumnFor,
   resolveReboundColumnFor,
 } from "./lifecycle-columns.js";
+
+export {
+  buildExecutionPrompt,
+  formatCommentForInjection,
+  formatTimestamp,
+  scopePromptToWorktree,
+  buildSourceIssueRef,
+} from "./execution-prompt.js";
+export { clearTerminalWorkflowStepFailures } from "./workflow-step-failures.js";
+export {
+  hasNonTerminalWorkflowSteps,
+  workflowStepResultPassed,
+  areExplicitEnabledWorkflowStepsSatisfied,
+  hasUnsatisfiedExplicitEnabledWorkflowSteps,
+  areEnabledPreMergeWorkflowStepsSatisfied,
+  preservePreExecutionWorkflowStepResults,
+} from "./workflow-step-satisfaction.js";
+export {
+  detectPseudoPause,
+  detectReviewHandoffIntent,
+} from "./pseudo-pause.js";
+export type { PseudoPauseResult } from "./pseudo-pause.js";
