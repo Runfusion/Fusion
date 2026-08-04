@@ -723,13 +723,10 @@ export class TaskExecutor {
   }
 
   /* FNXC:CodeOrganization 2026-08-04-02:10: awaitAbort / abortAllInFlight thin facades (U4). */
-  async awaitAbortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): Promise<void> {
-    return awaitAbortInFlightTaskWorkImpl(
-      buildAwaitAbortInFlightTaskWorkDeps(this),
-      taskId,
-      reason,
-      options,
-    );
+  async awaitAbortInFlightTaskWork(
+    ...args: FacadeRestArgs<typeof awaitAbortInFlightTaskWorkImpl>
+  ): Promise<void> {
+    return awaitAbortInFlightTaskWorkImpl(buildAwaitAbortInFlightTaskWorkDeps(this), ...args);
   }
 
   async abortAllInFlight(reason: string): Promise<void> {
@@ -974,12 +971,10 @@ export class TaskExecutor {
     );
   }
 
-  private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
-    return persistTokenUsageImpl(
-      buildPersistTokenUsageDeps(this),
-      taskId,
-      session,
-    );
+  private async persistTokenUsage(
+    ...args: FacadeRestArgs<typeof persistTokenUsageImpl>
+  ): Promise<void> {
+    return persistTokenUsageImpl(buildPersistTokenUsageDeps(this), ...args);
   }
 
   // FNXC:CodeOrganization 2026-08-03-09:25:
@@ -1233,20 +1228,16 @@ export class TaskExecutor {
     });
   }
 
-  private buildForeachWorktreeDeps(task: Task, runId?: string): ReturnType<typeof buildForeachWorktreeDepsImpl> {
-    return buildForeachWorktreeDepsImpl(
-      buildBuildForeachWorktreeDepsDeps(this),
-      task,
-      runId,
-    );
+  private buildForeachWorktreeDeps(
+    ...args: FacadeRestArgs<typeof buildForeachWorktreeDepsImpl>
+  ): ReturnType<typeof buildForeachWorktreeDepsImpl> {
+    return buildForeachWorktreeDepsImpl(buildBuildForeachWorktreeDepsDeps(this), ...args);
   }
 
-  private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
-    return applyGraphRethinkResetImpl(
-      buildApplyGraphRethinkResetDeps(this),
-      taskId,
-      active,
-    );
+  private async applyGraphRethinkReset(
+    ...args: FacadeRestArgs<typeof applyGraphRethinkResetImpl>
+  ): Promise<void> {
+    return applyGraphRethinkResetImpl(buildApplyGraphRethinkResetDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: runImplementationPhase U5e FNXC lives on run-implementation-phase.ts. */
@@ -1447,12 +1438,10 @@ export class TaskExecutor {
     return ensureGraphCustomNodeWorktreeImpl(buildEnsureGraphCustomNodeWorktreeDeps(this, runConfiguredCommand), ...args);
   }
 
-  public async releasePreExecutionWorktree(taskId: string, reason: string): Promise<boolean> {
-    return releasePreExecutionWorktreeImpl(
-      buildReleasePreExecutionWorktreeDeps(this),
-      taskId,
-      reason,
-    );
+  public async releasePreExecutionWorktree(
+    ...args: FacadeRestArgs<typeof releasePreExecutionWorktreeImpl>
+  ): Promise<boolean> {
+    return releasePreExecutionWorktreeImpl(buildReleasePreExecutionWorktreeDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: planning worktree acquisition FNXC lives on ensure-task-worktree-for-planning.ts. */
@@ -1623,12 +1612,10 @@ export class TaskExecutor {
     return routeGraphMergeFailureToRetryImpl(buildRouteGraphMergeFailureToRetryDeps(this), ...args);
   }
 
-  private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
-    return routeImplementationIncompleteMergeGraphFailureImpl(
-      buildRouteImplementationIncompleteMergeGraphFailureDeps(this),
-      live,
-      failedNode,
-    );
+  private async routeImplementationIncompleteMergeGraphFailure(
+    ...args: FacadeRestArgs<typeof routeImplementationIncompleteMergeGraphFailureImpl>
+  ): Promise<boolean> {
+    return routeImplementationIncompleteMergeGraphFailureImpl(buildRouteImplementationIncompleteMergeGraphFailureDeps(this), ...args);
   }
 
   private async hasTrailingConsecutiveToolFailures(taskId: string, cursor: number | null | undefined, threshold: number): Promise<boolean> {
@@ -1977,13 +1964,10 @@ export class TaskExecutor {
     return planSquashImportFromDep(this.rootDir, this.store, ...args);
   }
 
-  private async reconcileSelfOwnedBeforeRemove(worktreePath: string, taskId: string): Promise<void> {
-    return reconcileSelfOwnedBeforeRemove(
-      this.store,
-      worktreePath,
-      taskId,
-      (ownerTaskId, path) => this.hasActiveWorktreeBinding(ownerTaskId, path),
-    );
+  private async reconcileSelfOwnedBeforeRemove(
+    ...args: FacadeRestArgs<typeof reconcileSelfOwnedBeforeRemove>
+  ): Promise<void> {
+    return reconcileSelfOwnedBeforeRemove(this.store, ...args);
   }
 
   /*
