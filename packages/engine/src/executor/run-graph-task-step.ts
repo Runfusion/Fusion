@@ -2,6 +2,17 @@
  * FNXC:CodeOrganization 2026-08-03-11:50:
  * runGraphTaskStep peeled from TaskExecutor (U4).
  *
+ * Step-inversion per-step driver (KTD-2/KTD-8, closes the U3 interim gap).
+ * The U3 stand-in ran `runImplementationPhase` once per foreach instance, which
+ * re-ran the whole implementation for every step. The real driver:
+ *   1. Pins step-session physics only when the workflow needs a discrete per-step
+ *      boundary before a step-review node. Final-review coding lets
+ *      `runStepsInNewSessions` choose between one reused executor session and
+ *      fresh per-step sessions.
+ *   2. Drives the implementation phase exactly ONCE per run, memoized by task id.
+ *      Each foreach instance's `runTaskStep` observes projection truth for its step
+ *      rather than re-running the agent per step.
+ *
  * FNXC:WorkflowStepSessions 2026-06-30-00:00:
  * Default Coding reuses executor session unless runStepsInNewSessions; step-review workflows pin StepSessionExecutor.
  *

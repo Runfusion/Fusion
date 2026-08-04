@@ -2,6 +2,15 @@
  * FNXC:CodeOrganization 2026-08-03-12:20:
  * requestPreMergeOptionalStepFix peeled from TaskExecutor (U4).
  *
+ * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
+ * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
+ *
+ * FNXC:WorkflowRevisionBudget 2026-06-30-20:48:
+ * Live Plan Review/spec and Code Review remediation must honor explicit workflow setting values before node `maxRevisions`, and must treat unset values as unbounded for those two built-in review paths. Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
+ *
+ * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
+ * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.
+ *
  * FNXC:WorkflowRemediation 2026-07-03-20:10:
  * Pre-merge optional-step / Plan Review failure handoff: missing required artifacts
  * recover in place; Plan Review REVISE drives triage replan with revision budget + hard cap;

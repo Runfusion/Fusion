@@ -2,6 +2,23 @@
  * FNXC:CodeOrganization 2026-08-03-21:00:
  * TaskExecutorOptions / CliAgentRuntime / ActiveExecutorSessionState peeled from
  * executor.ts preamble (U4) so the facade file keeps options types out of line.
+ *
+ * FNXC:WorkflowExecution 2026-07-19-01:30:
+ * U5d (R9) — the `graphCompletionInterceptors` Map is DELETED. It was shared per-task
+ * mutable state used to signal "this execute() call is a graph implementation phase":
+ * the graph set an entry, re-entered execute(), and execute() read the Map at ~12 sites
+ * to decide whether to stop at the implementation-complete boundary, skip outer routing,
+ * suppress `fn_review_step`, and mark review gates graph-owned. Signalling through a
+ * shared Map made the graph/legacy split invisible at the call site and left stale
+ * entries to clean up on abort. It is replaced by an EXPLICIT optional
+ * `graphCompletion` callback: presence of the callback IS the "graph-owned implementation
+ * phase" signal, and invoking it hands the captured modifiedFiles back to the graph runner.
+ *
+ * FNXC:WorkflowExecution 2026-07-19-02:10:
+ * U5e (R9) — the RE-ENTRY is now gone too. `executeCore`'s implementation body was lifted
+ * into `runImplementation()`, which the graph seam calls DIRECTLY; `executeCore` is routing
+ * only and `execute()` no longer carries a completion parameter. There is no longer any path
+ * by which the graph runner calls back into `execute()`.
  */
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { MissionStore, AsyncMissionStore, Slice, Task, CliSessionStore } from "@fusion/core";

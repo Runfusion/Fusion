@@ -1303,27 +1303,7 @@ export class TaskExecutor {
     );
   }
 
-  /*
-   * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
-   * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
-   *
-   * FNXC:WorkflowRevisionBudget 2026-06-30-20:48:
-   * Live Plan Review/spec and Code Review remediation must honor explicit workflow setting values before node `maxRevisions`, and must treat unset values as unbounded for those two built-in review paths. Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
-   *
-   * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
-   * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.
-   */
-  /*
-   * FNXC:PlanReviewReplanCap 2026-07-19-00:10:
-   * U3 — the graph is the sole Plan Review owner (triage's out-of-graph gate and
-   * its blockAfterPlanReviewRevise cap-park are deleted). Re-own the replan-cap
-   * escalation here: when the plan-review replan budget (node `maxRevisions` /
-   * `planReviewReplanCap` setting, or the unbounded-default hard cap) is exhausted,
-   * park the task at `awaiting-approval` with reason `plan-review-replan-cap` so a
-   * persistent planner/reviewer disagreement surfaces to a human instead of looping
-   * forever or silently sitting in place. The reason string is special-cased by the
-   * dashboard + notifications, so it must be preserved verbatim.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:20: optional-step budget + replan-cap FNXC on request-pre-merge-optional-step-fix.ts + park-plan-review-replan-cap.ts. */
   private async parkPlanReviewReplanCapExhausted(
     taskId: string,
     capLabel: string,
@@ -1539,24 +1519,7 @@ export class TaskExecutor {
   // Interpreter-level failure parks the task as a workflow failure rather than
   // falling through to a second runtime path.
 
-  /*
-  FNXC:WorkflowExecution 2026-07-19-01:30:
-  U5d (R9) — the `graphCompletionInterceptors` Map is DELETED. It was shared per-task
-  mutable state used to signal "this execute() call is a graph implementation phase":
-  the graph set an entry, re-entered execute(), and execute() read the Map at ~12 sites
-  to decide whether to stop at the implementation-complete boundary, skip outer routing,
-  suppress `fn_review_step`, and mark review gates graph-owned. Signalling through a
-  shared Map made the graph/legacy split invisible at the call site and left stale
-  entries to clean up on abort. It is replaced by an EXPLICIT optional
-  `graphCompletion` callback: presence of the callback IS the "graph-owned implementation
-  phase" signal, and invoking it hands the captured modifiedFiles back to the graph runner.
-
-  FNXC:WorkflowExecution 2026-07-19-02:10:
-  U5e (R9) — the RE-ENTRY is now gone too. `executeCore`'s implementation body was lifted
-  into `runImplementation()`, which the graph seam calls DIRECTLY; `executeCore` is routing
-  only and `execute()` no longer carries a completion parameter. There is no longer any path
-  by which the graph runner calls back into `execute()`.
-  */
+  /* FNXC:CodeOrganization 2026-08-04-03:20: graphCompletion U5d/U5e FNXC lives on task-executor-options.ts. */
   /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */
   private graphToolFailureRunCursors = new Map<string, number>();
 
@@ -1766,18 +1729,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Run ONLY the implementation phase for a graph-driven task — full setup plus the
-   * agent session up to fn_task_done, stopping at the implementation-complete boundary
-   * so the graph owns workflow gates, review, and merge.
-   *
-   * FNXC:WorkflowExecution 2026-07-19-02:10:
-   * U5e (R9) — this now calls `runImplementation()` DIRECTLY. It used to re-enter
-   * `execute()`, which meant every graph-driven implementation pass made a second trip
-   * through routing (dependency/ephemeral gates, graph-routing duplicate check,
-   * authoritative dispatch) that had to be suppressed by a signal. There is no re-entry
-   * left: routing runs once, in `executeCore`, and the graph calls the runner.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:20: runImplementationPhase U5e FNXC lives on run-implementation-phase.ts. */
   private async runImplementationPhase(
     task: Task,
     prepared?: PreparedWorktree,
@@ -1793,28 +1745,7 @@ export class TaskExecutor {
     /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
-  /**
-   * Step-inversion per-step driver (KTD-2/KTD-8, closes the U3 interim gap).
-   *
-   * The U3 stand-in ran `runImplementationPhase` once per foreach instance, which
-   * re-ran the whole implementation for every step. The real driver:
-   *
-   *   1. Pins step-session physics only when the workflow needs a discrete
-   *      per-step boundary before a step-review node. Final-review coding lets
-   *      `runStepsInNewSessions` choose between one reused executor session and
-   *      fresh per-step sessions.
-   *   2. Drives the implementation phase exactly ONCE per run, memoized by task
-   *      id. Each foreach instance's `runTaskStep` observes projection truth for
-   *      its step rather than re-running the agent per step.
-   *
-   * Worktree/taskEnv/agent/semaphore state is threaded exactly the way
-   * `runImplementationPhase` gets it — by re-entering `execute()` under a
-   * completion interceptor — because that state is assembled inside `execute()`
-   * and is not available standalone at createGraphSeams time (the plan's
-   * documented threading approach for full step-session wiring).
-   *
-   * Returns whether the targeted step ended up `done`/`skipped` in the projection.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:20: step-inversion driver FNXC lives on run-graph-task-step.ts. */
   private async runGraphTaskStep(
     task: Task,
     stepIndex: number,
@@ -1846,17 +1777,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Project a graph-owned step only after it has a real worktree.
-   *
-   * A fresh task has no worktree until the authoritative implementation pass
-   * acquires one. Projecting before that pass produces a false "step started"
-   * event and captures the baseline from the project root. In that fresh path,
-   * let the implementation pass own the first projection and reuse the base SHA
-   * it captures during worktree acquisition. Resumed and isolated-step runs
-   * already have a worktree, so they keep the normal per-step projection and
-   * pre-work baseline behavior.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:20: projected step worktree-gating FNXC lives on run-projected-graph-task-step.ts. */
   private async runProjectedGraphTaskStep(
     task: Task,
     live: TaskDetail,
