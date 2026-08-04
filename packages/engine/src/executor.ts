@@ -140,13 +140,7 @@ export class TaskExecutor {
   /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED (zero production callers; inert sync-lane count drop). */
   private isBackwardMoveOutOfPlanning(taskId: string, from: string, to: string, moveLanes: TaskMoveLanes | undefined): boolean {
     const sync = moveLanes ? undefined : resolvePlannerLanes(this.store, taskId);
-    const lanes = {
-      hold: moveLanes?.hold ?? sync?.hold ?? "todo",
-      intake: moveLanes?.intake ?? sync?.intake ?? "triage",
-      wip: moveLanes?.wip ?? sync?.wip ?? "in-progress",
-      review: moveLanes?.review ?? sync?.review ?? "in-review",
-      complete: moveLanes?.complete ?? sync?.complete ?? "done",
-    };
+    const lanes = { hold: moveLanes?.hold ?? sync?.hold ?? "todo", intake: moveLanes?.intake ?? sync?.intake ?? "triage", wip: moveLanes?.wip ?? sync?.wip ?? "in-progress", review: moveLanes?.review ?? sync?.review ?? "in-review", complete: moveLanes?.complete ?? sync?.complete ?? "done" };
     if (from !== lanes.hold && from !== lanes.intake) return false;
     const forwardTargets = [lanes.wip, lanes.review, lanes.complete].filter((column): column is string => typeof column === "string");
     return !forwardTargets.includes(to);
