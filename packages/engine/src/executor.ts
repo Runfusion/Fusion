@@ -78,7 +78,8 @@ import { createArtifactListTool as sharedCreateArtifactListTool, createArtifactR
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
-export type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
+/* FNXC:CodeOrganization 2026-08-03-20:50: Public non-Free re-exports in executor/public-reexports.ts. */
+export * from "./executor/public-reexports.js";
 import type { PausedAbortProvenance } from "./executor/paused-abort-provenance.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
@@ -108,23 +109,10 @@ export {
   taskLogParams,
 } from "./agent-tools.js";
 
-export {
-  AGENT_BROWSER_NAVIGATION_SKILL_ID,
-  probeAgentBrowserAvailability,
-  augmentSessionSkillsForBrowserStep,
-  formatAgentBrowserAvailabilityLog,
-} from "./executor/browser-probe.js";
-export type { AgentBrowserAvailabilityProbeResult } from "./executor/browser-probe.js";
 
 /** Maximum retry attempts for workflow step hard failures before giving up */
 const MAX_WORKFLOW_STEP_RETRIES = 3;
 /** Maximum in-session retries when an agent exits without calling fn_task_done(). */
-export {
-  MAX_EXECUTE_REQUEUE_LOOP_CYCLES,
-  EXECUTE_REQUEUE_LOOP_VISIBLE_THRESHOLD,
-  buildExecuteRequeueLoopSignature,
-  isTransientMissingTaskJsonError,
-} from "./executor/requeue-loop.js";
 
 /*
 FNXC:SessionContention 2026-07-25-21:30:
@@ -138,137 +126,39 @@ const COMPLETED_TASK_WATCHDOG_MS = 60_000;
 /** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
 const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
-export type { PendingReviewBlockResult } from "./executor/pending-review-block.js";
 import { isTaskWorkComplete, createSeenSteeringIds } from "./executor/task-predicates.js";
-export {
-  isTaskWorkComplete,
-  isNoProgressNoTaskDoneFailure,
-  createSeenSteeringIds,
-  createConfiguredCommandAbortError,
-  graphActiveContextKey,
-  isRetryableMergePauseAbortStatus,
-  isTerminalMergeGraphFailureValue,
-  isAwaitingGraphFailureValue,
-} from "./executor/task-predicates.js";
-export {
-  graphFailureErrorTexts,
-  recordedNodeValue,
-  graphFailureValue,
-  extractUnusableWorktreeGraphFailure,
-  isMergeGraphFailure,
-  latestFailedPreMergeWorkflowStep,
-  isStalePauseAbortParkFailure,
-  isSessionContentionGraphFailure,
-  isWorktreeBaseRefreshGraphFailure,
-  graphRunReportedPendingReview,
-} from "./executor/graph-failure-pure.js";
 import {
   accumulateTokenUsage as accumulateTokenUsageImpl,
   tokenUsageWithModelSnapshot as tokenUsageWithModelSnapshotImpl,
   extractSessionTokenUsage as extractSessionTokenUsageImpl,
 } from "./executor/token-usage-pure.js";
-export {
-  accumulateTokenUsage,
-  tokenUsageWithModelSnapshot,
-  extractSessionTokenUsage,
-} from "./executor/token-usage-pure.js";
-export {
-  formatBranchConflictLifecycleLog,
-  formatBranchConflictAgentLog,
-} from "./executor/branch-conflict-format.js";
 import { extractOwnSettings } from "./executor/agent-binding-pure.js";
-export {
-  extractOwnSettings,
-  buildAgentPersona,
-} from "./executor/agent-binding-pure.js";
-export { resolveCliExecutorConfig } from "./executor/cli-executor-config.js";
-export {
-  isTaskAlreadyCompleteForNonContinuableSession,
-  evaluateImplicitCompletionRefusal,
-  skipBypassTaintUpdateForRefusal,
-} from "./executor/completion-predicates.js";
-export {
-  isTransientResumeAfterRestartGraphFailure,
-  isBenignInReviewPauseAbort,
-} from "./executor/graph-resume-predicates.js";
-export { buildWorkflowFailureScopeGuard } from "./executor/workflow-failure-scope-guard.js";
-export {
-  resolveContaminationBaseRef,
-  resolveDiffBaseRef,
-  captureBaseCommitSha,
-  preExecutionWorktreeHasWork,
-} from "./executor/worktree-git-refs.js";
-export {
-  isRegisteredWorktree,
-  assertWorktreePathNotNested,
-  getWorktreeBranchMap,
-} from "./executor/worktree-registry-helpers.js";
 
-export { quoteShellArg } from "./executor/shell-quote.js";
-export { isBenignEphemeralDeleteRaceError } from "./executor/ephemeral-delete-race.js";
-export { logReviewCheckoutRouting } from "./executor/review-checkout-routing.js";
 
-export { extractWorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
-export type { WorktreeConflictInfo } from "./executor/worktree-conflict-info.js";
 
-export {
-  evaluateTaskDoneRefusal,
-  determineRevisionResetStart,
-} from "./executor/task-done-refusal.js";
 import {
   evaluateTaskDoneRefusal,
 } from "./executor/task-done-refusal.js";
 
-export {
-  extractReferencedPathsFromWorkflowFeedback,
-  isAlwaysAllowedScopeLeakPath,
-  workflowPathMatchesDeclaredScope,
-} from "./executor/workflow-feedback-paths.js";
-export type { WorkflowRevisionFeedbackPartition } from "./executor/workflow-feedback-paths.js";
 
-export {
-  parseReviewLevelFromPrompt,
-  evaluatePromptDerivedNoCommitEligibility,
-  extractPromptSection,
-  extractPromptListEntries,
-} from "./executor/prompt-derived-eligibility.js";
 
-export { NonRetryableWorktreeError } from "./executor/worktree-registry-helpers.js";
 import {
-  hasActiveWorktreeBinding,
-  shouldGenerateNewWorktreeName,
-  findActiveWorktreeOwner,
-  isLiveCleanupRefusal,
-} from "./executor/worktree-ownership.js";
-export {
   hasActiveWorktreeBinding,
   shouldGenerateNewWorktreeName,
   findActiveWorktreeOwner,
   isLiveCleanupRefusal,
 } from "./executor/worktree-ownership.js";
 import { cleanupStaleBranch } from "./executor/worktree-stale-branch.js";
-export { cleanupStaleBranch } from "./executor/worktree-stale-branch.js";
 import { planSquashImportFromDep } from "./executor/worktree-squash-import-plan.js";
-export { planSquashImportFromDep } from "./executor/worktree-squash-import-plan.js";
 import { reconcileSelfOwnedBeforeRemove } from "./executor/worktree-self-owned-reconcile.js";
-export { reconcileSelfOwnedBeforeRemove } from "./executor/worktree-self-owned-reconcile.js";
 import {
   emitStaleLockAudit,
   recoverIndexLockIfStale,
   recoverExecutorStaleRegistration,
 } from "./executor/worktree-stale-lock-recovery.js";
-export {
-  emitStaleLockAudit,
-  recoverIndexLockIfStale,
-  recoverExecutorStaleRegistration,
-} from "./executor/worktree-stale-lock-recovery.js";
-export type { StaleLockAuditEvent } from "./executor/worktree-stale-lock-recovery.js";
 import { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
-export { normalizeReclaimableWorktreePath } from "./executor/worktree-reclaim-path.js";
 import { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
-export { removeOwnWorktreeWithReconcile } from "./executor/worktree-remove-own.js";
 import { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
-export { tryFreshWorktreeAfterLiveConflict } from "./executor/worktree-fresh-after-conflict.js";
 import {
   tryCreateWorktree as tryCreateWorktreeImpl,
   handleWorktreeConflict as handleWorktreeConflictImpl,
@@ -527,7 +417,6 @@ import { buildStepInstancePersistence as buildStepInstancePersistenceImpl } from
 import { resolveMcpServers as resolveMcpServersImpl } from "./executor/resolve-mcp-servers.js";
 
 import { runConfiguredCommand } from "./executor/configured-command.js";
-export { truncateWorkflowScriptOutput, runConfiguredCommand } from "./executor/configured-command.js";
 
 export async function __runConfiguredCommandForTests(
   command: string,
@@ -552,10 +441,6 @@ export async function __runConfiguredCommandForTests(
  * pause/resume machinery as an `awaitInput` node (U6). Returns the question text,
  * or null when no well-formed sentinel is present.
  */
-export {
-  parseAwaitInputSentinel,
-  parseAwaitInputQuestionToolCall,
-} from "./executor/await-input-parse.js";
 
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
@@ -572,21 +457,10 @@ export {
  * `../` traversal before reading, since the file body is injected verbatim into a
  * child's system prompt (a filesystem prompt-injection surface otherwise).
  */
-export {
-  FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
-  parseWorkflowStepVerdict,
-  inferWorkflowStepVerdictFromProse,
-  parseWorkflowStepOutput,
-} from "./executor/workflow-step-verdict.js";
-export type {
-  WorkflowStepOutcome,
-  WorkflowStepResult,
-} from "./executor/workflow-step-verdict.js";
 import type {
   WorkflowStepOutcome,
 } from "./executor/workflow-step-verdict.js";
 
-export { getExecutorSystemPrompt } from "./executor/system-prompt.js";
 
 export interface TaskExecutorOptions {
   /*
@@ -713,12 +587,6 @@ clears. The move TARGET was converted here in U5b; the guards in front of it wer
 which is the half-conversion shape: the correct target reached through a check that could
 not see it. Each site now resolves once and uses the same value for both.
 */
-export {
-  LEGACY_TERMINAL_COLUMNS,
-  resolveTerminalColumnsFor,
-  resolveCompleteColumnFor,
-  resolveReboundColumnFor,
-} from "./executor/lifecycle-columns.js";
 
 /*
 FNXC:WorkflowExecution 2026-07-19-01:30:
