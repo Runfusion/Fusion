@@ -5,8 +5,10 @@
  */
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
+import * as constants from "./executor-constants.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs } from "./facade-methods.js";
 import { activeSessionRegistry } from "../agents/active-session-registry.js";
+import { getTaskCompletionBlockerForStore } from "../execution/task-completion.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -67,4 +69,16 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected accumulateTokenUsage(...args: Parameters<typeof impl.accumulateTokenUsageImpl>): ReturnType<typeof impl.accumulateTokenUsageImpl> { return impl.accumulateTokenUsageImpl(...args); }
   protected tokenUsageWithModelSnapshot(...args: Parameters<typeof impl.tokenUsageWithModelSnapshotImpl>): ReturnType<typeof impl.tokenUsageWithModelSnapshotImpl> { return impl.tokenUsageWithModelSnapshotImpl(...args); }
   protected async extractSessionTokenUsage(...args: Parameters<typeof impl.extractSessionTokenUsageImpl>): ReturnType<typeof impl.extractSessionTokenUsageImpl> { return impl.extractSessionTokenUsageImpl(...args); }
+  protected signalTaskComplete(task: import("@fusion/core").Task): ReturnType<typeof impl.signalTaskCompleteImpl> { return impl.signalTaskCompleteImpl(bags.buildSignalTaskCompleteDeps(this), task); }
+  protected triggerPostTaskReflectionCapture(task: import("@fusion/core").Task): ReturnType<typeof impl.triggerPostTaskReflectionCaptureImpl> { return impl.triggerPostTaskReflectionCaptureImpl(bags.buildTriggerPostTaskReflectionCaptureDeps(this), task); }
+  protected scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void { impl.scheduleCompletedTaskWatchdogImpl(bags.buildScheduleCompletedTaskWatchdogDeps(this, constants.COMPLETED_TASK_WATCHDOG_MS), taskId, trigger); }
+  protected async clearTerminalStepFailuresForRetry(taskId: string): ReturnType<typeof impl.clearTerminalStepFailuresForRetryImpl> { return impl.clearTerminalStepFailuresForRetryImpl(bags.buildStoreRunContextDeps(this), taskId); }
+  protected async performWorkflowRerunBounce(...args: FacadeRestArgs<typeof impl.performWorkflowRerunBounceImpl>): ReturnType<typeof impl.performWorkflowRerunBounceImpl> { return impl.performWorkflowRerunBounceImpl(bags.buildPerformWorkflowRerunBounceDeps(this), ...args); }
+  protected scheduleWorkflowRerun(...args: FacadeRestArgs<typeof impl.scheduleWorkflowRerunImpl>): void { impl.scheduleWorkflowRerunImpl(bags.buildScheduleWorkflowRerunDeps(this, constants.WORKFLOW_RERUN_WATCHDOG_MS), ...args); }
+  protected async parkCompletedBlockedTask(...args: FacadeRestArgs<typeof impl.parkCompletedBlockedTaskImpl>): ReturnType<typeof impl.parkCompletedBlockedTaskImpl> { return impl.parkCompletedBlockedTaskImpl(bags.buildCompletionFinalizationFacadeDeps(this), ...args); }
+  protected async getCompletedTaskFinalizationDecision(taskId: string, taskDone: boolean): ReturnType<typeof impl.getCompletedTaskFinalizationDecisionImpl> { return impl.getCompletedTaskFinalizationDecisionImpl(bags.buildCompletionFinalizationFacadeDeps(this), taskId, taskDone); }
+  protected async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): ReturnType<typeof impl.shouldFinalizeCompletedTaskImpl> { return impl.shouldFinalizeCompletedTaskImpl(bags.buildCompletionFinalizationFacadeDeps(this), taskId, taskDone); }
+  protected async handleNonContinuableSessionError(task: import("@fusion/core").Task, taskDone: boolean, errorMessage: string): ReturnType<typeof impl.handleNonContinuableSessionErrorImpl> { return impl.handleNonContinuableSessionErrorImpl(bags.buildNonContinuableSessionFacadeDeps(this), task, taskDone, errorMessage); }
+  protected async handleNonContinuableSessionRetry(task: import("@fusion/core").Task, errorMessage: string): ReturnType<typeof impl.handleNonContinuableSessionRetryImpl> { return impl.handleNonContinuableSessionRetryImpl(bags.buildNonContinuableSessionFacadeDeps(this), task, errorMessage); }
+  protected async getTaskCompletionBlocker(task: import("@fusion/core").Task) { return getTaskCompletionBlockerForStore(this.store, task); }
 }

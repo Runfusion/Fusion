@@ -2,7 +2,7 @@
 export * from "./executor/executor-reexports.js";
 import {
   type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr, type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
-  dropPreHeldExecutorSlot, getTaskCompletionBlockerForStore, constants, impl, bags, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
+  dropPreHeldExecutorSlot, constants, impl, bags, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
   bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorSessionFacades,
 } from "./executor/task-executor-imports.js";
 export class TaskExecutor extends TaskExecutorSessionFacades {
@@ -25,18 +25,6 @@ export class TaskExecutor extends TaskExecutorSessionFacades {
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): ReturnType<typeof impl.resetMergeStateIfNeededImpl> { return impl.resetMergeStateIfNeededImpl(bags.buildResetMergeStateIfNeededDeps(this), task, from); }
   private async cleanupMergeStateForReverification(...args: FacadeRestArgs<typeof impl.cleanupMergeStateForReverificationImpl>): ReturnType<typeof impl.cleanupMergeStateForReverificationImpl> { return impl.cleanupMergeStateForReverificationImpl(bags.buildStoreRunContextDeps(this), ...args); }
   private async clearResumeFailureState(task: Task): ReturnType<typeof impl.clearResumeFailureStateImpl> { return impl.clearResumeFailureStateImpl({ store: this.store }, task); }
-  private signalTaskComplete(task: Task): ReturnType<typeof impl.signalTaskCompleteImpl> { return impl.signalTaskCompleteImpl(bags.buildSignalTaskCompleteDeps(this), task); }
-  private triggerPostTaskReflectionCapture(task: Task): ReturnType<typeof impl.triggerPostTaskReflectionCaptureImpl> { return impl.triggerPostTaskReflectionCaptureImpl(bags.buildTriggerPostTaskReflectionCaptureDeps(this), task); }
-  private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void { impl.scheduleCompletedTaskWatchdogImpl(bags.buildScheduleCompletedTaskWatchdogDeps(this, constants.COMPLETED_TASK_WATCHDOG_MS), taskId, trigger); }
-  private async clearTerminalStepFailuresForRetry(taskId: string): ReturnType<typeof impl.clearTerminalStepFailuresForRetryImpl> { return impl.clearTerminalStepFailuresForRetryImpl(bags.buildStoreRunContextDeps(this), taskId); }
-  private async performWorkflowRerunBounce(...args: FacadeRestArgs<typeof impl.performWorkflowRerunBounceImpl>): ReturnType<typeof impl.performWorkflowRerunBounceImpl> { return impl.performWorkflowRerunBounceImpl(bags.buildPerformWorkflowRerunBounceDeps(this), ...args); }
-  private scheduleWorkflowRerun(...args: FacadeRestArgs<typeof impl.scheduleWorkflowRerunImpl>): void { impl.scheduleWorkflowRerunImpl(bags.buildScheduleWorkflowRerunDeps(this, constants.WORKFLOW_RERUN_WATCHDOG_MS), ...args); }
-  private async parkCompletedBlockedTask(...args: FacadeRestArgs<typeof impl.parkCompletedBlockedTaskImpl>): ReturnType<typeof impl.parkCompletedBlockedTaskImpl> { return impl.parkCompletedBlockedTaskImpl(bags.buildCompletionFinalizationFacadeDeps(this), ...args); }
-  private async getCompletedTaskFinalizationDecision(taskId: string, taskDone: boolean): ReturnType<typeof impl.getCompletedTaskFinalizationDecisionImpl> { return impl.getCompletedTaskFinalizationDecisionImpl(bags.buildCompletionFinalizationFacadeDeps(this), taskId, taskDone); }
-  private async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): ReturnType<typeof impl.shouldFinalizeCompletedTaskImpl> { return impl.shouldFinalizeCompletedTaskImpl(bags.buildCompletionFinalizationFacadeDeps(this), taskId, taskDone); }
-  private async handleNonContinuableSessionError(task: Task, taskDone: boolean, errorMessage: string): ReturnType<typeof impl.handleNonContinuableSessionErrorImpl> { return impl.handleNonContinuableSessionErrorImpl(bags.buildNonContinuableSessionFacadeDeps(this), task, taskDone, errorMessage); }
-  private async handleNonContinuableSessionRetry(task: Task, errorMessage: string): ReturnType<typeof impl.handleNonContinuableSessionRetryImpl> { return impl.handleNonContinuableSessionRetryImpl(bags.buildNonContinuableSessionFacadeDeps(this), task, errorMessage); }
-  private async getTaskCompletionBlocker(task: Task) { return getTaskCompletionBlockerForStore(this.store, task); }
   private async executeReviewHandoff(...args: FacadeRestArgs<typeof impl.executeReviewHandoffImpl>): ReturnType<typeof impl.executeReviewHandoffImpl> { return impl.executeReviewHandoffImpl(bags.buildExecuteReviewHandoffDeps(this), ...args); }
   async recoverCompletedTask(task: Task): Promise<boolean> { return impl.recoverCompletedTaskImpl(bags.buildRecoverCompletedTaskDeps(this), task); }
   private async parkPlanReviewReplanCapExhausted(...args: FacadeRestArgs<typeof impl.parkPlanReviewReplanCapExhaustedImpl>): ReturnType<typeof impl.parkPlanReviewReplanCapExhaustedImpl> { return impl.parkPlanReviewReplanCapExhaustedImpl(bags.buildStoreRunContextDeps(this), ...args); }
