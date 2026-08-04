@@ -158,14 +158,18 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     rootDir = undefined;
   });
 
-  it("seeds the planner prompt from the latest plan-review REVISE output when no comment feedback exists", async () => {
+  it("seeds the planner prompt from the latest durable Plan Review REVISE notes when no comment feedback exists", async () => {
     const reviseOutput = "PLAN-REVIEW-REVISE-MARKER: the plan omits the required migration step and must add it.";
     const rejectedDraft = "# Existing rejected plan\n\n## Mission\nDo not lose this body during replan.\n";
     const task = createTask({
       id: "FN-REPLAN-FEEDBACK-WSR",
-      // No user comments and no "AI spec revision requested" log entry — the only
-      // available feedback is the Plan Review REVISE result in workflowStepResults.
-      log: [],
+      // The activity log is only a bounded operator preview. The full durable
+      // remediation contract comes from workflowStepResults.
+      log: [{
+        timestamp: "2026-07-13T00:00:20.000Z",
+        action: "AI spec revision requested",
+        outcome: "Revision source: plan-review/plan-review\nTRUNCATED-PREVIEW-MUST-NOT-WIN",
+      }],
       workflowStepResults: [
         {
           workflowStepId: "plan-review",
@@ -173,8 +177,8 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
           phase: "pre-merge",
           status: "failed",
           verdict: "REVISE",
-          output: reviseOutput,
-          notes: "Needs a migration step.",
+          output: "Reviewer prose may be incomplete.",
+          notes: reviseOutput,
         },
       ],
     });
@@ -195,11 +199,13 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(mockPromptWithFallback).toHaveBeenCalled();
     expect(capturedPrompt).toBeDefined();
     expect(capturedPrompt).toContain(reviseOutput);
+    expect(capturedPrompt).not.toContain("TRUNCATED-PREVIEW-MUST-NOT-WIN");
     // Surgical revision: rejected PROMPT body + feedback, not a fresh respec from title alone.
     expect(capturedPrompt).toContain("Revise this task");
     expect(capturedPrompt).toContain("Existing Specification");
     expect(capturedPrompt).toContain("Do not lose this body during replan");
     expect(capturedPrompt).toContain("Converge — do not rewrite from scratch");
+    expect(capturedPrompt).toContain("PLAN-REVIEW-REVISE-MARKER");
     expect(capturedPrompt).not.toContain("Re-specify this task");
   });
 
@@ -224,6 +230,14 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
           status: "failed",
           verdict: "REVISE",
           output: reviseOutput,
+          priorAttempts: [{
+            workflowStepId: "plan-review",
+            workflowStepName: "Plan Review",
+            phase: "pre-merge",
+            status: "failed",
+            verdict: "REVISE",
+            notes: "PRIOR-PLAN-REVIEW-FEEDBACK: preserve the lifecycle-writer audit.",
+          }],
         },
       ],
     });
@@ -243,6 +257,10 @@ describe("triage replan feedback falls back to Plan Review REVISE output", () =>
     expect(capturedPrompt).toBeDefined();
     expect(capturedPrompt).toContain(explicitFeedback);
     expect(capturedPrompt).not.toContain(reviseOutput);
+    expect(capturedPrompt).toContain("Cumulative Revision Decision Ledger");
+    expect(capturedPrompt).toContain("### PR1");
+    expect(capturedPrompt).toContain("PRIOR-PLAN-REVIEW-FEEDBACK");
+    expect(capturedPrompt).not.toMatch(/### PR\d+[\s\S]*EXPLICIT-COMMENT-FEEDBACK/);
     expect(capturedPrompt).toContain("Existing Specification");
     expect(capturedPrompt).toContain("Keep this under surgical revision");
   });

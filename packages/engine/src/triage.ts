@@ -228,6 +228,7 @@ import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
 import { finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
+import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
 
@@ -2965,6 +2966,7 @@ export class TriageProcessor {
           const isReplan = task.status === "needs-replan";
           let existingPrompt: string | undefined;
           let feedback: string | undefined;
+          let planReviewFeedbackHistory: string[] | undefined;
 
           if (isReplan) {
             // Prefer explicit re-specification feedback logged by comment-triggered
@@ -2974,7 +2976,7 @@ export class TriageProcessor {
               .find((entry) =>
                 entry.action === "User comment requested re-specification of planned task"
                 || entry.action === "User comment invalidated spec approval — task needs re-specification"
-                || entry.action === "AI spec revision requested"
+                || (entry.action === "AI spec revision requested" && !isPlanReviewRevisionLog(entry))
                 || entry.action === TRIAGE_STUCK_RESUME_LOG_ACTION
                 || entry.action === TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION
               );
@@ -3027,12 +3029,17 @@ export class TriageProcessor {
               const latestPlanReviewRevise = [...(currentTask.workflowStepResults || [])]
                 .reverse()
                 .find((result) =>
-                  result.workflowStepId === PLAN_REVIEW_GROUP_ID
+                  (result.workflowStepId === PLAN_REVIEW_GROUP_ID || result.workflowStepName === "Plan Review")
                   && result.verdict === "REVISE"
-                  && Boolean((result.output ?? result.notes)?.trim()),
+                  && Boolean((result.notes ?? result.output)?.trim()),
                 );
-              feedback = latestPlanReviewRevise?.output ?? latestPlanReviewRevise?.notes ?? feedback;
+              feedback = latestPlanReviewRevise?.notes ?? latestPlanReviewRevise?.output ?? feedback;
             }
+
+            planReviewFeedbackHistory = collectPlanReviewFeedbackHistory(currentTask.workflowStepResults, {
+              exclude: feedback,
+              includeCurrent: false,
+            });
 
             planLog.log(
               `${task.id} re-planning with feedback: ${feedback?.slice(0, 100)}...`
@@ -3054,6 +3061,7 @@ export class TriageProcessor {
             {
               plan: typeof planDocument?.content === "string" ? planDocument.content : undefined,
               originalDescription: typeof originalDescriptionDocument?.content === "string" ? originalDescriptionDocument.content : undefined,
+              planReviewFeedbackHistory,
             },
           );
           await promptWithFallback(
@@ -5083,7 +5091,7 @@ export function buildSpecificationPrompt(
   attachmentContents?: AttachmentContent[],
   existingPrompt?: string,
   feedback?: string,
-  planningContext?: { plan?: string; originalDescription?: string },
+  planningContext?: { plan?: string; originalDescription?: string; planReviewFeedbackHistory?: string[] },
 ): string {
   const hasFeedback = Boolean(feedback?.trim());
   const planDocument = planningContext?.plan?.trim();
@@ -5196,6 +5204,11 @@ Keep every \`##\`/\`###\` section heading, machine marker, the verbatim \`## Ori
 
   let revisionSection = "";
   if (isRevision) {
+    const cumulativeReviewLedger = (planningContext?.planReviewFeedbackHistory ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry, index) => `### PR${index + 1}\n${entry}`)
+      .join("\n\n");
     /*
     FNXC:PlanReviewReplan 2026-07-15-11:15:
     Plan Review REVISE and user re-spec feedback share this path. Label feedback generically
@@ -5214,7 +5227,8 @@ You are revising an existing task specification based on Plan Review or user fee
 - Apply **surgical** edits that fully resolve every blocking issue in the revision feedback below.
 - Preserve wording, steps, file scope, and acceptance criteria the feedback does not criticize.
 - Do not expand scope, invent new deliverables, or churn File Scope to "improve" an otherwise approved plan.
-- After editing, re-check each blocking item so a subsequent Plan Review can APPROVE without a new round of objections.
+- Treat every item in the cumulative ledger as a durable review decision unless a later entry explicitly supersedes it. Preserve resolved items, address every unresolved item, and do not regress an earlier correction while fixing the latest feedback.
+- After editing, rerun the full Mandatory Planning Completeness Procedure against the entire revised specification — not only the latest feedback — so a subsequent Plan Review can evaluate all remaining blockers in one pass.
 
 ## Existing Specification
 \`\`\`markdown
@@ -5223,6 +5237,8 @@ ${existingPrompt}
 
 ## Revision Feedback
 ${feedback}
+
+${cumulativeReviewLedger ? `## Cumulative Revision Decision Ledger\n${cumulativeReviewLedger}\n` : ""}
 
 Revise the specification above to address this feedback. Persist the complete revised PROMPT.md with \`fn_task_prompt_write\`.`;
   } else if (isFreshRespecification) {

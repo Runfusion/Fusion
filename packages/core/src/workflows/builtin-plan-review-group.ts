@@ -1,4 +1,5 @@
 import type { WorkflowIrNode } from "./workflow-ir-types.js";
+import { PLAN_REVIEW_COMPLETENESS_POLICY } from "../agents/planning-review-policy.js";
 
 /*
 FNXC:PlanReviewStep 2026-06-28-23:29:
@@ -29,12 +30,14 @@ const PLAN_REVIEW_PROMPT = `You are a senior plan reviewer. Review the task's PR
 4. **Verification quality** — absent or weak tests/checks for the behavior being changed.
 5. **Risk callouts** — migrations, data-loss paths, external integrations, secrets, or plugin/runtime dependencies that need explicit handling.
 
+${PLAN_REVIEW_COMPLETENESS_POLICY}
+
 Be specific: cite the plan section or file path for every finding and explain the concrete correction.
 
 ## Output Requirements
 - APPROVE: the plan is ready for execution.
 - APPROVE_WITH_NOTES: execution may proceed, but include non-blocking advisory notes.
-- REVISE: the plan should be corrected before execution; include the missing or wrong requirement and the needed change.
+- REVISE: the plan should be corrected before execution; include every blocking finding and needed change in the JSON notes, not only in preceding prose.
 - Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 

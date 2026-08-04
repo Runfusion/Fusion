@@ -2252,6 +2252,7 @@ export {
   isTerminalStepResult,
   type ReviewLeaseDisposition,
 } from "./workflows/workflow-step-results.js";
+export { PLAN_REVIEW_COMPLETENESS_POLICY } from "./agents/planning-review-policy.js";
 /*
 FNXC:GateBarrelSync 2026-07-19-01:10:
 Cutover (IR-driven lifecycle) barrel sync — same failure class as the classifyReviewLease incident above, found again when U4's resolveWipBudgetColumns threw "is not a function" in the engine-core hold/release sweep and silently zeroed all scheduler releases (scheduler-workflow-cutover gate suite 10/28 red). RULE: every runtime export the cutover adds to index.ts MUST be mirrored here; the engine-core gate bundle builds @fusion/core from THIS barrel. This block mirrors the cutover's lifecycle modules (transition policy, lifecycle traits, capacity budget, IR pin/drift, review-level preset, legacy adoption, creation column).

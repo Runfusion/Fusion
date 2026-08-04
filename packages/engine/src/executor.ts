@@ -16,7 +16,7 @@ import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -103,6 +103,12 @@ import {
   type VerificationResult,
 } from "./execution/verification-utils.js";
 import { canonicalFusionBranchName, canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree/worktree-names.js";
+import {
+  collectPlanReviewFeedbackHistory,
+  countPlanReviewRevisionAttempts,
+  formatPlanReviewRevisionFeedback,
+  PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT,
+} from "./plan-review-feedback-history.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree/worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
@@ -519,6 +525,35 @@ function countOptionalStepRevisionAttempts(task: Pick<Task, "log">, key: string,
 
 function optionalStepRevisionLogOutcome(details: string, key: string): string {
   return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}`;
+}
+
+function buildGraphPlanReviewConvergenceContext(
+  task: Pick<Task, "workflowStepResults">,
+  revisionKey: string,
+): string {
+  const priorAttemptCount = countPlanReviewRevisionAttempts(task.workflowStepResults, { revisionKey });
+  const attempt = priorAttemptCount + 1;
+  if (attempt <= 1) return "";
+
+  const history = collectPlanReviewFeedbackHistory(task.workflowStepResults, { revisionKey });
+  const lines = [
+    `## Convergence — Plan Review attempt ${attempt}`,
+    "Treat the cumulative prior feedback below as a decision primer. Verify each prior blocker against the current PROMPT.md before looking for new findings.",
+    "- Do not re-raise a resolved or semantically duplicate blocker.",
+    "- A newly blocking finding must identify the revision that introduced it, the prior blocker that genuinely masked it, or why it is independently delivery-blocking for correctness, security, data safety, or executability. Record an earlier reviewer miss explicitly; never demote a critical defect merely because it was missed before.",
+  ];
+  if (attempt >= 3) {
+    lines.push(
+      "- Severity ratchet (attempt 3+): only delivery-blocking critical defects may return REVISE; important/minor wording or implementation-detail findings are advisory.",
+    );
+  }
+  if (history.length > 0) {
+    lines.push("", "### Cumulative prior Plan Review ledger");
+    history.forEach((feedback, index) => {
+      lines.push(`#### PR${index + 1}`, feedback);
+    });
+  }
+  return lines.join("\n");
 }
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
@@ -5626,7 +5661,26 @@ export class TaskExecutor {
         return false;
       }
       const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
-      const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
+      // The terminal Plan Review result is persisted before remediation runs.
+      // Count only retained REVISE results from the current planning episode;
+      // activity-log counts span dependency invalidations and are not an
+      // approval-episode authority.
+      const currentEpisodeAttemptCount = countPlanReviewRevisionAttempts(
+        liveTask.workflowStepResults,
+        { revisionKey },
+      );
+      const matchingProjection = liveTask.workflowStepResults?.find((result) =>
+        result.workflowStepId === revisionKey
+        || (revisionKey === PLAN_REVIEW_GROUP_ID && result.workflowStepName === "Plan Review"),
+      );
+      const hasEpisodeBoundary = matchingProjection?.supersededAt != null
+        || matchingProjection?.priorAttempts?.some((attempt) => attempt.supersededAt != null) === true;
+      const nextCount = currentEpisodeAttemptCount > 0
+        ? currentEpisodeAttemptCount
+        : hasEpisodeBoundary
+          ? 1
+          : countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName) + 1;
+      const currentCount = nextCount - 1;
       if (!budget.unbounded && currentCount >= budget.max) {
         // U3: finite replan budget exhausted → park awaiting-approval (cap park
         // re-owned from the deleted triage gate), not a silent leave-in-place.
@@ -5639,20 +5693,18 @@ export class TaskExecutor {
        * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
        * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud halting log entry and STOP replanning (return false) so the gate falls through to a visible failed/parked state a human can act on, instead of looping indefinitely. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
        */
-      const PLAN_REVIEW_REPLAN_HARD_CAP = 15;
-      if (budget.unbounded && currentCount >= PLAN_REVIEW_REPLAN_HARD_CAP) {
+      if (budget.unbounded && currentCount >= PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT) {
         // U3: the unbounded-default safety ceiling now parks awaiting-approval with
         // the replan-cap reason (re-owned from the deleted triage gate) so the
         // non-convergence surfaces to a human instead of silently sitting in place.
         await this.parkPlanReviewReplanCapExhausted(
           taskId,
-          String(PLAN_REVIEW_REPLAN_HARD_CAP),
+          String(PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT),
           currentCount,
           feedback,
         );
         return true;
       }
-      const nextCount = currentCount + 1;
       const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
       const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
       await this.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, this.getRunContextFor(taskId));
@@ -5660,7 +5712,7 @@ export class TaskExecutor {
       await this.store.logEntry(
         taskId,
         "AI spec revision requested",
-        `Plan Review requested a planning revision before execution.\n\nStatus: ${info.status}\nFeedback:\n${feedback}`,
+        formatPlanReviewRevisionFeedback(revisionKey, info.status, feedback),
         this.getRunContextFor(taskId),
       );
       /*
@@ -6691,7 +6743,13 @@ export class TaskExecutor {
             fix) must preserve the prior `status:"failed"` entry's history in
             `priorAttempts` rather than silently overwriting it.
             */
-            const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
+            const isPlanReviewResult = result.workflowStepId === PLAN_REVIEW_GROUP_ID
+              || result.workflowStepName === "Plan Review";
+            const existing = upsertWorkflowStepResult(
+              live?.workflowStepResults,
+              result,
+              isPlanReviewResult ? { maxPriorAttempts: PLAN_REVIEW_FEEDBACK_HISTORY_LIMIT } : undefined,
+            );
             await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));
           } catch {
             // Result recording is additive visibility — never affect the run.
@@ -18801,13 +18859,16 @@ ${scopeGuard}
     // assumptions and proceed instead of parking on a question. Explicit opt-in
     // only (default false = board run); see runGraphCustomNode / KTD-3.
     const unattended = stepOptions?.unattended === true;
-    const isPlanReviewStep = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
     const workflowStepMetadata = workflowStep as WorkflowStep & {
       optionalGroupId?: string;
       reviewCanFixInline?: boolean;
       requireExternalIntegrationEvidence?: boolean;
     };
     const optionalGroupId = workflowStepMetadata.optionalGroupId;
+    const isPlanReviewStep = workflowStep.id === "graph:plan-review-step"
+      || workflowStep.name === "Plan Review"
+      || optionalGroupId === PLAN_REVIEW_GROUP_ID;
+    const planReviewRevisionKey = optionalStepRevisionKey(optionalGroupId, workflowStep.name);
     const isReviewTypeWorkflowStep =
       isPlanReviewStep
       || workflowStepMetadata.reviewCanFixInline === true
@@ -18849,6 +18910,9 @@ ${scopeGuard}
     }
     const workflowReviewSpecText = typeof workflowReviewSpecArtifact === "string" ? workflowReviewSpecArtifact : "";
     const planReviewSpecText = isPlanReviewStep ? workflowReviewSpecText : "";
+    const planReviewConvergenceContext = isPlanReviewStep
+      ? buildGraphPlanReviewConvergenceContext(task, planReviewRevisionKey)
+      : "";
 
     /*
     FNXC:PlanReview 2026-07-21-16:30:
@@ -18951,7 +19015,7 @@ ${workflowReviewSpecText}
 
 --- BEGIN PROMPT.md ---
 ${planReviewSpecText}
---- END PROMPT.md ---`
+--- END PROMPT.md ---${planReviewConvergenceContext ? `\n\n${planReviewConvergenceContext}` : ""}`
       : `Diff Scope (files changed by THIS task vs base):
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
 

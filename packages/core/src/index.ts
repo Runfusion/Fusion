@@ -2648,6 +2648,7 @@ export {
   isTerminalStepResult,
   type ReviewLeaseDisposition,
 } from "./workflows/workflow-step-results.js";
+export { PLAN_REVIEW_COMPLETENESS_POLICY } from "./agents/planning-review-policy.js";
 // FNXC:SqliteRemoval 2026-07-14: Export async audit reader so engine tests can
 // query run-audit events in backend mode (sync getRunAuditEvents returns [] in PG mode).
 export { queryRunAuditEvents } from "./task-store/async/async-audit.js";

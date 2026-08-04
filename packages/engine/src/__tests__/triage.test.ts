@@ -441,6 +441,12 @@ describe("buildSpecificationPrompt", () => {
       [],
       existingPrompt,
       feedback,
+      {
+        planReviewFeedbackHistory: [
+          "Round one: enumerate every lifecycle writer.",
+          "Round two: define the lock order and both race orderings.",
+        ],
+      },
     );
 
     expect(prompt).toContain("Revise this task");
@@ -448,6 +454,11 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("Existing Specification");
     expect(prompt).toContain("Revision Feedback");
     expect(prompt).toContain("Converge — do not rewrite from scratch");
+    expect(prompt).toContain("Cumulative Revision Decision Ledger");
+    expect(prompt).toContain("### PR1");
+    expect(prompt).toContain("Round one: enumerate every lifecycle writer.");
+    expect(prompt).toContain("### PR2");
+    expect(prompt).toContain("rerun the full Mandatory Planning Completeness Procedure");
     expect(prompt).toContain("surgical");
     expect(prompt).toContain(existingPrompt);
     expect(prompt).toContain(feedback);
