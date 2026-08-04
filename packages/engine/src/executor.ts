@@ -792,18 +792,6 @@ export class TaskExecutor {
     });
   }
 
-  /**
-   * @param store — Task store instance (also used to listen for events)
-   * @param rootDir — Project root directory
-   * @param options — Executor configuration
-   *
-   * Listens for `task:moved` to auto-execute tasks moved to `in-progress`,
-   * `task:updated` to terminate agent sessions when individual tasks are paused,
-   * and `settings:updated` to terminate **all** active agent sessions when
-   * `globalPause` transitions from `false` to `true`. `enginePaused` only
-   * prevents new work dispatch — running sessions continue to completion.
-   * Paused tasks are moved back to `todo` rather than marked as `failed`.
-   */
   private async parkApprovalSuspension(taskId: string, surface: string): Promise<boolean> {
     return parkApprovalSuspensionImpl(
       {
@@ -1246,22 +1234,12 @@ export class TaskExecutor {
     );
   }
 
-  /** Column-agent principal alignment (plan U5, R6). True when the EFFECTIVE agent
-   *  governing `task`'s execute or step-execute seam — resolved through the shared
-   *  core resolver against the task's workflow IR — is `agentId`. Used by the
-   *  `resumeTaskForAgent` second pass to re-dispatch column-bound tasks the
-   *  `assignedAgentId` filter misses. Best-effort: an unresolvable IR yields false. */
+  /** Column-agent U5/R6: effective principal matches agentId (fail-soft → false). */
   private async taskEffectiveAgentMatches(task: Task, agentId: string): Promise<boolean> {
     return taskEffectiveAgentMatchesImpl(this.store, task, agentId);
   }
 
-  /**
-   * Resume orphaned in-progress tasks (e.g., after crash/restart).
-   * Call once after engine startup.
-   *
-   * Tasks that are already complete (all steps done/skipped) are fast-pathed
-   * directly to in-review without spawning a new agent session.
-   */
+  /** Resume orphaned in-progress tasks after crash/restart (complete → in-review fast path). */
   async resumeOrphaned(): Promise<void> {
     return resumeOrphanedImpl({
       ...facadeFields(this, [
@@ -1290,12 +1268,7 @@ export class TaskExecutor {
   /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */
   private graphToolFailureRunCursors = new Map<string, number>();
 
-  /** Step-inversion (KTD-2/KTD-8, U6/U8): graph-owned step-execute can pin
-   *  step-session physics for workflows that need a hard per-step boundary
-   *  before step-review. Default final-review coding does not pin here and
-   *  therefore respects `runStepsInNewSessions` (reuse one session when false,
-   *  fresh per-step sessions when true). Cleared when the graph run ends
-   *  (executeWorkflowGraph finally). */
+  /** Step-inversion pin for hard per-step boundary before step-review (cleared on graph finally). */
   private graphStepSessionPinned = new Set<string>();
 
   /** Step-inversion (U6/U8): once-per-run implementation-phase cache keyed by task id. */
@@ -1319,13 +1292,7 @@ export class TaskExecutor {
   /** FNXC:Settings-ThinkingLevel 2026-07-10-00:00: per-run thinking pin for execute/step-execute seams. */
   private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
 
-  /**
-   * FNXC:WorkflowStepSkills 2026-07-22-00:00:
-   * FN-8490 pins the canonical `config.executor: "skill"` + trimmed
-   * `config.skillName` request only for the pass-initiating foreach instance.
-   * The implementation pass is shared across instances, so this template-constant
-   * value must settle with the same lifecycle as governing-node and thinking pins.
-   */
+  /** FNXC:WorkflowStepSkills 2026-07-22-00:00: FN-8490 skill pin for pass-initiating foreach instance. */
   private graphSeamSkillName = new Map<string, string>();
 
   /** FN-4811 process-wide graph routing (cross-instance execute() races). */
@@ -1409,12 +1376,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Build the code node runner (KTD-15, U14): worktree cwd resolution, pre-read of
-   * declared artifacts into the harness ctx, and customFields writes through the
-   * U11 validation authority. Drives the esbuild-compile + child-process runner
-   * in code-node-runner.ts.
-   */
+  /** KTD-15/U14 code-node runner (worktree cwd, artifact pre-read, customFields). */
   private buildCodeNodeRunner(): CodeNodeRunner {
     return buildCodeNodeRunnerImpl({
       store: this.store,
@@ -1643,11 +1605,7 @@ export class TaskExecutor {
     );
   }
 
-  /** Fetch the column agent and surface its model + persona for adoption by a
-   *  custom node (plan U3). Best-effort, mirroring the node-agent posture at the
-   *  `"agent"` branch: on null/throw, log and return undefined so the caller
-   *  falls back to the node's own/default resolution (R8). Emits a logEntry
-   *  naming the substitution and mode so the audit trail explains who ran. */
+  /** Column-agent U3 adoption for custom nodes (R8 fail-soft → undefined). */
   private async adoptColumnAgentForNode(
     node: WorkflowIrNode,
     live: TaskDetail,
@@ -1696,13 +1654,7 @@ export class TaskExecutor {
     return isAgentEffectivelyExecutingImpl(this.effectiveColumnAgentByTask, agentId);
   }
 
-  /** Build the task-scoped runtime env that carries plugin-injected keys
-   *  (e.g. compound-engineering `FUSION_CE_SKILLS_DIR` / `FUSION_CE_AGENTS_DIR`)
-   *  plus the plugin PATH contribution. Shared by the legacy single-session path
-   *  (agentWork, ~7434) and the graph-node skill-step path (runGraphCustomNode,
-   *  U8) so both deliver the same injected env to their sessions. We never mutate
-   *  process.env globally — this scoped env is threaded through taskEnv so session
-   *  subprocesses inherit it without leaking across concurrent tasks. */
+  /** Plugin-injected taskEnv (scoped; never mutates process.env). Shared by agentWork + graph skill steps. */
   private async buildInjectedRuntimeEnv(
     taskId: string,
     worktreePath: string,
@@ -1787,13 +1739,7 @@ export class TaskExecutor {
     );
   }
 
-  /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
-   *
-   *  `columnBinding` (plan U3) is the agent binding governing this node's
-   *  declared column, resolved by the seam wiring in executeWorkflowGraph
-   *  (the IR is not in scope here). When present, the core resolver decides
-   *  whether the column agent supersedes (override) or defers to the node's own
-   *  `cfg.agentId`/model pair — never a reimplemented precedence. */
+  /** Custom (non-seam) graph node via WorkflowStep machinery; columnBinding U3/R precedence. */
   private async runGraphCustomNode(
     node: WorkflowIrNode,
     nodeTask: TaskDetail,
@@ -1801,7 +1747,6 @@ export class TaskExecutor {
     columnBinding?: WorkflowColumnAgent,
     graphContext?: Record<string, unknown>,
   ): Promise<WorkflowNodeResult> {
-     
     return runGraphCustomNodeImpl(
       buildRunGraphCustomNodeDeps(this),
       node,
@@ -1810,7 +1755,6 @@ export class TaskExecutor {
       columnBinding,
       graphContext,
     );
-     
   }
 
   private async runCliAgentNode(
@@ -1826,11 +1770,7 @@ export class TaskExecutor {
     );
   }
 
-  /**
-   * Reap a CLI task session at the execute→in-review handoff (U7). Graceful PTY
-   * kill recorded as `completed`. Best-effort: a reap failure must not block the
-   * pipeline advancement that the positive done already authorized.
-   */
+  /** U7 CLI handoff: graceful PTY reap as completed (best-effort; never blocks advancement). */
   private async reapCliTaskSessionForHandoff(session: CliTaskSession, taskId: string): Promise<void> {
     return reapCliTaskSessionForHandoffImpl(session, taskId);
   }
@@ -1922,13 +1862,12 @@ export class TaskExecutor {
     );
   }
 
+  /* Shared resumeLanesMemo: one snapshot for handleGraphFailure recovery paths (avoid disagreeing re-resolve). */
   private async isRetryableBenignMergePauseAbort(
     live: TaskDetail,
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
-     *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return isRetryableBenignMergePauseAbortImpl(
@@ -1949,8 +1888,6 @@ export class TaskExecutor {
     result: WorkflowGraphTaskRunResult,
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
-     *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return isBenignManualMergeHoldPauseAbortImpl(
@@ -1972,8 +1909,6 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
-     *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return handleStaleInReviewPlanPauseAbortReplayImpl(
@@ -1993,8 +1928,6 @@ export class TaskExecutor {
     abortProvenance: PausedAbortProvenance | undefined,
     pausedAborted: boolean,
     userCanceled: boolean,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`; a fresh resolution here could disagree
-     *  with the one the rest of `handleGraphFailure` uses. */
     resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
   ): Promise<boolean> {
     return handleStaleInReviewParsePauseAbortReplayImpl(
