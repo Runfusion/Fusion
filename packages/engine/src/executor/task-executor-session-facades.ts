@@ -5,7 +5,8 @@
  */
 import * as impl from "./impl-bindings.js";
 import * as bags from "./deps-bags.js";
-import { type FacadeRestArgs } from "./facade-methods.js";
+import { facadeFields, facadeMethods, type FacadeRestArgs } from "./facade-methods.js";
+import { activeSessionRegistry } from "../agents/active-session-registry.js";
 import { TaskExecutorWorktreePureFacades } from "./task-executor-worktree-pure-facades.js";
 
 export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePureFacades {
@@ -35,4 +36,19 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected trackTaskDisposal(taskId: string, disposal: Promise<void>): void { impl.trackTaskDisposalImpl({ pendingTaskDisposals: this.pendingTaskDisposals }, taskId, disposal); }
   isEphemeralDeletionPending(agentId: string): boolean { return impl.isEphemeralDeletionPendingImpl(this.pendingEphemeralDeletions, agentId); }
   disposeEphemeralTimers(): void { impl.disposeEphemeralTimersImpl(this.pendingEphemeralDeletions); }
+  getExecutingTaskIds(): Set<string> { return impl.getExecutingTaskIdsImpl(bags.buildTaskLivenessDeps(this)); }
+  hasActivePlanningWorkflowSession(taskId: string): boolean { return impl.hasActivePlanningWorkflowSessionImpl(bags.buildTaskLivenessDeps(this), taskId); }
+  isTaskActive(taskId: string): boolean { return impl.isTaskActiveImpl(bags.buildTaskLivenessDeps(this), taskId); }
+  isTaskLiveForOverseerRetry(taskId: string): boolean {
+    return impl.isTaskLiveForOverseerRetryImpl({
+      ...facadeFields(this, ["resumingUnpaused"]),
+      ...facadeMethods(this, ["isTaskActive", "hasLiveTaskSessionSurface"]),
+    }, taskId);
+  }
+  hasLiveSessionSurface(taskId: string): boolean {
+    return impl.hasLiveSessionSurfaceImpl(bags.buildHasLiveSessionSurfaceDeps(this, (id) => activeSessionRegistry.pathsForTask(id)), taskId);
+  }
+  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
+    return impl.clearPhantomExecutorBindingImpl(bags.buildClearPhantomExecutorBindingDeps(this), taskId, options);
+  }
 }
