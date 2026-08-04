@@ -95,4 +95,14 @@ export abstract class TaskExecutorSessionFacades extends TaskExecutorWorktreePur
   protected async taskEffectiveAgentMatches(task: import("@fusion/core").Task, agentId: string): ReturnType<typeof impl.taskEffectiveAgentMatchesImpl> { return impl.taskEffectiveAgentMatchesImpl(this.store, task, agentId); }
   async resumeOrphaned(): Promise<void> { return impl.resumeOrphanedImpl(bags.buildResumeOrphanedDeps(this)); }
   protected async resolveInstructionsForRole(role: string, settings?: import("@fusion/core").Settings): ReturnType<typeof impl.resolveInstructionsForRoleImpl> { return impl.resolveInstructionsForRoleImpl(bags.buildResolveInstructionsForRoleDeps(this), role, settings); }
+  markStuckAborted(...args: FacadeRestArgs<typeof impl.markStuckAbortedImpl>): ReturnType<typeof impl.markStuckAbortedImpl> { return impl.markStuckAbortedImpl(bags.buildMarkStuckAbortedDeps(this), ...args); }
+  async handleLoopDetected(...args: FacadeRestArgs<typeof impl.handleLoopDetectedImpl>): ReturnType<typeof impl.handleLoopDetectedImpl> { return impl.handleLoopDetectedImpl(bags.buildHandleLoopDetectedDeps(this), ...args); }
+  protected async terminateAllChildren(parentTaskId: string): ReturnType<typeof impl.terminateAllChildrenImpl> { return impl.terminateAllChildrenImpl(bags.buildTerminateAllChildrenDeps(this), parentTaskId); }
+  protected async terminateChildAgent(childId: string): ReturnType<typeof impl.terminateChildAgentImpl> { return impl.terminateChildAgentImpl(bags.buildTerminateChildAgentDeps(this), childId); }
+  protected async runSpawnedChild(...args: FacadeRestArgs<typeof impl.runSpawnedChildImpl>): ReturnType<typeof impl.runSpawnedChildImpl> { return impl.runSpawnedChildImpl(bags.buildRunSpawnedChildDeps(this), ...args); }
+  protected createSpawnAgentTool(...args: FacadeRestArgs<typeof impl.createSpawnAgentToolImpl>): ReturnType<typeof impl.createSpawnAgentToolImpl> { return impl.createSpawnAgentToolImpl(bags.buildCreateSpawnAgentToolDeps(this), ...args); }
+  protected async captureModifiedFiles(...args: Parameters<typeof impl.captureModifiedFilesImpl>): ReturnType<typeof impl.captureModifiedFilesImpl> { return impl.captureModifiedFilesImpl(...args); }
+  protected async captureWorkspaceModifiedFiles(...args: Parameters<typeof impl.captureWorkspaceModifiedFilesImpl>): ReturnType<typeof impl.captureWorkspaceModifiedFilesImpl> { return impl.captureWorkspaceModifiedFilesImpl(...args); }
+  protected async reviewWorkspacePerRepo(...args: Parameters<typeof impl.reviewWorkspacePerRepoImpl>): ReturnType<typeof impl.reviewWorkspacePerRepoImpl> { return impl.reviewWorkspacePerRepoImpl(...args); }
+  protected async captureUncommittedModifiedFiles(worktreePath: string): ReturnType<typeof impl.captureUncommittedModifiedFilesImpl> { return impl.captureUncommittedModifiedFilesImpl(worktreePath); }
 }
