@@ -2,6 +2,28 @@
  * FNXC:CodeOrganization 2026-08-03-12:50:
  * Workflow lifecycle column resolvers peeled from executor.ts (U4 Slice A pure helpers).
  * Fail-soft to legacy ids; re-exported from executor.ts for callers/tests that import the facade.
+ *
+ * FNXC:WorkflowLifecycleTraits 2026-07-19-09:10 (U5b / KTD-10 / KTD-1):
+ * Every executor "requeue to backlog for retry/resume" rebound targets the task's
+ * TRAIT-derived backlog column (resolveReboundTarget: hold → intake → first), not the
+ * literal "todo". builtin:coding resolves to `todo` so the default pipeline is
+ * byte-identical; a custom/renamed workflow lands its recovered card in a valid
+ * backlog column. These are the KTD-1 RECOVERABLE rebounds (they preserve progress /
+ * resume state); the KTD-1 exhaustion parks (FN-8141 blocked, retry-exhausted) set
+ * status:"failed" in place WITHOUT a move and are intentionally untouched here.
+ * One IR resolution per rebound (a recovery path, not an enumeration loop); any
+ * resolution failure falls back to the legacy "todo" so a rebound is never stranded.
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-15:10 (Phase C convergence):
+ * THE "ALREADY THERE?" GUARDS NOW COMPARE AGAINST THIS RESULT. Eight call sites read
+ * X.column !== "todo" before moving to the resolved column — so on a renamed board the
+ * guard was ALWAYS true and the engine issued a move into the column the card was already
+ * in. That is a real move: moveTaskInternal runs the reset-on-entry effects again. At the
+ * preserveProgress: false site (stale workflow parse pins) it reset step progress a second
+ * time on a card that had only been re-checked, and every site re-ran the status/error/pause
+ * clears. The move TARGET was converted here in U5b; the guards in front of it were not,
+ * which is the half-conversion shape: the correct target reached through a check that could
+ * not see it. Each site now resolves once and uses the same value for both.
  */
 import type { TaskStore } from "@fusion/core";
 import {
