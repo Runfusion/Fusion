@@ -214,4 +214,53 @@ export function buildRunImplementationDeps(
     sharedWorkerTools: host.sharedWorkerToolsDeps(),
   };
 }
+
+export function buildRunGraphCustomNodeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir", "workspaceConfig"]),
+    options: host.options as { pluginRunner?: unknown; [k: string]: unknown },
+    graphUnattendedRuns: host.graphUnattendedRuns,
+    ...facadeMethods(host, [
+      "getRunContextFor",
+      "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
+      "executeScriptWorkflowStep", "executeWorkflowStep", "pauseForCliApproval",
+      "resolveWorkflowInputMarkerForGraphNode", "runAwaitInputNode", "runCliAgentNode",
+      "runRawCliCommand",
+    ]),
+  };
+}
+
+export function buildCreateAuthoritativeWorkflowSeamsDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    options: host.options as { mergeRequester?: unknown; pluginRunner?: unknown; [k: string]: unknown },
+    ...facadeFields(host, [
+      "workspaceConfig", "graphSeamGoverningNodeId", "graphSeamThinkingLevel",
+      "graphStepActiveContext", "graphRethinkNarrations", "pausedAborted",
+      "mergeRequester",
+    ]),
+    ...facadeMethods(host, [
+      "getRunContextFor",
+      "persistTokenUsage", "runImplementationPhase", "handoffTaskToReview",
+      "ensureWorkflowMergeBoundaryTask", "getWorkflowMergeImplementationProofFailure", "runProjectedGraphTaskStep",
+      "updateStepGraph", "reviewWorkspacePerRepo", "registerSubagentSession",
+      "unregisterSubagentSession",
+    ]),
+  };
+}
+
+export function buildCreateSpawnAgentToolDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir", "childSessions", "spawnedAgents"]),
+    agentStore: host.options.agentStore,
+    pluginRunner: host.options.pluginRunner,
+    getTotalSpawnedCount: () => host.totalSpawnedCount,
+    setTotalSpawnedCount: (n: number) => { host.totalSpawnedCount = n; },
+    ...facadeMethods(host, [
+      "createWorktree", "resolveInstructionsForRole", "getRunContextFor",
+      "resolveMcpServers", "runSpawnedChild",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

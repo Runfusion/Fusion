@@ -165,6 +165,9 @@ import {
   buildExecuteWorkflowGraphDeps,
   buildHandleGraphFailureDeps,
   buildRunImplementationDeps,
+  buildRunGraphCustomNodeDeps,
+  buildCreateAuthoritativeWorkflowSeamsDeps,
+  buildCreateSpawnAgentToolDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -2267,28 +2270,7 @@ export class TaskExecutor {
   }
 
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams {
-     
-    return createAuthoritativeWorkflowSeamsImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        options: this.options as { mergeRequester?: unknown; pluginRunner?: unknown; [k: string]: unknown },
-        ...facadeFields(this, [
-          "workspaceConfig", "graphSeamGoverningNodeId", "graphSeamThinkingLevel",
-          "graphStepActiveContext", "graphRethinkNarrations", "pausedAborted",
-          "mergeRequester",
-        ]),
-        ...facadeMethods(this, [
-          "getRunContextFor",
-          "persistTokenUsage", "runImplementationPhase", "handoffTaskToReview",
-          "ensureWorkflowMergeBoundaryTask", "getWorkflowMergeImplementationProofFailure", "runProjectedGraphTaskStep",
-          "updateStepGraph", "reviewWorkspacePerRepo", "registerSubagentSession",
-          "unregisterSubagentSession",
-        ]),
-      },
-      _settings,
-    );
-     
+    return createAuthoritativeWorkflowSeamsImpl(buildCreateAuthoritativeWorkflowSeamsDeps(this), _settings);
   }
 
   private async updateStepGraph(
@@ -2583,20 +2565,7 @@ export class TaskExecutor {
   ): Promise<WorkflowNodeResult> {
      
     return runGraphCustomNodeImpl(
-      {
-        ...facadeFields(this, [
-          "store", "rootDir", "workspaceConfig",
-        ]),
-        options: this.options as { pluginRunner?: unknown; [k: string]: unknown },
-        graphUnattendedRuns: this.graphUnattendedRuns,
-        ...facadeMethods(this, [
-          "getRunContextFor",
-          "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
-          "executeScriptWorkflowStep", "executeWorkflowStep", "pauseForCliApproval",
-          "resolveWorkflowInputMarkerForGraphNode", "runAwaitInputNode", "runCliAgentNode",
-          "runRawCliCommand",
-        ]),
-      },
+      buildRunGraphCustomNodeDeps(this),
       node,
       nodeTask,
       settings,
@@ -4070,17 +4039,7 @@ export class TaskExecutor {
   ): ToolDefinition {
     // FNXC:CodeOrganization 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests that mutate priv.totalSpawnedCount still drive the free-fn path.
     return createSpawnAgentToolImpl(
-      {
-        ...facadeFields(this, ["store", "rootDir", "childSessions", "spawnedAgents"]),
-        agentStore: this.options.agentStore,
-        pluginRunner: this.options.pluginRunner,
-        getTotalSpawnedCount: () => this.totalSpawnedCount,
-        setTotalSpawnedCount: (n: number) => { this.totalSpawnedCount = n; },
-        ...facadeMethods(this, [
-          "createWorktree", "resolveInstructionsForRole", "getRunContextFor",
-          "resolveMcpServers", "runSpawnedChild",
-        ]),
-      },
+      buildCreateSpawnAgentToolDeps(this),
       taskId,
       worktreePath,
       settings,
