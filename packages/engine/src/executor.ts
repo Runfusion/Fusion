@@ -1,13 +1,13 @@
 // port-4040-allowlist: this file embeds the "never kill port 4040" rule in the executor prompt.
 import {
   AgentStore,
-  type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings, type WorkflowStep,
+  type TaskStore, type Task, type TaskDetail, type TaskTokenUsage, type Settings,
   type RunMutationContext, type Agent, type MergeResult, type WorkflowIrNode,
   type WorkflowStepResult as CoreWorkflowStepResult, type ThinkingLevel,
   type WorkflowIr, type WorkflowFieldDefinition, type WorkflowColumnAgent, type TaskMoveLanes,
   type ApprovalRequestStore, type WorkspaceConfig, type RunCommandResult,
 } from "@fusion/core";
-import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
+import type { ImplementationExit } from "./executor/implementation-exit.js";
 import { resolvePlannerLanes } from "./execution/replan-target.js";
 import { type WorkflowGraphTaskRunResult, type WorkflowColumnBoundaryHooks } from "./workflows/workflow-graph-task-runner.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner, ForeachActiveContext, WorkflowLegacySeams } from "./workflows/workflow-node-handlers.js";
@@ -17,7 +17,7 @@ import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./w
 import type { PreparedWorktree, WorkflowRuntimePrimitives } from "./execution/runtime-primitives.js";
 import { createWorkflowRuntimePrimitiveProvider } from "./workflows/workflow-runtime-primitive-provider.js";
 import { type VerificationResult } from "./execution/verification-utils.js";
-import type { ReviewVerdict, ReviewResult } from "./execution/reviewer.js";
+import type { ReviewResult } from "./execution/reviewer.js";
 import { ModelRegistry, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { dropPreHeldExecutorSlot } from "./concurrency/concurrency.js";
 /* FNXC:Workspace 2026-06-21-15:00: F5/F8 workspace-path helpers are consumed via free peels / pure-bindings, not direct imports here. */
@@ -25,7 +25,7 @@ import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
 import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
-import type { StuckTaskDetector, StuckTaskEvent } from "./healing/stuck-task-detector.js";
+import type { StuckTaskEvent } from "./healing/stuck-task-detector.js";
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import type { RunTaskStepResult } from "./execution/step-runner.js";
 import type { RunAuditor } from "./util/run-audit.js";
@@ -236,7 +236,6 @@ export type {
 import type {
   TaskExecutorOptions,
   ActiveExecutorSessionState,
-  GraphCompletionCallback,
 } from "./executor/task-executor-options.js";
 
 /* FNXC:CodeOrganization 2026-08-04-03:10: Rebound/guard Phase C FNXC lives on lifecycle-columns.ts; GraphCompletionCallback U5d/U5e on task-executor-options.ts. */
@@ -911,18 +910,9 @@ export class TaskExecutor {
   }
 
   private scheduleWorkflowRerun(
-    taskId: string,
-    worktreePath: string,
-    successMessage: string,
-    preserveResumeState: boolean = true,
+    ...args: FacadeRestArgs<typeof scheduleWorkflowRerunImpl>
   ): void {
-    scheduleWorkflowRerunImpl(
-      buildScheduleWorkflowRerunDeps(this, WORKFLOW_RERUN_WATCHDOG_MS),
-      taskId,
-      worktreePath,
-      successMessage,
-      preserveResumeState,
-    );
+    scheduleWorkflowRerunImpl(buildScheduleWorkflowRerunDeps(this, WORKFLOW_RERUN_WATCHDOG_MS), ...args);
   }
 
   private completionFinalizationDeps() {
@@ -1415,11 +1405,9 @@ export class TaskExecutor {
   }
 
   private async updateStepGraph(
-    taskId: string,
-    stepIndex: number,
-    status: import("@fusion/core").StepStatus,
+    ...args: FacadeRestArgs<typeof updateStepGraphImpl>
   ): Promise<void> {
-    return updateStepGraphImpl({ store: this.store }, taskId, stepIndex, status);
+    return updateStepGraphImpl({ store: this.store }, ...args);
   }
 
   /**
@@ -1459,20 +1447,14 @@ export class TaskExecutor {
 
   /** Column-agent U3 adoption for custom nodes (R8 fail-soft → undefined). */
   private async adoptColumnAgentForNode(
-    node: WorkflowIrNode,
-    live: TaskDetail,
-    columnAgentId: string,
-    mode: WorkflowColumnAgent["mode"] | undefined,
+    ...args: FacadeRestArgs<typeof adoptColumnAgentForNodeImpl>
   ): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> {
     return adoptColumnAgentForNodeImpl(
       {
         ...this.storeRunContextDeps(),
         agentStore: this.options.agentStore,
       },
-      node,
-      live,
-      columnAgentId,
-      mode,
+      ...args,
     );
   }
 
@@ -1508,9 +1490,7 @@ export class TaskExecutor {
 
   /** Plugin-injected taskEnv (scoped; never mutates process.env). Shared by agentWork + graph skill steps. */
   private async buildInjectedRuntimeEnv(
-    taskId: string,
-    worktreePath: string,
-    branch: string | undefined,
+    ...args: FacadeRestArgs<typeof buildInjectedRuntimeEnvImpl>
   ): Promise<{ env: NodeJS.ProcessEnv; injectedKeyCount: number; pathEntryCount: number }> {
     return buildInjectedRuntimeEnvImpl(
       {
@@ -1519,9 +1499,7 @@ export class TaskExecutor {
           ? (input) => this.options.pluginRunner!.collectExecutorRuntimeEnv(input)
           : undefined,
       },
-      taskId,
-      worktreePath,
-      branch,
+      ...args,
     );
   }
 
@@ -1794,18 +1772,14 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: runImplementation U5e/U10b/U8 FNXC lives on run-implementation.ts. */
   private async runImplementation(
-    task: Task,
-    graphCompletion: GraphCompletionCallback,
-    reportImplementationExit?: ImplementationExitReporter,
+    ...args: FacadeRestArgs<typeof runImplementationImpl>
   ): Promise<void> {
     return runImplementationImpl(
       buildRunImplementationDeps(this, {
         BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
         MAX_AUTO_RECOVERY_ATTEMPTS,
       }),
-      task,
-      graphCompletion,
-      reportImplementationExit,
+      ...args,
     );
   }
 
@@ -1821,10 +1795,7 @@ export class TaskExecutor {
   // ── Custom tools for the worker agent ──────────────────────────────
 
   private createTaskUpdateTool(
-    taskId: string,
-    codeReviewVerdicts: Map<number, ReviewVerdict>,
-    sessionRef: { current: AgentSession | null },
-    stuckDetector?: StuckTaskDetector,
+    ...args: FacadeRestArgs<typeof createTaskUpdateToolImpl>
   ): ToolDefinition {
     return createTaskUpdateToolImpl(
       {
@@ -1832,10 +1803,7 @@ export class TaskExecutor {
         resolveTaskCustomFieldDefs: (id) => this.resolveTaskCustomFieldDefs(id),
         loopRecoveryState: this.loopRecoveryState,
       },
-      taskId,
-      codeReviewVerdicts,
-      sessionRef,
-      stuckDetector,
+      ...args,
     );
   }
 
@@ -1973,19 +1941,11 @@ export class TaskExecutor {
    * from project settings and running it in the task worktree.
    */
   private async executeScriptWorkflowStep(
-    task: Task,
-    workflowStep: WorkflowStep,
-    worktreePath: string,
-    settings: Settings,
-    extraEnv?: NodeJS.ProcessEnv,
+    ...args: FacadeRestArgs<typeof executeScriptWorkflowStepImpl>
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return executeScriptWorkflowStepImpl(
       buildExecuteScriptWorkflowStepDeps(this, runConfiguredCommand),
-      task,
-      workflowStep,
-      worktreePath,
-      settings,
-      extraEnv,
+      ...args,
     );
   }
 
@@ -2136,20 +2096,14 @@ export class TaskExecutor {
   }
 
   private async normalizeReclaimableWorktreePath(
-    sourcePath: string,
-    targetPath: string,
-    taskId: string,
-    settings: Partial<Settings>,
+    ...args: FacadeRestArgs<typeof normalizeReclaimableWorktreePath>
   ): Promise<string> {
     return normalizeReclaimableWorktreePath(
       {
         ...facadeFields(this, ["rootDir", "store"]),
         ...facadeMethods(this, ["hasActiveWorktreeBinding", "isLiveCleanupRefusal"]),
       },
-      sourcePath,
-      targetPath,
-      taskId,
-      settings,
+      ...args,
     );
   }
 
@@ -2365,19 +2319,10 @@ export class TaskExecutor {
   }
 
   private createSpawnAgentTool(
-    taskId: string,
-    worktreePath: string,
-    settings: Settings,
-    taskEnv?: NodeJS.ProcessEnv,
+    ...args: FacadeRestArgs<typeof createSpawnAgentToolImpl>
   ): ToolDefinition {
     // FNXC:CodeOrganization 2026-08-03-12:35: get/set totalSpawnedCount so capacity tests that mutate priv.totalSpawnedCount still drive the free-fn path.
-    return createSpawnAgentToolImpl(
-      buildCreateSpawnAgentToolDeps(this),
-      taskId,
-      worktreePath,
-      settings,
-      taskEnv,
-    );
+    return createSpawnAgentToolImpl(buildCreateSpawnAgentToolDeps(this), ...args);
   }
 
 }
