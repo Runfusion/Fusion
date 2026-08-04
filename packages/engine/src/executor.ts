@@ -813,9 +813,8 @@ export class TaskExecutor {
   isTaskLiveForOverseerRetry(taskId: string): boolean {
     return isTaskLiveForOverseerRetryImpl(
       {
-        isTaskActive: (id) => this.isTaskActive(id),
-        hasLiveTaskSessionSurface: (id) => this.hasLiveTaskSessionSurface(id),
-        resumingUnpaused: this.resumingUnpaused,
+        ...facadeFields(this, ["resumingUnpaused"]),
+        ...facadeMethods(this, ["isTaskActive", "hasLiveTaskSessionSurface"]),
       },
       taskId,
     );
@@ -863,14 +862,13 @@ export class TaskExecutor {
   clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
     return clearPhantomExecutorBindingImpl(
       {
-        hasLiveSessionSurface: (id) => this.hasLiveSessionSurface(id),
-        getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
         ...facadeFields(this, [
           "activeWorktrees", "executing", "recoveringCompleted",
           "resumingUnpaused", "approvalSuspended", "approvalResumeAfterUnwind",
+          "effectiveColumnAgentByTask",
         ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        effectiveColumnAgentByTask: this.effectiveColumnAgentByTask,
+        ...facadeMethods(this, ["hasLiveSessionSurface", "getActiveWorktreePaths"]),
       },
       taskId,
       options,
@@ -1487,10 +1485,8 @@ export class TaskExecutor {
       {
         ...facadeFields(this, ["store"]),
         ...facadeMethods(this, ["getRunContextFor"]),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-        handoffTaskToReview: (t, reason) => this.handoffTaskToReview(t, reason),
+        ...facadeMethods(this, ["persistTokenUsage", "handoffTaskToReview", "deleteActiveSession"]),
         activeSessions: this.activeSessions,
-        deleteActiveSession: (id) => this.deleteActiveSession(id),
         untrackStuckTask: (id) => { this.options.stuckTaskDetector?.untrackTask(id); },
       },
       task,
@@ -1590,9 +1586,8 @@ export class TaskExecutor {
           this.recoverMissingRequiredArtifacts(task, keys, source),
         parkPlanReviewReplanCapExhausted: (id, cap, count, feedback) =>
           this.parkPlanReviewReplanCapExhausted(id, cap, count, feedback),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        ...facadeMethods(this, ["clearPausedAborted", "sendTaskBackForFix"]),
         workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
-        sendTaskBackForFix: (...args) => this.sendTaskBackForFix(...args),
       },
       taskId,
       fallbackTask,
@@ -1645,8 +1640,7 @@ export class TaskExecutor {
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> {
     return recoverFailedPreMergeWorkflowStepImpl(
       {
-        resolveFailedPreMergeWorkflowStepBudget: (t, target) => this.resolveFailedPreMergeWorkflowStepBudget(t, target),
-        sendTaskBackForFix: (...args) => this.sendTaskBackForFix(...args),
+        ...facadeMethods(this, ["resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
       },
       task,
     );
@@ -1738,9 +1732,7 @@ export class TaskExecutor {
           "store", "executing", "activeSessions",
           "activeStepExecutors", "activeWorkflowStepSessions",
         ]),
-        listWipLaneTasks: () => this.listWipLaneTasks(),
-        taskEffectiveAgentMatches: (task, id) => this.taskEffectiveAgentMatches(task, id),
-        execute: (task) => this.execute(task),
+        ...facadeMethods(this, ["listWipLaneTasks", "taskEffectiveAgentMatches", "execute"]),
       },
       agentId,
     );
@@ -2197,12 +2189,11 @@ export class TaskExecutor {
     return runGraphTaskStepImpl(
       {
         store: this.store,
-        foreachActiveForTask: (id, inst) => this.foreachActiveForTask(id, inst),
+        ...facadeMethods(this, ["foreachActiveForTask", "runImplementationPhase"]),
         ...facadeFields(this, [
           "graphStepSessionPinned", "graphStepRunOnce", "graphSeamGoverningNodeId",
           "graphSeamThinkingLevel", "graphSeamSkillName",
         ]),
-        runImplementationPhase: (t) => this.runImplementationPhase(t),
       },
       task,
       stepIndex,
@@ -2300,8 +2291,7 @@ export class TaskExecutor {
       {
         ...facadeFields(this, ["store"]),
         ...facadeMethods(this, ["getRunContextFor"]),
-        resolveMergeBoundaryColumn: (taskId, nodeId) => this.resolveMergeBoundaryColumn(taskId, nodeId),
-        evaluateWorkflowMergeBoundary: (live, runId) => this.evaluateWorkflowMergeBoundary(live, runId),
+        ...facadeMethods(this, ["resolveMergeBoundaryColumn", "evaluateWorkflowMergeBoundary"]),
         shouldCompleteChecklistAtWorkflowMerge: (live, mergeProof) =>
           this.shouldCompleteChecklistAtWorkflowMerge(live, mergeProof),
       },
@@ -2579,17 +2569,14 @@ export class TaskExecutor {
         rootDir: this.rootDir,
         getWorkspaceConfig: () => this.workspaceConfig,
         setWorkspaceConfig: (c) => { this.workspaceConfig = c; },
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeMethods(this, ["getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController"]),
         pool: this.options.pool,
         secretsStore: this.options.secretsStore,
         createWorktree: (branch, path, taskId, startPoint, allowSibling) =>
           this.createWorktree(branch, path, taskId, startPoint, allowSibling),
         runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
           runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
-        addActiveWorktree: (id, path) => this.addActiveWorktree(id, path),
         onStart: this.options.onStart,
-        registerConfiguredCommandController: (id, c) => this.registerConfiguredCommandController(id, c),
-        unregisterConfiguredCommandController: (id, c) => this.unregisterConfiguredCommandController(id, c),
       },
       task,
       settings,
@@ -2863,8 +2850,7 @@ export class TaskExecutor {
     return isRetryableBenignMergePauseAbortImpl(
       {
         store: this.store,
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
       },
       live,
       result,
@@ -2886,8 +2872,7 @@ export class TaskExecutor {
     return isBenignManualMergeHoldPauseAbortImpl(
       {
         store: this.store,
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
       },
       live,
       result,
@@ -2948,8 +2933,7 @@ export class TaskExecutor {
           "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
         ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-        executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
+        ...facadeMethods(this, ["persistTokenUsage", "executeWorkflowGraph"]),
       },
       live,
       result,
@@ -2971,8 +2955,7 @@ export class TaskExecutor {
     return isReentrantPausedAbortedInFlightNodeImpl(
       {
         store: this.store,
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        isLiveSharedBranchGroupMember: (t) => this.isLiveSharedBranchGroupMember(t),
+        ...facadeMethods(this, ["resolveResumeLanes", "isLiveSharedBranchGroupMember"]),
       },
       live,
       result,
@@ -3021,18 +3004,15 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return reenterPausedAbortedWorkflowNodeImpl(
       {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, ["getRunContextFor"]),
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
         ...facadeFields(this, [
-          "activeWorktrees", "activeSessions", "activeStepExecutors",
+          "store", "activeWorktrees", "activeSessions", "activeStepExecutors",
           "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
         ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
-        executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
-        execute: (t) => this.execute(t),
+        ...facadeMethods(this, [
+          "getRunContextFor", "resolveResumeLanes", "clearPausedAborted",
+          "persistTokenUsage", "executeWorkflowGraph", "execute",
+        ]),
       },
       live,
       result,
@@ -3051,8 +3031,7 @@ export class TaskExecutor {
         ...facadeFields(this, ["store"]),
         ...facadeMethods(this, ["getRunContextFor"]),
         mergeRequester: this.mergeRequester,
-        ensureWorkflowMergeBoundaryTask: (liveTask, opts) => this.ensureWorkflowMergeBoundaryTask(liveTask, opts),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        ...facadeMethods(this, ["ensureWorkflowMergeBoundaryTask", "persistTokenUsage"]),
       },
       live,
       result,
@@ -3065,10 +3044,8 @@ export class TaskExecutor {
       {
         ...facadeFields(this, ["store"]),
         ...facadeMethods(this, ["getRunContextFor"]),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
+        ...facadeMethods(this, ["clearPausedAborted", "routeGraphFailureToExecutionResume", "persistTokenUsage"]),
         activeWorktrees: this.activeWorktrees,
-        routeGraphFailureToExecutionResume: (t, node, value) => this.routeGraphFailureToExecutionResume(t, node, value),
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
       },
       live,
       failedNode,
