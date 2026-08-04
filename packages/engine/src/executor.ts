@@ -25,7 +25,7 @@ import { RemovalReason, removeWorktree } from "./worktree/worktree-pool.js";
 import { activeSessionRegistry, type ActiveSessionKind } from "./agents/active-session-registry.js";
 import { CliTaskSession } from "./cli-agent/task-session.js";
 import { TokenCapDetector } from "./errors/token-cap-detector.js";
-import type { StuckTaskEvent } from "./healing/stuck-task-detector.js";
+
 import { StepSessionExecutor } from "./execution/step-session-executor.js";
 import type { RunTaskStepResult } from "./execution/step-runner.js";
 import type { RunAuditor } from "./util/run-audit.js";
@@ -1318,7 +1318,7 @@ export class TaskExecutor {
 
   private async evaluateWorkflowMergeBoundary(
     ...args: FacadeRestArgs<typeof evaluateWorkflowMergeBoundaryImpl>
-  ): Promise<ReturnType<typeof evaluateWorkflowMergeBoundaryImpl>> {
+  ): ReturnType<typeof evaluateWorkflowMergeBoundaryImpl> {
     return evaluateWorkflowMergeBoundaryImpl(
       {
         store: this.store,
@@ -1330,7 +1330,7 @@ export class TaskExecutor {
 
   private async loadMergeBoundaryInstances(
     ...args: FacadeRestArgs<typeof loadMergeBoundaryInstancesImpl>
-  ): Promise<ReturnType<typeof loadMergeBoundaryInstancesImpl>> {
+  ): ReturnType<typeof loadMergeBoundaryInstancesImpl> {
     return loadMergeBoundaryInstancesImpl({ store: this.store }, ...args);
   }
 
@@ -1765,13 +1765,13 @@ export class TaskExecutor {
 
   private async verifyWorktreeInvariants(
     ...args: FacadeRestArgs<typeof verifyWorktreeInvariantsImpl>
-  ): Promise<ReturnType<typeof verifyWorktreeInvariantsImpl>> {
+  ): ReturnType<typeof verifyWorktreeInvariantsImpl> {
     return verifyWorktreeInvariantsImpl(this.worktreeInvariantDeps(), ...args);
   }
 
   private async evaluateTaskDoneScopeLeak(
     ...args: FacadeRestArgs<typeof evaluateTaskDoneScopeLeakImpl>
-  ): Promise<ReturnType<typeof evaluateTaskDoneScopeLeakImpl>> {
+  ): ReturnType<typeof evaluateTaskDoneScopeLeakImpl> {
     return evaluateTaskDoneScopeLeakImpl(buildEvaluateTaskDoneScopeLeakDeps(this), ...args);
   }
 
@@ -1973,7 +1973,7 @@ export class TaskExecutor {
 
   private async planSquashImportFromDep(
     ...args: FacadeAfterSecond<typeof planSquashImportFromDep>
-  ): Promise<ReturnType<typeof planSquashImportFromDep>> {
+  ): ReturnType<typeof planSquashImportFromDep> {
     return planSquashImportFromDep(this.rootDir, this.store, ...args);
   }
 
