@@ -1580,14 +1580,11 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return requestPreMergeOptionalStepFixImpl(
       {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, ["getRunContextFor"]),
-        recoverMissingRequiredArtifacts: (task, keys, source) =>
-          this.recoverMissingRequiredArtifacts(task, keys, source),
-        parkPlanReviewReplanCapExhausted: (id, cap, count, feedback) =>
-          this.parkPlanReviewReplanCapExhausted(id, cap, count, feedback),
-        ...facadeMethods(this, ["clearPausedAborted", "sendTaskBackForFix"]),
-        workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
+        ...facadeFields(this, ["store", "workflowLifecycleMovesInFlight"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
+          "clearPausedAborted", "sendTaskBackForFix",
+        ]),
       },
       taskId,
       fallbackTask,
@@ -2106,9 +2103,8 @@ export class TaskExecutor {
   private buildForeachWorktreeDeps(task: Task, runId?: string): ReturnType<typeof buildForeachWorktreeDepsImpl> {
     return buildForeachWorktreeDepsImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        createWorktree: (branch, path, taskId, startPoint) => this.createWorktree(branch, path, taskId, startPoint),
+        ...facadeFields(this, ["store", "rootDir"]),
+        ...facadeMethods(this, ["createWorktree"]),
         semaphoreAvailableCount: () => this.options.semaphore?.availableCount ?? 1,
       },
       task,
@@ -2762,12 +2758,10 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return routeUnusableWorktreeGraphFailureToRecoveryImpl(
       {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, ["getRunContextFor"]),
-        pausedAborted: this.pausedAborted,
-        resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
-        recoverMissingWorktreeSessionStartFailure: (liveTask, path, err, audit) =>
-          this.recoverMissingWorktreeSessionStartFailure(liveTask, path, err, audit),
+        ...facadeFields(this, ["store", "pausedAborted"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "resolveResumeLanes", "recoverMissingWorktreeSessionStartFailure",
+        ]),
       },
       task,
       live,
@@ -3319,8 +3313,7 @@ export class TaskExecutor {
   private createTaskAddDepTool(taskId: string): ToolDefinition {
     return createTaskAddDepToolImpl(
       {
-        store: this.store,
-        depAborted: this.depAborted,
+        ...facadeFields(this, ["store", "depAborted"]),
         getActiveSession: (id: string) => this.activeSessions.get(id),
         getActiveStepExecutor: (id: string) => this.activeStepExecutors.get(id),
       },
