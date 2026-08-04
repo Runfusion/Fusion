@@ -451,4 +451,50 @@ export function buildHoldForSessionContentionDeps(host: any): any {
     reexecute: (t: unknown) => host.execute(t),
   };
 }
+
+export function buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "store", "rootDir", "graphSeamGoverningNodeId",
+      "graphStepActiveContext", "pausedAborted", "mergeRequester",
+    ]),
+    ...facadeMethods(host, [
+      "getRunContextFor",
+      "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
+      "getWorkflowMergeImplementationProofFailure", "handoffTaskToReview", "markPausedAborted",
+      "persistTokenUsage", "runImplementationPhase", "runProjectedGraphTaskStep",
+    ]),
+  };
+}
+
+export function buildAttemptExecutorVerificationFixDeps(host: any): any {
+  return {
+    store: host.store,
+    agentStore: host.options.agentStore,
+    pluginRunner: host.options.pluginRunner,
+    onAgentText: host.options.onAgentText,
+    onAgentTool: host.options.onAgentTool,
+    ...facadeMethods(host, [
+      "getRunContextFor", "getAssignedAgentRuntimeConfig", "resolveMcpServers",
+      "runExecutorDeterministicVerification",
+    ]),
+  };
+}
+
+export function buildAwaitAbortInFlightTaskWorkDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "userCanceledTaskIds", "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+      "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
+      "activeCliTaskSessions", "loopRecoveryState", "stuckAborted",
+    ]),
+    processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
+    untrackStuckTask: (id: string) => { host.options.stuckTaskDetector?.untrackTask(id); },
+    ...facadeMethods(host, [
+      "markPausedAborted", "clearWorkflowRerunWatchdog", "clearCompletedTaskWatchdog",
+      "deleteActiveSession", "deleteActiveStepExecutor", "deleteActiveWorkflowStepSession",
+      "disposeSubagentsForTask", "safeLogEntry",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

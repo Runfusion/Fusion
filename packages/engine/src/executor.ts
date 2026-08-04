@@ -180,6 +180,9 @@ import {
   buildScheduleCompletedTaskWatchdogDeps,
   buildDispatchUnpauseResumeDeps,
   buildHoldForSessionContentionDeps,
+  buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps,
+  buildAttemptExecutorVerificationFixDeps,
+  buildAwaitAbortInFlightTaskWorkDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -1007,20 +1010,7 @@ export class TaskExecutor {
   */
   async awaitAbortInFlightTaskWork(taskId: string, reason: string, options: { userCanceled?: boolean } = {}): Promise<void> {
     return awaitAbortInFlightTaskWorkImpl(
-      {
-        ...facadeFields(this, [
-          "userCanceledTaskIds", "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
-          "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
-          "activeCliTaskSessions", "loopRecoveryState", "stuckAborted",
-        ]),
-        processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        untrackStuckTask: (id: string) => { this.options.stuckTaskDetector?.untrackTask(id); },
-        ...facadeMethods(this, [
-          "markPausedAborted", "clearWorkflowRerunWatchdog", "clearCompletedTaskWatchdog",
-          "deleteActiveSession", "deleteActiveStepExecutor", "deleteActiveWorkflowStepSession",
-          "disposeSubagentsForTask", "safeLogEntry",
-        ]),
-      },
+      buildAwaitAbortInFlightTaskWorkDeps(this),
       taskId,
       reason,
       options,
@@ -2156,18 +2146,7 @@ export class TaskExecutor {
   private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
      
     return createAuthoritativeWorkflowPrimitivesFromExecutorImpl(
-      {
-        ...facadeFields(this, [
-          "store", "rootDir", "graphSeamGoverningNodeId",
-          "graphStepActiveContext", "pausedAborted", "mergeRequester",
-        ]),
-        ...facadeMethods(this, [
-          "getRunContextFor",
-          "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
-          "getWorkflowMergeImplementationProofFailure", "handoffTaskToReview", "markPausedAborted",
-          "persistTokenUsage", "runImplementationPhase", "runProjectedGraphTaskStep",
-        ]),
-      },
+      buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(this),
       settings,
     );
      
@@ -3239,17 +3218,7 @@ export class TaskExecutor {
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<boolean> {
     return attemptExecutorVerificationFixImpl(
-      {
-        store: this.store,
-        agentStore: this.options.agentStore,
-        pluginRunner: this.options.pluginRunner,
-        onAgentText: this.options.onAgentText,
-        onAgentTool: this.options.onAgentTool,
-        ...facadeMethods(this, [
-          "getRunContextFor", "getAssignedAgentRuntimeConfig", "resolveMcpServers",
-          "runExecutorDeterministicVerification",
-        ]),
-      },
+      buildAttemptExecutorVerificationFixDeps(this),
       task,
       worktreePath,
       failureContext,
