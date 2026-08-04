@@ -145,7 +145,6 @@ import {
   buildRecoverCompletedTaskDeps,
   buildExecuteScriptWorkflowStepDeps,
   buildEnsureGraphCustomNodeWorktreeDeps,
-  buildCreateWorktreeDeps,
   buildRunRawCliCommandDeps,
   buildEvaluateTaskDoneScopeLeakDeps,
   buildScheduleCompletedTaskWatchdogDeps,
@@ -233,6 +232,14 @@ import {
   buildReconcileStepsFromGitHistoryDeps,
   buildResetStepsIfWorkLostDeps,
   buildTerminateAllChildrenDeps,
+  buildPauseAbortMarkerDeps,
+  buildFinalizeAlreadyReviewedTaskDeps,
+  buildRunWithExecutorSemaphoreDeps,
+  buildResetMergeStateIfNeededDeps,
+  buildResolveInstructionsForRoleDeps,
+  buildRunImplementationPhaseDeps,
+  buildRouteResetParsePinMismatchToRetryDeps,
+  buildCreateWorktreeFacadeDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -368,13 +375,7 @@ export class TaskExecutor {
   }
 
   private pauseAbortMarkerDeps() {
-    return {
-      ...facadeFields(this, [
-        "pausedAborted", "pausedAbortProvenance", "completionFinalizedTaskIds",
-      ]),
-      markPausedAborted: (id: string, provenance?: import("./executor/paused-abort-provenance.js").PausedAbortProvenance, source?: string) =>
-        this.markPausedAborted(id, provenance, source),
-    };
+    return buildPauseAbortMarkerDeps(this);
   }
   private markCompletionFinalized(taskId: string): void { markCompletionFinalizedImpl(this.pauseAbortMarkerDeps(), taskId); }
   private clearPausedAborted(taskId: string): void { clearPausedAbortedImpl(this.pauseAbortMarkerDeps(), taskId); }
@@ -456,13 +457,7 @@ export class TaskExecutor {
   }
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
-    return finalizeAlreadyReviewedTaskImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, ["getRunContextFor", "resolveResumeLanes"]),
-      },
-      taskId,
-    );
+    return finalizeAlreadyReviewedTaskImpl(buildFinalizeAlreadyReviewedTaskDeps(this), taskId);
   }
 
   private async getExecutionPauseLabel(): Promise<"global pause" | "engine pause" | null> {
@@ -771,14 +766,7 @@ export class TaskExecutor {
   Prefer a scheduler pre-held global slot when present so the hold/release tryAcquire and the executor share one top-level claim. Without this handoff the executor would acquire a second slot (or leave a gap if the pre-held slot were dropped) and live running counts could drift above the global cap again. While this outer claim is active, seam/step sessions must not acquire again — a second top-level acquire under a full global cap deadlocks (parent holds the last slot, child waits forever).
   */
   private async runWithExecutorSemaphore<T>(taskId: string, work: () => Promise<T>): Promise<T> {
-    return runWithExecutorSemaphoreImpl(
-      {
-        options: this.options as { semaphore?: import("./concurrency/concurrency.js").AgentSemaphore; [k: string]: unknown },
-        outerConcurrencyClaims: this.outerConcurrencyClaims,
-      },
-      taskId,
-      work,
-    );
+    return runWithExecutorSemaphoreImpl(buildRunWithExecutorSemaphoreDeps(this), taskId, work);
   }
 
   /* FNXC:PlannerOversight 2026-07-13-23:05: session-advisor flush setter (options captured at construct). */
@@ -808,14 +796,7 @@ export class TaskExecutor {
   }
 
   private async resetMergeStateIfNeeded(task: Task, from: Task["column"]): Promise<Task> {
-    return resetMergeStateIfNeededImpl(
-      {
-        store: this.store,
-        cleanupMergeStateForReverification: (t, msg, opts) => this.cleanupMergeStateForReverification(t, msg, opts),
-      },
-      task,
-      from,
-    );
+    return resetMergeStateIfNeededImpl(buildResetMergeStateIfNeededDeps(this), task, from);
   }
 
   private async cleanupMergeStateForReverification(
@@ -1054,14 +1035,7 @@ export class TaskExecutor {
   }
 
   private async resolveInstructionsForRole(role: string, settings?: Settings): Promise<string> {
-    return resolveInstructionsForRoleImpl(
-      {
-        rootDir: this.rootDir,
-        agentStore: this.options.agentStore,
-      },
-      role,
-      settings,
-    );
+    return resolveInstructionsForRoleImpl(buildResolveInstructionsForRoleDeps(this), role, settings);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: graphCompletion U5d/U5e FNXC lives on task-executor-options.ts. */
@@ -1174,14 +1148,7 @@ export class TaskExecutor {
   private async runImplementationPhase(
     ...args: FacadeRestArgs<typeof runImplementationPhaseImpl>
   ): Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
-    return runImplementationPhaseImpl(
-      {
-        runImplementation: (...a: unknown[]) => (this as any).runImplementation(...a),
-      },
-      ...args,
-    );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+    return runImplementationPhaseImpl(buildRunImplementationPhaseDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: step-inversion driver FNXC lives on run-graph-task-step.ts. */
@@ -1509,13 +1476,7 @@ export class TaskExecutor {
   }
 
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): Promise<boolean> {
-    return routeResetParsePinMismatchToRetryImpl(
-      {
-        ...facadeFields(this, ["store", "activeWorktrees"]),
-        ...facadeMethods(this, ["getRunContextFor", "clearPausedAborted", "persistTokenUsage"]),
-      },
-      live,
-    );
+    return routeResetParsePinMismatchToRetryImpl(buildRouteResetParsePinMismatchToRetryDeps(this), live);
   }
 
   private async maybeDispatchWorkflowWorkEngine(task: Task): Promise<boolean> {
@@ -1529,12 +1490,7 @@ export class TaskExecutor {
   }
 
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): Promise<boolean> {
-    return blockOuterDispatchWhenDependenciesUnmetImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      task,
-    );
+    return blockOuterDispatchWhenDependenciesUnmetImpl(this.storeRunContextDeps(), task);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:25: ephemeral-off dispatch guard FNXC lives on block-outer-dispatch-when-ephemeral-disabled.ts. */
@@ -1895,7 +1851,7 @@ export class TaskExecutor {
     ...args: FacadeRestArgs<typeof createWorktreeImpl>
   ): Promise<{ path: string; branch: string }> {
     return createWorktreeImpl(
-      buildCreateWorktreeDeps(
+      buildCreateWorktreeFacadeDeps(
         this,
         { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
         bindTryCreateWorktree(this),

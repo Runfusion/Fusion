@@ -1220,4 +1220,64 @@ export function buildTerminateAllChildrenDeps(host: any): any {
     ...facadeMethods(host, ["terminateChildAgent"]),
   };
 }
+
+export function buildPauseAbortMarkerDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "pausedAborted", "pausedAbortProvenance", "completionFinalizedTaskIds",
+    ]),
+    markPausedAborted: (id: string, provenance?: unknown, source?: string) =>
+      host.markPausedAborted(id, provenance, source),
+  };
+}
+
+export function buildFinalizeAlreadyReviewedTaskDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "resolveResumeLanes"]),
+  };
+}
+
+export function buildRunWithExecutorSemaphoreDeps(host: any): any {
+  return {
+    options: host.options as { semaphore?: unknown; [k: string]: unknown },
+    outerConcurrencyClaims: host.outerConcurrencyClaims,
+  };
+}
+
+export function buildResetMergeStateIfNeededDeps(host: any): any {
+  return {
+    store: host.store,
+    cleanupMergeStateForReverification: (t: unknown, msg: string, opts?: unknown) =>
+      host.cleanupMergeStateForReverification(t, msg, opts),
+  };
+}
+
+export function buildResolveInstructionsForRoleDeps(host: any): any {
+  return {
+    rootDir: host.rootDir,
+    agentStore: host.options.agentStore,
+  };
+}
+
+export function buildRunImplementationPhaseDeps(host: any): any {
+  return {
+    runImplementation: (...a: unknown[]) => host.runImplementation(...a),
+  };
+}
+
+export function buildRouteResetParsePinMismatchToRetryDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "activeWorktrees"]),
+    ...facadeMethods(host, ["getRunContextFor", "clearPausedAborted", "persistTokenUsage"]),
+  };
+}
+
+export function buildCreateWorktreeFacadeDeps(
+  host: any,
+  tunables: { maxWorktreeRetries: number; worktreeRetryDelaysMs: number[] },
+  tryCreateWorktree: any,
+): any {
+  return buildCreateWorktreeDeps(host, tunables, tryCreateWorktree);
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
