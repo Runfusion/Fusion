@@ -64,7 +64,6 @@ import {
 
 import { createRunAuditor, type RunAuditor } from "./util/run-audit.js";
 import { AutoRecoveryDispatcher } from "./healing/auto-recovery.js";
-import { createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool } from "./agent-tools.js";
 import { getTaskCompletionBlockerForStore } from "./execution/task-completion.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 
@@ -4103,11 +4102,6 @@ export class TaskExecutor {
     );
   }
 
-  /** Plan-review workflow steps may inject fn_task_prompt_write for inline fixes. */
-  private createTaskPromptWriteTool(taskId: string): ToolDefinition {
-    return sharedCreateTaskPromptWriteTool(this.store, taskId, this.getRunContextFor(taskId));
-  }
-
   private createTaskAddDepTool(taskId: string): ToolDefinition {
     return createTaskAddDepToolImpl(
       {
@@ -4458,11 +4452,17 @@ export class TaskExecutor {
         activeWorkflowStepSessions: this.activeWorkflowStepSessions,
         getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
-          "captureModifiedFiles", "createSpawnAgentTool", "createTaskPromptWriteTool",
+          "captureModifiedFiles", "createSpawnAgentTool",
           "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
           "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
           "setActiveWorkflowStepSession",
         ]),
+        sharedWorkerTools: {
+          store: this.store,
+          rootDir: this.rootDir,
+          messageStore: this.options.messageStore,
+          getRunContextFor: (id) => this.getRunContextFor(id),
+        },
       },
       task,
       workflowStep,

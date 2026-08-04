@@ -23,6 +23,7 @@ import {
   startPlanningSegment,
 } from "@fusion/core";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createTaskPromptWriteTool } from "./shared-worker-tools.js";
 import type { PluginRunner } from "../plugins/plugin-runner.js";
 import { AgentLogger } from "../agents/agent-logger.js";
 import { buildSystemPromptWithInstructions } from "../agents/agent-instructions.js";
@@ -94,7 +95,8 @@ export type ExecuteWorkflowStepDeps = {
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
   captureModifiedFiles: AnyFn;
   createSpawnAgentTool: AnyFn;
-  createTaskPromptWriteTool: AnyFn;
+  /** FNXC:CodeOrganization 2026-08-03-22:25: plan-review prompt-write uses shared free factory */
+  sharedWorkerTools: import("./shared-worker-tools.js").SharedWorkerToolsDeps;
   deleteActiveWorkflowStepSession: AnyFn;
   getAssignedAgentRuntimeConfig: AnyFn;
   getAuthoritativeAssignedAgent: AnyFn;
@@ -530,7 +532,7 @@ export async function executeWorkflowStep(
       // knowingly-accepted gap, not a closed one — re-evaluate before enabling the
       // CE workflow for genuinely-unattended (FUSION_HEADLESS) LFG/pipeline runs.
       const planReviewPromptTools: ToolDefinition[] = allowPlanReviewPromptWrite
-        ? [deps.createTaskPromptWriteTool(task.id)]
+        ? [createTaskPromptWriteTool(deps.sharedWorkerTools, task.id)]
         : [];
       const codingCustomTools: ToolDefinition[] = toolMode === "coding"
         ? [deps.createSpawnAgentTool(task.id, worktreePath, settings, stepEnv)]
