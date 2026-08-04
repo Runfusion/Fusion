@@ -36,21 +36,29 @@ describe("browser layout smoke fixture", () => {
     expect(events).toEqual(["fixture:start", "fixture:ready", "browser:launch"]);
   });
 
+  /*
+  FNXC:DashboardBrowserSmoke 2026-08-04-13:29:
+  A browser launch failure remains the primary diagnostic even when fixture cleanup also fails. Cleanup must still receive the prepared fixture, and its secondary failure must remain observable without replacing the launch error.
+  */
   it("preserves a browser launch failure when fixture cleanup also fails", async () => {
+    const fixture = { server: null as never, url: "http://127.0.0.1:1234/" };
     const launchError = new Error("browser launch failed");
     const cleanupError = new Error("fixture cleanup failed");
+    const closeFixture = vi.fn(async () => {
+      throw cleanupError;
+    });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     try {
       await expect(prepareBrowserSmoke("/browser", {
-        startFixture: async () => ({ server: {}, url: "http://127.0.0.1:1234/" }),
+        startFixture: async () => fixture,
         launch: async () => {
           throw launchError;
         },
-        closeFixture: async () => {
-          throw cleanupError;
-        },
+        closeFixture,
       })).rejects.toBe(launchError);
+      expect(closeFixture).toHaveBeenCalledOnce();
+      expect(closeFixture).toHaveBeenCalledWith(fixture);
       expect(warn).toHaveBeenCalledWith(
         "[dashboard-browser-smoke] fixture cleanup after browser launch failure also failed:",
         cleanupError,
