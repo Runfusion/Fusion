@@ -370,4 +370,42 @@ export function buildEnsureGraphCustomNodeWorktreeDeps(
     onStart: host.options.onStart,
   };
 }
+
+export function buildCreateWorktreeDeps(
+  host: any,
+  constants: { maxWorktreeRetries: number; worktreeRetryDelaysMs: number[] },
+  tryCreateWorktree: any,
+): any {
+  return {
+    rootDir: host.rootDir,
+    store: host.store,
+    maxWorktreeRetries: constants.maxWorktreeRetries,
+    worktreeRetryDelaysMs: constants.worktreeRetryDelaysMs,
+    tryCreateWorktree,
+    ...facadeMethods(host, [
+      "resolveWorktreeStartPoint", "planSquashImportFromDep",
+      "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",
+    ]),
+  };
+}
+
+export function buildRunRawCliCommandDeps(host: any, runConfiguredCommand: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+    ]),
+    runConfiguredCommand: (command: string, cwd: string, timeoutMs: number, extraEnv?: unknown, auditor?: unknown, signal?: unknown) =>
+      runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
+  };
+}
+
+export function buildEvaluateTaskDoneScopeLeakDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "workspaceConfig"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "captureUncommittedModifiedFiles", "captureModifiedFiles",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

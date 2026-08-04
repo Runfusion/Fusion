@@ -174,6 +174,9 @@ import {
   buildRecoverCompletedTaskDeps,
   buildExecuteScriptWorkflowStepDeps,
   buildEnsureGraphCustomNodeWorktreeDeps,
+  buildCreateWorktreeDeps,
+  buildRunRawCliCommandDeps,
+  buildEvaluateTaskDoneScopeLeakDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -2302,14 +2305,7 @@ export class TaskExecutor {
     extraEnv?: NodeJS.ProcessEnv,
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return runRawCliCommandImpl(
-      {
-        ...facadeFields(this, ["store"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
-        ]),
-        runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
-          runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
-      },
+      buildRunRawCliCommandDeps(this, runConfiguredCommand),
       task,
       label,
       command,
@@ -3154,12 +3150,7 @@ export class TaskExecutor {
     audit?: RunAuditor,
   ): Promise<{ blocked: false } | { blocked: true; message: string }> {
     return evaluateTaskDoneScopeLeakImpl(
-      {
-        ...facadeFields(this, ["store", "workspaceConfig"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "captureUncommittedModifiedFiles", "captureModifiedFiles",
-        ]),
-      },
+      buildEvaluateTaskDoneScopeLeakDeps(this),
       task,
       worktreePath,
       promptContent,
@@ -3741,17 +3732,11 @@ export class TaskExecutor {
     allowSiblingBranchRename = false,
   ): Promise<{ path: string; branch: string }> {
     return createWorktreeImpl(
-      {
-        rootDir: this.rootDir,
-        store: this.store,
-        maxWorktreeRetries: MAX_WORKTREE_RETRIES,
-        worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS],
-        tryCreateWorktree: bindTryCreateWorktree(this),
-        ...facadeMethods(this, [
-          "resolveWorktreeStartPoint", "planSquashImportFromDep",
-          "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",
-        ]),
-      },
+      buildCreateWorktreeDeps(
+        this,
+        { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
+        bindTryCreateWorktree(this),
+      ),
       branch,
       path,
       taskId,
