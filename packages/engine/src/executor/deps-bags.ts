@@ -12,6 +12,7 @@ import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
 import type { NonContinuableSessionDeps } from "./non-continuable-session.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
+import { MAX_WORKTREE_RETRIES, WORKTREE_RETRY_DELAYS } from "./executor-constants.js";
 
 export type BranchConflictHandleDepsSource = {
   rootDir: string;
@@ -1273,11 +1274,51 @@ export function buildRouteResetParsePinMismatchToRetryDeps(host: any): any {
   };
 }
 
-export function buildCreateWorktreeFacadeDeps(
-  host: any,
-  tunables: { maxWorktreeRetries: number; worktreeRetryDelaysMs: number[] },
-  tryCreateWorktree: any,
-): any {
-  return buildCreateWorktreeDeps(host, tunables, tryCreateWorktree);
+export function buildCreateWorktreeFacadeDeps(host: any, tryCreateWorktree: any): any {
+  return buildCreateWorktreeDeps(
+    host,
+    { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
+    tryCreateWorktree,
+  );
+}
+
+export function buildGetAssignedAgentRuntimeConfigDeps(host: any): any {
+  return {
+    getAuthoritativeAssignedAgent: (...a: unknown[]) => host.getAuthoritativeAssignedAgent(...a),
+  };
+}
+
+export function buildSharedWorkerToolsDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "rootDir"]),
+    messageStore: host.options.messageStore,
+    ...facadeMethods(host, ["getRunContextFor"]),
+  };
+}
+
+export function buildTaskLivenessDeps(host: any, processWideGraphRouting: Set<string>): any {
+  return {
+    executing: host.executing,
+    recoveringCompleted: host.recoveringCompleted,
+    resumingUnpaused: host.resumingUnpaused,
+    activeSessions: host.activeSessions,
+    activePlanningWorkflowSessions: host.activePlanningWorkflowSessions,
+    activeWorkflowStepSessions: host.activeWorkflowStepSessions,
+    processWideGraphRouting,
+  };
+}
+
+export function buildCompletionFinalizationFacadeDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store"]),
+    ...facadeMethods(host, ["getRunContextFor", "getTaskCompletionBlocker"]),
+  };
+}
+
+export function buildStaleLockRecoveryDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["rootDir", "store"]),
+    ...facadeMethods(host, ["getRunContextFor"]),
+  };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

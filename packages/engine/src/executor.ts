@@ -42,7 +42,6 @@ import {
   COMPLETED_TASK_WATCHDOG_MS,
   WORKFLOW_RERUN_WATCHDOG_MS,
   MAX_WORKTREE_RETRIES,
-  WORKTREE_RETRY_DELAYS,
   MAX_AUTO_RECOVERY_ATTEMPTS,
   BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
 } from "./executor/executor-constants.js";
@@ -240,6 +239,11 @@ import {
   buildRunImplementationPhaseDeps,
   buildRouteResetParsePinMismatchToRetryDeps,
   buildCreateWorktreeFacadeDeps,
+  buildGetAssignedAgentRuntimeConfigDeps,
+  buildSharedWorkerToolsDeps,
+  buildTaskLivenessDeps,
+  buildCompletionFinalizationFacadeDeps,
+  buildStaleLockRecoveryDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -549,11 +553,7 @@ export class TaskExecutor {
   /** Returns the set of task IDs currently being executed. */
 
   private taskLivenessDeps(): TaskLivenessDeps {
-    return {
-      executing: this.executing, recoveringCompleted: this.recoveringCompleted, resumingUnpaused: this.resumingUnpaused,
-      activeSessions: this.activeSessions, activePlanningWorkflowSessions: this.activePlanningWorkflowSessions,
-      activeWorkflowStepSessions: this.activeWorkflowStepSessions, processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-    };
+    return buildTaskLivenessDeps(this, TaskExecutor.processWideGraphRouting);
   }
 
   getExecutingTaskIds(): Set<string> {
@@ -836,12 +836,7 @@ export class TaskExecutor {
 
   /* FNXC:CodeOrganization 2026-08-04-03:40: clearTerminalStepFailures ReviewLeniency FNXC lives on clear-terminal-step-failures-for-retry.ts. */
   private async clearTerminalStepFailuresForRetry(taskId: string): Promise<void> {
-    return clearTerminalStepFailuresForRetryImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      taskId,
-    );
+    return clearTerminalStepFailuresForRetryImpl(this.storeRunContextDeps(), taskId);
   }
 
   private async performWorkflowRerunBounce(
@@ -857,10 +852,7 @@ export class TaskExecutor {
   }
 
   private completionFinalizationDeps() {
-    return {
-      ...facadeFields(this, ["store"]),
-      ...facadeMethods(this, ["getRunContextFor", "getTaskCompletionBlocker"]),
-    };
+    return buildCompletionFinalizationFacadeDeps(this);
   }
 
   private async parkCompletedBlockedTask(task: Task, completionBlocker: string, source: string, workComplete = isTaskWorkComplete(task)): Promise<boolean> {
@@ -1002,14 +994,7 @@ export class TaskExecutor {
   private async getAssignedAgentRuntimeConfig(
     ...args: FacadeRestArgs<typeof getAssignedAgentRuntimeConfigImpl>
   ): Promise<Record<string, unknown> | undefined> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
-    return getAssignedAgentRuntimeConfigImpl(
-      {
-        getAuthoritativeAssignedAgent: (...a: unknown[]) => (this as any).getAuthoritativeAssignedAgent(...a),
-      },
-      ...args,
-    );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+    return getAssignedAgentRuntimeConfigImpl(buildGetAssignedAgentRuntimeConfigDeps(this), ...args);
   }
 
   /* FNXC:CodeOrganization 2026-08-04-03:15: listWipLaneTasks resume-sweep FNXC lives on list-wip-lane-tasks.ts. */
@@ -1532,11 +1517,7 @@ export class TaskExecutor {
 
   /** FNXC:CodeOrganization 2026-08-03-22:25: shared free-tool deps bag for runImplementation + executeWorkflowStep. */
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps {
-    return {
-      ...facadeFields(this, ["store", "rootDir"]),
-      messageStore: this.options.messageStore,
-      ...facadeMethods(this, ["getRunContextFor"]),
-    };
+    return buildSharedWorkerToolsDeps(this);
   }
 
   // ── Custom tools for the worker agent ──────────────────────────────
@@ -1670,13 +1651,7 @@ export class TaskExecutor {
   }
 
   private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): Promise<"clear" | "waiting" | "none"> {
-    return resolveWorkflowInputMarkerForGraphNodeImpl(
-      {
-        ...this.storeRunContextDeps(),
-      },
-      live,
-      nodeId,
-    );
+    return resolveWorkflowInputMarkerForGraphNodeImpl(this.storeRunContextDeps(), live, nodeId);
   }
 
   /**
@@ -1767,10 +1742,7 @@ export class TaskExecutor {
   Thin facades over peeled stale-lock / reclaim / remove-own helpers (U4 Slice B).
   */
   private staleLockRecoveryDeps() {
-    return {
-      ...facadeFields(this, ["rootDir", "store"]),
-      ...facadeMethods(this, ["getRunContextFor"]),
-    };
+    return buildStaleLockRecoveryDeps(this);
   }
 
   private async emitStaleLockAudit(
@@ -1851,11 +1823,7 @@ export class TaskExecutor {
     ...args: FacadeRestArgs<typeof createWorktreeImpl>
   ): Promise<{ path: string; branch: string }> {
     return createWorktreeImpl(
-      buildCreateWorktreeFacadeDeps(
-        this,
-        { maxWorktreeRetries: MAX_WORKTREE_RETRIES, worktreeRetryDelaysMs: [...WORKTREE_RETRY_DELAYS] },
-        bindTryCreateWorktree(this),
-      ),
+      buildCreateWorktreeFacadeDeps(this, bindTryCreateWorktree(this)),
       ...args,
     );
   }
