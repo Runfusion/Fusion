@@ -1339,4 +1339,26 @@ export function buildRunImplementationFacadeDeps(host: any): any {
     MAX_AUTO_RECOVERY_ATTEMPTS,
   });
 }
+
+/*
+FNXC:CodeOrganization 2026-08-04-06:45:
+disposeStoreLifecycleDisposers deps bag (U4) — keeps TaskExecutor facade one-line while clear
+callbacks still touch host disposer fields.
+*/
+export function buildDisposeStoreLifecycleDisposersDeps(host: any): any {
+  return {
+    clearTaskMoveDisposer: () => {
+      host.unregisterTaskMoveDisposer?.();
+      host.unregisterTaskMoveDisposer = undefined;
+    },
+    clearArchiveWorktreeDisposer: () => {
+      host.unregisterArchiveWorktreeDisposer?.();
+      host.unregisterArchiveWorktreeDisposer = undefined;
+    },
+    clearArchiveWorkspaceWorktreeDisposer: () => {
+      host.unregisterArchiveWorkspaceWorktreeDisposer?.();
+      host.unregisterArchiveWorkspaceWorktreeDisposer = undefined;
+    },
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -335,7 +335,6 @@ export class TaskExecutor {
     this.unregisterArchiveWorktreeDisposer = wired.unregisterArchiveWorktreeDisposer;
     this.unregisterArchiveWorkspaceWorktreeDisposer = wired.unregisterArchiveWorkspaceWorktreeDisposer;
   }
-
   /* FNXC:CodeOrganization 2026-08-04-02:25: shared store + getRunContextFor deps bag for free-fn facades. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same any-spread posture as facadeMethods
   private storeRunContextDeps(): any {
@@ -475,20 +474,14 @@ export class TaskExecutor {
   }
   /* FNXC:CodeOrganization 2026-08-04-03:20: graphCompletion U5d/U5e FNXC lives on task-executor-options.ts. */
   private graphToolFailureRunCursors = new Map<string, number>();
-
   private graphStepSessionPinned = new Set<string>();
-
   private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
-
   private graphStepActiveContext = new Map<string, ForeachActiveContext>();
 
   /** FNXC:ProactiveChatStatus 2026-07-16-12:30: RETHINK summary held until rework reset succeeds. */
   private graphRethinkNarrations = new Map<string, string>();
-
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
-
   private graphUnattendedRuns = new Set<string>();
-
   private graphSeamGoverningNodeId = new Map<string, string>();
 
   /** FNXC:Settings-ThinkingLevel 2026-07-10-00:00: per-run thinking pin for execute/step-execute seams. */
@@ -502,7 +495,6 @@ export class TaskExecutor {
     return TaskExecutor.processWideGraphRouting;
   }
   private static processWideGraphRouting = new Set<string>();
-
   private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
 
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void {
@@ -762,7 +754,7 @@ export class TaskExecutor {
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps {
     return bags.buildSharedWorkerToolsDeps(this);
   }
-  // ── Custom tools for the worker agent ──────────────────────────────
+  // Custom tools for the worker agent
 
   private createTaskUpdateTool(...args: FacadeRestArgs<typeof impl.createTaskUpdateToolImpl>): ToolDefinition {
     return impl.createTaskUpdateToolImpl(bags.buildCreateTaskUpdateToolDeps(this), ...args);
@@ -819,7 +811,7 @@ export class TaskExecutor {
   private async captureUncommittedModifiedFiles(worktreePath: string): Promise<string[]> {
     return impl.captureUncommittedModifiedFilesImpl(worktreePath);
   }
-  // ── Worktree management ────────────────────────────────────────────
+  // Worktree management
 
   /** Execute a script-mode workflow step (scriptName → project settings command in worktree). */
   private async executeScriptWorkflowStep(...args: FacadeRestArgs<typeof impl.executeScriptWorkflowStepImpl>): Promise<{ success: boolean; output?: string; error?: string }> {
@@ -857,7 +849,6 @@ export class TaskExecutor {
   listWorktreeHolders(): Array<{ taskId: string; worktreePath: string }> {
     return impl.listWorktreeHoldersImpl(this.activeWorktrees);
   }
-
   /* FNXC:CodeOrganization 2026-08-03-14:20: thin free-helper facades for vi.spyOn surfaces (U4 Slice B). */
   private hasActiveWorktreeBinding(taskId: string, worktreePath: string): boolean {
     return pure.hasActiveWorktreeBinding(this.activeWorktrees, taskId, worktreePath);
@@ -930,11 +921,7 @@ export class TaskExecutor {
   }
   /** Remove only this executor's store-scoped lifecycle disposer registrations. */
   disposeStoreLifecycleDisposers(): void {
-    impl.disposeStoreLifecycleDisposersImpl({
-      clearTaskMoveDisposer: () => { this.unregisterTaskMoveDisposer?.(); this.unregisterTaskMoveDisposer = undefined; },
-      clearArchiveWorktreeDisposer: () => { this.unregisterArchiveWorktreeDisposer?.(); this.unregisterArchiveWorktreeDisposer = undefined; },
-      clearArchiveWorkspaceWorktreeDisposer: () => { this.unregisterArchiveWorkspaceWorktreeDisposer?.(); this.unregisterArchiveWorkspaceWorktreeDisposer = undefined; },
-    });
+    impl.disposeStoreLifecycleDisposersImpl(bags.buildDisposeStoreLifecycleDisposersDeps(this));
   }
   async cleanup(taskId: string): Promise<void> {
     return impl.cleanupTaskWorktreeImpl(bags.buildCleanupTaskWorktreeDeps(this), taskId);
@@ -965,7 +952,7 @@ export class TaskExecutor {
   getWorktreePath(taskId: string): string | undefined {
     return impl.getWorktreePathImpl(this.workspaceConfig, (id) => this.getActiveWorktreePaths(id), taskId);
   }
-  // ── Agent Spawning ─────────────────────────────────────────────────────
+  // Agent spawning
 
   private async terminateAllChildren(parentTaskId: string): Promise<void> {
     return impl.terminateAllChildrenImpl(bags.buildTerminateAllChildrenDeps(this), parentTaskId);
