@@ -449,20 +449,9 @@ export class TaskExecutor {
   }
 
   private async renewTaskLease(
-    taskId: string,
-    agentId: string,
-    leaseEpoch: number,
-    nodeId: string,
-    runId: string | undefined,
-  ): Promise<void> {
-    return renewTaskLeaseImpl(
-      buildRenewTaskLeaseDeps(this),
-      taskId,
-      agentId,
-      leaseEpoch,
-      nodeId,
-      runId,
-    );
+    ...args: FacadeRestArgs<typeof renewTaskLeaseImpl>
+  ): Promise<void>  {
+    return renewTaskLeaseImpl(buildRenewTaskLeaseDeps(this), ...args);
   }
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
@@ -494,14 +483,9 @@ export class TaskExecutor {
   }
 
   private async shouldDeferWorkflowStepCompletion(
-    taskId: string,
-    context: string,
-  ): Promise<boolean> {
-    return shouldDeferWorkflowStepCompletionImpl(
-      buildShouldDeferWorkflowStepCompletionDeps(this),
-      taskId,
-      context,
-    );
+    ...args: FacadeRestArgs<typeof shouldDeferWorkflowStepCompletionImpl>
+  ): Promise<boolean>  {
+    return shouldDeferWorkflowStepCompletionImpl(buildShouldDeferWorkflowStepCompletionDeps(this), ...args);
   }
 
   /** Child agent sessions keyed by agent ID. Used for termination. */
@@ -936,16 +920,9 @@ export class TaskExecutor {
   }
 
   private async performWorkflowRerunBounce(
-    taskId: string,
-    worktreePath: string,
-    preserveResumeState: boolean = true,
-  ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
-    return performWorkflowRerunBounceImpl(
-      buildPerformWorkflowRerunBounceDeps(this),
-      taskId,
-      worktreePath,
-      preserveResumeState,
-    );
+    ...args: FacadeRestArgs<typeof performWorkflowRerunBounceImpl>
+  ): Promise<"bounced" | "skipped-pending" | "deferred-paused">  {
+    return performWorkflowRerunBounceImpl(buildPerformWorkflowRerunBounceDeps(this), ...args);
   }
 
   private scheduleWorkflowRerun(
@@ -1066,16 +1043,9 @@ export class TaskExecutor {
    * the agent session.
    */
   private async executeReviewHandoff(
-    task: Task,
-    _session: AgentSession,
-    _sessionEntry: { session: AgentSession; seenSteeringIds: Set<string>; lastResolvedModelProvider?: string; lastResolvedModelId?: string; lastTaskModelProvider?: string | null; lastTaskModelId?: string | null; lastAssignedAgentId?: string | null },
-  ): Promise<void> {
-    return executeReviewHandoffImpl(
-      buildExecuteReviewHandoffDeps(this),
-      task,
-      _session,
-      _sessionEntry,
-    );
+    ...args: FacadeRestArgs<typeof executeReviewHandoffImpl>
+  ): Promise<void>  {
+    return executeReviewHandoffImpl(buildExecuteReviewHandoffDeps(this), ...args);
   }
 
   /**
@@ -1116,16 +1086,9 @@ export class TaskExecutor {
   }
 
   private async recoverMissingRequiredArtifacts(
-    task: Task,
-    artifactKeys: string[],
-    source: { source: "graph-entry" | "workflow-step"; nodeId?: string },
-  ): Promise<void> {
-    return recoverMissingRequiredArtifactsImpl(
-      buildRecoverMissingRequiredArtifactsDeps(this),
-      task,
-      artifactKeys,
-      source,
-    );
+    ...args: FacadeRestArgs<typeof recoverMissingRequiredArtifactsImpl>
+  ): Promise<void>  {
+    return recoverMissingRequiredArtifactsImpl(buildRecoverMissingRequiredArtifactsDeps(this), ...args);
   }
 
   private async isRequiredArtifactRecoveryProtected(task: Task): Promise<boolean> {
@@ -1422,14 +1385,9 @@ export class TaskExecutor {
   }
 
   private async ensureWorkflowMergeBoundaryTask(
-    task: TaskDetail,
-    metadata: { reason: string; nodeId: string; workflowId: string; runId: string },
-  ): Promise<TaskDetail> {
-    return ensureWorkflowMergeBoundaryTaskImpl(
-      buildEnsureWorkflowMergeBoundaryTaskDeps(this),
-      task,
-      metadata,
-    );
+    ...args: FacadeRestArgs<typeof ensureWorkflowMergeBoundaryTaskImpl>
+  ): Promise<TaskDetail>  {
+    return ensureWorkflowMergeBoundaryTaskImpl(buildEnsureWorkflowMergeBoundaryTaskDeps(this), ...args);
   }
 
   private async evaluateWorkflowMergeBoundary(task: TaskDetail, runId?: string): Promise<{
@@ -1592,18 +1550,9 @@ export class TaskExecutor {
   }
 
   private async ensureGraphCustomNodeWorktree(
-    task: TaskDetail,
-    settings: Settings,
-    nodeId: string,
-    refreshStaleBase = false,
-  ): Promise<TaskDetail> {
-    return ensureGraphCustomNodeWorktreeImpl(
-      buildEnsureGraphCustomNodeWorktreeDeps(this, runConfiguredCommand),
-      task,
-      settings,
-      nodeId,
-      refreshStaleBase,
-    );
+    ...args: FacadeRestArgs<typeof ensureGraphCustomNodeWorktreeImpl>
+  ): Promise<TaskDetail>  {
+    return ensureGraphCustomNodeWorktreeImpl(buildEnsureGraphCustomNodeWorktreeDeps(this, runConfiguredCommand), ...args);
   }
 
   public async releasePreExecutionWorktree(taskId: string, reason: string): Promise<boolean> {
@@ -1665,16 +1614,9 @@ export class TaskExecutor {
   }
 
   private async runCliAgentNode(
-    node: WorkflowIrNode,
-    live: TaskDetail,
-    cfg: Record<string, unknown>,
-  ): Promise<WorkflowNodeResult> {
-    return runCliAgentNodeImpl(
-      buildRunCliAgentNodeDeps(this),
-      node,
-      live,
-      cfg,
-    );
+    ...args: FacadeRestArgs<typeof runCliAgentNodeImpl>
+  ): Promise<WorkflowNodeResult>  {
+    return runCliAgentNodeImpl(buildRunCliAgentNodeDeps(this), ...args);
   }
 
   /** U7 CLI handoff: graceful PTY reap as completed (best-effort; never blocks advancement). */
@@ -1690,32 +1632,15 @@ export class TaskExecutor {
   }
 
   private async holdForSessionContention(
-    task: Task,
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-  ): Promise<void> {
-    return holdForSessionContentionImpl(
-      buildHoldForSessionContentionDeps(this),
-      task,
-      live,
-      result,
-    );
+    ...args: FacadeRestArgs<typeof holdForSessionContentionImpl>
+  ): Promise<void>  {
+    return holdForSessionContentionImpl(buildHoldForSessionContentionDeps(this), ...args);
   }
 
   private async routeUnusableWorktreeGraphFailureToRecovery(
-    task: Task,
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
-  ): Promise<boolean> {
-    return routeUnusableWorktreeGraphFailureToRecoveryImpl(
-      buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(this),
-      task,
-      live,
-      result,
-      resumeLanesMemo,
-    );
+    ...args: FacadeRestArgs<typeof routeUnusableWorktreeGraphFailureToRecoveryImpl>
+  ): Promise<boolean>  {
+    return routeUnusableWorktreeGraphFailureToRecoveryImpl(buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(this), ...args);
   }
 
   /*
@@ -1757,16 +1682,9 @@ export class TaskExecutor {
   }
 
   private async routeRetryableRemediationGraphFailureToPreMergeFix(
-    live: TaskDetail,
-    failedNode: string | undefined,
-    failureValue: string | undefined,
-  ): Promise<boolean> {
-    return routeRetryableRemediationGraphFailureToPreMergeFixImpl(
-      buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(this),
-      live,
-      failedNode,
-      failureValue,
-    );
+    ...args: FacadeRestArgs<typeof routeRetryableRemediationGraphFailureToPreMergeFixImpl>
+  ): Promise<boolean>  {
+    return routeRetryableRemediationGraphFailureToPreMergeFixImpl(buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(this), ...args);
   }
 
   /* Shared resumeLanesMemo: one snapshot for handleGraphFailure recovery paths (avoid disagreeing re-resolve). */
@@ -1809,31 +1727,15 @@ export class TaskExecutor {
   }
 
   private async reenterPausedAbortedWorkflowNode(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
-  ): Promise<boolean> {
-    return reenterPausedAbortedWorkflowNodeImpl(
-      buildReenterPausedAbortedWorkflowNodeDeps(this),
-      live,
-      result,
-      abortProvenance,
-      resumeLanesMemo,
-    );
+    ...args: FacadeRestArgs<typeof reenterPausedAbortedWorkflowNodeImpl>
+  ): Promise<boolean>  {
+    return reenterPausedAbortedWorkflowNodeImpl(buildReenterPausedAbortedWorkflowNodeDeps(this), ...args);
   }
 
   private async routeGraphMergeFailureToRetry(
-    live: TaskDetail,
-    result: WorkflowGraphTaskRunResult,
-    abortProvenance: PausedAbortProvenance | undefined,
-  ): Promise<boolean> {
-    return routeGraphMergeFailureToRetryImpl(
-      buildRouteGraphMergeFailureToRetryDeps(this),
-      live,
-      result,
-      abortProvenance,
-    );
+    ...args: FacadeRestArgs<typeof routeGraphMergeFailureToRetryImpl>
+  ): Promise<boolean>  {
+    return routeGraphMergeFailureToRetryImpl(buildRouteGraphMergeFailureToRetryDeps(this), ...args);
   }
 
   private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
@@ -1855,19 +1757,9 @@ export class TaskExecutor {
   }
 
   private async routeGraphFailureToExecutionResume(
-    live: TaskDetail,
-    failedNode: string,
-    failureValue: string | undefined,
-    /** Shared per-recovery lane snapshot — see `resolveResumeLanes`. */
-    resumeLanesMemo?: { lanes?: { hold: string; wip: string; review: string; wipDeclared: boolean } },
-  ): Promise<boolean> {
-    return routeGraphFailureToExecutionResumeImpl(
-      buildRouteGraphFailureToExecutionResumeDeps(this),
-      live,
-      failedNode,
-      failureValue,
-      resumeLanesMemo,
-    );
+    ...args: FacadeRestArgs<typeof routeGraphFailureToExecutionResumeImpl>
+  ): Promise<boolean>  {
+    return routeGraphFailureToExecutionResumeImpl(buildRouteGraphFailureToExecutionResumeDeps(this), ...args);
   }
 
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): Promise<boolean> {
@@ -2030,33 +1922,15 @@ export class TaskExecutor {
   }
 
   private async handleImplicitTaskDoneRefusal(
-    task: Task,
-    refusal: Extract<ReturnType<typeof evaluateTaskDoneRefusal>, { ok: false }>,
-  ): Promise<void> {
-    return handleImplicitTaskDoneRefusalImpl(
-      buildHandleImplicitTaskDoneRefusalDeps(this),
-      task,
-      refusal,
-    );
+    ...args: FacadeRestArgs<typeof handleImplicitTaskDoneRefusalImpl>
+  ): Promise<void>  {
+    return handleImplicitTaskDoneRefusalImpl(buildHandleImplicitTaskDoneRefusalDeps(this), ...args);
   }
 
   private createTaskDoneTool(
-    taskId: string,
-    worktreePath: string,
-    promptContent: string,
-    codeReviewVerdicts: Map<number, ReviewVerdict>,
-    onDone: () => void,
-    audit?: RunAuditor,
-  ): ToolDefinition {
-    return createTaskDoneToolImpl(
-      buildCreateTaskDoneToolDeps(this),
-      taskId,
-      worktreePath,
-      promptContent,
-      codeReviewVerdicts,
-      onDone,
-      audit,
-    );
+    ...args: FacadeRestArgs<typeof createTaskDoneToolImpl>
+  ): ToolDefinition  {
+    return createTaskDoneToolImpl(buildCreateTaskDoneToolDeps(this), ...args);
   }
 
   /**
@@ -2260,18 +2134,9 @@ export class TaskExecutor {
   }
 
   private async recoverMissingWorktreeSessionStartFailure(
-    task: Task,
-    worktreePath: string,
-    error: unknown,
-    audit: RunAuditor,
-  ): Promise<false | "requeue-todo" | "escalate-exhausted"> {
-    return recoverMissingWorktreeSessionStartFailureImpl(
-      buildRecoverMissingWorktreeSessionStartFailureDeps(this),
-      task,
-      worktreePath,
-      error,
-      audit,
-    );
+    ...args: FacadeRestArgs<typeof recoverMissingWorktreeSessionStartFailureImpl>
+  ): Promise<false | "requeue-todo" | "escalate-exhausted">  {
+    return recoverMissingWorktreeSessionStartFailureImpl(buildRecoverMissingWorktreeSessionStartFailureDeps(this), ...args);
   }
 
   private async emitWorktreeReanchoredAudit(
@@ -2442,16 +2307,9 @@ export class TaskExecutor {
   }
 
   private async cleanupConflictingWorktree(
-    worktreePath: string,
-    branch: string,
-    taskId: string,
-  ): Promise<boolean> {
-    return cleanupConflictingWorktreeImpl(
-      buildCleanupConflictingWorktreeDeps(this),
-      worktreePath,
-      branch,
-      taskId,
-    );
+    ...args: FacadeRestArgs<typeof cleanupConflictingWorktreeImpl>
+  ): Promise<boolean>  {
+    return cleanupConflictingWorktreeImpl(buildCleanupConflictingWorktreeDeps(this), ...args);
   }
 
   /*
@@ -2622,16 +2480,9 @@ export class TaskExecutor {
    * Handles state transitions and cleanup.
    */
   private async runSpawnedChild(
-    agentId: string,
-    childSession: AgentSession,
-    taskPrompt: string,
-  ): Promise<void> {
-    return runSpawnedChildImpl(
-      buildRunSpawnedChildDeps(this),
-      agentId,
-      childSession,
-      taskPrompt,
-    );
+    ...args: FacadeRestArgs<typeof runSpawnedChildImpl>
+  ): Promise<void>  {
+    return runSpawnedChildImpl(buildRunSpawnedChildDeps(this), ...args);
   }
 
   private createSpawnAgentTool(
