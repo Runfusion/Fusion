@@ -3,6 +3,11 @@
  * Collapsed import surface for TaskExecutor facades (U4). Keeps executor.ts free of
  * long multi-module import lists while preserving static analyzable @fusion/* imports.
  */
+export type {
+  TaskStore, Task, TaskDetail, TaskTokenUsage, Settings, RunMutationContext,
+  Agent, MergeResult, WorkflowIrNode, WorkflowIr, WorkflowColumnAgent, TaskMoveLanes,
+  ApprovalRequestStore,
+} from "@fusion/core";
 export { resolvePlannerLanes } from "../execution/replan-target.js";
 export type { WorkflowGraphTaskRunResult } from "../workflows/workflow-graph-task-runner.js";
 export type { WorkflowLegacySeams } from "../workflows/workflow-node-handlers.js";
