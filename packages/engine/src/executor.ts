@@ -54,6 +54,7 @@ import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/wo
 import { buildWireExecutorLifecycleDeps, wireExecutorLifecycle } from "./executor/wire-executor-lifecycle.js";
 /* FNXC host for isBackwardMoveOutOfPlanning requirement history (body stays on TaskExecutor). */
 import "./executor/is-backward-move-out-of-planning.js";
+import "./executor/task-executor-fields.js";
 
 /* FNXC:CodeOrganization 2026-08-04-02:35: Orphan await-input/conventions JSDoc removed — lives on await-input-parse.ts + workflow-step-verdict.ts peels. */
 import type { WorkflowStepOutcome } from "./executor/workflow-step-verdict.js";
@@ -74,77 +75,47 @@ export class TaskExecutor {
     return impl.getActiveWorktreePathsImpl(this.activeWorktrees, taskId);
   }
   private executing = new Set<string>();
-  /** Tasks currently being prepared for unpause resume, before execute() has registered them. */
   private resumingUnpaused = new Set<string>();
-  /** Tasks whose active session was intentionally suspended by an action gate. */
   private approvalSuspended = new Set<string>();
-  /** Approval decisions received while the old execute() lifecycle is still unwinding. */
   private approvalResumeAfterUnwind = new Set<string>();
-  /** Completed orphan recovery tasks currently running during startup. */
   private recoveringCompleted = new Set<string>();
-  /** FN-7528: once-per-completion reflection capture guard (see signal-task-complete.ts). */
   private capturedReflectionTaskIds = new Set<string>();
-  /** Workflow-rerun bounce in flight (todo→in-progress); blocks premature task:moved execute(). */
   private workflowRerunPending = new Set<string>();
-  /** Graph-owned task:moved emissions so external moves still hard-cancel. */
   private workflowLifecycleMovesInFlight = new Set<string>();
-  /** FN-5256: in-flight session-disposal promises (await before re-dispatch worktree). */
   private pendingTaskDisposals = new Map<string, Promise<void>>();
   private unregisterTaskMoveDisposer: (() => void) | undefined;
   private unregisterArchiveWorktreeDisposer: (() => void) | undefined;
   private unregisterArchiveWorkspaceWorktreeDisposer: (() => void) | undefined;
-  /** Active agent sessions per task, used to terminate on pause and inject steering. */
   private activeSessions = new Map<string, ActiveExecutorSessionState>();
-  /** Active step-session executors per task (mutually exclusive with activeSessions). */
   private activeStepExecutors = new Map<string, StepSessionExecutor>();
-  /** Steering comments already observed for active step-session executor runs. */
   private activeStepExecutorSeenSteeringIds = new Map<string, Set<string>>();
   /* FNXC:CodeOrganization 2026-08-04-03:35: effectiveColumnAgentByTask semantics on is-agent-effectively-executing.ts. */
   private effectiveColumnAgentByTask = new Map<string, string>();
-  /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
   /** FNXC:TaskTiming 2026-07-30-21:40: graph-owned Plan Review sessions only (self-healing liveness). */
   private activePlanningWorkflowSessions = new Set<string>();
-  /** Steering comments already observed for active workflow step sessions. */
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
-  /** Active configured-command abort controllers keyed by task. */
   private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
-  /** Lazy root-project AgentStore when execution is handed an agents-less worktree store. */
   private authoritativeAssignedAgentStore: AgentStore | null = null;
-  /** Active workflow-graph runner abort controllers keyed by task. */
   private activeWorkflowGraphAbortControllers = new Map<string, AbortController>();
-  /** CLI agent task sessions (U7) — hard-cancel SIGKILL + in-review PTY reap. */
   private activeCliTaskSessions = new Map<string, CliTaskSession>();
   private readonlyWorkflowStepAuditDone = false;
-  /** Reviewer subagent sessions — disposed with parent kill paths. */
   private activeSubagentSessions = new Map<string, Set<AgentSession>>();
-  /** Tasks that were paused mid-execution (to avoid marking them as "failed"). */
   private pausedAborted = new Set<string>();
   /* FNXC:CodeOrganization 2026-08-04-03:15: Pause/abort provenance FNXC lives on paused-abort-provenance.ts. */
   private pausedAbortProvenance = new Map<string, PausedAbortProvenance>();
   /* FNXC:CodeOrganization 2026-08-04-03:15: completionFinalizedTaskIds FNXC lives on pause-abort-markers.ts. */
   private completionFinalizedTaskIds = new Set<string>();
-  /** Tasks that had a dependency added mid-execution (abort + discard worktree). */
   private depAborted = new Set<string>();
-  /** Tasks killed by stuck task detector. Value = shouldRequeue (budget not exhausted). */
   private stuckAborted = new Map<string, boolean>();
-  /** Tasks explicitly canceled by user move (in-progress → todo). */
   private userCanceledTaskIds = new Set<string>();
-  /** Run-local marker: graph execute self-requeued for recoverable repair (outer failure sink must not overwrite). */
   private graphExecuteSelfRequeued = new Set<string>();
-  /** In-memory loop recovery state per task (compact-and-resume attempts; reset at execute finally). */
   private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
-  /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
   private spawnedAgents = new Map<string, Set<string>>();
-  /** Per-task baseline of session stats used for delta persistence across repeated updates. */
   private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; totalTokens: number }>();
-  /** In-memory branch conflict error counters per task for tripwire protection. */
   private branchConflictErrorCount = new Map<string, number>();
-  /** One-shot watchdogs for completed tasks that should have transitioned to in-review. */
   private completedTaskWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
-  /** One-shot watchdogs for workflow reruns that should have bounced back to in-progress. */
   private workflowRerunWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Set of ephemeral spawned agent IDs with in-flight cleanup (prevents duplicate deletion attempts). */
   private pendingEphemeralDeletions = new Set<string>();
   private workspaceConfig: WorkspaceConfig | null | undefined = undefined;
 
@@ -222,15 +193,11 @@ export class TaskExecutor {
   private async shouldDeferWorkflowStepCompletion(...args: FacadeRestArgs<typeof impl.shouldDeferWorkflowStepCompletionImpl>): Promise<boolean> {
     return impl.shouldDeferWorkflowStepCompletionImpl(bags.buildShouldDeferWorkflowStepCompletionDeps(this), ...args);
   }
-  /** Child agent sessions keyed by agent ID. Used for termination. */
   private childSessions = new Map<string, AgentSession>();
-  /** Total count of currently spawned agents (across all parents). */
   private totalSpawnedCount = 0;
-  /** Token cap detector for proactive context compaction. */
   private tokenCapDetector = new TokenCapDetector();
   private _modelRegistry?: Promise<ModelRegistry>;
   private _approvalRequestStore?: ApprovalRequestStore;
-  /** Current run context for mutation correlation, keyed by task id. */
   private currentRunContexts = new Map<string, RunMutationContext>();
   private getRunContextFor(taskId: string): RunMutationContext | undefined {
     return this.currentRunContexts.get(taskId);
@@ -347,7 +314,6 @@ export class TaskExecutor {
   private async resolveMcpServers(agentId?: string | null) {
     return impl.resolveMcpServersImpl({ store: this.store }, agentId);
   }
-  /** Tasks whose graph run already owns a top-level concurrency slot (scheduler pre-held handoff). */
   private outerConcurrencyClaims = new Set<string>();
 
   /* FNXC:GlobalConcurrencyControls 2026-07-14-18:30: share scheduler pre-held global slot; no second top-level acquire under full cap. */
@@ -508,28 +474,21 @@ export class TaskExecutor {
     return impl.resolveInstructionsForRoleImpl(bags.buildResolveInstructionsForRoleDeps(this), role, settings);
   }
   /* FNXC:CodeOrganization 2026-08-04-03:20: graphCompletion U5d/U5e FNXC lives on task-executor-options.ts. */
-  /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */
   private graphToolFailureRunCursors = new Map<string, number>();
 
-  /** Step-inversion pin for hard per-step boundary before step-review (cleared on graph finally). */
   private graphStepSessionPinned = new Set<string>();
 
-  /** Step-inversion (U6/U8): once-per-run implementation-phase cache keyed by task id. */
   private graphStepRunOnce = new Map<string, Promise<{ taskDone: boolean; modifiedFiles: string[]; exit?: ImplementationExit }>>();
 
-  /** Step-inversion (KTD-4): active foreach context for deferDoneToReview (`taskId:instanceId`). */
   private graphStepActiveContext = new Map<string, ForeachActiveContext>();
 
   /** FNXC:ProactiveChatStatus 2026-07-16-12:30: RETHINK summary held until rework reset succeeds. */
   private graphRethinkNarrations = new Map<string, string>();
 
-  /** Per-run column-agent binding resolver (nodeId → binding); cleared in graph finally. */
   private graphColumnAgentResolver = new Map<string, (nodeId: string) => WorkflowColumnAgent | undefined>();
 
-  /** (U3) Unattended graph runs (LFG/pipeline) — FUSION_HEADLESS for skill steps. */
   private graphUnattendedRuns = new Set<string>();
 
-  /** Governing seam node id for in-flight implementation pass (column-agent plan U4). */
   private graphSeamGoverningNodeId = new Map<string, string>();
 
   /** FNXC:Settings-ThinkingLevel 2026-07-10-00:00: per-run thinking pin for execute/step-execute seams. */
@@ -544,7 +503,6 @@ export class TaskExecutor {
   }
   private static processWideGraphRouting = new Set<string>();
 
-  /** Wired by the runtime to ProjectEngine.onMerge. */
   private mergeRequester?: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>;
 
   setMergeRequester(requestMerge: (taskId: string, options?: { signal?: AbortSignal }) => Promise<MergeResult>): void {
