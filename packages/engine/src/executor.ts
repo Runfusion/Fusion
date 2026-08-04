@@ -437,8 +437,8 @@ export class TaskExecutor {
   private safeLogEntry(taskId: string, message: string): void {
     safeLogEntryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       message,
@@ -477,9 +477,9 @@ export class TaskExecutor {
   private async clearStalePauseAbortBeforeDispatch(task: Task): Promise<void> {
     return clearStalePauseAbortBeforeDispatchImpl(
       {
-        store: this.store,
+        ...facadeFields(this, ["store"]),
         hasPausedAborted: (taskId: string) => this.pausedAborted.has(taskId),
-        clearPausedAborted: (taskId: string) => this.clearPausedAborted(taskId),
+        ...facadeMethods(this, ["clearPausedAborted"]),
       },
       task,
     );
@@ -706,8 +706,8 @@ export class TaskExecutor {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return handoffTaskToReviewImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         generateCompletionFeatureVideo: (...args: unknown[]) => (this as any).generateCompletionFeatureVideo(...args),
       },
       task,
@@ -750,8 +750,8 @@ export class TaskExecutor {
   private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
     return buildActionGateContextImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         approvalSuspended: this.approvalSuspended,
         awaitAbortInFlightTaskWork: (id, reason) => this.awaitAbortInFlightTaskWork(id, reason),
         agentStore: this.options.agentStore,
@@ -766,8 +766,8 @@ export class TaskExecutor {
   private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
     return buildPermanentAgentGatingContextImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         approvalSuspended: this.approvalSuspended,
         approvalRequestStore: this.approvalRequestStore,
       },
@@ -1118,8 +1118,8 @@ export class TaskExecutor {
   private async dispatchUnpauseResume(task: Task): Promise<boolean> {
     return dispatchUnpauseResumeImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         ...facadeFields(this, [
           "executing", "resumingUnpaused", "recoveringCompleted",
           "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
@@ -1232,8 +1232,8 @@ export class TaskExecutor {
   ): Promise<Task> {
     return cleanupMergeStateForReverificationImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         reopenLastStepForRevision: (id, t) => this.reopenLastStepForRevision(id, t),
       },
       task,
@@ -1372,9 +1372,8 @@ export class TaskExecutor {
 
   private completionFinalizationDeps() {
     return {
-      store: this.store,
-      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-      getTaskCompletionBlocker: (task: Task) => this.getTaskCompletionBlocker(task),
+      ...facadeFields(this, ["store"]),
+      ...facadeMethods(this, ["getRunContextFor", "getTaskCompletionBlocker"]),
     };
   }
 
@@ -1421,8 +1420,8 @@ export class TaskExecutor {
   private async persistTaskTokenUsage(taskId: string, tokenUsage: TaskTokenUsage): Promise<void> {
     return persistTaskTokenUsageImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       tokenUsage,
@@ -1444,8 +1443,8 @@ export class TaskExecutor {
   private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
     return persistTokenUsageImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         tokenUsageBaselines: this.tokenUsageBaselines,
         getActiveSession: (id) => this.activeSessions.get(id)?.session,
       },
@@ -1486,8 +1485,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return executeReviewHandoffImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         persistTokenUsage: (id) => this.persistTokenUsage(id),
         handoffTaskToReview: (t, reason) => this.handoffTaskToReview(t, reason),
         activeSessions: this.activeSessions,
@@ -1509,8 +1508,8 @@ export class TaskExecutor {
   async recoverCompletedTask(task: Task): Promise<boolean> {
     return recoverCompletedTaskImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         ...facadeFields(this, [
           "executing", "activeSessions", "activeStepExecutors",
           "activeWorkflowStepSessions", "resumingUnpaused",
@@ -1558,8 +1557,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return parkPlanReviewReplanCapExhaustedImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       capLabel,
@@ -1585,8 +1584,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return requestPreMergeOptionalStepFixImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         recoverMissingRequiredArtifacts: (task, keys, source) =>
           this.recoverMissingRequiredArtifacts(task, keys, source),
         parkPlanReviewReplanCapExhausted: (id, cap, count, feedback) =>
@@ -1608,8 +1607,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return recoverMissingRequiredArtifactsImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         isRequiredArtifactRecoveryProtected: (t: Task) => this.isRequiredArtifactRecoveryProtected(t),
         workflowLifecycleMovesInFlight: this.workflowLifecycleMovesInFlight,
       },
@@ -2277,8 +2276,8 @@ export class TaskExecutor {
           "store", "rootDir", "graphSeamGoverningNodeId",
           "graphStepActiveContext", "pausedAborted", "mergeRequester",
         ]),
-        getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
+          "getRunContextFor",
           "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
           "getWorkflowMergeImplementationProofFailure", "handoffTaskToReview", "markPausedAborted",
           "persistTokenUsage", "runImplementationPhase", "runProjectedGraphTaskStep",
@@ -2299,8 +2298,8 @@ export class TaskExecutor {
   ): Promise<TaskDetail> {
     return ensureWorkflowMergeBoundaryTaskImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         resolveMergeBoundaryColumn: (taskId, nodeId) => this.resolveMergeBoundaryColumn(taskId, nodeId),
         evaluateWorkflowMergeBoundary: (live, runId) => this.evaluateWorkflowMergeBoundary(live, runId),
         shouldCompleteChecklistAtWorkflowMerge: (live, mergeProof) =>
@@ -2367,8 +2366,8 @@ export class TaskExecutor {
           "graphStepActiveContext", "graphRethinkNarrations", "pausedAborted",
           "mergeRequester",
         ]),
-        getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
+          "getRunContextFor",
           "persistTokenUsage", "runImplementationPhase", "handoffTaskToReview",
           "ensureWorkflowMergeBoundaryTask", "getWorkflowMergeImplementationProofFailure", "runProjectedGraphTaskStep",
           "updateStepGraph", "reviewWorkspacePerRepo", "registerSubagentSession",
@@ -2398,8 +2397,8 @@ export class TaskExecutor {
   private async runAwaitInputNode(node: WorkflowIrNode, live: TaskDetail): Promise<WorkflowNodeResult> {
     return runAwaitInputNodeImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       node,
       live,
@@ -2409,8 +2408,8 @@ export class TaskExecutor {
   private async pauseForCliApproval(node: WorkflowIrNode, live: TaskDetail, command: string): Promise<WorkflowNodeResult> {
     return pauseForCliApprovalImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       node,
       live,
@@ -2428,10 +2427,10 @@ export class TaskExecutor {
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return runRawCliCommandImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        registerConfiguredCommandController: (id, c) => this.registerConfiguredCommandController(id, c),
-        unregisterConfiguredCommandController: (id, c) => this.unregisterConfiguredCommandController(id, c),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+        ]),
         runConfiguredCommand: (command, cwd, timeoutMs, extraEnv, auditor, signal) =>
           runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
       },
@@ -2456,8 +2455,8 @@ export class TaskExecutor {
   ): Promise<{ modelProvider?: string; modelId?: string; persona?: string } | undefined> {
     return adoptColumnAgentForNodeImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         agentStore: this.options.agentStore,
       },
       node,
@@ -2491,8 +2490,8 @@ export class TaskExecutor {
   ): Promise<{ agent: Agent; mode: WorkflowColumnAgent["mode"] | undefined } | undefined> {
     return resolveSeamColumnAgentImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         agentStore: this.options.agentStore,
         graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
         graphColumnAgentResolver: this.graphColumnAgentResolver,
@@ -2614,8 +2613,7 @@ export class TaskExecutor {
         ...facadeFields(this, [
           "store", "rootDir", "activeWorktrees",
         ]),
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        hasLiveTaskSessionSurface: (id) => this.hasLiveTaskSessionSurface(id),
+        ...facadeMethods(this, ["getRunContextFor", "hasLiveTaskSessionSurface"]),
       },
       taskId,
       reason,
@@ -2643,8 +2641,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return prepareGraphNodeExecutionImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         ensureGraphCustomNodeWorktree: (t, s, nodeId, refresh) => this.ensureGraphCustomNodeWorktree(t, s, nodeId, refresh),
       },
       node,
@@ -2657,9 +2655,8 @@ export class TaskExecutor {
   private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
     return finalizeMergeConfirmedWorkflowGraphTaskImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        getRunContextFor: (id: string) => this.getRunContextFor(id),
+        ...facadeFields(this, ["rootDir", "store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       taskId,
       reason,
@@ -2688,8 +2685,8 @@ export class TaskExecutor {
         ]),
         options: this.options as { pluginRunner?: unknown; [k: string]: unknown },
         graphUnattendedRuns: this.graphUnattendedRuns,
-        getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
+          "getRunContextFor",
           "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
           "executeScriptWorkflowStep", "executeWorkflowStep", "pauseForCliApproval",
           "resolveWorkflowInputMarkerForGraphNode", "runAwaitInputNode", "runCliAgentNode",
@@ -2712,8 +2709,8 @@ export class TaskExecutor {
   ): Promise<WorkflowNodeResult> {
     return runCliAgentNodeImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         activeCliTaskSessions: this.activeCliTaskSessions,
         cliAgentRuntime: this.options.cliAgentRuntime,
         reapCliTaskSessionForHandoff: (session, id) => this.reapCliTaskSessionForHandoff(session, id),
@@ -2756,8 +2753,8 @@ export class TaskExecutor {
   ): Promise<void> {
     return holdForSessionContentionImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         getHoldAttempts: (taskId: string) => this.sessionContentionHoldAttempts.get(taskId) ?? 0,
         setHoldAttempts: (taskId: string, attempt: number) => { this.sessionContentionHoldAttempts.set(taskId, attempt); },
         clearHold: (taskId: string) => this.clearSessionContentionHold(taskId),
@@ -2778,8 +2775,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return routeUnusableWorktreeGraphFailureToRecoveryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         pausedAborted: this.pausedAborted,
         resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
         recoverMissingWorktreeSessionStartFailure: (liveTask, path, err, audit) =>
@@ -3024,8 +3021,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return reenterPausedAbortedWorkflowNodeImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
         clearPausedAborted: (id) => this.clearPausedAborted(id),
         ...facadeFields(this, [
@@ -3051,8 +3048,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return routeGraphMergeFailureToRetryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         mergeRequester: this.mergeRequester,
         ensureWorkflowMergeBoundaryTask: (liveTask, opts) => this.ensureWorkflowMergeBoundaryTask(liveTask, opts),
         persistTokenUsage: (id) => this.persistTokenUsage(id),
@@ -3066,8 +3063,8 @@ export class TaskExecutor {
   private async routeImplementationIncompleteMergeGraphFailure(live: TaskDetail, failedNode: string): Promise<boolean> {
     return routeImplementationIncompleteMergeGraphFailureImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         clearPausedAborted: (id) => this.clearPausedAborted(id),
         activeWorktrees: this.activeWorktrees,
         routeGraphFailureToExecutionResume: (t, node, value) => this.routeGraphFailureToExecutionResume(t, node, value),
@@ -3141,11 +3138,8 @@ export class TaskExecutor {
   private async routeResetParsePinMismatchToRetry(live: TaskDetail): Promise<boolean> {
     return routeResetParsePinMismatchToRetryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        clearPausedAborted: (id) => this.clearPausedAborted(id),
-        activeWorktrees: this.activeWorktrees,
-        persistTokenUsage: (id) => this.persistTokenUsage(id),
+        ...facadeFields(this, ["store", "activeWorktrees"]),
+        ...facadeMethods(this, ["getRunContextFor", "clearPausedAborted", "persistTokenUsage"]),
       },
       live,
     );
@@ -3165,8 +3159,8 @@ export class TaskExecutor {
   private async blockOuterDispatchWhenDependenciesUnmet(task: Task): Promise<boolean> {
     return blockOuterDispatchWhenDependenciesUnmetImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       task,
     );
@@ -3181,9 +3175,9 @@ export class TaskExecutor {
   private async blockOuterDispatchWhenEphemeralDisabled(task: Task): Promise<boolean> {
     return blockOuterDispatchWhenEphemeralDisabledImpl(
       {
-        store: this.store,
+        ...facadeFields(this, ["store"]),
         agentStore: this.options.agentStore,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       task,
     );
@@ -3318,10 +3312,9 @@ export class TaskExecutor {
   /** FNXC:CodeOrganization 2026-08-03-22:25: shared free-tool deps bag for runImplementation + executeWorkflowStep. */
   private sharedWorkerToolsDeps(): import("./executor/shared-worker-tools.js").SharedWorkerToolsDeps {
     return {
-      store: this.store,
-      rootDir: this.rootDir,
+      ...facadeFields(this, ["store", "rootDir"]),
       messageStore: this.options.messageStore,
-      getRunContextFor: (id) => this.getRunContextFor(id),
+      ...facadeMethods(this, ["getRunContextFor"]),
     };
   }
 
@@ -3371,10 +3364,9 @@ export class TaskExecutor {
       ...facadeFields(this, [
         "rootDir", "store", "workspaceConfig",
       ]),
-      getActiveWorktreePaths: (taskId) => this.getActiveWorktreePaths(taskId),
-      getRunContextFor: (taskId) => this.getRunContextFor(taskId),
-      emitWorktreeReanchoredAudit: (taskId, fromPath, toPath, source) =>
-        this.emitWorktreeReanchoredAudit(taskId, fromPath, toPath, source),
+      ...facadeMethods(this, [
+        "getActiveWorktreePaths", "getRunContextFor", "emitWorktreeReanchoredAudit",
+      ]),
     });
   }
 
@@ -3402,12 +3394,10 @@ export class TaskExecutor {
   ): Promise<{ blocked: false } | { blocked: true; message: string }> {
     return evaluateTaskDoneScopeLeakImpl(
       {
-        store: this.store,
-        workspaceConfig: this.workspaceConfig,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        captureUncommittedModifiedFiles: (wp: string) => this.captureUncommittedModifiedFiles(wp),
-        captureModifiedFiles: (wp, base, taskId, a, source) =>
-          this.captureModifiedFiles(wp, base, taskId, a, source),
+        ...facadeFields(this, ["store", "workspaceConfig"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "captureUncommittedModifiedFiles", "captureModifiedFiles",
+        ]),
       },
       task,
       worktreePath,
@@ -3535,11 +3525,10 @@ export class TaskExecutor {
         pluginRunner: this.options.pluginRunner,
         onAgentText: this.options.onAgentText,
         onAgentTool: this.options.onAgentTool,
-        getRunContextFor: (id) => this.getRunContextFor(id),
-        getAssignedAgentRuntimeConfig: (id) => this.getAssignedAgentRuntimeConfig(id),
-        resolveMcpServers: (id) => this.resolveMcpServers(id),
-        runExecutorDeterministicVerification: (t, wt, st, env) =>
-          this.runExecutorDeterministicVerification(t, wt, st, env),
+        ...facadeMethods(this, [
+          "getRunContextFor", "getAssignedAgentRuntimeConfig", "resolveMcpServers",
+          "runExecutorDeterministicVerification",
+        ]),
       },
       task,
       worktreePath,
@@ -3639,12 +3628,10 @@ export class TaskExecutor {
   ): Promise<{ success: boolean; output?: string; error?: string }> {
     return executeScriptWorkflowStepImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        registerConfiguredCommandController: (taskId, controller) =>
-          this.registerConfiguredCommandController(taskId, controller),
-        unregisterConfiguredCommandController: (taskId, controller) =>
-          this.unregisterConfiguredCommandController(taskId, controller),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, [
+          "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+        ]),
         runConfiguredCommand,
       },
       task,
@@ -3662,8 +3649,8 @@ export class TaskExecutor {
   private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): Promise<"clear" | "waiting" | "none"> {
     return resolveWorkflowInputMarkerForGraphNodeImpl(
       {
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
       },
       live,
       nodeId,
@@ -3690,8 +3677,8 @@ export class TaskExecutor {
         options: this.options as ExecuteWorkflowStepDeps["options"],
         activePlanningWorkflowSessions: this.activePlanningWorkflowSessions,
         activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
+          "getRunContextFor",
           "captureModifiedFiles", "createSpawnAgentTool",
           "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
           "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
@@ -3716,10 +3703,8 @@ export class TaskExecutor {
   ): Promise<boolean> {
     return tryBootstrapMisbindingRecoveryImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        markGraphExecuteSelfRequeued: (taskId: string) => this.markGraphExecuteSelfRequeued(taskId),
+        ...facadeFields(this, ["rootDir", "store"]),
+        ...facadeMethods(this, ["getRunContextFor", "markGraphExecuteSelfRequeued"]),
       },
       task,
       contamination,
@@ -3857,9 +3842,8 @@ export class TaskExecutor {
   */
   private staleLockRecoveryDeps() {
     return {
-      rootDir: this.rootDir,
-      store: this.store,
-      getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
+      ...facadeFields(this, ["rootDir", "store"]),
+      ...facadeMethods(this, ["getRunContextFor"]),
     };
   }
 
@@ -4114,8 +4098,8 @@ export class TaskExecutor {
   private async reconcileStepsFromGitHistory(taskId: string, detail: TaskDetail, worktreePath: string): Promise<void> {
     return reconcileStepsFromGitHistoryImpl(
       {
-        store: this.store,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, ["store"]),
+        ...facadeMethods(this, ["getRunContextFor"]),
         resolveTaskStepSource: (ir) => this.resolveTaskStepSource(ir),
       },
       taskId,
