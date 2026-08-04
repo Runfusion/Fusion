@@ -186,10 +186,11 @@ describe("development source restart watcher", () => {
   });
 
   it("retains changes while the child is disconnected and sends them later", () => {
+    const log = vi.fn();
     const warn = vi.fn();
     const send = vi.fn((_message: unknown, callback?: (error?: Error) => void) => callback?.());
     const child = { connected: false, send };
-    const coordinator = createDevWatchRestartCoordinator({ log: vi.fn(), warn });
+    const coordinator = createDevWatchRestartCoordinator({ log, warn });
     coordinator.attach(child);
     coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
 
@@ -202,15 +203,19 @@ describe("development source restart watcher", () => {
       { type: "fusion:dev-source-changed" },
       expect.any(Function),
     );
+    expect(log).toHaveBeenLastCalledWith(
+      expect.stringContaining("packages/core/src/first.ts, packages/core/src/second.ts"),
+    );
   });
 
   it("retains changes after a send callback error and retries later", () => {
+    const log = vi.fn();
     const warn = vi.fn();
     const send = vi.fn()
       .mockImplementationOnce((_message: unknown, callback?: (error?: Error) => void) => callback?.(new Error("send failed")))
       .mockImplementationOnce((_message: unknown, callback?: (error?: Error) => void) => callback?.());
     const child = { connected: true, send };
-    const coordinator = createDevWatchRestartCoordinator({ log: vi.fn(), warn });
+    const coordinator = createDevWatchRestartCoordinator({ log, warn });
     coordinator.attach(child);
     coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
 
@@ -219,6 +224,9 @@ describe("development source restart watcher", () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("send failed"));
     expect(send).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenLastCalledWith(
+      expect.stringContaining("packages/core/src/first.ts, packages/core/src/second.ts"),
+    );
   });
 
   it("restarts for runtime sources but ignores tests and generated declarations", () => {

@@ -99,6 +99,8 @@ export function registerDevSourceRestart({
     pending = true;
     if (drainStarted) return;
     drainStarted = true;
+    // FNXC:DevSourceRestart 2026-08-04-09:19:
+    // Enter the promise chain before draining so synchronous failures are logged instead of escaping IPC dispatch.
     void Promise.resolve()
       .then(beginDrain)
       .then(() => schedule(0))
