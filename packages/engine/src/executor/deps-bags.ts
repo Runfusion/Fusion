@@ -117,7 +117,7 @@ export function buildNonContinuableSessionDeps(src: NonContinuableSessionDepsSou
  * (same process-wide claim map the façade getter exposed).
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
+/* eslint-disable @typescript-eslint/no-explicit-any -- TaskExecutor host/private members; same posture as facadeMethods */
 export function buildExecuteWorkflowGraphDeps(host: any): any {
   return {
     store: host.store,
@@ -140,7 +140,6 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
 export function buildHandleGraphFailureDeps(host: any): any {
   return {
     store: host.store,
@@ -172,14 +171,12 @@ export function buildHandleGraphFailureDeps(host: any): any {
  * runImplementation deps bag peeled from TaskExecutor (U4). Constants are injected by the
  * façade so the free builder stays free of executor-constants coupling.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutor host; private members
 export function buildRunImplementationDeps(
   host: any,
   constants: { BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: number; MAX_AUTO_RECOVERY_ATTEMPTS: number },
 ): any {
   return {
     ...facadeFields(host, ["store", "rootDir", "workspaceConfig"]),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions structural superset
     options: host.options as any,
     BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: constants.BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
     MAX_AUTO_RECOVERY_ATTEMPTS: constants.MAX_AUTO_RECOVERY_ATTEMPTS,
@@ -217,3 +214,4 @@ export function buildRunImplementationDeps(
     sharedWorkerTools: host.sharedWorkerToolsDeps(),
   };
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
