@@ -510,9 +510,9 @@ export class TaskExecutor {
 
   private pauseAbortMarkerDeps() {
     return {
-      pausedAborted: this.pausedAborted,
-      pausedAbortProvenance: this.pausedAbortProvenance,
-      completionFinalizedTaskIds: this.completionFinalizedTaskIds,
+      ...facadeFields(this, [
+        "pausedAborted", "pausedAbortProvenance", "completionFinalizedTaskIds",
+      ]),
       markPausedAborted: (id: string, provenance?: import("./executor/paused-abort-provenance.js").PausedAbortProvenance, source?: string) =>
         this.markPausedAborted(id, provenance, source),
     };
@@ -575,9 +575,9 @@ export class TaskExecutor {
   private activeSessionBookkeepingDeps(): ActiveSessionBookkeepingDeps {
     return {
       rootDir: this.rootDir, activeSessions: this.activeSessions, activeStepExecutors: this.activeStepExecutors,
-      activeStepExecutorSeenSteeringIds: this.activeStepExecutorSeenSteeringIds,
-      activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-      activeWorkflowStepSessionSeenSteeringIds: this.activeWorkflowStepSessionSeenSteeringIds,
+      ...facadeFields(this, [
+        "activeStepExecutorSeenSteeringIds", "activeWorkflowStepSessions", "activeWorkflowStepSessionSeenSteeringIds",
+      ]),
       effectiveColumnAgentByTask: this.effectiveColumnAgentByTask, graphRouting: this.graphRouting,
       graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
       getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
@@ -900,10 +900,10 @@ export class TaskExecutor {
   hasLiveSessionSurface(taskId: string): boolean {
     return hasLiveSessionSurfaceImpl(
       {
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        activeCliTaskSessions: this.activeCliTaskSessions,
+        ...facadeFields(this, [
+          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+          "activeCliTaskSessions",
+        ]),
         pathsForTask: (id) => activeSessionRegistry.pathsForTask(id),
       },
       taskId,
@@ -915,12 +915,10 @@ export class TaskExecutor {
       {
         hasLiveSessionSurface: (id) => this.hasLiveSessionSurface(id),
         getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
-        activeWorktrees: this.activeWorktrees,
-        executing: this.executing,
-        recoveringCompleted: this.recoveringCompleted,
-        resumingUnpaused: this.resumingUnpaused,
-        approvalSuspended: this.approvalSuspended,
-        approvalResumeAfterUnwind: this.approvalResumeAfterUnwind,
+        ...facadeFields(this, [
+          "activeWorktrees", "executing", "recoveringCompleted",
+          "resumingUnpaused", "approvalSuspended", "approvalResumeAfterUnwind",
+        ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
         effectiveColumnAgentByTask: this.effectiveColumnAgentByTask,
       },
@@ -1108,13 +1106,13 @@ export class TaskExecutor {
         deleteActiveStepExecutor: (id) => this.deleteActiveStepExecutor(id),
         activeWorkflowStepSessions: this.activeWorkflowStepSessions,
         deleteActiveWorkflowStepSession: (id) => this.deleteActiveWorkflowStepSession(id),
-        activeConfiguredCommandControllers: this.activeConfiguredCommandControllers,
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
-        activeSubagentSessions: this.activeSubagentSessions,
+        ...facadeFields(this, [
+          "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
+        ]),
         disposeSubagentsForTask: (id, r) => this.disposeSubagentsForTask(id, r),
-        activeCliTaskSessions: this.activeCliTaskSessions,
-        loopRecoveryState: this.loopRecoveryState,
-        stuckAborted: this.stuckAborted,
+        ...facadeFields(this, [
+          "activeCliTaskSessions", "loopRecoveryState", "stuckAborted",
+        ]),
         safeLogEntry: (id, msg) => this.safeLogEntry(id, msg),
       },
       taskId,
@@ -1126,14 +1124,11 @@ export class TaskExecutor {
   async abortAllInFlight(reason: string): Promise<void> {
     return abortAllInFlightImpl(
       {
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        activeConfiguredCommandControllers: this.activeConfiguredCommandControllers,
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
-        activeSubagentSessions: this.activeSubagentSessions,
-        activeCliTaskSessions: this.activeCliTaskSessions,
-        childSessions: this.childSessions,
+        ...facadeFields(this, [
+          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+          "activeConfiguredCommandControllers", "activeWorkflowGraphAbortControllers", "activeSubagentSessions",
+          "activeCliTaskSessions", "childSessions",
+        ]),
         awaitAbortInFlightTaskWork: (id, r) => this.awaitAbortInFlightTaskWork(id, r),
       },
       reason,
@@ -1141,13 +1136,13 @@ export class TaskExecutor {
   }
 
   abortAllSessionBash(): void {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- session map value shapes */
+     
     abortAllSessionBashImpl({
-      activeSessions: this.activeSessions as any,
-      childSessions: this.childSessions as any,
-      activeStepExecutors: this.activeStepExecutors as any,
+      ...facadeFields(this, [
+        "activeSessions", "childSessions", "activeStepExecutors",
+      ]),
     });
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+     
   }
 
   /**
@@ -1180,14 +1175,11 @@ export class TaskExecutor {
       {
         store: this.store,
         getRunContextFor: (taskId: string) => this.getRunContextFor(taskId),
-        executing: this.executing,
-        resumingUnpaused: this.resumingUnpaused,
-        recoveringCompleted: this.recoveringCompleted,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        graphRouting: this.graphRouting,
-        approvalSuspended: this.approvalSuspended,
+        ...facadeFields(this, [
+          "executing", "resumingUnpaused", "recoveringCompleted",
+          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+          "graphRouting", "approvalSuspended",
+        ]),
         ...facadeMethods(this, [
           "getExecutionPauseLabel", "clearResumeFailureState", "recoverApprovedStepsOnResume",
           "recoverCompletedTask", "execute",
@@ -2058,14 +2050,11 @@ export class TaskExecutor {
   private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
     scheduleCompletedTaskWatchdogImpl(
       {
-        store: this.store,
-        completedTaskWatchdogs: this.completedTaskWatchdogs,
-        recoveringCompleted: this.recoveringCompleted,
-        executing: this.executing,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        resumingUnpaused: this.resumingUnpaused,
+        ...facadeFields(this, [
+          "store", "completedTaskWatchdogs", "recoveringCompleted",
+          "executing", "activeSessions", "activeStepExecutors",
+          "activeWorkflowStepSessions", "resumingUnpaused",
+        ]),
         completedTaskWatchdogMs: COMPLETED_TASK_WATCHDOG_MS,
         ...facadeMethods(this, [
           "clearCompletedTaskWatchdog", "getExecutionPauseLabel", "resolveResumeLanes",
@@ -2284,15 +2273,14 @@ export class TaskExecutor {
       {
         store: this.store,
         getRunContextFor: (id) => this.getRunContextFor(id),
-        executing: this.executing,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        resumingUnpaused: this.resumingUnpaused,
+        ...facadeFields(this, [
+          "executing", "activeSessions", "activeStepExecutors",
+          "activeWorkflowStepSessions", "resumingUnpaused",
+        ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        workflowRerunWatchdogs: this.workflowRerunWatchdogs,
-        workflowRerunPending: this.workflowRerunPending,
-        recoveringCompleted: this.recoveringCompleted,
+        ...facadeFields(this, [
+          "workflowRerunWatchdogs", "workflowRerunPending", "recoveringCompleted",
+        ]),
         captureModifiedFiles: (wt, base, id, audit, source) => this.captureModifiedFiles(wt, base ?? undefined, id, audit, source),
         ...facadeMethods(this, [
           "shouldDeferCompletionForGlobalPause", "executeWorkflowGraph", "clearCompletedTaskWatchdog",
@@ -2509,11 +2497,10 @@ export class TaskExecutor {
   async resumeTaskForAgent(agentId: string): Promise<void> {
     return resumeTaskForAgentImpl(
       {
-        store: this.store,
-        executing: this.executing,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
+        ...facadeFields(this, [
+          "store", "executing", "activeSessions",
+          "activeStepExecutors", "activeWorkflowStepSessions",
+        ]),
         listWipLaneTasks: () => this.listWipLaneTasks(),
         taskEffectiveAgentMatches: (task, id) => this.taskEffectiveAgentMatches(task, id),
         execute: (task) => this.execute(task),
@@ -2540,9 +2527,9 @@ export class TaskExecutor {
    */
   async resumeOrphaned(): Promise<void> {
     return resumeOrphanedImpl({
-      store: this.store,
-      executing: this.executing,
-      recoveringCompleted: this.recoveringCompleted,
+      ...facadeFields(this, [
+        "store", "executing", "recoveringCompleted",
+      ]),
       processWideGraphRouting: TaskExecutor.processWideGraphRouting,
       ...facadeMethods(this, [
         "listWipLaneTasks", "clearResumeFailureState", "recoverApprovedStepsOnResume",
@@ -2903,10 +2890,10 @@ export class TaskExecutor {
   private async applyGraphRethinkReset(taskId: string, active: ForeachActiveContext): Promise<void> {
     return applyGraphRethinkResetImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        graphStepRunOnce: this.graphStepRunOnce,
-        graphRethinkNarrations: this.graphRethinkNarrations,
+        ...facadeFields(this, [
+          "rootDir", "store", "graphStepRunOnce",
+          "graphRethinkNarrations",
+        ]),
       },
       taskId,
       active,
@@ -2974,11 +2961,10 @@ export class TaskExecutor {
       {
         store: this.store,
         foreachActiveForTask: (id, inst) => this.foreachActiveForTask(id, inst),
-        graphStepSessionPinned: this.graphStepSessionPinned,
-        graphStepRunOnce: this.graphStepRunOnce,
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphSeamThinkingLevel: this.graphSeamThinkingLevel,
-        graphSeamSkillName: this.graphSeamSkillName,
+        ...facadeFields(this, [
+          "graphStepSessionPinned", "graphStepRunOnce", "graphSeamGoverningNodeId",
+          "graphSeamThinkingLevel", "graphSeamSkillName",
+        ]),
         runImplementationPhase: (t) => this.runImplementationPhase(t),
       },
       task,
@@ -3049,12 +3035,10 @@ export class TaskExecutor {
      
     return createAuthoritativeWorkflowPrimitivesFromExecutorImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphStepActiveContext: this.graphStepActiveContext,
-        pausedAborted: this.pausedAborted,
-        mergeRequester: this.mergeRequester,
+        ...facadeFields(this, [
+          "store", "rootDir", "graphSeamGoverningNodeId",
+          "graphStepActiveContext", "pausedAborted", "mergeRequester",
+        ]),
         getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
           "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
@@ -3140,13 +3124,11 @@ export class TaskExecutor {
         store: this.store,
         rootDir: this.rootDir,
         options: this.options as { mergeRequester?: unknown; pluginRunner?: unknown; [k: string]: unknown },
-        workspaceConfig: this.workspaceConfig,
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphSeamThinkingLevel: this.graphSeamThinkingLevel,
-        graphStepActiveContext: this.graphStepActiveContext,
-        graphRethinkNarrations: this.graphRethinkNarrations,
-        pausedAborted: this.pausedAborted,
-        mergeRequester: this.mergeRequester,
+        ...facadeFields(this, [
+          "workspaceConfig", "graphSeamGoverningNodeId", "graphSeamThinkingLevel",
+          "graphStepActiveContext", "graphRethinkNarrations", "pausedAborted",
+          "mergeRequester",
+        ]),
         getRunContextFor: (id) => this.getRunContextFor(id),
         ...facadeMethods(this, [
           "persistTokenUsage", "runImplementationPhase", "handoffTaskToReview",
@@ -3391,9 +3373,9 @@ export class TaskExecutor {
   public async releasePreExecutionWorktree(taskId: string, reason: string): Promise<boolean> {
     return releasePreExecutionWorktreeImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        activeWorktrees: this.activeWorktrees,
+        ...facadeFields(this, [
+          "store", "rootDir", "activeWorktrees",
+        ]),
         getRunContextFor: (id) => this.getRunContextFor(id),
         hasLiveTaskSessionSurface: (id) => this.hasLiveTaskSessionSurface(id),
       },
@@ -3463,9 +3445,9 @@ export class TaskExecutor {
      
     return runGraphCustomNodeImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        workspaceConfig: this.workspaceConfig,
+        ...facadeFields(this, [
+          "store", "rootDir", "workspaceConfig",
+        ]),
         options: this.options as { pluginRunner?: unknown; [k: string]: unknown },
         graphUnattendedRuns: this.graphUnattendedRuns,
         getRunContextFor: (id) => this.getRunContextFor(id),
@@ -3579,10 +3561,10 @@ export class TaskExecutor {
   private hasLiveTaskSessionSurface(taskId: string): boolean {
     return hasLiveTaskSessionSurfaceImpl(
       {
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        activeCliTaskSessions: this.activeCliTaskSessions,
+        ...facadeFields(this, [
+          "activeSessions", "activeStepExecutors", "activeWorkflowStepSessions",
+          "activeCliTaskSessions",
+        ]),
       },
       taskId,
     );
@@ -3726,11 +3708,10 @@ export class TaskExecutor {
           "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
           "clearPausedAborted",
         ]),
-        activeWorktrees: this.activeWorktrees,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        ...facadeFields(this, [
+          "activeWorktrees", "activeSessions", "activeStepExecutors",
+          "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
+        ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
         persistTokenUsage: (id) => this.persistTokenUsage(id),
         executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
@@ -3809,11 +3790,10 @@ export class TaskExecutor {
         getRunContextFor: (id) => this.getRunContextFor(id),
         resolveResumeLanes: (id, memo) => this.resolveResumeLanes(id, memo),
         clearPausedAborted: (id) => this.clearPausedAborted(id),
-        activeWorktrees: this.activeWorktrees,
-        activeSessions: this.activeSessions,
-        activeStepExecutors: this.activeStepExecutors,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
+        ...facadeFields(this, [
+          "activeWorktrees", "activeSessions", "activeStepExecutors",
+          "activeWorkflowStepSessions", "activeWorkflowGraphAbortControllers",
+        ]),
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
         persistTokenUsage: (id) => this.persistTokenUsage(id),
         executeWorkflowGraph: (t) => this.executeWorkflowGraph(t),
@@ -4051,9 +4031,9 @@ export class TaskExecutor {
   ): Promise<void> {
     return runImplementationImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        workspaceConfig: this.workspaceConfig,
+        ...facadeFields(this, [
+          "store", "rootDir", "workspaceConfig",
+        ]),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions is structural superset of RunImplementationDeps.options
         options: this.options as any,
         BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
@@ -4150,9 +4130,9 @@ export class TaskExecutor {
   */
   private worktreeInvariantDeps() {
     return buildWorktreeInvariantDeps({
-      rootDir: this.rootDir,
-      store: this.store,
-      workspaceConfig: this.workspaceConfig,
+      ...facadeFields(this, [
+        "rootDir", "store", "workspaceConfig",
+      ]),
       getActiveWorktreePaths: (taskId) => this.getActiveWorktreePaths(taskId),
       getRunContextFor: (taskId) => this.getRunContextFor(taskId),
       emitWorktreeReanchoredAudit: (taskId, fromPath, toPath, source) =>
@@ -4251,9 +4231,9 @@ export class TaskExecutor {
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
     return handleDepAbortCleanupImpl(
       {
-        rootDir: this.rootDir,
-        store: this.store,
-        activeWorktrees: this.activeWorktrees,
+        ...facadeFields(this, [
+          "rootDir", "store", "activeWorktrees",
+        ]),
         removeOwnWorktreeWithReconcile: (input) => this.removeOwnWorktreeWithReconcile(input),
       },
       taskId,
@@ -4877,9 +4857,9 @@ export class TaskExecutor {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return cleanupTaskWorktreeImpl(
       {
-        store: this.store,
-        workspaceConfig: this.workspaceConfig,
-        activeWorktrees: this.activeWorktrees,
+        ...facadeFields(this, [
+          "store", "workspaceConfig", "activeWorktrees",
+        ]),
         getActiveWorktreePaths: (id) => this.getActiveWorktreePaths(id),
         removeOwnWorktreeWithReconcile: (...args: unknown[]) => (this as any).removeOwnWorktreeWithReconcile(...args),
       },
@@ -4953,14 +4933,11 @@ export class TaskExecutor {
   markStuckAborted(taskId: string, shouldRequeue: boolean = true): void {
     return markStuckAbortedImpl(
       {
-        store: this.store,
-        rootDir: this.rootDir,
-        workspaceConfig: this.workspaceConfig,
-        activeStepExecutors: this.activeStepExecutors,
-        stuckAborted: this.stuckAborted,
-        executing: this.executing,
-        activeWorktrees: this.activeWorktrees,
-        loopRecoveryState: this.loopRecoveryState,
+        ...facadeFields(this, [
+          "store", "rootDir", "workspaceConfig",
+          "activeStepExecutors", "stuckAborted", "executing",
+          "activeWorktrees", "loopRecoveryState",
+        ]),
         ...facadeMethods(this, [
           "resolveResumeLanes", "getWorktreePath", "terminateAllChildren",
           "awaitAbortInFlightTaskWork", "clearPausedAborted", "resetStepsIfWorkLost",
@@ -4989,9 +4966,9 @@ export class TaskExecutor {
     async handleLoopDetected(event: StuckTaskEvent): Promise<boolean> {
     return handleLoopDetectedImpl(
       {
-        store: this.store,
-        activeSessions: this.activeSessions,
-        loopRecoveryState: this.loopRecoveryState,
+        ...facadeFields(this, [
+          "store", "activeSessions", "loopRecoveryState",
+        ]),
         markLoopObserved: this.options.stuckTaskDetector
           ? (id) => this.options.stuckTaskDetector!.markLoopObserved(id)
           : undefined,
@@ -5035,10 +5012,10 @@ export class TaskExecutor {
     return terminateChildAgentImpl(
       {
         options: this.options as { agentStore?: import("@fusion/core").AgentStore | null; [k: string]: unknown },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dispose-only session map
-        childSessions: this.childSessions as any,
-        pendingEphemeralDeletions: this.pendingEphemeralDeletions,
-        totalSpawnedCount: this.totalSpawnedCount,
+         
+        ...facadeFields(this, [
+          "childSessions", "pendingEphemeralDeletions", "totalSpawnedCount",
+        ]),
         setTotalSpawnedCount: (n) => { this.totalSpawnedCount = n; },
       },
       childId,
