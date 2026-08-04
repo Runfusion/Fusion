@@ -154,7 +154,6 @@ import {
 
 /* FNXC:CodeOrganization 2026-08-03-20:40: Free re-exports live in executor/free-reexports.ts (U4 barrel). */
 export * from "./executor/free-reexports.js";
-import type { ExecuteWorkflowStepDeps } from "./executor/execute-workflow-step.js";
 import type { ActiveSessionBookkeepingDeps } from "./executor/active-session-bookkeeping.js";
 import type { TaskLivenessDeps } from "./executor/task-liveness.js";
 import {
@@ -168,6 +167,9 @@ import {
   buildRunGraphCustomNodeDeps,
   buildCreateAuthoritativeWorkflowSeamsDeps,
   buildCreateSpawnAgentToolDeps,
+  buildExecuteWorkflowStepDeps,
+  buildCreateTaskDoneToolDeps,
+  buildMarkStuckAbortedDeps,
 } from "./executor/deps-bags.js";
 import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 import { bindHandleWorktreeConflict, bindTryCreateWorktree } from "./executor/worktree-create-binders.js";
@@ -3224,13 +3226,7 @@ export class TaskExecutor {
     audit?: RunAuditor,
   ): ToolDefinition {
     return createTaskDoneToolImpl(
-      {
-        ...facadeFields(this, ["store", "workflowLifecycleMovesInFlight"]),
-        ...facadeMethods(this, [
-          "getRunContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
-          "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
-        ]),
-      },
+      buildCreateTaskDoneToolDeps(this),
       taskId,
       worktreePath,
       promptContent,
@@ -3459,21 +3455,7 @@ export class TaskExecutor {
   ): Promise<WorkflowStepOutcome> {
      
     return executeWorkflowStepImpl(
-      {
-        store: this.store,
-        rootDir: this.rootDir,
-        options: this.options as ExecuteWorkflowStepDeps["options"],
-        activePlanningWorkflowSessions: this.activePlanningWorkflowSessions,
-        activeWorkflowStepSessions: this.activeWorkflowStepSessions,
-        ...facadeMethods(this, [
-          "getRunContextFor",
-          "captureModifiedFiles", "createSpawnAgentTool",
-          "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
-          "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
-          "setActiveWorkflowStepSession",
-        ]),
-        sharedWorkerTools: this.sharedWorkerToolsDeps(),
-      },
+      buildExecuteWorkflowStepDeps(this),
       task,
       workflowStep,
       worktreePath,
@@ -3918,18 +3900,7 @@ export class TaskExecutor {
 
   markStuckAborted(taskId: string, shouldRequeue: boolean = true): void {
     return markStuckAbortedImpl(
-      {
-        ...facadeFields(this, [
-          "store", "rootDir", "workspaceConfig",
-          "activeStepExecutors", "stuckAborted", "executing",
-          "activeWorktrees", "loopRecoveryState",
-        ]),
-        ...facadeMethods(this, [
-          "resolveResumeLanes", "getWorktreePath", "terminateAllChildren",
-          "awaitAbortInFlightTaskWork", "clearPausedAborted", "resetStepsIfWorkLost",
-          "hasActiveWorktreeBinding",
-        ]),
-      },
+      buildMarkStuckAbortedDeps(this),
       taskId,
       shouldRequeue,
     );

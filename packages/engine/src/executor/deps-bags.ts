@@ -263,4 +263,47 @@ export function buildCreateSpawnAgentToolDeps(host: any): any {
     ]),
   };
 }
+
+export function buildExecuteWorkflowStepDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    options: host.options,
+    activePlanningWorkflowSessions: host.activePlanningWorkflowSessions,
+    activeWorkflowStepSessions: host.activeWorkflowStepSessions,
+    ...facadeMethods(host, [
+      "getRunContextFor",
+      "captureModifiedFiles", "createSpawnAgentTool",
+      "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
+      "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
+      "setActiveWorkflowStepSession",
+    ]),
+    sharedWorkerTools: host.sharedWorkerToolsDeps(),
+  };
+}
+
+export function buildCreateTaskDoneToolDeps(host: any): any {
+  return {
+    ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
+    ...facadeMethods(host, [
+      "getRunContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
+      "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
+    ]),
+  };
+}
+
+export function buildMarkStuckAbortedDeps(host: any): any {
+  return {
+    ...facadeFields(host, [
+      "store", "rootDir", "workspaceConfig",
+      "activeStepExecutors", "stuckAborted", "executing",
+      "activeWorktrees", "loopRecoveryState",
+    ]),
+    ...facadeMethods(host, [
+      "resolveResumeLanes", "getWorktreePath", "terminateAllChildren",
+      "awaitAbortInFlightTaskWork", "clearPausedAborted", "resetStepsIfWorkLost",
+      "hasActiveWorktreeBinding",
+    ]),
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
