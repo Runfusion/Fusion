@@ -4,6 +4,10 @@ import type { Task, TaskStore } from "@fusion/core";
  * Free builders for TaskExecutor deps bags that wire peeled worktree/session helpers (U4).
  *
  * These stay free functions so circular this-callbacks remain assembled at the facade edge.
+ *
+ * FNXC:CodeOrganization 2026-08-04-08:10:
+ * Bags that need runConfiguredCommand import pure by default so executor facades do not
+ * re-pass pure.runConfiguredCommand on every call site.
  */
 import type { AutoRecoveryDispatcher } from "../healing/auto-recovery.js";
 import { createRunAuditor, type EngineRunContext, type RunAuditor } from "../util/run-audit.js";
@@ -12,6 +16,7 @@ import type { WorktreeCreateConflictDeps } from "./worktree-create-conflict.js";
 import type { WorktreeInvariantDeps } from "./worktree-verify-invariants.js";
 import type { NonContinuableSessionDeps } from "./non-continuable-session.js";
 import { facadeFields, facadeMethods } from "./facade-methods.js";
+import * as pure from "./pure-bindings.js";
 import {
   MAX_WORKTREE_RETRIES,
   WORKTREE_RETRY_DELAYS,
@@ -342,10 +347,7 @@ export function buildRecoverCompletedTaskDeps(host: any): any {
   };
 }
 
-export function buildExecuteScriptWorkflowStepDeps(
-  host: any,
-  runConfiguredCommand: any,
-): any {
+export function buildExecuteScriptWorkflowStepDeps(host: any, runConfiguredCommand: any = pure.runConfiguredCommand): any {
   return {
     ...facadeFields(host, ["store"]),
     ...facadeMethods(host, [
@@ -355,10 +357,7 @@ export function buildExecuteScriptWorkflowStepDeps(
   };
 }
 
-export function buildEnsureGraphCustomNodeWorktreeDeps(
-  host: any,
-  runConfiguredCommand: any,
-): any {
+export function buildEnsureGraphCustomNodeWorktreeDeps(host: any, runConfiguredCommand: any = pure.runConfiguredCommand): any {
   return {
     store: host.store,
     rootDir: host.rootDir,
@@ -395,7 +394,7 @@ export function buildCreateWorktreeDeps(
   };
 }
 
-export function buildRunRawCliCommandDeps(host: any, runConfiguredCommand: any): any {
+export function buildRunRawCliCommandDeps(host: any, runConfiguredCommand: any = pure.runConfiguredCommand): any {
   return {
     ...facadeFields(host, ["store"]),
     ...facadeMethods(host, [
