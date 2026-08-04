@@ -316,15 +316,7 @@ export class TaskExecutor {
   private activeStepExecutors = new Map<string, StepSessionExecutor>();
   /** Steering comments already observed for active step-session executor runs. */
   private activeStepExecutorSeenSteeringIds = new Map<string, Set<string>>();
-  /** Column-agent principal alignment (plan U5, R6): the EFFECTIVE column-agent id
-   *  currently running each executing task's coding/step session, when an
-   *  override/defer binding governs the in-flight seam. Keyed by task id, populated
-   *  by the execute / step-execute seam right after `resolveSeamColumnAgent` yields a
-   *  column agent, and cleared alongside the session (deleteActiveSession /
-   *  deleteActiveStepExecutor). Powers `isAgentEffectivelyExecuting`, the
-   *  reverse-direction heartbeat-scheduler guard that must know an agent is running a
-   *  task it is not `assignedAgentId` on. Empty for the legacy/no-binding path, so
-   *  that path is byte-identical. */
+  /* FNXC:CodeOrganization 2026-08-04-03:35: effectiveColumnAgentByTask semantics on is-agent-effectively-executing.ts. */
   private effectiveColumnAgentByTask = new Map<string, string>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
@@ -595,17 +587,7 @@ export class TaskExecutor {
     return this.currentRunContexts.get(taskId);
   }
 
-  /**
-   * Stable handoff reasons used on task:handoff audit events.
-   * Keep values greppable for executor/self-healing forensics: review-handoff-requested,
-   * completed-task-recovered, step-session-completed, paused-after-completion,
-   * fn_task_done, fn_task_done-retry-completed.
-   *
-   * FNXC:WorkflowLifecycle 2026-06-29-11:20:
-   * Failed execution is not a review handoff. Error paths must either requeue
-   * executable work for resume or fail in-place; `in-review` is reserved for
-   * clean completion handoffs.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:35: handoffTaskToReview reason/failure FNXC lives on handoff-task-to-review.ts. */
   private async handoffTaskToReview(task: Task, reason: string, runId = this.getRunContextFor(task.id)?.runId): Promise<Task> {
     /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade */
     return handoffTaskToReviewImpl(
@@ -774,21 +756,7 @@ export class TaskExecutor {
     disposeSubagentsForTaskImpl(this.activeSubagentSessions, taskId, reason);
   }
 
-  /*
-  FNXC:WorkflowResolvedColumns 2026-07-31-23:59 — `isPlannerColumnFor` DELETED, and the deletion is
-  the whole fix for its two guards.
-
-  It was a private method with ZERO production callers. `tsc` reported it unused
-  ("'isPlannerColumnFor' is declared but its value is never read"); the only things reaching it were
-  two tests going through `executor as unknown as { isPlannerColumnFor: … }`, which is why nothing
-  noticed. Its doc comment described the planning-evacuation branch of the `task:moved` handler — but
-  that branch calls `isBackwardMoveOutOfPlanning` below, never this.
-
-  So its two sync-resolved lane reads were counted as inert conversions in code that cannot run.
-  Converting them would have "fixed" a guard with no behaviour behind it and produced two more sites
-  to maintain; deleting is the honest reduction. The tests that only exercised it went with it — a
-  test whose subject has no caller pins nothing.
-  */
+  /* FNXC:WorkflowResolvedColumns 2026-07-31-23:59: isPlannerColumnFor DELETED (zero production callers; inert sync-lane count drop). */
 
   /**
    * Was this card pulled BACKWARD out of a planner lane — as opposed to advancing forward
@@ -1080,15 +1048,7 @@ export class TaskExecutor {
     clearCompletedTaskWatchdogImpl(this.completedTaskWatchdogs, taskId);
   }
 
-  /**
-   * FNXC:AgentReflection 2026-07-04-00:00:
-   * FN-7528: single seam for every `onComplete` call site. Fires the deterministic, non-LLM
-   * post-task performance capture (best-effort, fire-and-forget — a capture failure must never
-   * block or fail task completion) before forwarding to the configured `onComplete` callback.
-   * Capture is completion-gated: only runs once per taskId (see `capturedReflectionTaskIds`),
-   * guarded by `reflectionService` presence, `settings.reflectionEnabled`, and an assigned agent id
-   * mirroring the existing in-session reflection-tool guard.
-   */
+  /* FNXC:CodeOrganization 2026-08-04-03:35: signalTaskComplete FN-7528 FNXC lives on signal-task-complete.ts. */
   private signalTaskComplete(task: Task): void {
     return signalTaskCompleteImpl(
       {
@@ -1458,23 +1418,6 @@ export class TaskExecutor {
     });
   }
 
-  /**
-   * Execute a task in an isolated git worktree.
-   *
-   * Worktree acquisition flow:
-   * 1. If the worktree already exists on disk (resume after crash), reuse it.
-   * 2. If a {@link WorktreePool} is provided and `recycleWorktrees` is enabled,
-   *    attempt to acquire a warm worktree from the pool. Pooled worktrees skip
-   *    the `worktreeInitCommand` since their build caches are already warm.
-   * 3. Otherwise, create a fresh worktree via `git worktree add` and run the
-   *    `worktreeInitCommand` if configured.
-   */
-
-  /**
-   * Resolve custom instructions for a given agent role by looking up agents
-   * in the AgentStore that have instructions configured.
-   * Returns an empty string if no instructions are found.
-   */
   private async resolveInstructionsForRole(role: string, settings?: Settings): Promise<string> {
     return resolveInstructionsForRoleImpl(
       {
@@ -1485,24 +1428,6 @@ export class TaskExecutor {
       settings,
     );
   }
-
-  /**
-   * Execute a task in an isolated git worktree.
-   *
-   * **Worktree assignment:** New worktrees get humanized random names
-   * (e.g., `.worktrees/swift-falcon/`) via `generateWorktreeName()` rather
-   * than being named after the task ID. This decouples directory names from
-   * tasks, enabling worktree reuse across dependency chains. When resuming
-   * a task that already has `task.worktree` set, the existing path is used
-   * as-is. Branches remain task-scoped (`fusion/{task-id}`).
-   */
-  // ── Workflow graph interpreter (cutover M-B/M-C) ─────────────────────────
-  //
-  // The workflow graph runner owns lifecycle SEQUENCING for every task:
-  // custom prompt/script/gate nodes run via the WorkflowStep machinery, and the
-  // planning/execute/review/merge seam nodes delegate to the engine primitives.
-  // Interpreter-level failure parks the task as a workflow failure rather than
-  // falling through to a second runtime path.
 
   /* FNXC:CodeOrganization 2026-08-04-03:20: graphCompletion U5d/U5e FNXC lives on task-executor-options.ts. */
   /** Per graph-run agent-log boundary; passed to failure handling rather than trusting stale task snapshots. */

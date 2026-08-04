@@ -5,6 +5,15 @@
  * Stable completion handoff into review: optional feature-video, workflow
  * completion summary, handoffToReview store transition, and merge-request
  * contract shadow markers. Failed execution must not use this path.
+ *
+ * Stable handoff reasons on task:handoff audit events (keep greppable for
+ * executor/self-healing forensics): review-handoff-requested, completed-task-recovered,
+ * step-session-completed, paused-after-completion, fn_task_done, fn_task_done-retry-completed.
+ *
+ * FNXC:WorkflowLifecycle 2026-06-29-11:20:
+ * Failed execution is not a review handoff. Error paths must either requeue
+ * executable work for resume or fail in-place; `in-review` is reserved for
+ * clean completion handoffs.
  */
 import type { Task, TaskDetail, TaskStore } from "@fusion/core";
 import { isMergeRequestContractShadowEnabled } from "@fusion/core";
