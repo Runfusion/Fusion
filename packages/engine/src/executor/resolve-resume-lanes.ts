@@ -5,7 +5,30 @@
  * FNXC:WorkflowLifecycleColumns 2026-07-30-16:00:
  * Resume-safe columns (hold/wip/review) resolved from the task workflow, not default literals.
  * Memoized per recovery so eligibility and re-entry share one snapshot.
- */
+ 
+ *
+ * FNXC:WorkflowLifecycleColumns 2026-07-30-16:00 (Phase C convergence — resume eligibility):
+ * The columns a RESUME may legitimately start from, resolved from the task's own workflow: the
+ * hold (backlog) lane, the wip lane, and the review lane.
+ *
+ * These decisions were spelled as the default lineage's three names, so on a renamed board every
+ * resume-safety check answered "not a safe resume state" and the paused-node re-entry, the
+ * pause-abort auto-continue, and the benign-todo abort-marker clear all stopped firing. The last
+ * of those is the one that bites: FN-6478's benign path exists so a re-queued card clears its
+ * abort marker instead of being parked `failed` for an operator — and on a renamed board it took
+ * the operator-action branch instead, which is the retry storm that path was written to end.
+ *
+ * ASYNC on purpose: every call site here is already async (a store read precedes each one), so
+ * there is no listener-ordering hazard of the kind that forced the synchronous planner-lane
+ * resolver in replan-target.ts.
+ *
+ * Fail-soft to the legacy trio so an unresolvable or column-less workflow behaves as before.
+ *
+ * FOLLOW-UP, deliberately not done here: PR #2628 exports a synchronous resolvePlannerLanes
+ * (hold/intake/wip) from replan-target.ts. Once both land, this helper and that one should
+ * become one resolver returning the full lane set — two resolvers for the same question is the
+ * drift this program keeps paying for. Kept separate now only to avoid a cross-branch dependency.
+*/
 import type { TaskStore } from "@fusion/core";
 import { resolveLifecycleColumns, resolveWorkflowIrForTask } from "@fusion/core";
 import { declaresAnyLifecycleRole } from "./lifecycle-columns.js";
