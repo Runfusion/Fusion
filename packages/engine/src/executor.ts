@@ -216,7 +216,7 @@ import {
   buildWorktreeInvariantDeps,
   buildNonContinuableSessionDeps,
 } from "./executor/deps-bags.js";
-import { facadeMethods } from "./executor/facade-methods.js";
+import { facadeFields, facadeMethods } from "./executor/facade-methods.js";
 
 
 export async function __runConfiguredCommandForTests(
@@ -2712,30 +2712,20 @@ export class TaskExecutor {
    * (completed or failed); false when the legacy pipeline should run.
    */
   private async executeWorkflowGraph(task: Task, opts?: { alreadyClaimed?: boolean }): Promise<void> {
-     
     return executeWorkflowGraphImpl(
       {
         store: this.store,
         options: this.options as { prNodes?: unknown; [k: string]: unknown },
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
-        graphColumnAgentResolver: this.graphColumnAgentResolver,
-        graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
-        graphRethinkNarrations: this.graphRethinkNarrations,
-        graphRouting: this.graphRouting,
-        graphSeamGoverningNodeId: this.graphSeamGoverningNodeId,
-        graphSeamSkillName: this.graphSeamSkillName,
-        graphSeamThinkingLevel: this.graphSeamThinkingLevel,
-        graphStepActiveContext: this.graphStepActiveContext,
-        graphStepRunOnce: this.graphStepRunOnce,
-        graphStepSessionPinned: this.graphStepSessionPinned,
-        graphToolFailureRunCursors: this.graphToolFailureRunCursors,
-        graphUnattendedRuns: this.graphUnattendedRuns,
-        outerConcurrencyClaims: this.outerConcurrencyClaims,
         processWideGraphRouting: TaskExecutor.processWideGraphRouting,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, [
+          "activeWorkflowGraphAbortControllers", "graphColumnAgentResolver", "graphExecuteSelfRequeued",
+          "graphRethinkNarrations", "graphRouting", "graphSeamGoverningNodeId", "graphSeamSkillName",
+          "graphSeamThinkingLevel", "graphStepActiveContext", "graphStepRunOnce", "graphStepSessionPinned",
+          "graphToolFailureRunCursors", "graphUnattendedRuns", "outerConcurrencyClaims",
+        ]),
         ...facadeMethods(this, [
-          "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset", "buildBranchPersistence",
-          "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
+          "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
+          "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
           "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
           "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
           "prepareGraphNodeExecution", "readTaskArtifact", "recoverMissingRequiredArtifacts",
@@ -2745,7 +2735,6 @@ export class TaskExecutor {
       task,
       opts,
     );
-     
   }
 
   private buildBranchPersistence(): WorkflowBranchPersistence | undefined {
@@ -3880,19 +3869,15 @@ export class TaskExecutor {
   /** Terminal failure of a graph run: record the error and park the task in
    *  review so a human can act — never leave it invisible in in-progress. */
   private async handleGraphFailure(task: Task, result: WorkflowGraphTaskRunResult): Promise<void> {
-     
     return handleGraphFailureImpl(
       {
         store: this.store,
         rootDir: this.rootDir,
         options: this.options as { stuckTaskDetector?: { untrackTask?: (taskId: string) => void }; [k: string]: unknown },
-        activeWorktrees: this.activeWorktrees,
-        completionFinalizedTaskIds: this.completionFinalizedTaskIds,
-        graphExecuteSelfRequeued: this.graphExecuteSelfRequeued,
-        graphToolFailureRunCursors: this.graphToolFailureRunCursors,
-        pausedAborted: this.pausedAborted,
-        pausedAbortProvenance: this.pausedAbortProvenance,
-        userCanceledTaskIds: this.userCanceledTaskIds,
+        ...facadeFields(this, [
+          "activeWorktrees", "completionFinalizedTaskIds", "graphExecuteSelfRequeued",
+          "graphToolFailureRunCursors", "pausedAborted", "pausedAbortProvenance", "userCanceledTaskIds",
+        ]),
         ...facadeMethods(this, [
           "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
           "finalizeMergeConfirmedWorkflowGraphTask", "getTaskCompletionBlocker",
@@ -3911,7 +3896,6 @@ export class TaskExecutor {
       task,
       result,
     );
-     
   }
 
   private async routeGraphFailureToExecutionResume(
@@ -4065,37 +4049,25 @@ export class TaskExecutor {
     */
     reportImplementationExit?: ImplementationExitReporter,
   ): Promise<void> {
-    /* eslint-disable @typescript-eslint/no-explicit-any -- thin facade forwards TaskExecutor surface into free-function deps bag */
     return runImplementationImpl(
       {
         store: this.store,
         rootDir: this.rootDir,
         workspaceConfig: this.workspaceConfig,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TaskExecutorOptions is structural superset of RunImplementationDeps.options
         options: this.options as any,
-        stuckAborted: this.stuckAborted,
-        executing: this.executing,
-        depAborted: this.depAborted,
-        tokenUsageBaselines: this.tokenUsageBaselines,
-        loopRecoveryState: this.loopRecoveryState,
-        branchConflictErrorCount: this.branchConflictErrorCount,
-        pausedAborted: this.pausedAborted,
-        userCanceledTaskIds: this.userCanceledTaskIds,
-        tokenCapDetector: this.tokenCapDetector,
+        BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
+        MAX_AUTO_RECOVERY_ATTEMPTS,
         approvalRequestStore: this.approvalRequestStore,
-        activeSessions: this.activeSessions as any,
-        activeWorktrees: this.activeWorktrees,
-        activeWorkflowGraphAbortControllers: this.activeWorkflowGraphAbortControllers,
-        currentRunContexts: this.currentRunContexts as any,
-        effectiveColumnAgentByTask: this.effectiveColumnAgentByTask,
-        graphSeamThinkingLevel: this.graphSeamThinkingLevel,
-        graphSeamSkillName: this.graphSeamSkillName,
-        graphStepSessionPinned: this.graphStepSessionPinned,
-        outerConcurrencyClaims: this.outerConcurrencyClaims,
-        BRANCH_CONFLICT_TRIPWIRE_THRESHOLD: BRANCH_CONFLICT_TRIPWIRE_THRESHOLD,
-        MAX_AUTO_RECOVERY_ATTEMPTS: MAX_AUTO_RECOVERY_ATTEMPTS,
-        getRunContextFor: (id) => this.getRunContextFor(id),
+        ...facadeFields(this, [
+          "stuckAborted", "executing", "depAborted", "tokenUsageBaselines", "loopRecoveryState",
+          "branchConflictErrorCount", "pausedAborted", "userCanceledTaskIds", "tokenCapDetector",
+          "activeSessions", "activeWorktrees", "activeWorkflowGraphAbortControllers", "currentRunContexts",
+          "effectiveColumnAgentByTask", "graphSeamThinkingLevel", "graphSeamSkillName",
+          "graphStepSessionPinned", "outerConcurrencyClaims",
+        ]),
         ...facadeMethods(this, [
-          "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
+          "getRunContextFor", "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
           "deleteActiveSession", "hasActiveWorktreeBinding", "persistTaskTokenUsage",
           "handleDepAbortCleanup", "parkApprovalSuspension", "scheduleCompletedTaskWatchdog",
           "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
@@ -4128,7 +4100,6 @@ export class TaskExecutor {
       graphCompletion,
       reportImplementationExit,
     );
-    /* eslint-enable @typescript-eslint/no-explicit-any */
   }
 
   // ── Custom tools for the worker agent ──────────────────────────────

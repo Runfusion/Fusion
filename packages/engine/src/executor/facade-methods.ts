@@ -20,3 +20,18 @@ export function facadeMethods(host: object, names: readonly string[]): any {
   }
   return out;
 }
+
+/*
+FNXC:CodeOrganization 2026-08-03-22:15:
+Pick host fields by name for free-fn deps bags. Complements facadeMethods for
+the field-heavy executeWorkflowGraph / handleGraphFailure / runImplementation facades.
+Returns any for the same spread-into-typed-deps reason as facadeMethods.
+*/
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see FNXC above
+export function facadeFields(host: object, names: readonly string[]): any {
+  const out: Record<string, unknown> = {};
+  for (const name of names) {
+    out[name] = (host as Record<string, unknown>)[name];
+  }
+  return out;
+}
