@@ -2,14 +2,12 @@
 /* FNXC:CodeOrganization 2026-08-04-07:20: facade imports via task-executor-imports barrel (U4). */
 export * from "./executor/public-reexports.js";
 export * from "./executor/free-reexports.js";
-export type { TaskExecutorOptions, CliAgentRuntime, ActiveExecutorSessionState, GraphCompletionCallback } from "./executor/task-executor-imports.js";
 import {
   type TaskStore, type Task, type TaskDetail, type Settings, type Agent, type MergeResult, type WorkflowIr,
   type WorkflowColumnAgent, type TaskMoveLanes, resolvePlannerLanes, createWorkflowRuntimePrimitiveProvider,
   type AgentSession, dropPreHeldExecutorSlot, activeSessionRegistry, getTaskCompletionBlockerForStore, constants,
   pure, impl, bags, facadeFields, facadeMethods, type FacadeRestArgs, type FacadeAfterFirst, type FacadeAfterSecond,
-  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle,
-  type TaskExecutorOptions, TaskExecutorState
+  bindHandleWorktreeConflict, bindTryCreateWorktree, wireTaskExecutorLifecycle, type TaskExecutorOptions, TaskExecutorState,
 } from "./executor/task-executor-imports.js";
 import "./executor/executor-side-effect-hosts.js";
 export class TaskExecutor extends TaskExecutorState {

@@ -6,7 +6,18 @@
  * FNXC:CodeOrganization 2026-08-04-02:05:
  * Also hosts agent-tools surface re-exports (tests import from executor.ts) and
  * summarizeToolArgs so the façade preamble is not a re-export laundry list.
+ *
+ * FNXC:CodeOrganization 2026-08-04-07:45:
+ * TaskExecutorOptions / CliAgentRuntime / ActiveExecutorSessionState /
+ * GraphCompletionCallback re-exported here so executor.ts drops the export-type line.
  */
+
+export type {
+  TaskExecutorOptions,
+  CliAgentRuntime,
+  ActiveExecutorSessionState,
+  GraphCompletionCallback,
+} from "./task-executor-options.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "../agents/agent-logger.js";
