@@ -72,6 +72,7 @@ import { AWAITING_APPROVAL_PAUSE_REASON, PLAN_REVIEW_GROUP_ID } from "@fusion/co
 import { runHoldReleaseSweep, resetHoldReleaseInstrumentation } from "../execution/hold-release.js";
 import {
   evaluateStrandedHoldContinuation,
+  resumeApprovedPlanReviewHandoff,
   seedPreReleasePlanReviewContinuation,
 } from "../plan-review-continuation.js";
 import {
@@ -353,6 +354,75 @@ describe("#2 neither continuation seeder arms a run for a card blocked on approv
       graceMs: 1000,
     });
     expect(verdict.reason).toBe("paused");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #2b — the approved-plan public handoff
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("#2b approved-plan handoff resumes only canonical graph work", () => {
+  it("creates one atomic runnable Plan Review continuation for an approved plan", async () => {
+    const { store } = seedStore();
+
+    const result = await resumeApprovedPlanReviewHandoff(store, task(), planInPlaceIr());
+
+    expect(result).toMatchObject({ resumed: true, reason: "seeded", workItemId: "wi-1" });
+    expect(store.seedStrandedPlanReviewContinuation).toHaveBeenCalledOnce();
+    expect(store.replaceActiveTaskWorkflowContinuation).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate an active continuation", async () => {
+    const { store, seeded } = seedStore();
+    (store.listWorkflowWorkItemsForTask as ReturnType<typeof vi.fn>).mockResolvedValue([
+      dueItem({ state: "running" }),
+    ]);
+
+    await expect(resumeApprovedPlanReviewHandoff(store, task(), planInPlaceIr())).resolves.toEqual({
+      resumed: false,
+      reason: "active-continuation",
+    });
+    expect(seeded()).toBe(0);
+  });
+
+  it("does not replace satisfied Plan Review evidence", async () => {
+    const { store, seeded } = seedStore();
+    (store.seedStrandedPlanReviewContinuation as ReturnType<typeof vi.fn>).mockResolvedValue({
+      seeded: false,
+      reason: "plan-review-passed",
+    });
+
+    await expect(resumeApprovedPlanReviewHandoff(store, task(), planInPlaceIr())).resolves.toEqual({
+      resumed: false,
+      reason: "plan-review-passed",
+    });
+    expect(seeded()).toBe(0);
+  });
+
+  it.each([
+    ["approval hold", task({ status: "awaiting-approval" })],
+    ["pause", task({ paused: true })],
+    ["dependency replan fence", task({ status: "needs-replan" })],
+  ])("leaves %s to its existing lifecycle owner", async (_label, heldTask) => {
+    const { store, seeded } = seedStore();
+
+    const result = await resumeApprovedPlanReviewHandoff(store, heldTask, planInPlaceIr());
+
+    expect(result.resumed).toBe(false);
+    expect(seeded()).toBe(0);
+  });
+
+  it("uses a successor identity when terminal history is present", async () => {
+    const terminal = dueItem({ state: "failed" });
+    const { store } = seedStore();
+    (store.listWorkflowWorkItemsForTask as ReturnType<typeof vi.fn>).mockResolvedValue([terminal]);
+
+    await resumeApprovedPlanReviewHandoff(store, task(), planInPlaceIr());
+
+    expect(store.seedStrandedPlanReviewContinuation).toHaveBeenCalledWith(expect.objectContaining({
+      continuationSequence: 1,
+      runId: expect.stringContaining(":1"),
+    }));
   });
 });
 

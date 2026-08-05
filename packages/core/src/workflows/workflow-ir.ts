@@ -521,6 +521,7 @@ function validateForeach(
   // top-level column id (column-agent plan KTD-1) — otherwise a dangling reference
   // is a silent no-binding no-op at runtime instead of a typed authoring error.
   for (const inner of templateNodes) {
+    validateReviewKind(inner, "nested");
     if (inner.kind === "foreach" || inner.kind === "loop") {
       throw new WorkflowIrError(
         `foreach node '${node.id}' template may not contain nested loop/foreach ('${inner.id}')`,
@@ -664,6 +665,7 @@ function validateLoop(
     );
   }
   for (const inner of templateNodes) {
+    validateReviewKind(inner, "nested");
     if (inner.kind === "loop" || inner.kind === "foreach") {
       throw new WorkflowIrError(
         `loop node '${node.id}' template may not contain nested loop/foreach ('${inner.id}')`,
@@ -789,6 +791,7 @@ function validateOptionalGroup(
     throw new WorkflowIrError(`optional-group node '${node.id}' template has duplicate node ids`);
   }
   for (const inner of templateNodes) {
+    validateReviewKind(inner, "nested");
     if (inner.kind === "loop" || inner.kind === "foreach" || inner.kind === "optional-group") {
       throw new WorkflowIrError(
         `optional-group node '${node.id}' template may not contain nested loop/foreach/optional-group ('${inner.id}')`,
@@ -1638,6 +1641,26 @@ function validateColumnRecovery(column: WorkflowIrColumn): void {
   }
 }
 
+/**
+ * FNXC:WorkflowReviewKind 2026-08-05-02:31:
+ * Direct-review semantics are author-declared data, never inferred from a node label,
+ * verdict, or gate behavior. Template executions lack a stable persisted current-result
+ * identity, so valid markers there fail separately after malformed values fail first.
+ */
+function validateReviewKind(node: WorkflowIrNode, placement: "top-level" | "nested"): void {
+  const value = node.config?.reviewKind;
+  if (value === undefined) return;
+  if (value !== "plan" && value !== "code") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has invalid reviewKind '${String(value)}'; expected 'plan' or 'code'`);
+  }
+  if (placement === "nested") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has reviewKind in an unsupported nested template placement`);
+  }
+  if (node.kind !== "prompt" && node.kind !== "gate" && node.kind !== "script" && node.kind !== "optional-group") {
+    throw new WorkflowIrError(`Workflow node '${node.id}' has reviewKind on unsupported node kind '${node.kind}'`);
+  }
+}
+
 function validateV2(ir: WorkflowIrV2): void {
   validateColumns(ir);
 
@@ -1673,6 +1696,7 @@ function validateV2(ir: WorkflowIrV2): void {
   const nodesById = new Map(ir.nodes.map((n) => [n.id, n]));
 
   for (const node of ir.nodes) {
+    validateReviewKind(node, "top-level");
     validateExtensionMetadata(`Workflow node '${node.id}'`, node.extensions);
     if (node.column !== undefined && !columnIds.has(node.column)) {
       throw new WorkflowIrError(

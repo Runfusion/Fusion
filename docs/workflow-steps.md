@@ -948,3 +948,13 @@ When the project or task-level [`reviewArtifacts`](./settings-reference.md) poli
 The MVP requires a persisted `review-artifact-scenario` task document containing JSON such as `{ "baseUrl": "http://127.0.0.1:5173", "targetRoute": "/settings" }`. The URL must be `http` or `https` on `127.0.0.1`, `localhost`, or `::1`; missing, malformed, remote, or unreachable scenarios are skipped. Fusion does not start or manage this server. An optional `flowScript` identifier is accepted for future registered flows; unknown identifiers use the default navigate-and-settle recording.
 
 Capture uses local Chromium through `playwright-core` and records WebM. Recording is capped at 15 seconds (normally three seconds); output over the size cap is rejected without artifact registration rather than trimmed or re-encoded. A successful recording is registered through the normal artifact registry as `type="video"`, `mimeType="video/webm"`, and linked to its task, so existing review-artifact galleries display it. When review artifacts are enabled, executor-generated verification videos also appear in the top-level Quality hub.
+
+## Direct-review kind for custom nodes
+
+A top-level `prompt`, `gate`, `script`, or `optional-group` node may set `config.reviewKind` to exactly `"plan"` or `"code"`. This is an explicit metadata declaration for the direct Review tab; it does not change routing, gate mode, retries, merge blocking, or execution behavior. For example:
+
+```json
+{ "id": "architecture-review", "kind": "prompt", "config": { "name": "Architecture review", "reviewKind": "code", "prompt": "Review the proposed architecture." } }
+```
+
+When a marked supported node runs, its pending and terminal workflow-step result snapshots the declared value. Omission means the node is **not** a direct review, regardless of its ID, label, verdict, output prose, phase, or gate mode. Markers are rejected on foreach and loop templates and optional-group source/template nodes: those executions do not yet have an instance-safe current-result or Review-tab address contract.

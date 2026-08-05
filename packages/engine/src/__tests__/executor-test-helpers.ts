@@ -646,6 +646,13 @@ export function createMockStore() {
       updatedAt: new Date().toISOString(),
     })),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    transitionQueuedEpisode: vi.fn(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string; outcome?: string }) => {
+      const prior = patches.get(id) ?? {};
+      const appended = !(prior.status === "queued" && prior.blockedBy === transition.blockedBy && prior.overlapBlockedBy === transition.overlapBlockedBy && prior.queuedLogEpisodeSignature === transition.signature);
+      await store.updateTask(id, { status: "queued", blockedBy: transition.blockedBy, overlapBlockedBy: transition.overlapBlockedBy, queuedLogEpisodeSignature: transition.signature });
+      if (appended) await store.logEntry(id, transition.action, transition.outcome);
+      return { appended, task: { id, ...patches.get(id) } };
+    }),
     addTaskComment: vi.fn().mockResolvedValue(undefined),
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),

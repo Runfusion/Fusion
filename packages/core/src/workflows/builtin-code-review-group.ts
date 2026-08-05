@@ -97,6 +97,7 @@ export function codeReviewOptionalGroupNode(
     column,
     config: {
       name: CODE_REVIEW_NAME,
+      reviewKind: "code",
       // Default-ON: runs for every coding task by default, but operators can toggle it
       // off per task (remove `code-review` from enabledWorkflowSteps).
       defaultOn: options.defaultOn ?? true,

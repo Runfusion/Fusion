@@ -28,7 +28,7 @@ import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
 import { useGitHubStarPromptShown, markGitHubStarPromptShown } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
-import { useTasks } from "./hooks/useTasks";
+import { mergeTaskSnapshot, useTasks } from "./hooks/useTasks";
 import { useBoardWorkflows } from "./hooks/useBoardWorkflows";
 import type { ExecutorColumnFlags } from "./hooks/useExecutorStats";
 import { useProjects } from "./hooks/useProjects";
@@ -1159,7 +1159,7 @@ function AppInner() {
     const previousDetailTab = mainPanelDetailInitialTab;
 
     if (previousView === "task-detail" && previousDetailTask?.id === task.id && previousDetailTab === initialTab) {
-      setMainPanelDetailTask(task);
+      setMainPanelDetailTask((current) => current?.id === task.id ? mergeTaskSnapshot(current, task) : task);
       return;
     }
 
@@ -2165,7 +2165,8 @@ function AppInner() {
       FN remount-churn fix R7 supersedes the FN-8016 remount behavior: ALL popped-out entries render, and off-origin-view windows are hidden via FloatingWindow's hidden contract (visibility-based, aria-hidden, effects suspended) instead of being filtered out of the render array. Returning to the origin view is an instant reveal of the live window — the embedded task detail, including an open terminal WebSocket, stays mounted. The `isTaskPopupVisibleForView` predicate and per-origin-view addressability are unchanged; `visiblePoppedOutTaskEntries` still feeds the Escape/nav-shortcut consumer. While hidden, `active={false}` closes the detail's SSE/EventSource channels (R8). Each FloatingWindow key includes its origin so identical task ids never collide across views.
       */}
       {poppedOutTaskEntries.map(({ task: snapshot, originTaskView, initialTab }) => {
-        const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
+        const boardTask = tasks.find((candidate) => candidate.id === snapshot.id);
+        const liveTask = boardTask ? mergeTaskSnapshot(snapshot, boardTask) : snapshot;
         const popupKey = taskPopupIdentityKey(snapshot.id, originTaskView);
         const close = () => closePoppedOutTaskWithNav(snapshot.id, originTaskView);
         const popupVisible = taskPopupsVisibleOnCurrentView(originTaskView);
@@ -2189,6 +2190,7 @@ function AppInner() {
               initialTab={initialTab}
               projectId={currentProject?.id}
               tasks={tasks}
+              globalPaused={globalPaused}
               active={popupVisible}
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
@@ -2214,6 +2216,7 @@ function AppInner() {
         projectId={currentProject?.id}
         tasks={tasks}
         columnFlagsByTaskId={footerColumnFlagsByTaskId}
+        globalPaused={globalPaused}
         projects={projects}
         currentProject={currentProject}
         addToast={addToast}

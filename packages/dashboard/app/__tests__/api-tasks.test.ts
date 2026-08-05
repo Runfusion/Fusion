@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { API_JSON_HEADERS, API_JSON_HEADERS_NO_ATTRIBUTION } from "../test/apiRequestHeaders";
 import {
   fetchTaskDetail,
+  fetchTaskPrompt,
   uploadAttachment,
   fetchAgentLogsWithMeta,
   fetchAiSessions,
@@ -141,6 +142,19 @@ beforeEach(() => {
 afterEach(() => {
   clearAuthToken();
   localStorage.removeItem("fn.authToken");
+});
+
+describe("fetchTaskPrompt", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it("requests only the project-scoped narrow prompt endpoint", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "FN-001", prompt: "# Prompt" }));
+
+    await expect(fetchTaskPrompt("FN-001", "project-a")).resolves.toEqual({ id: "FN-001", prompt: "# Prompt" });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/prompt?projectId=project-a", expect.objectContaining({ headers: expect.anything() }));
+  });
 });
 
 describe("fetchTaskDetail", () => {

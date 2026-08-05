@@ -7664,7 +7664,7 @@ describe("TriageProcessor delegation tools", () => {
     expect(toolNames).not.toContain("fn_delegate_task");
   });
 
-  it("fn_task_search includes done tasks by default and searches with includeArchived true", async () => {
+  it("fn_task_search excludes done tasks by default and searches with includeArchived false", async () => {
     const store = createMockStore();
     (store.searchTasks as any).mockResolvedValue([
       {
@@ -7695,11 +7695,11 @@ describe("TriageProcessor delegation tools", () => {
 
     expect(store.searchTasks).toHaveBeenCalledWith("rebase diff", {
       slim: true,
-      includeArchived: true,
+      includeArchived: false,
       limit: 20,
     });
-    expect(text).toContain('Search results for "rebase diff" (2):');
-    expect(text).toContain("FN-100 (done): Fix rebase merge truncation");
+    expect(text).toContain('Search results for "rebase diff" (1):');
+    expect(text).not.toContain("FN-100 (done): Fix rebase merge truncation");
   });
 
   it("fn_task_search filters done tasks when includeDone is false", async () => {
@@ -7812,11 +7812,11 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
   });
 
   // Regression: FN-4774 (FN-4827 recovery; supersedes FN-4815) — see docs/triage-duplicate-detection-postmortem.md
-  it("canonical triage policy prompt guides agents to search done/archived before creating", () => {
+  it("canonical triage policy prompt guides agents to exclude done/archived duplicates", () => {
     // Standard prompt mentions fn_task_search in duplicate-check guidance
     expect(TRIAGE_POLICY_PROMPT).toContain("fn_task_search");
-    // The tool bullet list explicitly states it covers done and archived
-    expect(TRIAGE_POLICY_PROMPT).toContain("including done and archived tasks");
+    expect(TRIAGE_POLICY_PROMPT).toContain("includeDone: false");
+    expect(TRIAGE_POLICY_PROMPT).toContain("includeArchived: false");
     // Duplicate-check section co-locates fn_task_search with done/archived references
     expect(TRIAGE_POLICY_PROMPT).toContain("done");
     expect(TRIAGE_POLICY_PROMPT).toContain("archived");
@@ -7829,12 +7829,11 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
   });
 
   // Regression: FN-4774 (FN-4827 recovery; supersedes FN-4815) — see docs/triage-duplicate-detection-postmortem.md
-  it("FAST_PLANNING_PROMPT guides agents to search done/archived before creating", () => {
+  it("FAST_PLANNING_PROMPT guides agents to exclude done/archived duplicates", () => {
     // Fast prompt mentions fn_task_search
     expect(FAST_PLANNING_PROMPT).toContain("fn_task_search");
-    // Duplicate-check section references done and archived
-    expect(FAST_PLANNING_PROMPT).toContain("done");
-    expect(FAST_PLANNING_PROMPT).toContain("archived");
+    expect(FAST_PLANNING_PROMPT).toContain("includeDone: false");
+    expect(FAST_PLANNING_PROMPT).toContain("includeArchived: false");
     // Defensive regex: duplicate-check guidance must cross-reference fn_task_search with done/archived
     expect(
       /Duplicate check[\s\S]{0,600}fn_task_search[\s\S]{0,400}(done|archived)/i.test(
@@ -7844,7 +7843,7 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
   });
 
   // Regression: FN-4774 (FN-4827 recovery; supersedes FN-4815) — see docs/triage-duplicate-detection-postmortem.md
-  it("fn_task_search returns done-column results by default", async () => {
+  it("fn_task_search excludes done-column results by default", async () => {
     const store = createMockStore();
     (store.searchTasks as any).mockResolvedValue([
       {
@@ -7868,15 +7867,13 @@ describe("FN-4774 regression: triage duplicate detection over done/archived task
     });
     const text = result.content[0].text;
 
-    // searchTasks is called with includeArchived: true (includeDone is a post-filter, not passed to searchTasks)
+    // searchTasks excludes archived rows and completed rows are filtered after lookup.
     expect(store.searchTasks).toHaveBeenCalledWith("rebase truncation", {
       slim: true,
-      includeArchived: true,
+      includeArchived: false,
       limit: 20,
     });
-    // Done results surface in output with the (done): column label
-    expect(text).toContain("FN-DONE");
-    expect(text).toContain("(done):");
+    expect(text).not.toContain("FN-DONE");
   });
 });
 

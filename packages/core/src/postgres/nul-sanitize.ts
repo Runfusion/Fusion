@@ -32,14 +32,19 @@ export function deepStripNulChars(value: unknown): unknown {
     return stripNulChars(value);
   }
   if (Array.isArray(value)) {
-    return value.map(deepStripNulChars);
+    const sanitized = value.map(deepStripNulChars);
+    return sanitized.some((entry, index) => entry !== value[index]) ? sanitized : value;
   }
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(
-        ([key, entry]) => [stripNulChars(key), deepStripNulChars(entry)],
-      ),
-    );
+    const entries = Object.entries(value as Record<string, unknown>);
+    const sanitizedEntries = entries.map(([key, entry]) => [
+      stripNulChars(key),
+      deepStripNulChars(entry),
+    ] as const);
+    const changed = sanitizedEntries.some(([key, entry], index) => (
+      key !== entries[index]?.[0] || entry !== entries[index]?.[1]
+    ));
+    return changed ? Object.fromEntries(sanitizedEntries) : value;
   }
   return value;
 }

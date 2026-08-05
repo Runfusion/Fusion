@@ -86,6 +86,7 @@ import {
   TASK_LIFECYCLE_CONSUMERS_VERSION,
   VALIDATOR_INPUT_FINGERPRINT_VERSION,
   UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+  QUEUED_EPISODE_SIGNATURE_VERSION,
 } from "../../postgres/schema-applier.js";
 import { ProjectPartitionRekeyError, rekeyFallbackProjectPartition } from "../../postgres/migration-stamping.js";
 import type { PluginSchemaInitHook } from "../../postgres/plugin-schema-hook.js";
@@ -105,7 +106,8 @@ describe("schema-applier: immutable migration identities", () => {
     expect(TASK_LIFECYCLE_CONSUMERS_VERSION).toBe("0041");
     expect(VALIDATOR_INPUT_FINGERPRINT_VERSION).toBe("0042");
     expect(UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION).toBe("0043");
-    expect(SCHEMA_BASELINE_VERSION).toBe("0043");
+    expect(QUEUED_EPISODE_SIGNATURE_VERSION).toBe("0044");
+    expect(SCHEMA_BASELINE_VERSION).toBe("0044");
   });
 
   it("keeps monitor and approval isolation assigned to version 0003", () => {
@@ -1761,6 +1763,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+      QUEUED_EPISODE_SIGNATURE_VERSION,
     ]);
     expect((await applySchemaBaseline(ctx.db, { pluginHooks: [] })).applied).toBe(false);
   });
@@ -1830,6 +1833,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+      QUEUED_EPISODE_SIGNATURE_VERSION,
     ]);
   });
 
@@ -2032,6 +2036,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+      QUEUED_EPISODE_SIGNATURE_VERSION,
     ]);
   });
 
@@ -2115,6 +2120,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+      QUEUED_EPISODE_SIGNATURE_VERSION,
     ]);
   });
 
@@ -2198,6 +2204,7 @@ pgDescribe("schema-applier: automation project-isolation upgrade", () => {
       TASK_LIFECYCLE_CONSUMERS_VERSION,
       VALIDATOR_INPUT_FINGERPRINT_VERSION,
       UNPLANNED_EXECUTION_BLOCK_DEDUPE_VERSION,
+      QUEUED_EPISODE_SIGNATURE_VERSION,
     ]);
   });
 });

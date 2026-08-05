@@ -51,7 +51,7 @@ import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTas
 import { ACTIVE_STATUSES, isTaskAgentActive } from "../utils/taskActivity";
 import { getPrBadgeModifierClass } from "../utils/prBadgeClass";
 import { getTotalAgentActiveMs, getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
-import { getTaskStatusBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge } from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, type TaskStatusBadgeContext, hasTaskStatusBadge, isTaskPlanningActive } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval, isTaskAwaitingPlanApproval } from "../utils/reviewBudgetApproval";
 import { canStartPrFeedbackAddressing, getTaskPrimaryPrInfo } from "../utils/prFeedback";
 import type { ToastType } from "../hooks/useToast";
@@ -3377,6 +3377,7 @@ function TaskCardComponent({
     && !visualStatus
     && Boolean(task.recentAgentActivityAt)
     && isAgentActive;
+  const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
   /*
   FNXC:TaskStatusBadge 2026-08-01-07:20 (operator: queued belongs with Planning and Ready):
   Queued used to render as a clock-and-text footer tag, separating the waiting state from the
@@ -3407,7 +3408,7 @@ function TaskCardComponent({
         ? t("tasks.awaitingApproval", "Awaiting Approval")
         : isAwaitingInput
           ? t("tasks.needsInput", "Needs input")
-          : isTransientPlannerActive
+          : isLivePlanning || isTransientPlannerActive
             ? t("tasks.statusPlanning", "Planning")
             /*
             FNXC:TaskStatusBadge 2026-08-01-03:20 (operator: ONE queued badge family, no dupes):
@@ -3621,7 +3622,7 @@ function TaskCardComponent({
                       )
                     : undefined
             }
-            aria-label={isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
+            aria-label={isLivePlanning || isTransientPlannerActive ? t("tasks.statusPlanning", "Planning") : undefined}
             data-testid={isAwaitingApproval ? `card-awaiting-approval-${task.id}` : showQueuedToPlanBadge ? `card-queued-to-plan-${task.id}` : undefined}
             data-awaiting-approval-reason={isAwaitingApproval ? (task.awaitingApprovalReason ?? "manual") : undefined}
           >

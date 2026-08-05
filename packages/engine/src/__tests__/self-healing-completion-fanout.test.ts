@@ -70,6 +70,23 @@ function createStore(tasks: Task[], settings?: Partial<Settings>): TaskStore & E
       map.set(id, { ...task, ...patch } as Task);
       return map.get(id);
     }),
+    transitionQueuedEpisode: vi.fn(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string }) => {
+      const task = map.get(id)!;
+      const appended = !(task.status === "queued"
+        && (task.blockedBy ?? null) === transition.blockedBy
+        && (task.overlapBlockedBy ?? null) === transition.overlapBlockedBy
+        && task.queuedLogEpisodeSignature === transition.signature);
+      const updated = {
+        ...task,
+        status: "queued",
+        blockedBy: transition.blockedBy,
+        overlapBlockedBy: transition.overlapBlockedBy,
+        queuedLogEpisodeSignature: transition.signature,
+        log: appended ? [...(task.log ?? []), { timestamp: new Date().toISOString(), action: transition.action }] : task.log,
+      } as Task;
+      map.set(id, updated);
+      return { appended, task: updated };
+    }),
     moveTask: vi.fn(async (id: string, column: Task["column"]) => {
       const task = map.get(id)!;
       const from = task.column;
@@ -111,6 +128,26 @@ describe("self-healing completion fan-out", () => {
       "FN-CLEAR",
       expect.stringContaining("FN-4523"),
     );
+  });
+
+  it("deduplicates concurrent completion fanout that leaves a dependent behind the same queue episode", async () => {
+    const blocker = makeTask("FN-B", { column: "done" });
+    const other = makeTask("FN-OTHER", { column: "todo" });
+    const dependent = makeTask("FN-DEPENDENT", {
+      column: "todo",
+      status: "queued" as any,
+      blockedBy: "FN-B",
+      dependencies: ["FN-B", "FN-OTHER"],
+    });
+    const store = createStore([blocker, other, dependent]);
+    const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
+
+    await Promise.all([mgr.reconcileCompletedTask("FN-B"), mgr.reconcileCompletedTask("FN-B")]);
+
+    const updated = await store.getTask("FN-DEPENDENT");
+    expect(updated?.blockedBy).toBe("FN-OTHER");
+    expect(updated?.queuedLogEpisodeSignature).toBe("dependency:FN-OTHER");
+    expect(updated?.log?.filter((entry) => entry.action.includes("FN-4523"))).toHaveLength(1);
   });
 
   it("prefers worktree hint and is idempotent when missing", async () => {

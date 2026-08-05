@@ -34,6 +34,9 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
 
+/** Closed snapshot of an author-declared direct-review category. */
+export type WorkflowReviewKind = "plan" | "code";
+
 export interface WorkflowStep {
   /** Unique identifier (e.g., "WS-001") */
   id: string;
@@ -247,6 +250,11 @@ export interface WorkflowStepResult {
   source?: "optional-group" | "node";
   /** Execution status */
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
+  /**
+   * Author-declared direct-review category snapshotted when a supported top-level
+   * graph node starts. Absent preserves historical and non-review semantics.
+   */
+  reviewKind?: WorkflowReviewKind;
   /** Output from the workflow step agent (findings, errors, etc.) */
   output?: string;
   /**

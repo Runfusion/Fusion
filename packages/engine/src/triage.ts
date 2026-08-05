@@ -23,6 +23,7 @@ import {
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
   resolveAgentPrompt,
+  buildPlanningDuplicatePolicyInstruction,
   builtinSeamPrompt,
   renderTriagePolicyPlaceholders,
   resolveEffectiveSettingsDetailed,
@@ -44,7 +45,8 @@ import {
   computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
-  isNearDuplicateCanonicalInactive, resolveColumnFlags,
+  isNearDuplicateCanonicalInactive,
+  resolveNearDuplicateCanonicalFlags,
   detectImageMimeFromBytes,
   applyFrontendUxCriteria,
   applyOriginalDescription,
@@ -354,35 +356,6 @@ derived from the IR, since the point is to recognise a column the CURRENT workfl
 no longer has.
 */
 const LEGACY_PLANNER_COLUMN_IDS: ReadonlySet<string> = new Set(["triage", "todo"]);
-
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-04:10:
-The canonical's OWN resolved column flags, for `isNearDuplicateCanonicalInactive`.
-
-Omitted, that predicate falls back to the legacy `done`/`archived` ids, so on a renamed board a
-canonical that has SHIPPED reads as still ACTIVE. Every "the canonical is inactive, so clear the
-marker" branch below then fails to fire, and FN-8356's fix — inactive canonicals flow through marker
-cleanup rather than parking the card — is inert. The card keeps its "Needs your decision" badge
-pointing at work that finished days ago, and no decision can ever resolve it.
-
-Module-private rather than shared: `findColumn` is already duplicated this way in hold-release.ts,
-merge-trait.ts, and workflow-capacity.ts, so this follows the established shape instead of adding a
-cross-module helper for it.
-
-`undefined` on any failure is deliberate — it degrades to the legacy id rather than to absent traits
-that match nothing.
-*/
-async function resolveNearDuplicateCanonicalFlags(
-  store: TaskStore,
-  canonical: { id: string; column?: string | null } | null | undefined,
-): Promise<ReturnType<typeof resolveColumnFlags> | undefined> {
-  if (!canonical?.column) return undefined;
-  const ir = await resolveWorkflowIrForTask(store, canonical.id).catch(() => undefined);
-  if (!ir || ir.version !== "v2") return undefined;
-  const column = ir.columns.find((candidate) => candidate.id === canonical.column);
-  return column ? resolveColumnFlags(column) : undefined;
-}
-
 
 /*
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59 DELIBERATE-LITERAL: the migration arm, and only it.
@@ -2709,11 +2682,13 @@ export class TriageProcessor {
         // fast prompts. Fast mode currently has no policy placeholders, making
         // this a no-op there while still guaranteeing no dangling token leaks.
         const renderedBasePrompt = renderTriagePolicyPlaceholders(resolvedBasePrompt, triagePolicySettings);
+        const duplicatePolicyInstruction = buildPlanningDuplicatePolicyInstruction();
         const triageLayers = buildPromptLayers({
           basePrompt: renderedBasePrompt,
           goalContext: triageGoalResolution.goalContext,
           agentInstructions: [
             triageIdentitySection,
+            duplicatePolicyInstruction,
             triageInstructions,
             isResearchToolSurfaceEnabled(settings)
               ? getResearchGuidanceForSurface("triage")
@@ -3673,8 +3648,8 @@ export class TriageProcessor {
       name: "fn_task_search",
       label: "Search Tasks",
       description:
-        "Keyword search across tasks, including done and archived tasks by default. " +
-        "Use for duplicate detection before filing a new task.",
+        "Keyword search across active tasks by default. " +
+        "Done and archived history is opt-in and must not be used for duplicate detection.",
       parameters: taskSearchParams,
       execute: async (
         _callId: string,
@@ -3689,10 +3664,10 @@ export class TriageProcessor {
         }
         const results = await store.searchTasks(query, {
           slim: true,
-          includeArchived: params.includeArchived ?? true,
+          includeArchived: params.includeArchived ?? false,
           limit: params.limit ?? 20,
         });
-        const includeDone = params.includeDone ?? true;
+        const includeDone = params.includeDone ?? false;
         const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
         const filtered = includeDone
           ? results
@@ -4311,16 +4286,14 @@ export class TriageProcessor {
       if (isNearDuplicateCanonicalInactive(canonicalTask ?? undefined, canonicalFlags)) {
         if (canClearInactiveMarker) {
           /*
-          First inactive clear: replan once with dismissal stamped.
-          Re-emit of the same dismissed inactive id (or clearCount>=1): park failed so
-          triage eligibility (status:failed) stops the FN-8704 forever-loop.
+          Completed and archived work is historical context, never an accepted duplicate verdict.
+          Clear the marker and require a fresh plan regardless of how the new task was created.
           */
-          const alreadyDismissed = fusionCore.isTriageDuplicateKeepAcknowledged(liveMeta, canonicalId);
           await this.clearDuplicateMarkerForReplan(
             task,
             canonicalId,
             buildInactiveDuplicateClearFeedback(canonicalId),
-            { exhausted: alreadyDismissed || priorClearCount >= 1, priorClearCount },
+            { exhausted: false, priorClearCount },
           );
         }
         return;

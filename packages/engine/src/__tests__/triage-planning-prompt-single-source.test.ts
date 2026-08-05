@@ -117,6 +117,25 @@ async function captureBasePrompt(task: Task, store: TaskStore): Promise<string> 
   return captured;
 }
 
+async function capturePromptLayers(task: Task, store: TaskStore): Promise<string> {
+  let captured = "";
+  mockCreateFnAgent.mockImplementationOnce(async (opts: any) => {
+    captured = JSON.stringify(opts.systemPromptLayers ?? opts.systemPrompt);
+    return {
+      session: {
+        state: {},
+        sessionManager: { getLeafId: vi.fn().mockReturnValue(null) },
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        navigateTree: vi.fn(),
+      },
+    };
+  });
+
+  await new TriageProcessor(store, "/tmp/root").specifyTask(task);
+  return captured;
+}
+
 const canonicalPlanningPrompt = resolvePlanningPromptFromIr(BUILTIN_CODING_WORKFLOW_IR)!;
 const renderedCanonicalPlanningPrompt = renderTriagePolicyPlaceholders(canonicalPlanningPrompt, {});
 const renderedDefaultTriagePrompt = renderTriagePolicyPlaceholders(resolveAgentPrompt("triage"), {});
@@ -198,6 +217,20 @@ describe("triage planning prompt single source", () => {
     const store = createStore(task);
 
     await expect(captureBasePrompt(task, store)).resolves.toBe(renderedFastPlanningPrompt);
+  });
+
+  it.each(["standard", "fast"] as const)("injects direct-user duplicate policy into the %s planning session", async (executionMode) => {
+    const task = createTask({ id: `FN-6232-USER-${executionMode}`, executionMode, sourceType: "dashboard_ui" });
+    const store = createStore(task);
+
+    await expect(capturePromptLayers(task, store)).resolves.toContain("Only active tasks can be duplicate blockers");
+  });
+
+  it("injects active-only duplicate policy into programmatic planning sessions", async () => {
+    const task = createTask({ id: "FN-6232-API", executionMode: "standard", sourceType: "api" });
+    const store = createStore(task);
+
+    await expect(capturePromptLayers(task, store)).resolves.toContain("Only active tasks can be duplicate blockers");
   });
 
   it("uses a selected custom workflow planning prompt", async () => {

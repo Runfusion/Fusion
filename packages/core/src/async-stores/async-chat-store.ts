@@ -128,24 +128,34 @@ function rowToRoomMessage(row: Record<string, unknown>): ChatRoomMessage {
  * Create a chat session.
  */
 export async function createChatSession(handle: QueryHandle, session: ChatSession): Promise<ChatSession> {
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  Chat snapshot fields may include arbitrary model and tool text. PostgreSQL
+  rejects U+0000 anywhere in jsonb, so strip it only at this persistence
+  boundary and return the same sanitized shape that is stored.
+  */
+  const sanitized: ChatSession = {
+    ...session,
+    inFlightGeneration: sanitizeJsonbValue(session.inFlightGeneration),
+  };
   await handle.insert(schema.project.chatSessions).values({
-    id: session.id,
-    agentId: session.agentId,
-    title: session.title,
-    status: session.status,
+    id: sanitized.id,
+    agentId: sanitized.agentId,
+    title: sanitized.title,
+    status: sanitized.status,
     // FNXC:MultiProjectIsolation 2026-07-15-23:40: write the caller's domain project to owner_project_id and never project_id — the trigger/GUC owns the partition.
-    ownerProjectId: session.projectId,
-    modelProvider: session.modelProvider,
-    modelId: session.modelId,
-    thinkingLevel: session.thinkingLevel ?? null,
-    createdAt: session.createdAt,
-    updatedAt: session.updatedAt,
-    pinnedAt: session.pinnedAt,
-    cliSessionFile: session.cliSessionFile,
-    inFlightGeneration: session.inFlightGeneration,
-    cliExecutorAdapterId: session.cliExecutorAdapterId,
+    ownerProjectId: sanitized.projectId,
+    modelProvider: sanitized.modelProvider,
+    modelId: sanitized.modelId,
+    thinkingLevel: sanitized.thinkingLevel ?? null,
+    createdAt: sanitized.createdAt,
+    updatedAt: sanitized.updatedAt,
+    pinnedAt: sanitized.pinnedAt,
+    cliSessionFile: sanitized.cliSessionFile,
+    inFlightGeneration: sanitized.inFlightGeneration,
+    cliExecutorAdapterId: sanitized.cliExecutorAdapterId,
   });
-  return session;
+  return sanitized;
 }
 
 /**
@@ -767,9 +777,16 @@ export async function setInFlightGeneration(
 ): Promise<ChatSession | undefined> {
   const existing = await getChatSession(handle, id);
   if (!existing) return undefined;
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  Every checkpoint reaches this JSONB boundary from live streaming callbacks,
+  including tool results. Sanitizing here protects regular chat, QuickChat,
+  and future providers without mutating the caller's snapshot.
+  */
+  const sanitizedInFlightGeneration = sanitizeJsonbValue(inFlightGeneration);
   await handle
     .update(schema.project.chatSessions)
-    .set({ inFlightGeneration })
+    .set({ inFlightGeneration: sanitizedInFlightGeneration })
     .where(eq(schema.project.chatSessions.id, id));
   return getChatSession(handle, id);
 }
@@ -790,7 +807,10 @@ export async function addChatMessageAttachment(
   if (!message || message.sessionId !== sessionId) {
     throw new Error(`Message ${messageId} not found in session ${sessionId}`);
   }
-  const updatedAttachments = [...(message.attachments ?? []), attachment];
+  const updatedAttachments = sanitizeJsonbValue([
+    ...(message.attachments ?? []),
+    attachment,
+  ]);
   await handle
     .update(schema.project.chatMessages)
     .set({ attachments: updatedAttachments })
@@ -930,7 +950,7 @@ export async function updateChatMessageMetadata(
 
   await handle
     .update(schema.project.chatMessages)
-    .set({ metadata: nextMetadata ?? null })
+    .set({ metadata: sanitizeJsonbValue(nextMetadata) ?? null })
     .where(eq(schema.project.chatMessages.id, messageId));
 
   const updated = await getChatMessage(handle, messageId);
@@ -1109,7 +1129,10 @@ export async function addChatRoomMessageAttachment(
   if (!message || message.roomId !== roomId) {
     throw new Error(`Message ${messageId} not found in room ${roomId}`);
   }
-  const updatedAttachments = [...(message.attachments ?? []), attachment];
+  const updatedAttachments = sanitizeJsonbValue([
+    ...(message.attachments ?? []),
+    attachment,
+  ]);
   await handle
     .update(schema.project.chatRoomMessages)
     .set({ attachments: updatedAttachments })

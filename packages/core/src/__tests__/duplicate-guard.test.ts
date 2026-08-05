@@ -109,6 +109,54 @@ describe("runDeterministicDuplicateGuard", () => {
     result.releaseLock();
   });
 
+  it.each(["done", "archived"] as const)("ignores an exact match in %s", async (column) => {
+    const existing = mkTask({
+      id: "FN-1",
+      title: INPUT.title,
+      description: INPUT.description,
+      column,
+      source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } },
+    });
+    const { store } = makeStore([existing]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([existing]);
+
+    const result = await runDeterministicDuplicateGuard(store, INPUT, { lockScope: "p-1" });
+
+    expect(result.action).toBe("proceed");
+    result.releaseLock();
+  });
+
+  it("ignores an exact match in a renamed complete column", async () => {
+    const existing = mkTask({
+      id: "FN-1",
+      title: INPUT.title,
+      description: INPUT.description,
+      column: "shipped",
+      source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } },
+    });
+    const { store } = makeStore([existing]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([existing]);
+    const ir = {
+      version: "v2", id: "renamed-complete", name: "Renamed complete",
+      columns: [
+        { id: "todo", name: "Todo", traits: [{ trait: "hold", config: { release: "capacity" } }] },
+        { id: "shipped", name: "Shipped", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [{ id: "start", kind: "start", column: "todo" }],
+      edges: [],
+    };
+    Object.assign(store, {
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: "renamed-complete", stepIds: [] })),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: "renamed-complete", stepIds: [] })),
+      getWorkflowDefinition: vi.fn(async () => ({ ir })),
+    });
+
+    const result = await runDeterministicDuplicateGuard(store, INPUT, { lockScope: "p-1" });
+
+    expect(result.action).toBe("proceed");
+    result.releaseLock();
+  });
+
   it("scopes exact duplicates to the creating parent task", async () => {
     const foreignSibling = mkTask({
       id: "FN-1",
@@ -246,6 +294,20 @@ describe("runDeterministicDuplicateGuard", () => {
 });
 
 describe("reconcileDeterministicDuplicate", () => {
+  it("does not archive new work against a completed sibling", async () => {
+    const canonicalTs = new Date(Date.now() - 2_000).toISOString();
+    const createdTs = new Date().toISOString();
+    const completed = mkTask({ id: "FN-1", title: INPUT.title, description: INPUT.description, column: "done", createdAt: canonicalTs, updatedAt: canonicalTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
+    const created = mkTask({ id: "FN-2", title: INPUT.title, description: INPUT.description, column: "todo", createdAt: createdTs, updatedAt: createdTs, source: { sourceType: "api", sourceMetadata: { contentFingerprint: "fp" } } });
+    const { store } = makeStore([completed, created]);
+    vi.spyOn(store, "findRecentTasksByContentFingerprint").mockResolvedValueOnce([completed, created]);
+
+    const result = await reconcileDeterministicDuplicate(store, { createdTask: created, fingerprint: "fp" });
+
+    expect(result).toEqual({ outcome: "kept", canonical: created });
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("does not archive an identical task created by a different parent", async () => {
     const canonicalTs = new Date(Date.now() - 2_000).toISOString();
     const createdTs = new Date().toISOString();

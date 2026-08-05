@@ -145,6 +145,10 @@ import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 import { DASHBOARD_STARTUP_STATUS, runTuiStartupPrelude } from "./dashboard-startup-chain.js";
 import { phaseTime } from "../startup-phase.js";
+import {
+  DEV_SOURCE_RESTART_ARMED_MESSAGE,
+  registerDevSourceRestart,
+} from "./dev-source-restart.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -1295,6 +1299,23 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     getRecent: (limit?: number) => logSink.getRecentEntries(limit),
     subscribe: (listener: (entry: import("./dashboard-tui/log-ring-buffer.js").LogEntry) => void) => logSink.subscribeEntries(listener),
   };
+  const bindDevSourceRestart = (centralCore: CentralCore, beginDrain: () => void) => {
+    disposeCallbacks.push(registerDevSourceRestart({
+      enabled: process.env.FUSION_DEV_WATCH === "1"
+        && systemControlForServer.supervised
+        && Boolean(systemControlForServer.sourceWorkspaceRoot),
+      beginDrain,
+      notifyArmed: () => {
+        process.send?.({ type: DEV_SOURCE_RESTART_ARMED_MESSAGE });
+      },
+      getLiveRunningAgentCounts: () => centralCore.getLiveRunningAgentCounts(),
+      requestRestart: (reason) => requestSelfRestart?.(reason) ?? false,
+      logger: {
+        log: (message) => logSink.log(message, "dashboard"),
+        warn: (message) => logSink.warn(message, "dashboard"),
+      },
+    }));
+  };
 
   /*
    * FNXC:DashboardShutdown 2026-06-27-10:32:
@@ -2440,6 +2461,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }, 300);
       return true;
     };
+    bindDevSourceRestart(centralCoreForEngine, () => engineManager.beginDrain());
     registerHandler(process, "SIGINT", () => void shutdown("SIGINT"));
     registerHandler(process, "SIGTERM", () => void shutdown("SIGTERM"));
 
@@ -2775,6 +2797,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }, 300);
       return true;
     };
+    if (centralCoreForMesh) {
+      bindDevSourceRestart(centralCoreForMesh, () => {
+        triggerScheduler?.stop();
+        heartbeatMonitorImpl?.stop();
+      });
+    }
     registerHandler(process, "SIGINT", () => void devShutdown("SIGINT"));
     registerHandler(process, "SIGTERM", () => void devShutdown("SIGTERM"));
 

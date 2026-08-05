@@ -32,6 +32,7 @@ vi.mock("../../api", async (importOriginal) => {
     repairOverlapBlocker: vi.fn().mockResolvedValue({ repaired: true, statusCleared: false, reason: "repaired", message: "Repaired", task: makeTask() }),
     summarizeTitle: vi.fn().mockResolvedValue("Generated Title"),
     fetchTaskDetail: vi.fn().mockResolvedValue(makeTask()),
+    fetchTaskPrompt: vi.fn().mockResolvedValue({ id: "FN-099", prompt: "# Task FN-099" }),
     // FNXC:DashboardTests 2026-07-19-01:20: FN-8296 TaskDetail polls verification request status.
     fetchTaskVerificationRequest: vi.fn().mockResolvedValue(null),
     fetchAgentLogs: vi.fn().mockResolvedValue([]),

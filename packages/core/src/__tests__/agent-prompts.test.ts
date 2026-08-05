@@ -9,6 +9,7 @@ import {
   getTemplatesForRole,
   FUSION_RUNTIME_SELF_AWARENESS,
   TRIAGE_HEARTBEAT_PATROL_DISABLED_INSTRUCTION,
+  buildPlanningDuplicatePolicyInstruction,
 } from "../agents/agent-prompts.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../workflows/builtin-coding-workflow-ir.js";
 import { BUILTIN_SEAM_PROMPTS, builtinSeamPrompt } from "../workflows/builtin-workflow-prompts.js";
@@ -22,6 +23,22 @@ import type { WorkflowIr } from "../workflows/workflow-ir-types.js";
 // ---------------------------------------------------------------------------
 
 describe("resolveAgentPrompt", () => {
+  it("treats completed matches as history for user-authored tasks", () => {
+    const instruction = buildPlanningDuplicatePolicyInstruction();
+
+    expect(instruction).toContain("Only active tasks can be duplicate blockers");
+    expect(instruction).toContain("done or archived");
+    expect(instruction).toContain("write a new plan");
+  });
+
+  it("treats completed matches as history for programmatic tasks too", () => {
+    const instruction = buildPlanningDuplicatePolicyInstruction();
+
+    expect(instruction).toContain("Only active tasks can be duplicate blockers");
+    expect(instruction).toContain("done or archived");
+    expect(instruction).toContain("write a new plan");
+  });
+
   it("returns the correct built-in prompt for executor when no config provided", () => {
     const result = resolveAgentPrompt("executor");
     expect(result).toBeTruthy();

@@ -2404,3 +2404,7 @@ When a completed task is successfully reverted, Fusion removes it from ordinary 
 ### Todo Lists plugin enablement
 
 Todo Lists is an optional first-party plugin. Enable `fusion-plugin-todos` for a project in the Plugins settings to make its plugin-discovered Todos destination and `/api/plugins/fusion-plugin-todos/todos/*` API available for that project. Disabled or uninstalled projects expose neither route nor navigation entry; enablement is per project and replaces the former experimental Todo setting.
+
+## Workflow direct-review items
+
+The Review tab shows a custom workflow result only when its selected workflow declares the exact top-level node and result source, the result explicitly snapshots `reviewKind: "plan"` or `"code"`, it is current, has `passed` or `failed` status, is not bypassed or superseded, and contains nonblank output or notes. Pending, skipped, historical prior attempts, blank results, and records without that declared top-level identity (including template instances) are not selectable or addressable. Node-ID punctuation alone does not identify a template instance. Existing historical `plan-review` and `code-review` results retain narrow compatibility; Fusion does not infer or backfill custom review meaning from names, verdicts, prose, or gate settings.

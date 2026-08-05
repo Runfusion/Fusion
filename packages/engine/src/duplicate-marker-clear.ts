@@ -8,9 +8,8 @@
  * FS-fails, and storms (observed on FN-8704 / inactive FN-8676).
  *
  * FNXC:NearDuplicateDetection 2026-08-02-00:46:
- * First clear of an inactive/dismissed-id marker gets one needs-replan chance.
- * A second DUPLICATE write for the same already-dismissed canonical parks failed
- * (DUPLICATE_REPLAN_EXHAUSTED) so triage stops re-admitting the card forever.
+ * Inactive/dismissed-id markers are cleared for replanning because completed and archived work is
+ * historical context, never an actionable duplicate, regardless of task provenance.
  */
 
 /** Log action picked up by triage's needs-replan feedback scanner. */

@@ -175,6 +175,42 @@ describe("routes /api/tasks explicit duplicate marker", () => {
     expect(tasks).toHaveLength(2);
   });
 
+  it("allows a user-authored task to reference a completed duplicate target", async () => {
+    const canonical = mkTask({ id: "FN-42", title: "Canonical", description: "Existing canonical task", column: "done" });
+    const { app, tasks } = buildApp([canonical]);
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      description: "DUPLICATE: FN-42",
+      source: { sourceType: "dashboard_ui" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(tasks).toHaveLength(2);
+  });
+
+  it("allows a programmatic task to reference a completed duplicate target", async () => {
+    const canonical = mkTask({ id: "FN-42", title: "Canonical", description: "Existing canonical task", column: "done" });
+    const { app, tasks } = buildApp([canonical]);
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      description: "DUPLICATE: FN-42",
+      source: { sourceType: "api" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(tasks).toHaveLength(2);
+  });
+
+  it("allows a task to reference a live archived duplicate target", async () => {
+    const canonical = mkTask({ id: "FN-42", title: "Canonical", description: "Existing canonical task", column: "archived" });
+    const { app, tasks } = buildApp([canonical]);
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      description: "DUPLICATE: FN-42",
+      source: { sourceType: "api" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(tasks).toHaveLength(2);
+  });
+
   it("does not block prose that merely mentions duplicate text", async () => {
     const canonical = mkTask({ id: "FN-42", title: "Canonical", description: "Existing canonical task", column: "todo" });
     const { app, tasks } = buildApp([canonical]);

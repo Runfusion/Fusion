@@ -19,11 +19,12 @@ import { isTaskStuck } from "../utils/taskStuck";
 import { hasPendingAutomaticRecovery, isTaskManuallyRetryable } from "../utils/taskRecovery";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress } from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
-import { getTaskStatusBadgeLabel, hasTaskStatusBadge , type TaskStatusBadgeContext} from "../utils/taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive, type TaskStatusBadgeContext } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
@@ -565,7 +566,7 @@ export function ListView({
         return liveTask;
       }
       if (previous === liveTask) return previous;
-      return { ...previous, ...liveTask };
+      return mergeTaskSnapshot(previous, liveTask);
     });
   }, [selectedTaskId, tasks]);
 
@@ -2108,7 +2109,7 @@ export function ListView({
     try {
       const updatedTask = await updateTask(task.id, { githubTracking: { enabled: true } }, projectId);
       onTasksUpdated?.([updatedTask]);
-      setSelectedTaskSnapshot((previous) => previous?.id === updatedTask.id ? ({ ...previous, ...updatedTask, githubTracking: updatedTask.githubTracking } as Task | TaskDetail) : previous);
+      setSelectedTaskSnapshot((previous) => previous?.id === updatedTask.id ? mergeTaskSnapshot(previous, updatedTask) : previous);
       addToast(t("taskDetail.githubTracking.issueCreationRequested", "Requested GitHub tracking issue creation"), "info");
     } catch (err) {
       addToast(t("taskDetail.updateFailed", "Failed to update {{id}}: {{error}}", { id: task.id, error: getErrorMessage(err) }), "error");
@@ -2467,7 +2468,7 @@ export function ListView({
             if (!previous || previous.id !== detail.id) {
               return previous;
             }
-            return { ...previous, ...detail };
+            return mergeTaskSnapshot(previous, detail, { fullSnapshot: true });
           });
         })
         .catch(() => {
@@ -3125,6 +3126,7 @@ export function ListView({
                             && !visualStatus
                             && Boolean(task.recentAgentActivityAt)
                             && isAgentActive;
+                          const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
                           const hasStatus = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                             || isTransientPlannerActive;
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
@@ -3147,7 +3149,7 @@ export function ListView({
                           */
                           const statusBadgeLabel = isReviewBudgetExhausted
                             ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                            : isTransientPlannerActive
+                            : isLivePlanning || isTransientPlannerActive
                               ? t("tasks.statusPlanning", "Planning")
                               : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
@@ -3397,6 +3399,7 @@ export function ListView({
                               && !visualStatus
                               && Boolean(task.recentAgentActivityAt)
                               && isAgentActive;
+                            const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
                             const showStatusBadge = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
                               || isTransientPlannerActive;
                             /*
@@ -3414,7 +3417,7 @@ export function ListView({
                             // gate badge — see the grouped-card render path above.
                             const statusBadgeLabel = isReviewBudgetExhausted
                               ? t("tasks.reviewBudgetExhausted", "Review budget exhausted")
-                              : isTransientPlannerActive
+                              : isLivePlanning || isTransientPlannerActive
                                 ? t("tasks.statusPlanning", "Planning")
                                 : getTaskStatusLabel(visualStatus ?? "", t, showOptionalGateBadge ? undefined : getRunningWorkflowStepLabel(task), { idle: !isAgentActive, overlapBlockedBy: task.overlapBlockedBy ?? null });
                             const isDragging = draggingTaskId === task.id;
@@ -3628,6 +3631,7 @@ export function ListView({
                       task={selectedTaskSnapshot}
                       projectId={projectId}
                       tasks={tasks}
+                      globalPaused={globalPaused}
                       embedded
                       onRequestClose={closeEmbeddedTaskDetail}
                       onOpenDetail={handleEmbeddedOpenDetail}
@@ -3643,7 +3647,7 @@ export function ListView({
                       onTaskUpdated={(updatedTask) => {
                         setSelectedTaskSnapshot((previous) => {
                           if (!previous || previous.id !== updatedTask.id) return previous;
-                          return { ...previous, ...updatedTask };
+                          return mergeTaskSnapshot(previous, updatedTask);
                         });
                       }}
                       addToast={addToast}

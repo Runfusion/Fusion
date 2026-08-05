@@ -1940,6 +1940,42 @@ export class InProcessRuntime
   }
 
   /**
+   * Close every process-local admission source without aborting work that is
+   * already running. Development source reload uses this boundary before it
+   * waits for the live-agent count to reach zero.
+   */
+  beginDrain(): void {
+    if (this.status !== "active") return;
+
+    this.setStatus("paused");
+    if (this.workflowContinuationTimer) {
+      clearInterval(this.workflowContinuationTimer);
+      this.workflowContinuationTimer = undefined;
+    }
+    const admissionStops: Array<readonly [string, () => void]> = [
+      ["self-healing manager", () => this.selfHealingManager?.stop()],
+      ["routine scheduler", () => this.routineScheduler?.stop()],
+      ["trigger scheduler", () => this.triggerScheduler?.stop()],
+      ["stuck task detector", () => this.stuckTaskDetector?.stop()],
+      ["heartbeat monitor", () => this.heartbeatMonitor?.stop()],
+      ["triage processor", () => this.triageProcessor?.stop()],
+      ["scheduler", () => this.scheduler?.stop()],
+      ["mission autopilot", () => this.missionAutopilot?.stop()],
+      ["mission execution loop", () => this.missionExecutionLoop?.stop()],
+    ];
+    for (const [label, stop] of admissionStops) {
+      try {
+        stop();
+      } catch (error) {
+        runtimeLog.warn(
+          `Failed to stop ${label} while draining ${this.config.projectId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    runtimeLog.log(`InProcessRuntime draining for ${this.config.projectId}`);
+  }
+
+  /**
    * Stop the runtime with graceful shutdown.
    *
    * Shutdown sequence:

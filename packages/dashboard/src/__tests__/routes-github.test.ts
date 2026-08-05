@@ -18,8 +18,27 @@ import {
 import { GitHubClient } from "../github.js";
 import * as resolveDiffBaseModule from "../routes/resolve-diff-base.js";
 import { githubRateLimiter } from "../github-poll.js";
-import type { TaskStore, TaskAttachment, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, ChatSession, ChatMessage } from "@fusion/core";
-import type { TaskDetail } from "@fusion/core";
+import {
+  PLAN_REVIEW_GROUP_ID,
+  TransitionRejectionError,
+  type Task,
+  type TaskStore,
+  type TaskAttachment,
+  type Routine,
+  type RoutineCreateInput,
+  type RoutineUpdateInput,
+  type RoutineExecutionResult,
+  type ChatSession,
+  type ChatMessage,
+  type TaskDetail,
+  type WorkflowIr,
+  type WorkflowWorkItem,
+} from "@fusion/core";
+import { Scheduler } from "../../../engine/src/scheduler.js";
+import { WorkflowGraphTaskRunner } from "../../../engine/src/workflows/workflow-graph-task-runner.js";
+import { createExecutorColumnBoundaryHooks } from "../../../engine/src/workflow-column-boundary-hooks.js";
+import { isUnplannedForExecution } from "../../../engine/src/execution/hold-release.js";
+import { drainDuePlanningContinuations } from "../../../engine/src/runtimes/in-process-runtime.js";
 import type { AuthStorageLike, ModelRegistryLike } from "../routes.js";
 import { __resetBatchImportRateLimiter, __setCreateFnAgentForRefine } from "../routes.js";
 import * as agentGenerationModule from "../agent-generation.js";
@@ -143,9 +162,11 @@ vi.mock("@fusion/core", async (importOriginal) => {
   });
 });
 
-vi.mock("@fusion/engine", async () => {
+vi.mock("@fusion/engine", async (importOriginal) => {
   const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  const actual = await importOriginal<typeof import("@fusion/engine")>();
   return createEngineMock({
+  resumeApprovedPlanReviewHandoff: vi.fn(actual.resumeApprovedPlanReviewHandoff),
   createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
     session: {
       state: {
@@ -189,7 +210,7 @@ vi.mock("@fusion/engine", async () => {
 });
 
 import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
-import { createFnAgent } from "@fusion/engine";
+import { createFnAgent, resumeApprovedPlanReviewHandoff } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
@@ -2643,6 +2664,144 @@ describe("POST /tasks/:id/approve-plan", () => {
     app.use("/api", createApiRoutes(store));
     return app;
   }
+
+  it("drives one real approval through Plan Review capacity and scheduler dispatch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fusion-plan-approval-dispatch-"));
+    const ir: WorkflowIr = {
+      version: "v2", id: "custom:approved-plan-dispatch", name: "approved-plan-dispatch",
+      columns: [
+        { id: "todo", name: "Todo", traits: [{ trait: "intake" }, { trait: "hold", config: { release: "capacity" } }] },
+        { id: "in-progress", name: "In progress", traits: [{ trait: "wip", config: { limitSetting: "maxConcurrent" } }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "todo" },
+        { id: PLAN_REVIEW_GROUP_ID, kind: "optional-group", column: "todo", config: { name: "Plan Review", defaultOn: true, template: { nodes: [{ id: "review", kind: "prompt", config: { prompt: "Review the plan" } }], edges: [] } } },
+        { id: "execute", kind: "prompt", column: "in-progress", config: {} },
+        { id: "end", kind: "end", column: "in-progress" },
+      ],
+      edges: [
+        { from: "start", to: PLAN_REVIEW_GROUP_ID },
+        { from: PLAN_REVIEW_GROUP_ID, to: "execute", condition: "success" },
+        { from: "execute", to: "end", condition: "success" },
+      ],
+    } as WorkflowIr;
+    const task = {
+      ...FAKE_TASK_DETAIL, id: "FN-8792-repro", column: "todo" as const, status: "awaiting-approval" as const,
+      enabledWorkflowSteps: [PLAN_REVIEW_GROUP_ID], assignedAgentId: "executor-1",
+    } as Task;
+    const items: WorkflowWorkItem[] = [];
+    const logs: string[] = [];
+    const scheduled = vi.fn();
+    const capacityError = () => new TransitionRejectionError(
+      { code: "capacity-exhausted", messageKey: "transition.rejected.capacityExhausted", retryable: true },
+      "Column 'in-progress' is at capacity (1/1)",
+    );
+    const integrationStore = createMockStore({
+      getRootDir: vi.fn(() => root),
+      getTasksDir: vi.fn(() => join(root, ".fusion", "tasks")),
+      getTask: vi.fn(async () => task), listTasks: vi.fn(async () => [task]),
+      getSettings: vi.fn(async () => ({ maxConcurrent: 1, maxWorktrees: 1, pollIntervalMs: 60_000 })),
+      updateSettings: vi.fn(async () => undefined),
+      updateTask: vi.fn(async (_id, patch) => Object.assign(task, patch)),
+      moveTask: vi.fn(async (_id, column: string) => {
+        if (column === "in-progress") throw capacityError();
+        task.column = column as Task["column"];
+        return task;
+      }),
+      moveTaskIf: vi.fn(async (_id, column, predicate) => {
+        if (!await predicate(task)) return { task, moved: false };
+        task.column = column;
+        return { task, moved: true };
+      }),
+      logEntry: vi.fn(async (_id, action: string) => { logs.push(action); }),
+      parseFileScopeFromPrompt: vi.fn(async () => []),
+      getTaskWorkflowSelection: vi.fn(() => ({ workflowId: ir.id!, stepIds: [PLAN_REVIEW_GROUP_ID] })),
+      getTaskWorkflowSelectionAsync: vi.fn(async () => ({ workflowId: ir.id!, stepIds: [PLAN_REVIEW_GROUP_ID] })),
+      getWorkflowDefinition: vi.fn(async () => ({ id: ir.id, ir })),
+      listWorkflowWorkItemsForTask: vi.fn(async () => items),
+      seedStrandedPlanReviewContinuation: vi.fn(async (input) => {
+        const item = { ...input, id: "plan-review-1" } as WorkflowWorkItem;
+        items.push(item);
+        return { seeded: true, workItemId: item.id };
+      }),
+      replaceActiveTaskWorkflowContinuation: vi.fn(async (input) => {
+        for (const item of items) if (["runnable", "retrying", "running", "held"].includes(item.state)) item.state = "cancelled";
+        const item = { ...input, id: "capacity-1" } as WorkflowWorkItem;
+        items.push(item);
+        return item;
+      }),
+      getCompletionHandoffAcceptedMarker: vi.fn(async () => null),
+      recordRunAuditEvent: vi.fn(async () => undefined),
+      renewSymbolLocks: vi.fn(async () => ({ renewed: [], lost: [] })),
+      transitionQueuedEpisode: vi.fn(async () => ({ appended: false, task })),
+      on: vi.fn(), off: vi.fn(),
+    });
+    mkdirSync(join(root, ".fusion", "tasks", task.id), { recursive: true });
+    writeFileSync(join(root, ".fusion", "tasks", task.id, "PROMPT.md"), "# Task\nA real approved plan\n");
+
+    try {
+      await expect(isUnplannedForExecution(integrationStore, task, ir)).resolves.toBe(true);
+      const res = await REQUEST((() => {
+        const app = express(); app.use(express.json()); app.use("/api", createApiRoutes(integrationStore)); return app;
+      })(), "POST", `/api/tasks/${task.id}/approve-plan`);
+      expect(res.status).toBe(200);
+      expect(items).toContainEqual(expect.objectContaining({ nodeId: PLAN_REVIEW_GROUP_ID, state: "runnable", waitReason: "planning" }));
+      await expect(isUnplannedForExecution(integrationStore, task, ir)).resolves.toBe(true);
+
+      const runner = new WorkflowGraphTaskRunner({
+        store: integrationStore,
+        seams: { planning: async () => undefined, execute: async () => undefined, review: async () => undefined, merge: async () => undefined, schedule: async () => undefined },
+        runCustomNode: async () => ({ outcome: "success" }),
+        columnBoundaryHooks: createExecutorColumnBoundaryHooks({ store: integrationStore, task }),
+      });
+      const reviewRuns = vi.fn(async () => {
+        items[0].state = "running";
+        return runner.run(task as TaskDetail, {}, PLAN_REVIEW_GROUP_ID);
+      });
+      await drainDuePlanningContinuations({
+        listDue: async () => items.filter((item) => item.state === "runnable" && item.waitReason === "planning"),
+        getTask: async () => task, cancelOrphan: async () => undefined, defer: async () => undefined,
+        dispatch: async () => {
+          await expect(reviewRuns()).resolves.toMatchObject({
+            disposition: "suspended",
+            suspension: { reason: "capacity" },
+          });
+        },
+        nowMs: () => Date.parse("2026-08-05T02:13:00.000Z"), warn: () => undefined,
+      });
+      expect(reviewRuns).toHaveBeenCalledOnce();
+      expect(items).toContainEqual(expect.objectContaining({ state: "held", waitReason: "capacity", sourceColumn: "todo" }));
+      await expect(isUnplannedForExecution(integrationStore, task, ir)).resolves.toBe(false);
+
+      const scheduler = new Scheduler(integrationStore, { onSchedule: scheduled });
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+      expect(scheduled).toHaveBeenCalledWith(expect.objectContaining({ id: task.id, column: "in-progress" }));
+      expect(logs).not.toContain("Execution dispatch refused — task is still unplanned");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes Plan Review through the public engine handoff after approval", async () => {
+    const awaitingTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };
+    const approvedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: undefined };
+    const publicHandoff = vi.mocked(resumeApprovedPlanReviewHandoff);
+    publicHandoff.mockClear();
+    publicHandoff.mockResolvedValue({ resumed: true, reason: "seeded", workItemId: "review-continuation" });
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(approvedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(approvedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(200);
+    expect(publicHandoff).toHaveBeenCalledWith(
+      store,
+      expect.objectContaining({ id: "FN-001", column: "todo", status: undefined }),
+      expect.any(Object),
+    );
+  });
 
   it("approves plan and moves task from triage to todo", async () => {
     const awaitingTask = { ...FAKE_TASK_DETAIL, column: "todo" as const, status: "awaiting-approval" as const };

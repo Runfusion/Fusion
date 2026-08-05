@@ -204,6 +204,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     } as unknown as Task),
     updateTask: vi.fn().mockResolvedValue({} as Task),
     logEntry: vi.fn().mockResolvedValue(undefined),
+    transitionQueuedEpisode: vi.fn().mockResolvedValue({ appended: true }),
     moveTask: vi.fn().mockResolvedValue(undefined),
     handoffToReview: vi.fn().mockResolvedValue(undefined),
     enqueueMergeQueue: vi.fn().mockResolvedValue(undefined),
@@ -9477,6 +9478,22 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
       if (options?.column === "in-review") return tasks.filter((task) => task.column === "in-review");
       return tasks;
     });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      const task = tasks.find((candidate) => candidate.id === id)!;
+      Object.assign(task, patch);
+      return task;
+    });
+    (store.transitionQueuedEpisode as ReturnType<typeof vi.fn>).mockImplementation(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string }) => {
+      const task = tasks.find((candidate) => candidate.id === id)!;
+      const appended = !(task.status === "queued" && task.blockedBy === transition.blockedBy && task.overlapBlockedBy === transition.overlapBlockedBy && task.queuedLogEpisodeSignature === transition.signature);
+      await store.updateTask(id, { blockedBy: transition.blockedBy, status: "queued" });
+      task.blockedBy = transition.blockedBy;
+      task.overlapBlockedBy = transition.overlapBlockedBy;
+      task.status = "queued";
+      task.queuedLogEpisodeSignature = transition.signature;
+      if (appended) await store.logEntry(id, transition.action);
+      return { appended, task };
+    });
     return store;
   }
 
@@ -9555,7 +9572,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     manager.stop();
   });
 
-  it("FN-6276: clearStaleBlockedBy resets preserved queued memo after blocker resolves", async () => {
+  it("FN-6276: recovery does not repeat a restored queued overlap episode", async () => {
     const overlapBlocker = makeTask("FN-ACTIVE", { column: "in-progress" });
     const target = makeTask("FN-TARGET", {
       column: "todo",
@@ -9579,11 +9596,11 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     overlapBlocker.column = "in-progress";
     await manager.clearStaleBlockedBy();
 
-    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "FN-TARGET" && call[1] === message)).toHaveLength(2);
+    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "FN-TARGET" && call[1] === message)).toHaveLength(1);
     manager.stop();
   });
 
-  it("FN-6276: stop clears preserved queued memo so next pass logs again", async () => {
+  it("FN-8785: restart preserves an unchanged overlap episode without another log", async () => {
     const overlapBlocker = makeTask("FN-ACTIVE", { column: "in-progress" });
     const target = makeTask("FN-TARGET", {
       column: "todo",
@@ -9600,7 +9617,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     manager.stop();
     await manager.clearStaleBlockedBy();
 
-    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "FN-TARGET" && call[1] === message)).toHaveLength(2);
+    expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "FN-TARGET" && call[1] === message)).toHaveLength(1);
     manager.stop();
   });
 

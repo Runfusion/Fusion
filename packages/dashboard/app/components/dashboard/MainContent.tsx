@@ -8,6 +8,7 @@ import { Board } from "../Board";
 import { TaskCard } from "../TaskCard";
 import { ListView } from "../ListView";
 import { TaskDetailContent } from "../TaskDetailModal";
+import { mergeTaskSnapshot } from "../../hooks/useTasks";
 import { ProjectOverview } from "../ProjectOverview";
 import { MissionManager } from "../MissionManager";
 import { MailboxView } from "../MailboxView";
@@ -810,8 +811,11 @@ export function MainContent({
   Both Board render sites use App's setting-aware board-open handler. That keeps this switch presentational while ensuring only Board card clicks can route into the right dock; deep-tab, list, plugin, and modal task-open paths continue to call their existing handlers.
   */
   if (taskView === "task-detail") {
+    const boardTask = mainPanelDetailTask
+      ? tasks.find((candidate) => candidate.id === mainPanelDetailTask.id)
+      : undefined;
     const liveDetailTask = mainPanelDetailTask
-      ? (tasks.find((candidate) => candidate.id === mainPanelDetailTask.id) ?? mainPanelDetailTask)
+      ? (boardTask ? mergeTaskSnapshot(mainPanelDetailTask, boardTask) : mainPanelDetailTask)
       : null;
     if (!liveDetailTask) {
       return (
@@ -888,6 +892,7 @@ export function MainContent({
               task={liveDetailTask}
               projectId={currentProject?.id}
               tasks={tasks}
+              globalPaused={globalPaused}
               embedded
               initialTab={mainPanelDetailInitialTab}
               /*
@@ -913,7 +918,7 @@ export function MainContent({
               onTaskUpdated={(updatedTask) => {
                 setMainPanelDetailTask((previous) => {
                   if (!previous || previous.id !== updatedTask.id) return previous;
-                  return { ...previous, ...updatedTask };
+                  return mergeTaskSnapshot(previous, updatedTask);
                 });
               }}
               addToast={addToast}

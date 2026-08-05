@@ -4,6 +4,7 @@ import type { Task, TaskDetail } from "@fusion/core";
 import type { SectionId } from "../components/SettingsModal";
 import type { ToastType } from "./useToast";
 import { removeScopedItem } from "../utils/projectStorage";
+import { mergeTaskSnapshot } from "./useTasks";
 
 /*
 FNXC:TaskDetailActivity 2026-06-30-22:15:
@@ -383,7 +384,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
       if (updated.id !== undefined && updated.id !== prev.id) {
         return prev;
       }
-      return { ...prev, ...updated };
+      return mergeTaskSnapshot(prev, updated as Task);
     });
   }, []);
   const closeDetailTask = useCallback(() => {

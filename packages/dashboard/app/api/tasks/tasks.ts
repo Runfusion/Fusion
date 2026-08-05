@@ -65,6 +65,21 @@ export function fetchArchivedTasks(
   return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/archived${suffix}`, projectId));
 }
 
+/** A Definition refresh payload deliberately excludes mutable card state. */
+export interface TaskPromptResponse {
+  id: string;
+  prompt?: string;
+}
+
+/*
+FNXC:TaskDetailPlan 2026-08-05-04:05:
+Definition polling reads only PROMPT.md. It must not request a TaskDetail because board/SSE/mutation
+snapshots exclusively own lifecycle, workflow, and action state while a detail host is mounted.
+*/
+export function fetchTaskPrompt(id: string, projectId?: string): Promise<TaskPromptResponse> {
+  return api<TaskPromptResponse>(withProjectId(`/tasks/${id}/prompt`, projectId));
+}
+
 export async function fetchTaskDetail(id: string, projectId?: string): Promise<TaskDetail> {
   const maxAttempts = 2; // 1 initial + 1 retry
   const url = buildApiUrl(withProjectId(`/tasks/${id}`, projectId));

@@ -14,7 +14,7 @@ function duplicateStub(canonicalId: string): string {
 
 async function createPromptTask(
   fx: ReliabilityFixture,
-  input: { id: string; column: "triage" | "todo" | "in-review"; title?: string; prompt: string },
+  input: { id: string; column: "triage" | "todo" | "in-review"; title?: string; prompt: string; sourceType?: "api" | "dashboard_ui" },
 ) {
   /*
   FNXC:ExplicitDuplicateMarkerSweep 2026-07-16-11:25:
@@ -25,6 +25,7 @@ async function createPromptTask(
   const task = await fx.store.createTask({
     title: input.title ?? input.id,
     description: `${input.id} description`,
+    source: input.sourceType ? { sourceType: input.sourceType } : undefined,
   });
   if (input.column !== "triage") {
     await fx.store.moveTask(task.id, input.column);
@@ -119,6 +120,32 @@ const canRun = hasGit && hasPg;
       entry.action === "Duplicate marker cleared for re-specification"
       && String(entry.outcome ?? "").includes(canonicalId),
     )).toBe(true);
+  });
+
+  it.each([
+    ["dashboard user", "dashboard_ui", "needs-replan"],
+    ["programmatic source", "api", "needs-replan"],
+  ] as const)("handles a repeated inactive marker from a %s according to provenance", async (_label, sourceType, expectedStatus) => {
+    const fx = await makeReliabilityFixture({ settings: { taskPrefix: "FN", triageDuplicateResolution: "prompt" } });
+    fixtures.push(fx);
+
+    const canonical = await fx.store.createTask({ title: "Completed canonical", description: "canonical", column: "done" });
+    const duplicate = await createPromptTask(fx, { id: "FN-5302", column: "triage", prompt: duplicateStub(canonical.id), sourceType });
+    await fx.store.updateTask(duplicate.id, {
+      sourceMetadataPatch: {
+        nearDuplicateOf: canonical.id,
+        duplicateSource: "triage-marker",
+        nearDuplicateDismissed: true,
+        duplicateMarkerClearCount: 1,
+      },
+    });
+
+    await (fx.manager as any).resolveExplicitDuplicateMarkerTasks();
+
+    const updated = await fx.store.getTask(duplicate.id);
+    expect(updated.status).toBe(expectedStatus);
+    expect(updated.error ?? null).toBeNull();
+    expect(updated.sourceMetadata).toEqual(expect.objectContaining({ duplicateMarkerClearCount: 2 }));
   });
 
   it.each([

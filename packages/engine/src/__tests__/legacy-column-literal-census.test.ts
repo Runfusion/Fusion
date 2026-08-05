@@ -196,7 +196,18 @@ function productionSources(): string[] {
     .filter((f) => !f.includes("__tests__") && !/\.(test|spec)\.tsx?$/.test(f));
 }
 
+/*
+FNXC:LegacyColumnCensus 2026-08-05-00:02 (gate cost):
+MEMOISED, for the same reason its sibling no-legacy-move-targets.test.ts memoises countByFile().
+census() re-read and re-scanned the whole ~1200-file corpus, and two cases each call it in full
+("never grows" and "reports when the count has fallen") — so the heaviest scan in this suite ran
+twice for one tree, ~900ms each, buying nothing because the tree cannot change mid-run. A guard that
+is gratuitously slow is a guard someone eventually moves back out of the gate.
+*/
+let censusCache: { total: number; byFile: Map<string, number> } | undefined;
+
 function census(): { total: number; byFile: Map<string, number> } {
+  if (censusCache) return censusCache;
   const byFile = new Map<string, number>();
   let total = 0;
   for (const file of productionSources()) {
@@ -221,7 +232,8 @@ function census(): { total: number; byFile: Map<string, number> } {
       total += n;
     }
   }
-  return { total, byFile };
+  censusCache = { total, byFile };
+  return censusCache;
 }
 
 describe("legacy column-literal census — the unconverted lifecycle surface", () => {

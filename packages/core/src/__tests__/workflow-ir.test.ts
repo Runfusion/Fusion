@@ -222,6 +222,89 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
 // `optionalSteps` key on an old v2 row is now TOLERATED — no longer validated or
 // required — so old rows still parse as v2 (optional steps are graph-native
 // `optional-group` nodes now).
+describe("parseWorkflowIr — review kind markers", () => {
+  const supportedReviewKinds = ["prompt", "gate", "script", "optional-group"] as const;
+  const configFor = (kind: typeof supportedReviewKinds[number], reviewKind?: unknown) => ({
+    ...(kind === "optional-group" ? { template: { nodes: [{ id: "inner", kind: "prompt" }], edges: [] } } : {}),
+    ...(reviewKind === undefined ? {} : { reviewKind }),
+  });
+
+  it.each(supportedReviewKinds)("accepts absence and round-trips both closed markers for top-level %s nodes", (kind) => {
+    for (const reviewKind of [undefined, "plan", "code"] as const) {
+      const ir = v2(
+        [{ id: "work", name: "Work", traits: [] }],
+        [{ id: "start", kind: "start" }, { id: "review", kind, config: configFor(kind, reviewKind) }, { id: "end", kind: "end" }],
+        [{ from: "start", to: "review" }, { from: "review", to: "end" }],
+      );
+      const parsed = parseWorkflowIr(ir) as WorkflowIrV2;
+      expect(parsed.nodes.find((node) => node.id === "review")?.config?.reviewKind).toBe(reviewKind);
+      expect(parseWorkflowIr(serializeWorkflowIr(parsed))).toEqual(parsed);
+    }
+  });
+
+  it("rejects every malformed reviewKind value for every supported top-level kind", () => {
+    for (const kind of supportedReviewKinds) {
+      for (const reviewKind of ["", "review", true, null]) {
+        const ir = v2(
+          [{ id: "work", name: "Work", traits: [] }],
+          [{ id: "start", kind: "start" }, { id: "declared-review", kind, config: configFor(kind, reviewKind) }, { id: "end", kind: "end" }],
+          [{ from: "start", to: "declared-review" }, { from: "declared-review", to: "end" }],
+        );
+        expect(() => parseWorkflowIr(ir)).toThrow(/declared-review.*invalid reviewKind/);
+      }
+    }
+  });
+
+  it("rejects a valid marker on unsupported top-level nodes", () => {
+    const ir = v2(
+      [{ id: "work", name: "Work", traits: [] }],
+      [{ id: "start", kind: "start" }, { id: "not-a-review", kind: "hold", config: { release: "manual", reviewKind: "plan" } }, { id: "end", kind: "end" }],
+      [{ from: "start", to: "not-a-review" }, { from: "not-a-review", to: "end" }],
+    );
+    expect(() => parseWorkflowIr(ir)).toThrow(/not-a-review.*unsupported node kind/);
+  });
+
+  /*
+   * FNXC:WorkflowReviewKind 2026-08-05-03:08:
+   * Foreach and loop template nodes have materialized execution identities, not a
+   * top-level current-result/address contract. Validate malformed values before
+   * placement so imported config cannot turn either error into silent omission.
+   */
+  it.each([
+    ["foreach", "plan", /foreach-child.*unsupported nested template placement/],
+    ["foreach", "invalid", /foreach-child.*invalid reviewKind/],
+    ["loop", "code", /loop-child.*unsupported nested template placement/],
+    ["loop", "", /loop-child.*invalid reviewKind/],
+    ["loop", true, /loop-child.*invalid reviewKind/],
+  ] as const)("rejects %s template reviewKind %j with the owning node diagnostic", (container, reviewKind, diagnostic) => {
+    const template = container === "foreach"
+      ? {
+          nodes: [
+            { id: "foreach-child", kind: "prompt", config: { seam: "step-execute", reviewKind } },
+            { id: "foreach-exit", kind: "step-review", config: { type: "code" } },
+          ],
+          edges: [{ from: "foreach-child", to: "foreach-exit", condition: "success" }],
+        }
+      : { nodes: [{ id: "loop-child", kind: "prompt", config: { reviewKind } }], edges: [] };
+    const nodes: WorkflowIrNode[] = container === "foreach"
+      ? [
+          { id: "start", kind: "start" },
+          { id: "parse", kind: "parse-steps", config: { artifact: "PROMPT.md", parser: "step-headings" } },
+          { id: "each", kind: "foreach", config: { source: "task-steps", template } },
+          { id: "end", kind: "end" },
+        ]
+      : [
+          { id: "start", kind: "start" },
+          { id: "repeat", kind: "loop", config: { maxIterations: 2, exitWhen: { type: "output-contains", value: "DONE" }, template } },
+          { id: "end", kind: "end" },
+        ];
+    const edges: WorkflowIrEdge[] = container === "foreach"
+      ? [{ from: "start", to: "parse" }, { from: "parse", to: "each" }, { from: "each", to: "end" }]
+      : [{ from: "start", to: "repeat" }, { from: "repeat", to: "end" }];
+    expect(() => parseWorkflowIr(v2([{ id: "work", name: "Work", traits: [] }], nodes, edges))).toThrow(diagnostic);
+  });
+});
+
 describe("parseWorkflowIr — legacy optionalSteps tolerated", () => {
   const columns = DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] }));
   const base = (): WorkflowIrV2 => v2(

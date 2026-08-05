@@ -1,5 +1,119 @@
 # @runfusion/fusion
 
+## 0.75.1-beta.0
+
+### Patch Changes
+
+- b9c5df0: summary: Prevent chat checkpoints from failing on NUL-containing tool output.
+  category: fix
+  dev: Sanitizes chat JSONB persistence boundaries and observes best-effort checkpoint failures.
+- 4167841: summary: Resume Plan Review automatically after approving a task plan.
+  category: fix
+  dev: Dashboard approval now invokes the public engine handoff that seeds graph-owned review work.
+- 0658795: summary: Restore workflow review feedback selection for same-task revisions.
+  category: fix
+  dev: Canonical workflow-step review items now prevent forged client feedback from reaching snapshots or steering.
+
+## 0.75.0
+
+### Minor Changes
+
+- 9e4a081: summary: Add safe development source watching with automatic engine restarts.
+  category: feature
+  dev: Use `pnpm dev:watch`; restarts close new admission, drain active agents, rebuild dist, and respawn the supervised child.
+- 5b2b31d: summary: Add Todo Lists as an optional per-project first-party plugin.
+  category: feature
+  dev: Moves the Todo backend route and dashboard view from hardcoded host ownership into fusion-plugin-todos.
+
+### Patch Changes
+
+- 5d8d494: summary: Restore clean CLI packaging for the bundled Todo Lists plugin.
+  category: fix
+  dev: Re-exports AgentStore through the bundled plugin core runtime shim.
+- c8ff721: summary: Release manually approved or rejected plans so their tasks can continue.
+  category: fix
+  dev: Uses TaskStore null-clear semantics and persists approved plan fingerprints through field merges.
+- 4ff41a7: summary: Self-heal executor credential resolution so custom providers and renames match chat.
+  category: fix
+  dev: Stop synthesizing credentialInstanceId "default" into executor sessions; soft-fail unresolved instances to the legacy unscoped auth path (customProviders.apiKey); collapse-match renamed custom-provider auth slugs when unique.
+- 56819e2: summary: Restore plugin SDK declarations and Todo Lists packaging.
+  category: fix
+  dev: Full releases typecheck the SDK entry; the Todo bundle now receives AgentStore from the runtime shim.
+- fb0863f: summary: Let supported installations enable Voice Input after its model is ready.
+  category: fix
+  dev: Publishes sherpa-onnx-node as an optional runtime dependency and reports stable readiness codes.
+- d39acb5: summary: Make List task details adapt to available content width.
+  category: feature
+  dev: List uses measured usable width for split detail routing; popup preference still overrides it.
+- af66b38: summary: Add undo and redo controls to editable file editors.
+  category: feature
+  dev: Uses CodeMirror native history with controlled external-content baselines.
+- b269bff: summary: Add a mobile Planning Mode shortcut to review the evolving plan after five answers.
+  category: feature
+  dev: Review plan switches the existing mobile workspace tab without submitting the current response.
+- f1ed5ac: summary: Retain complete Planning Mode interview decisions in every created task.
+  category: fix
+  dev: Centralizes Planning Mode task handoff formatting across single, CLI, and multi-task creation.
+- 71ba437: summary: Schedule Planning Mode-created tasks promptly in selected workflow lanes.
+  category: fix
+  dev: Publish task creation lifecycle lanes after durable workflow selection; replayed proposal claims do not re-wake triage.
+- fef9692: summary: Align the floating Task Detail popup close control with its header edge.
+  category: fix
+  dev: Moves only Task Detail desktop resize targets outboard while retaining shared scrollbar clearance.
+- 9dc7b94: summary: Resume approved plans immediately after Plan Review exhausts its revision budget.
+  category: fix
+  dev: Records an audited human Plan Review bypass and wakes scheduler and deferred workflow continuations.
+- bb17baa: summary: Keep dependency-reseeded plans recoverable instead of silently stranding them.
+  category: fix
+  dev: Dependency changes now retain the durable `needs-replan` lifecycle signal.
+- 9939897: summary: Prevent stale plan approvals and strengthen planning and review completeness.
+  category: fix
+  dev: Adds bounded lifecycle locks, planning-episode evidence, approval serialization, and convergent planning/review ledgers.
+- 7824150: summary: Protect default-branch mission group merges with the normal manual release gate.
+  category: fix
+  dev: Mission default strategies now reuse a dedicated mission/<mission.id> integration branch.
+- c10a880: summary: Keep voice dictation requests scoped to the selected project.
+  category: fix
+  dev: Voice session create, transcription, and cleanup now share the status request project identity.
+- dd2cb0c: summary: Prevent planning finalization from crashing after PROMPT.md writes.
+  category: fix
+  dev: Preserves the TaskStore receiver when invoking the planning lifecycle lock.
+- 3cc1d93: summary: Expand Task Detail Activity thinking blocks by default.
+  category: fix
+  dev: Preserves per-block collapse state while streamed reasoning updates arrive.
+- 1dc636b: summary: Prevent repeated dependency and file-scope queue activity entries for unchanged blockers.
+  category: fix
+  dev: Queue episode signatures are durable and project/task transaction-serialized across scheduler, executor, and recovery producers.
+- 1d1a7fe: summary: Ignore completed and archived tasks during duplicate detection while protecting active work.
+  category: fix
+  dev: Applies active-only duplicate matching consistently across task intake, planning, and recovery.
+- 7854323: summary: Allow Planning Mode to create another task from the same plan without requiring an edit.
+  category: fix
+  dev: Advances the durable planning creation epoch while preserving per-action idempotency.
+- f344715: summary: Make planning and review prompts converge faster and catch cross-surface regressions.
+  category: fix
+  dev: Planning now gathers repository evidence before drafting, Plan Review batches independently discoverable blockers, and code review traces changed invariants through consumers and tests.
+- 40453ac: summary: Restore locale parity for project escalation models and voice input states
+  category: fix
+  dev: Add the FN-8752 and FN-8753 settings keys to every supported secondary locale catalog.
+
+## 0.75.0-beta.2
+
+### Minor Changes
+
+- 9e4a081: summary: Add safe development source watching with automatic engine restarts.
+  category: feature
+  dev: Use `pnpm dev:watch`; restarts close new admission, drain active agents, rebuild dist, and respawn the supervised child.
+
+### Patch Changes
+
+- 1dc636b: summary: Prevent repeated dependency and file-scope queue activity entries for unchanged blockers.
+  category: fix
+  dev: Queue episode signatures are durable and project/task transaction-serialized across scheduler, executor, and recovery producers.
+- 1d1a7fe: summary: Ignore completed and archived tasks during duplicate detection while protecting active work.
+  category: fix
+  dev: Applies active-only duplicate matching consistently across task intake, planning, and recovery.
+
 ## 0.75.0-beta.1
 
 ### Patch Changes

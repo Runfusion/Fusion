@@ -57,6 +57,7 @@ function createStore(tasks: Task[], scopes: Record<string, string[]>, settings: 
     if (task) Object.assign(task, patch);
     return task as Task;
   });
+  const logEntry = vi.fn(async () => undefined);
   const moveTask = vi.fn(async (id: string, column: Task["column"]) => {
     const task = tasks.find((candidate) => candidate.id === id);
     if (task) task.column = column;
@@ -88,7 +89,22 @@ function createStore(tasks: Task[], scopes: Record<string, string[]>, settings: 
     moveTask,
     moveTaskIf,
     getTask: vi.fn(async (id: string) => tasks.find((task) => task.id === id) ?? null),
-    logEntry: vi.fn(async () => undefined),
+    logEntry,
+    transitionQueuedEpisode: vi.fn(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string }) => {
+      const task = tasks.find((candidate) => candidate.id === id)!;
+      const appended = !(
+        task.status === "queued"
+        && (task.blockedBy ?? null) === transition.blockedBy
+        && (task.overlapBlockedBy ?? null) === transition.overlapBlockedBy
+        && task.queuedLogEpisodeSignature === transition.signature
+      );
+      await updateTask(id, transition.signature.startsWith("dependency:")
+        ? { status: "queued", blockedBy: transition.blockedBy ?? undefined }
+        : { status: "queued", blockedBy: transition.blockedBy, overlapBlockedBy: transition.overlapBlockedBy });
+      task.queuedLogEpisodeSignature = transition.signature;
+      if (appended) await logEntry(id, transition.action);
+      return { appended, task };
+    }),
     getRootDir: vi.fn(() => "/tmp/project"),
     getTasksDir: vi.fn(() => "/tmp/project/.fusion/tasks"),
     on: vi.fn(),
@@ -565,6 +581,31 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
       "queued — blocked by active file-scope lease FN-NEW (column=in-progress)",
     );
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-900", "in-progress", expect.anything());
+  });
+
+  it("persists one dependency queue log per full blocker signature across repeated scheduler passes", async () => {
+    const tasks = [
+      makeTask({ id: "FN-A", column: "todo" }),
+      makeTask({ id: "FN-B", column: "todo" }),
+      makeTask({ id: "FN-C", column: "todo" }),
+      makeTask({ id: "FN-QUEUED", column: "todo", dependencies: ["FN-A", "FN-B"] }),
+    ];
+    const store = createStore(tasks, {});
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+
+    await scheduler.schedule();
+    await scheduler.schedule();
+    tasks.find((task) => task.id === "FN-QUEUED")!.dependencies = ["FN-A", "FN-C"];
+    await scheduler.schedule();
+
+    const queueLogs = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call) => call[0] === "FN-QUEUED" && String(call[1]).startsWith("queued — unmet dependencies"));
+    expect(queueLogs).toHaveLength(2);
+    expect(queueLogs.map((call) => call[1])).toEqual([
+      "queued — unmet dependencies: FN-A, FN-B",
+      "queued — unmet dependencies: FN-A, FN-C",
+    ]);
   });
 
   it("clears an absent overlap blocker only after confirming no current overlap remains", async () => {

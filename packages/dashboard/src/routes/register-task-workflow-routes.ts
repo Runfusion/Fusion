@@ -9,6 +9,7 @@ const severityAuditLog = createLogger("dashboard-register-task-workflow-routes")
  * than turning one board load into thousands of file reads. Truncation is logged, never silent.
  */
 const AWAITING_PLANNING_ENRICH_LIMIT = 200;
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,6 +22,8 @@ import type {
   TaskReviewData,
   TaskReviewItem,
   TaskReviewSummary,
+  TaskReviewVerdict,
+  WorkflowStepResult,
   GithubIssueAction,
   DuplicateCandidate,
   DuplicateMatch,
@@ -52,9 +55,12 @@ import {
   reconcileDeterministicDuplicate,
   extractIntentSignature,
   findNearDuplicates,
+  isNearDuplicateCanonicalInactive,
+  resolveNearDuplicateCanonicalFlags,
   isEphemeralAgent,
   parseExplicitDuplicateMarker,
   resolveWorkflowIrForTask,
+  resolveWorkflowIrForTaskWithProvenance,
   resolveReviewColumns,
   workflowHasColumn,
   workflowPlansInColumn,
@@ -96,6 +102,8 @@ import {
   // FN-8004 follow-up: shared with SelfHealingManager.recoverStaleMergingStatus so the manual
   // Retry gate and the automatic sweep agree on when a merge-active stamp is orphaned.
   isStaleMergeActiveStatus,
+  resumeApprovedPlanReviewHandoff,
+  type ApprovedPlanReviewHandoffResult,
   type AiUndoTaskResult,
   type PrepareRevertPrBranchResult,
   type PrepareWorkspaceRevertPrBranchesResult,
@@ -756,6 +764,7 @@ function buildDuplicateQuery(title: string | undefined, description: string): st
 async function computeDuplicateMatches(
   scopedStore: TaskStore,
   input: { title?: string; description: string; limit?: number; threshold?: number },
+  classifyBlocker: (canonical: Pick<Task, "id" | "column" | "deletedAt">) => Promise<boolean>,
 ): Promise<DuplicateMatch[]> {
   const query = buildDuplicateQuery(input.title, input.description);
   if (query.length === 0) {
@@ -767,7 +776,12 @@ async function computeDuplicateMatches(
     includeArchived: false,
     limit: 20,
   });
-  const candidates: DuplicateCandidate[] = results.map((task) => ({
+  const eligibility = await Promise.all(results.map(async (task) => ({
+    task,
+    blocker: await classifyBlocker(task),
+  })));
+  const eligibleResults = eligibility.filter(({ blocker }) => blocker).map(({ task }) => task);
+  const candidates: DuplicateCandidate[] = eligibleResults.map((task) => ({
     id: task.id,
     title: task.title ?? "",
     description: task.description ?? "",
@@ -787,6 +801,14 @@ async function computeDuplicateMatches(
   );
 }
 
+async function isDuplicateBlocker(
+  store: TaskStore,
+  canonical: Pick<Task, "id" | "column" | "deletedAt">,
+): Promise<boolean> {
+  const flags = await resolveNearDuplicateCanonicalFlags(store, canonical);
+  return !isNearDuplicateCanonicalInactive(canonical, flags);
+}
+
 function buildReviewerAgentItemId(input: { index: number; reviewType: "plan" | "code"; step?: number; verdict?: string; createdAt?: string }): string {
   const stepPart = input.step ? `step-${input.step}` : "step-na";
   const verdictPart = (input.verdict ?? "unknown").toLowerCase();
@@ -794,7 +816,150 @@ function buildReviewerAgentItemId(input: { index: number; reviewType: "plan" | "
   return `reviewer-${input.reviewType}-${stepPart}-${verdictPart}-${timePart}-${input.index + 1}`;
 }
 
+const CURRENT_WORKFLOW_REVIEW_STEP_IDS = new Set(["code-review", "plan-review"]);
+const CURRENT_WORKFLOW_REVIEW_STATUSES = new Set<WorkflowStepResult["status"]>(["passed", "failed"]);
+const LEGACY_WORKFLOW_REVIEW_STATUSES = new Set<WorkflowStepResult["status"]>(["passed", "failed", "advisory_failure"]);
+function parseTaskReviewVerdict(value: string | undefined): TaskReviewVerdict | undefined {
+  switch (value) {
+    case "APPROVE":
+    case "APPROVE_WITH_NOTES":
+    case "REVISE":
+    case "RETHINK":
+    case "UNAVAILABLE":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * FNXC:TaskReview 2026-08-05-01:57:
+ * The current graph-owned Code Review and Plan Review ids are the only structured review sources:
+ * current, terminal, verdict-bearing results win over compatibility-only reviewer prose/activity
+ * parsing. Their persisted identity produces canonical ids so GET, refresh, and address reconstruct
+ * the same server-owned feedback; address snapshots and steering must never trust client prose.
+ * Explicit `reviewKind` results may also qualify when terminal and nonblank; custom names,
+ * verdicts, and gate modes remain non-semantic. Historical attempts, pending/skipped,
+ * superseded, and bypassed results are non-selectable.
+ */
+function hasCurrentWorkflowReviewIdentity(result: WorkflowStepResult): boolean {
+  return result.supersededAt === undefined
+    && result.supersededReason === undefined
+    && result.bypassedBy === undefined
+    && result.bypassedAt === undefined
+    && result.bypassReason === undefined
+    && result.bypassedFromStatus === undefined
+    && result.bypassedFromVerdict === undefined;
+}
+
+function isCurrentMarkedWorkflowReviewResult(result: WorkflowStepResult): result is WorkflowStepResult & { reviewKind: "plan" | "code" } {
+  return CURRENT_WORKFLOW_REVIEW_STATUSES.has(result.status)
+    && hasCurrentWorkflowReviewIdentity(result)
+    && Boolean(result.output?.trim() || result.notes?.trim())
+    && (result.reviewKind === "plan" || result.reviewKind === "code")
+    && (result.source === "node" || result.source === "optional-group");
+}
+
+async function getDeclaredTopLevelReviewResultSources(task: Task, store: TaskStore): Promise<Map<string, WorkflowStepResult["source"]>> {
+  const resolved = await resolveWorkflowIrForTaskWithProvenance(store, task.id);
+  if (resolved.source !== "selection") return new Map();
+
+  /*
+  FNXC:WorkflowReviewKind 2026-08-05-06:14:
+  A persisted marker is authoritative only for a node and result source that the task's selected
+  workflow declares at the top level. Resolve exact node identities instead of reserving punctuation: custom node IDs
+  may legitimately contain `::` or `#<number>:`, while template instances have no matching top-level
+  declaration and remain outside this task's currentness/addressing contract.
+  */
+  return new Map(resolved.ir.nodes.flatMap((node): Array<[string, WorkflowStepResult["source"]]> => {
+    if (node.kind === "optional-group") return [[node.id, "optional-group"]];
+    if (node.kind === "prompt" || node.kind === "gate" || node.kind === "script") return [[node.id, "node"]];
+    return [];
+  }));
+}
+
+function isCurrentLegacyWorkflowReviewResult(result: WorkflowStepResult): boolean {
+  // Historical built-ins predate reviewKind. Preserve FN-8793's deliberately narrow
+  // id-and-verdict compatibility contract without applying marked-custom requirements.
+  return CURRENT_WORKFLOW_REVIEW_STEP_IDS.has(result.workflowStepId)
+    && result.reviewKind === undefined
+    && LEGACY_WORKFLOW_REVIEW_STATUSES.has(result.status)
+    && result.verdict !== undefined
+    && hasCurrentWorkflowReviewIdentity(result);
+}
+
+function getWorkflowReviewKind(
+  result: WorkflowStepResult,
+  declaredTopLevelReviewResultSources: ReadonlyMap<string, WorkflowStepResult["source"]>,
+): "plan" | "code" | undefined {
+  if (isCurrentMarkedWorkflowReviewResult(result) && declaredTopLevelReviewResultSources.get(result.workflowStepId) === result.source) return result.reviewKind;
+  if (isCurrentLegacyWorkflowReviewResult(result)) {
+    return result.workflowStepId === "plan-review" ? "plan" : "code";
+  }
+  return undefined;
+}
+
+function buildWorkflowReviewItemId(task: Task, result: WorkflowStepResult): string {
+  const identity = JSON.stringify({
+    taskId: task.id,
+    workflowStepId: result.workflowStepId,
+    workflowStepName: result.workflowStepName,
+    phase: result.phase,
+    status: result.status,
+    verdict: result.verdict,
+    reviewKind: result.reviewKind,
+    completedAt: result.completedAt,
+    startedAt: result.startedAt,
+    output: result.output,
+    notes: result.notes,
+  });
+  return `workflow-review-${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
+}
+
+async function buildWorkflowReviewItems(task: Task, store: TaskStore): Promise<TaskReviewItem[]> {
+  const declaredTopLevelReviewResultSources = await getDeclaredTopLevelReviewResultSources(task, store);
+  return (task.workflowStepResults ?? [])
+    .flatMap((result): TaskReviewItem[] => {
+      const reviewType = getWorkflowReviewKind(result, declaredTopLevelReviewResultSources);
+      if (!reviewType) return [];
+      const body = result.output?.trim() || result.notes?.trim() || "No written feedback was provided by this review step.";
+      const timestamp = result.completedAt ?? result.startedAt ?? task.updatedAt ?? task.createdAt;
+      return [{
+        itemId: buildWorkflowReviewItemId(task, result),
+        sourceMode: "reviewer-agent",
+        title: `${result.workflowStepName || result.workflowStepId} ${result.verdict ?? result.status}`,
+        body,
+        author: "reviewer-agent",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        reviewState: result.verdict,
+        verdict: result.verdict,
+        reviewType,
+        progressStatus: null,
+      }];
+    })
+    .sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? "") || a.itemId.localeCompare(b.itemId));
+}
+
+function buildDirectReviewSummary(items: TaskReviewItem[]): TaskReviewSummary | null {
+  const latest = items[0];
+  return latest
+    ? { summary: latest.title, verdict: latest.verdict }
+    : null;
+}
+
 async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<TaskReviewData> {
+  const structuredItems = await buildWorkflowReviewItems(task, store);
+  if (structuredItems.length > 0) {
+    return {
+      mode: "reviewer-agent",
+      refreshable: true,
+      fetchedAt: new Date().toISOString(),
+      summary: buildDirectReviewSummary(structuredItems),
+      items: structuredItems,
+    };
+  }
+
   const agentLogs = await store.getAgentLogs(task.id);
   const reviewerText = agentLogs.filter((entry) => entry.agent === "reviewer" && entry.type === "text").map((entry) => entry.text).join("\n");
   const fallbackLogs = (task.log ?? []).filter((entry) => REVIEW_STEP_RE.test(entry.action));
@@ -817,6 +982,8 @@ async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<
       createdAt,
       updatedAt: createdAt,
       reviewState: verdict ?? null,
+      verdict: parseTaskReviewVerdict(verdict),
+      reviewType,
       progressStatus: null,
     });
   }
@@ -835,25 +1002,20 @@ async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<
         createdAt: entry.timestamp,
         updatedAt: entry.timestamp,
         reviewState: verdict ?? null,
+        verdict: parseTaskReviewVerdict(verdict),
+        reviewType,
         progressStatus: null,
       });
     });
   }
 
-  const sorted = [...items].sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? ""));
-  const latest = sorted[0];
-  const summary: TaskReviewSummary | null = latest
-    ? {
-        summary: latest.title,
-        verdict: (latest.reviewState as "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE" | null | undefined) ?? undefined,
-      }
-    : null;
+  const sorted = [...items].sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? "") || a.itemId.localeCompare(b.itemId));
 
   return {
     mode: "reviewer-agent",
     refreshable: true,
     fetchedAt: new Date().toISOString(),
-    summary,
+    summary: buildDirectReviewSummary(sorted),
     items: sorted,
   };
 }
@@ -1408,7 +1570,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         description: description.trim(),
         limit,
         threshold,
-      });
+      }, (canonical) => isDuplicateBlocker(scopedStore, canonical));
 
       res.json({ matches });
       return;
@@ -1576,6 +1738,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         source && typeof source === "object" && "sourceType" in source && typeof (source as { sourceType?: unknown }).sourceType === "string"
           ? source
           : { sourceType: "api" as const };
+      const duplicateBlockerVerdicts = new Map<string, Promise<boolean>>();
+      const classifyDuplicateBlocker = (canonical: Pick<Task, "id" | "column" | "deletedAt">): Promise<boolean> => {
+        const key = `${canonical.id}:${canonical.column}:${canonical.deletedAt ?? ""}`;
+        const existing = duplicateBlockerVerdicts.get(key);
+        if (existing) return existing;
+        const verdict = isDuplicateBlocker(scopedStore, canonical);
+        duplicateBlockerVerdicts.set(key, verdict);
+        return verdict;
+      };
 
       const requestedBranchMode = getBranchSelectionMode(branchSelection);
       const { branch: normalizedBranch, baseBranch: normalizedBaseBranch, sharedFeatureBranch } =
@@ -1668,7 +1839,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       let matchesAfterAckFilter: DuplicateMatch[] = [];
       try {
-        if (deterministicGuard.action === "duplicate" && deterministicGuard.existing) {
+        if (
+          deterministicGuard.action === "duplicate"
+          && deterministicGuard.existing
+          && await classifyDuplicateBlocker(deterministicGuard.existing)
+        ) {
           throw conflict("duplicate_candidates", {
             matches: [{
               id: deterministicGuard.existing.id,
@@ -1686,7 +1861,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           : await computeDuplicateMatches(scopedStore, {
               title: normalizedTitle,
               description: normalizedDescription,
-            });
+            }, classifyDuplicateBlocker);
         matchesAfterAckFilter = duplicateMatches.filter((match) => !acknowledgedDuplicateIds.includes(match.id));
         if (matchesAfterAckFilter.length > 0) {
           throw conflict("duplicate_candidates", { matches: matchesAfterAckFilter });
@@ -1715,11 +1890,17 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             const fullRows = await scopedStore.listTasks({ slim: false, includeArchived: false });
             const byId = new Map(fullRows.map((row) => [row.id, row]));
             const candidateMap = new Map<string, NearDuplicateCandidate>();
-            for (const row of candidateRows) {
+            const classifiedRows = await Promise.all(candidateRows.map(async (row) => {
+              const full = byId.get(row.id);
+              return { row, full, blocker: full ? await classifyDuplicateBlocker(full) : true };
+            }));
+            for (const { row, full, blocker } of classifiedRows) {
               if (acknowledgedDuplicateIds.includes(row.id)) {
                 continue;
               }
-              const full = byId.get(row.id);
+              if (!blocker) {
+                continue;
+              }
               candidateMap.set(row.id, {
                 id: row.id,
                 title: row.title ?? "",
@@ -1772,7 +1953,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           (explicitDuplicateMarker ? acknowledgedDuplicateIds.includes(explicitDuplicateMarker.canonicalId) : false);
         if (explicitDuplicateMarker && !explicitMarkerBypassed) {
           const canonical = await scopedStore.getTask(explicitDuplicateMarker.canonicalId).catch(() => null);
-          if (canonical && !canonical.deletedAt) {
+          if (
+            canonical
+            && !canonical.deletedAt
+            && await classifyDuplicateBlocker(canonical)
+          ) {
             try {
               // The intake guard runs before createTask, so there is no new task row yet.
               // Record against the canonical target to leave a traceable audit breadcrumb.
@@ -1898,6 +2083,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         fingerprint: bypassDuplicateCheck === true ? null : contentFingerprint,
         windowMs: 60_000,
         logger: runtimeLogger,
+        onDuplicate: async (canonical) =>
+          await classifyDuplicateBlocker(canonical)
+            ? "archive-created"
+            : "keep-created",
       });
         if (deterministicReconcile.outcome === "archived") {
           res.status(200).json(deterministicReconcile.canonical);
@@ -3808,6 +3997,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+  FNXC:TaskDetailPlan 2026-08-05-04:05:
+  This literal route precedes /tasks/:id so Express cannot capture `prompt` as a task id.
+  Definition polling gets only identity plus PROMPT.md and cannot replace lifecycle or workflow state.
+  */
+  router.get("/tasks/:id/prompt", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      res.json(task.prompt === undefined ? { id: task.id } : { id: task.id, prompt: task.prompt });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if (isTaskLookupMiss(err)) throw notFound(`Task ${req.params.id} not found`);
+      rethrowAsApiError(err, "Internal server error");
+    }
+  });
+
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
@@ -4177,6 +4383,21 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
          * so a stale plan can never bypass a later manual approval gate.
          */
         const approved = await scopedStore.updateTask(task.id, approvalPatch);
+        /*
+         * FNXC:PlanApprovalDispatch 2026-08-05-01:57:
+         * Clearing awaiting-approval is only the first half of the operator decision. Resume the
+         * graph through the public engine seam while the planning lifecycle fence is still held so
+         * Plan Review creates its own runnable continuation and later capacity evidence. The route
+         * must never mark review passed or create a capacity continuation on the operator's behalf.
+         */
+        const approvedWorkflow = await resolveWorkflowIrForTask(scopedStore, approved.id);
+        const handoff: ApprovedPlanReviewHandoffResult = await resumeApprovedPlanReviewHandoff(
+          scopedStore,
+          approved,
+          approvedWorkflow,
+        );
+        // Keep the typed handoff result local: recovery owns retry after a post-approval seed failure.
+        void handoff;
         // Activity logging is secondary to the now-durable decision. Do not turn
         // a successful approval into a 500 if the bounded log append is unavailable.
         await scopedStore.logEntry(task.id, "Plan approved by user").catch((error) => {
@@ -6003,20 +6224,13 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       type SelectedReviewItem = {
         id: string;
         source: "pr-review" | "reviewer-agent";
-        threadId?: string;
-        filePath?: string;
-        lineNumber?: number;
-        author?: string;
-        summary: string;
-        body: string;
-        url?: string;
       };
 
       const selectedItems: SelectedReviewItem[] = Array.isArray(req.body?.selectedItems)
         ? req.body.selectedItems.filter((value: unknown): value is SelectedReviewItem => {
             if (!value || typeof value !== "object") return false;
             const item = value as Record<string, unknown>;
-            return typeof item.id === "string" && item.id.trim().length > 0 && typeof item.summary === "string" && typeof item.body === "string";
+            return typeof item.id === "string" && item.id.trim().length > 0 && typeof item.source === "string";
           })
         : [];
 
@@ -6055,6 +6269,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         state: item.reviewState ?? undefined,
         isResolved: item.isResolved,
         source: item.sourceMode === "reviewer-agent" ? "reviewer-agent" as const : "github-pr" as const,
+        verdict: item.verdict,
+        reviewType: item.reviewType,
       }));
       const reviewState = {
         source: canonicalReviewData.mode,
@@ -6074,7 +6290,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const now = new Date().toISOString();
       const selectedSet = new Set(selectedItems.map((item: SelectedReviewItem) => item.id));
       const canonicalIds = new Set(reviewState.items.map((item) => item.id));
-      const expectedSource = canonicalReviewData.mode === "pull-request" ? "pr-review" : "reviewer-agent";
+      const expectedSource: "pr-review" | "reviewer-agent" = canonicalReviewData.mode === "pull-request" ? "pr-review" : "reviewer-agent";
       const reviewSourceMismatch = selectedItems.find((item) => canonicalIds.has(item.id) && item.source !== expectedSource);
       if (reviewSourceMismatch) {
         throw badRequest("Selected review source does not match task review mode");
@@ -6084,8 +6300,25 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest("selectedItems must reference existing review items");
       }
 
-      const modeSummary = `${reviewState.source === "pull-request" ? "pull-request" : "reviewer-agent"} · ${selectedItems.length} selected item(s)`;
-      const steeringItems = selectedItems.map((item: SelectedReviewItem, index: number) => {
+      const canonicalById = new Map(reviewState.items.map((item) => [item.id, item] as const));
+      const canonicalSelections = selectedItems.map((selected) => {
+        const item = canonicalById.get(selected.id);
+        if (!item) throw badRequest("selectedItems must reference existing review items");
+        return {
+          id: item.id,
+          source: expectedSource,
+          summary: item.summary ?? item.body.slice(0, 120),
+          body: item.body,
+          author: item.author.login,
+          filePath: item.path,
+          lineNumber: item.line,
+          threadId: item.threadId,
+          url: item.htmlUrl,
+        };
+      });
+
+      const modeSummary = `${reviewState.source === "pull-request" ? "pull-request" : "reviewer-agent"} · ${canonicalSelections.length} selected item(s)`;
+      const steeringItems = canonicalSelections.map((item, index) => {
         const location = item.filePath ? `${item.filePath}${typeof item.lineNumber === "number" ? `:${item.lineNumber}` : ""}` : undefined;
         const snippetSource = item.body.trim() || item.summary.trim();
         const snippet = snippetSource.length > 220 ? `${snippetSource.slice(0, 220)}…` : snippetSource;
@@ -6097,7 +6330,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const priorAddressingById = new Map(reviewState.addressing.map((record) => [record.itemId, record] as const));
       const nextAddressing = [
         ...reviewState.addressing.filter((record) => !selectedSet.has(record.itemId)),
-        ...selectedItems.map((item: SelectedReviewItem) => {
+        ...canonicalSelections.map((item) => {
           const existing = priorAddressingById.get(item.id);
           return {
             itemId: item.id,

@@ -76,6 +76,7 @@ export function rowToTask(row: TaskRow): Task {
     worktree: row.worktree || undefined,
     blockedBy: row.blockedBy || undefined,
     overlapBlockedBy: row.overlapBlockedBy || undefined,
+    queuedLogEpisodeSignature: row.queuedLogEpisodeSignature || undefined,
     paused: row.paused ? true : undefined,
     pausedReason: row.pausedReason || undefined,
     wedgeNotification: fromJson<Task["wedgeNotification"]>(row.wedgeNotification) ?? undefined,

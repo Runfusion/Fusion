@@ -783,6 +783,40 @@ describe("createDelegateTaskTool", () => {
     });
   }
 
+  for (const [label, completeColumn] of [["DEFAULT", "done"], ["RENAMED", RENAMED_VOCAB.complete]] as const) {
+    it(`does not select a completed same-agent task as a defined-feature bootstrap canonical (${label} complete lane: ${completeColumn})`, async () => {
+      const completed = {
+        id: "FN-completed", title: "Bootstrap feature", description: "Bootstrap the hand-authored feature",
+        sourceAgentId: "agent-001", dependencies: [], column: completeColumn, steps: [], currentStep: 0,
+        log: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      } as Task;
+      const ir = lifecycleIr(RENAMED_VOCAB, "agent-tools-complete");
+      const store = createMockTaskStore({
+        listTasks: vi.fn().mockResolvedValue([completed]),
+        ...(label === "RENAMED"
+          ? {
+              getTaskWorkflowSelectionAsync: (async () => ({ workflowId: "agent-tools-complete", stepIds: [] })) as never,
+              getTaskWorkflowSelection: (() => ({ workflowId: "agent-tools-complete", stepIds: [] })) as never,
+              getWorkflowDefinition: (async (id: string) => (id === "agent-tools-complete" ? { ir } : undefined)) as never,
+            }
+          : {}),
+      });
+      const validate = vi.fn().mockResolvedValue(undefined);
+
+      const result = await createAgentTask(store, {
+        title: "Bootstrap feature",
+        description: "Bootstrap the hand-authored feature",
+        source: { sourceType: "api", sourceAgentId: "agent-001" },
+        preflightSameAgentDuplicate: true,
+        validateDuplicateCanonical: validate,
+      } as TaskCreateInput & { preflightSameAgentDuplicate: boolean; validateDuplicateCanonical: (task: Task) => Promise<void> });
+
+      expect(result.wasDuplicate).toBe(false);
+      expect(validate).not.toHaveBeenCalled();
+      expect(store.createTask).toHaveBeenCalledOnce();
+    });
+  }
+
   it("serializes three concurrent paraphrased creates from one parent", async () => {
     const tasks: Task[] = [];
     vi.mocked(taskStore.findRecentTasksBySourceParentTaskId).mockImplementation(async () => tasks);

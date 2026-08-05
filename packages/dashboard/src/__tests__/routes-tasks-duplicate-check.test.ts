@@ -33,7 +33,9 @@ function buildApp(seed: Task[] = []) {
   const recordActivity = vi.fn().mockResolvedValue(undefined);
 
   const store: Partial<TaskStore> = {
-    searchTasks: vi.fn().mockImplementation(async () => tasks),
+    searchTasks: vi.fn().mockImplementation(async (_query: string, options?: { includeArchived?: boolean }) =>
+      options?.includeArchived ? tasks : tasks.filter((task) => task.column !== "archived"),
+    ),
     findRecentTasksByContentFingerprint: vi.fn().mockImplementation(async (fingerprint: string, options?: { windowMs?: number; includeArchived?: boolean }) => {
       const windowMs = Math.max(1, Math.min(300_000, Math.trunc(options?.windowMs ?? 60_000)));
       const cutoff = Date.now() - windowMs;
@@ -151,6 +153,23 @@ describe("task duplicate detection routes", () => {
       "POST",
       "/api/tasks/duplicate-check",
       JSON.stringify({ description: "Completely unrelated modal styling issue" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect((res.body as { matches: unknown[] }).matches).toEqual([]);
+  });
+
+  it.each(["done", "archived"] as const)("returns no dashboard warning for %s history", async (column) => {
+    const { app } = buildApp([
+      createTaskFixture({ id: "FN-11", title: "Duplicate warning", description: "Warn before task creation", column }),
+    ]);
+
+    const res = await performRequest(
+      app,
+      "POST",
+      "/api/tasks/duplicate-check",
+      JSON.stringify({ description: "Warn before task creation" }),
       { "content-type": "application/json" },
     );
 
@@ -284,9 +303,9 @@ describe("task duplicate detection routes", () => {
     expect(res.status).toBe(201);
   });
 
-  it("done tasks do not trigger conflict", async () => {
+  it.each(["done", "archived"] as const)("programmatic repeats of %s tasks do not trigger conflict", async (column) => {
     const { app } = buildApp([
-      createTaskFixture({ id: "FN-15", title: "Duplicate warning", description: "Warn before task creation", column: "done" }),
+      createTaskFixture({ id: "FN-15", title: "Duplicate warning", description: "Warn before task creation", column }),
     ]);
 
     const res = await performRequest(

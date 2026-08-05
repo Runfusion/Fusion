@@ -50,6 +50,17 @@ test("engine-core gate keeps a Node 24/macOS-safe Vitest pool without changing b
   );
   assert.match(config, /maxWorkers,/, "worker budgeting must still flow through computeMaxWorkers");
   assert.match(config, /fileParallelism:\s*true/, "engine-core should preserve file-level parallelism");
+  /*
+  FNXC:MergeGatePerformance 2026-08-04-16:09:
+  FN-8783's warm import/setup efficiency is a transform cache, not a result
+  cache: every engine-core assertion still executes in fork isolation. Pin its
+  project-local path so a later config edit cannot silently widen this cache to
+  the broad engine lanes or replace it with stale hand-maintained artifacts.
+  */
+  assert.match(engineCoreBlock, /experimental:\s*\{[\s\S]*?fsModuleCache:\s*true/,
+    "engine-core must retain Vitest's filesystem transform cache");
+  assert.match(engineCoreBlock, /fsModuleCachePath:\s*resolve\(__dirname, "node_modules\/.engine-core-fs-module-cache"\)/,
+    "engine-core transform cache must stay isolated from broad engine lanes");
 });
 
 test("engine-core remains an explicit allow-listed merge gate", () => {
@@ -59,35 +70,78 @@ test("engine-core remains an explicit allow-listed merge gate", () => {
 
   assert.equal(new Set(includeEntries).size, includeEntries.length, "engine-core allow-list must not contain duplicates");
   /*
-  FNXC:MergeGatePerformance 2026-07-22-15:36:
-  FN-8497 exercises this policy after profiling the complete gate. The current
-  curated engine lane has 16 explicit files after the documented SQLite and
-  obsolete graph-runner retirements; guard its real floor instead of the stale
-  18-file count, while still requiring the replacement graph executor seam.
+  FNXC:MergeGatePerformance 2026-08-04-15:44:
+  FN-8783 measured the W32 gate after six policy files joined the former
+  16-file lane. Exact membership is the coverage contract: an efficiency change
+  may reduce scheduling overhead, never silently drop an assertion group.
   */
-  assert.ok(includeEntries.length >= 16, "engine-core allow-list must not be gutted to avoid the runtime abort");
-  assert.ok(
-    includeEntries.includes('"src/__tests__/workflow-graph-executor-parity.test.ts"'),
-    "engine-core must keep workflow graph executor gate coverage",
-  );
-  assert.ok(
-    includeEntries.includes('"src/__tests__/heartbeat-monitor.test.ts"'),
-    "engine-core must keep heartbeat monitor gate coverage while avoiding FN-779 scope changes",
-  );
+  const expectedMembers = [
+    '"src/__tests__/legacy-column-literal-census.test.ts"',
+    '"src/__tests__/no-legacy-move-targets.test.ts"',
+    '"src/__tests__/merger-merge-lifecycle.test.ts"',
+    '"src/__tests__/merger-conflict-resolution.test.ts"',
+    '"src/__tests__/merger-diff-scope.test.ts"',
+    '"src/__tests__/merger-landed-files-capture.test.ts"',
+    '"src/__tests__/branch-attribution.test.ts"',
+    '"src/__tests__/project-engine.test.ts"',
+    '"src/__tests__/merge-single-flight-invariant.test.ts"',
+    '"src/__tests__/workflow-step-verdict-parsing.test.ts"',
+    '"src/__tests__/u9-merge-region-node-config-authority.test.ts"',
+    '"src/__tests__/executor-graph-requeue-gate.test.ts"',
+    '"src/__tests__/workflow-graph-executor-parity.test.ts"',
+    '"src/__tests__/task-pipeline-smoke.test.ts"',
+    '"src/__tests__/scheduler-workflow-cutover.test.ts"',
+    '"src/__tests__/executor-base-commit-capture.test.ts"',
+    '"src/__tests__/executor-capture-modified-files-attribution.test.ts"',
+    '"src/__tests__/triage-preflight.test.ts"',
+    '"src/__tests__/mission-scheduler.test.ts"',
+    '"src/__tests__/heartbeat-monitor.test.ts"',
+    '"src/__tests__/workflow-node-handlers.test.ts"',
+    '"src/__tests__/workflow-policy-ownership-map.test.ts"',
+  ];
+  assert.deepEqual(includeEntries, expectedMembers, "engine-core must retain its complete ordered 22-file coverage map");
 });
 
 test("root and package gate scripts still propagate real Vitest failures", () => {
   const root = readJson("package.json");
   const engine = readJson("packages/engine/package.json");
+  const core = readJson("packages/core/package.json");
+  const staticChecks = root.scripts?.["test:gate:static"] ?? "";
+  const gate = root.scripts?.["test:gate"] ?? "";
 
   assert.equal(
     engine.scripts?.["test:core"],
     "vitest run --silent=passed-only --reporter=dot --project=engine-core",
   );
-  assert.match(root.scripts?.["test:gate"] ?? "", /pnpm --filter @fusion\/engine test:core/);
-  assert.match(root.scripts?.["test:gate"] ?? "", /wait \$engine_pid \|\| status=1/);
-  assert.match(root.scripts?.["test:gate"] ?? "", /wait \$pg_pid \|\| status=1/);
-  assert.doesNotMatch(root.scripts?.["test:gate"] ?? "", /NODE_NO_WARNINGS/);
+  assert.match(gate, /^node scripts\/run-static-gate-checks\.mjs &&/);
+  const gateValidators = [...staticChecks.matchAll(/node (scripts\/check-[\w-]+\.mjs)/g)].map((match) => match[1]);
+  const staticCheck = (name) => `scripts/check-${name}.mjs`;
+  assert.deepEqual(gateValidators, [
+    staticCheck(["no-", ["no", "hup"].join("")].join("")),
+    staticCheck("no-cwd-relative-dashboard-test-reads"),
+    staticCheck(["no-", "kill-", "40" + "40"].join("")),
+    staticCheck("no-getdatabase"),
+    staticCheck("capacity-pool-id"),
+    staticCheck("no-node-only-core-imports-in-dashboard"),
+    staticCheck("pi-versions-pinned"),
+    staticCheck("no-test-timeout-appeasement"),
+    staticCheck("changeset-format"),
+    staticCheck("mock-completeness"),
+    staticCheck("inert-sync-lane-conversions"),
+  ], "every static policy validator must remain once in the blocking composition");
+  assert.equal(new Set(gateValidators).size, gateValidators.length, "the static validator composition must be duplicate-free");
+  assert.match(gate, /pnpm --filter @fusion\/engine test:core/);
+  assert.match(gate, /pnpm --filter @fusion\/core test:pg-gate/);
+  assert.match(gate, /pnpm --filter @fusion\/core test:unit-gate/);
+  assert.match(gate, /wait \$engine_pid \|\| status=1/);
+  assert.match(gate, /wait \$pg_pid \|\| status=1/);
+  assert.match(gate, /wait \$unit_pid \|\| status=1/);
+  assert.match(gate, /&& pnpm --filter @runfusion\/fusion test:ci-shape$/);
+  assert.equal(
+    core.scripts?.["test:unit-gate"],
+    "vitest run src/__tests__/task-merge.test.ts src/__tests__/legacy-adoption.test.ts src/__tests__/no-hardcoded-lifecycle-columns.test.ts src/__tests__/sync-workflow-ir-callsite-allowlist.test.ts --silent=passed-only --reporter=dot",
+  );
+  assert.doesNotMatch(gate, /NODE_NO_WARNINGS/);
   assert.doesNotMatch(root.scripts?.["test"] ?? "", /NODE_NO_WARNINGS/);
 });
 

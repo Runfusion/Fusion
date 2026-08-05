@@ -9,6 +9,7 @@ import { getScopedItem } from "../utils/projectStorage";
 import { DOCK_FILES_CURRENT_KEY } from "./DockFilesView";
 import { TaskCard } from "./TaskCard";
 import { TaskDetailContent } from "./TaskDetailModal";
+import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { RightDock, persistRightDockOpen, persistRightDockPinned, readStoredRightDockOpen, readStoredRightDockPinned } from "./RightDock";
 import { RightDockExpandModal } from "./RightDockExpandModal";
 import type { OverflowViewKey, OverflowViewRenderProps, OverflowViewVisibilityOptions } from "./overflowViewRegistry";
@@ -117,7 +118,8 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
 
   const resolvedDockTask = useMemo(() => {
     if (!dockTaskSnapshot) return null;
-    return input.tasks.find((candidate) => candidate.id === dockTaskSnapshot.id) ?? dockTaskSnapshot;
+    const liveTask = input.tasks.find((candidate) => candidate.id === dockTaskSnapshot.id);
+    return liveTask ? mergeTaskSnapshot(dockTaskSnapshot, liveTask) : dockTaskSnapshot;
   }, [dockTaskSnapshot, input.tasks]);
 
   const toggle = useCallback(() => {

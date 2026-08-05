@@ -30,8 +30,12 @@ function buildApp(seed: Task[]) {
   const tasks = [...seed];
   const runtimeLogger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
   const store: Partial<TaskStore> = {
-    searchTasks: vi.fn().mockResolvedValue(tasks),
-    listTasks: vi.fn().mockResolvedValue(tasks),
+    searchTasks: vi.fn().mockImplementation(async (_query: string, options?: { includeArchived?: boolean }) =>
+      options?.includeArchived ? tasks : tasks.filter((task) => task.column !== "archived"),
+    ),
+    listTasks: vi.fn().mockImplementation(async (options?: { includeArchived?: boolean }) =>
+      options?.includeArchived ? tasks : tasks.filter((task) => task.column !== "archived"),
+    ),
     findRecentTasksByContentFingerprint: vi.fn().mockImplementation(async (fingerprint: string) =>
       tasks.filter((task) => task.source?.sourceMetadata?.contentFingerprint === fingerprint),
     ),
@@ -159,6 +163,32 @@ describe("routes /api/tasks near duplicate", () => {
     const match = (res.body as { details: { matches: Array<{ id: string; reason: string }> } }).details.matches[0];
     expect(match).toMatchObject({ id: "FN-5145", reason: "near-duplicate-intent" });
     expect(tasks).toHaveLength(1);
+  });
+
+  it.each(["done", "archived"] as const)("ignores a %s near-duplicate when the dashboard user creates the task", async (column) => {
+    vi.spyOn(core, "findDuplicateMatches").mockReturnValue([]);
+    const { app, tasks } = buildApp([{ ...reviewSeed, column }]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      ...reviewIncoming,
+      source: { sourceType: "dashboard_ui" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(tasks).toHaveLength(2);
+  });
+
+  it.each(["done", "archived"] as const)("ignores a %s near-duplicate from a programmatic source", async (column) => {
+    vi.spyOn(core, "findDuplicateMatches").mockReturnValue([]);
+    const { app, tasks } = buildApp([{ ...reviewSeed, column }]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      ...reviewIncoming,
+      source: { sourceType: "api" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect(tasks).toHaveLength(2);
   });
 
   it("acknowledgedDuplicates bypasses", async () => {

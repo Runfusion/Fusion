@@ -81,6 +81,7 @@ export function planReviewOptionalGroupNode(
     ...(column ? { column } : {}),
     config: {
       name: PLAN_REVIEW_NAME,
+      reviewKind: "plan",
       defaultOn: options.defaultOn ?? true,
       /*
        * FNXC:WorkflowRemediation 2026-06-29-12:14:

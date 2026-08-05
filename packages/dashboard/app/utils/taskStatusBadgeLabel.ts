@@ -3,6 +3,7 @@ FNXC:MergeQueue 2026-07-15-10:45:
 AI merge sets task.status to reviewing/landing for most of the live merge window. Board/list badges must never show those raw engine strings; map the full active-merge pipeline to operator-facing Merging… (and Merging fixes… for merging-fix).
 */
 import type { TFunction } from "i18next";
+import type { Task } from "@fusion/core";
 import { isActiveMergeStatus } from "../../../core/src/merge/active-merge-status";
 
 /*
@@ -13,6 +14,41 @@ Queued remains an intake-only presentation exclusion at TaskCard and ListView ca
 */
 export function hasTaskStatusBadge(status: string | null | undefined): boolean {
   return typeof status === "string" && status.trim().length > 0;
+}
+
+/*
+FNXC:TaskStatusConsistency 2026-08-05-03:49:
+A planner agent-log event can reach the shared board snapshot before the status update that changes
+`needs-replan` to `planning`. Its `recentAgentActivityAt` is written only after the log proves it is
+newer than the row, so this is explicit live-planner evidence rather than arrival-order guessing.
+Use it only for the parked-revision token while the event is inside the five-minute live window and
+the engine is not globally paused: undefined status remains unknown and an idle needs-replan card
+remains Queued to revise. TaskCard, both ListView paths, and task detail share this predicate so a
+modal that has already fetched planning cannot contradict the board during that short SSE gap.
+
+FNXC:TaskStatusConsistency 2026-08-05-04:54:
+A parseable historical log is not liveness. The transient `needs-replan` override expires after the
+shared five-minute heartbeat window and is suppressed during global pause, returning the operator to
+Queued to revise instead of leaving every affected surface stuck on Planning.
+*/
+export const PLANNER_ACTIVITY_LIVE_WINDOW_MS = 5 * 60_000;
+
+export interface TaskPlanningActivityOptions {
+  globalPaused?: boolean;
+  now?: number;
+}
+
+export function isTaskPlanningActive(
+  task: Pick<Task, "status" | "recentAgentActivityAt">,
+  { globalPaused = false, now = Date.now() }: TaskPlanningActivityOptions = {},
+): boolean {
+  if (task.status === "planning") return true;
+  if (globalPaused || task.status !== "needs-replan" || typeof task.recentAgentActivityAt !== "string") return false;
+
+  const activityAt = Date.parse(task.recentAgentActivityAt);
+  return Number.isFinite(activityAt)
+    && activityAt <= now
+    && now - activityAt <= PLANNER_ACTIVITY_LIVE_WINDOW_MS;
 }
 
 /*

@@ -1044,6 +1044,10 @@ export {
   type HoldReleaseResult,
   type SlotReservation,
 } from "./execution/hold-release.js";
+export {
+  resumeApprovedPlanReviewHandoff,
+  type ApprovedPlanReviewHandoffResult,
+} from "./plan-review-continuation.js";
 export { StepSessionExecutor } from "./execution/step-session-executor.js";
 export type { StepResult, ParallelWave, StepSessionExecutorOptions } from "./execution/step-session-executor.js";
 export {

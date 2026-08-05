@@ -31,6 +31,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, isNearDuplicateCanonicalInactive, parseExplicitDuplicateMarker, flagTriageDuplicate, isTriageDuplicateKeepAcknowledged, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, getBuiltinWorkflow, isBuiltinWorkflowId, resolveWorkflowIrForTask, resolveWorkflowIrForTaskWithProvenance, resolveReboundTarget, resolveReboundTargetForTask, resolveArchiveTargetForTask, columnsWithFlag, resolveLifecycleColumns, resolveTaskLifecycleColumns, workflowHasColumn, planLegacyAdoption, resolveOrphanedPendingStepResults, classifyReviewLease, PLAN_REVIEW_LEASE_STALENESS_MS, DEFAULT_MAX_POST_REVIEW_FIXES, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult, type WorkflowIr,
+  resolveNearDuplicateCanonicalFlags,
   LEGACY_COLUMN_IDS_BY_ROLE,
   TERMINAL_ROLES,
   resolveProjectColumnsForRoles,
@@ -846,34 +847,6 @@ function hasTerminalInvalidDoneTransition(task: Pick<Task, "error">): boolean {
 /** Sentinel for a workflow selection whose READ failed, distinct from "no selection". */
 const UNREADABLE_WORKFLOW_SELECTION = "\u0000unreadable-workflow-selection";
 
-/*
-FNXC:WorkflowResolvedColumns 2026-07-30-04:10:
-The canonical's OWN resolved column flags, for `isNearDuplicateCanonicalInactive`.
-
-Omitted, that predicate falls back to the legacy `done`/`archived` ids, so on a renamed board a
-canonical that has SHIPPED reads as still ACTIVE. Every "the canonical is inactive, so clear the
-marker" branch below then fails to fire, and FN-8356's fix — inactive canonicals flow through marker
-cleanup rather than parking the card — is inert. The card keeps its "Needs your decision" badge
-pointing at work that finished days ago, and no decision can ever resolve it.
-
-Module-private rather than shared: `findColumn` is already duplicated this way in hold-release.ts,
-merge-trait.ts, and workflow-capacity.ts, so this follows the established shape instead of adding a
-cross-module helper for it.
-
-`undefined` on any failure is deliberate — it degrades to the legacy id rather than to absent traits
-that match nothing.
-*/
-async function resolveNearDuplicateCanonicalFlags(
-  store: TaskStore,
-  canonical: { id: string; column?: string | null } | null | undefined,
-): Promise<ReturnType<typeof resolveColumnFlags> | undefined> {
-  if (!canonical?.column) return undefined;
-  const ir = await resolveWorkflowIrForTask(store, canonical.id).catch(() => undefined);
-  if (!ir || ir.version !== "v2") return undefined;
-  const column = ir.columns.find((candidate) => candidate.id === canonical.column);
-  return column ? resolveColumnFlags(column) : undefined;
-}
-
 export class SelfHealingManager extends SelfHealingGitEvidence {
   // ── Auto-unpause state ──────────────────────────────────────────────
   private unpauseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -923,7 +896,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
   private strandedHoldContinuationNoActionAudited = new Set<string>();
   /* FNXC:SymbolLock 2026-07-30-14:20: idle symbol-lock sweeps emit one no-action audit until a stale lock re-arms the diagnostic. */
   private symbolLockNoActionAudited = false;
-  private preservedQueuedOverlapLogged = new Map<string, string>();
   private maintenanceTickCounter = 0;
   private readonly taskLifecycleRetentionLastPrunedAt = new Map<string, number>();
   private readonly processBootStartedAt = Date.now();
@@ -1836,7 +1808,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
 
     this.finalizeUnprovenWarned.clear();
     this.strandedCompletedFailureProvenanceWarned.clear();
-    this.preservedQueuedOverlapLogged.clear();
     log.debug("Stopped");
   }
 
@@ -5077,19 +5048,28 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
 
           if (todoTaskIds.has(dependent.id)) {
+            /*
+            FNXC:QueuedTaskLogging 2026-08-04-18:32:
+            Completion fanout can race duplicate completion callbacks. Route retained dependency
+            and overlap queue episodes through the durable transition so its state repair and
+            one visible event commit together rather than reintroducing poll-driven task logs.
+            */
             if (unresolvedDeps.length > 0) {
               const nextBlocker = unresolvedDeps[0]!;
-              await this.store.updateTask(dependent.id, { blockedBy: nextBlocker, overlapBlockedBy, status: "queued" });
-              await this.store.logEntry(
-                dependent.id,
-                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
-              );
+              const normalizedUnresolvedDeps = [...new Set(unresolvedDeps)].sort();
+              await this.store.transitionQueuedEpisode(dependent.id, {
+                signature: `dependency:${normalizedUnresolvedDeps.join(",")}`,
+                blockedBy: nextBlocker,
+                overlapBlockedBy,
+                action: `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
+              });
             } else if (hasActiveOverlapBlocker) {
-              await this.store.updateTask(dependent.id, { blockedBy: null, overlapBlockedBy, status: "queued" });
-              await this.store.logEntry(
-                dependent.id,
-                `Auto-recovered (FN-4523): preserved queued status — still blocked by file scope overlap with ${overlapBlockedBy}`,
-              );
+              await this.store.transitionQueuedEpisode(dependent.id, {
+                signature: `file-scope:${overlapBlockedBy}`,
+                blockedBy: null,
+                overlapBlockedBy,
+                action: `Auto-recovered (FN-4523): preserved queued status — still blocked by file scope overlap with ${overlapBlockedBy}`,
+              });
             } else {
               await this.store.updateTask(dependent.id, { blockedBy: null, overlapBlockedBy: null, status: null });
               await this.store.logEntry(
@@ -5708,18 +5688,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
     return tasks.filter((task) => typeof task.blockedBy === "string" && task.blockedBy.trim().length > 0).length;
   }
 
-  private shouldLogPreservedQueuedOverlap(taskId: string, overlapBlockedBy: string | null | undefined): overlapBlockedBy is string {
-    if (!overlapBlockedBy) return false;
-    const previous = this.preservedQueuedOverlapLogged.get(taskId);
-    if (previous === overlapBlockedBy) return false;
-    this.preservedQueuedOverlapLogged.set(taskId, overlapBlockedBy);
-    return true;
-  }
-
-  private clearPreservedQueuedOverlapMemo(taskId: string): void {
-    this.preservedQueuedOverlapLogged.delete(taskId);
-  }
-
   /**
    * #1401: periodic transitionPending recovery sweep. Delegates to the store's
    * idempotent recovery method (a no-op when no stale markers exist), keeping
@@ -6023,7 +5991,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
       );
 
       if (blockedTasks.length === 0 && queuedDependencyTasks.length === 0) {
-        this.preservedQueuedOverlapLogged.clear();
         return 0;
       }
 
@@ -6132,50 +6099,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
         hold: new Set(["todo"]), review: new Set(["in-review"]),
       };
 
-      for (const [taskId, lastLoggedBlockerId] of this.preservedQueuedOverlapLogged) {
-        const memoTask = taskById.get(taskId);
-        const memoHasActiveOverlapBlocker = memoTask
-          ? await hasActiveFileScopeOverlapBlocker(memoTask, memoTask.overlapBlockedBy)
-          : false;
-        if (
-          !candidates.has(taskId)
-          /*
-          FNXC:WorkflowResolvedColumns 2026-07-30-21:40 (FLAGGED AND LEFT COUNTED):
-          This sits in a log-dedup closure defined BEFORE the per-referenced-task lane prefetch below, so
-          the resolved sets are not in scope here and tsc says so. Hoisting the prefetch above the closure
-          is not available either — it is keyed on `candidates`, which this closure helps build.
-
-          Left as the literal rather than restructured: the closure only decides whether to re-log an
-          already-logged blocker, so the degraded answer costs a duplicate log line on a renamed board, not
-          a wrong lifecycle decision. Restructuring a sweep's control flow to convert a logging guard is
-          the wrong trade.
-          */
-          /*
-          FNXC:WorkflowResolvedColumns 2026-07-31-12:10 (u12 — CONVERTED; the stated blocker was not real):
-          The prior note said the resolved sets could not be in scope because the lane prefetch is keyed on
-          `candidates`, "which this closure helps build". Measured: this loop does not build `candidates` —
-          it is fully populated two statements above (`blockedTasks` then `queuedDependencyTasks`) and this
-          loop only CLEARS memo entries. So the prefetch was hoistable, and it now sits above.
-
-          Reaching this clause already proves the id is a candidate: `!candidates.has(taskId)` is the first
-          arm of the same `||` chain, so short-circuit means we only ask the lane question for ids the
-          prefetch covered (`referencedIds.add(task.id)` for every candidate). `lanesOf` still falls back to
-          the legacy set, so an unresolvable workflow answers exactly as the literal did.
-
-          `|| !memoTask` is explicit rather than implied: `memoTask?.column !== "todo"` was ALSO the undefined
-          check, and tsc narrowed the clauses after it on that basis. Dropping it silently broke the
-          narrowing (TS18048 on `memoTask.status`), so the undefined arm is now stated on its own line.
-          */
-          || !memoTask
-          || !lanesOf(taskId).hold.has(memoTask.column)
-          || memoTask.status !== "queued"
-          || memoTask.overlapBlockedBy !== lastLoggedBlockerId
-          || !memoHasActiveOverlapBlocker
-        ) {
-          this.clearPreservedQueuedOverlapMemo(taskId);
-        }
-      }
-
 
       for (const task of candidates.values()) {
         const blockerId = task.blockedBy;
@@ -6273,7 +6196,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
               let didRecover = false;
               if (todoTaskIds.has(task.id)) {
                 if (unresolvedDeps.length > 0) {
-                  this.clearPreservedQueuedOverlapMemo(task.id);
                   const nextBlocker = unresolvedDeps[0]!;
                   if (nextBlocker === blockerId) {
                     continue;
@@ -6282,19 +6204,19 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
                   await this.store.logEntry(task.id, `Auto-recovered (FN-5488): refreshed stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}; now blocked by ${nextBlocker}`);
                   didRecover = true;
                 } else if (hasActiveOverlapBlocker) {
-                  await this.store.updateTask(task.id, { blockedBy: null, status: "queued" });
-                  if (this.shouldLogPreservedQueuedOverlap(task.id, task.overlapBlockedBy)) {
-                    await this.store.logEntry(task.id, `Auto-recovered (FN-5488): preserved queued status — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; still blocked by file scope overlap with ${task.overlapBlockedBy}`);
-                    didRecover = true;
-                  }
+                  const transition = await this.store.transitionQueuedEpisode(task.id, {
+                    signature: `file-scope:${task.overlapBlockedBy}`,
+                    blockedBy: null,
+                    overlapBlockedBy: task.overlapBlockedBy ?? null,
+                    action: `Auto-recovered (FN-5488): preserved queued status — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; still blocked by file scope overlap with ${task.overlapBlockedBy}`,
+                  });
+                  didRecover = transition.appended;
                 } else {
-                  this.clearPreservedQueuedOverlapMemo(task.id);
                   await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, status: null });
                   await this.store.logEntry(task.id, `Auto-recovered (FN-5488): cleared stale blockedBy — blocker=${blockerId} blockerStatus=${blocker?.status ?? "none"} reason=${reasonCode ?? "unspecified"}; ${reason}`);
                   didRecover = true;
                 }
               } else {
-                this.clearPreservedQueuedOverlapMemo(task.id);
                 await this.store.updateTask(task.id, { blockedBy: null });
                 await this.store.logEntry(task.id, `Auto-recovered (FN-4091): cleared stale blockedBy — ${reason}`);
                 didRecover = true;
@@ -6316,13 +6238,14 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           if (queuedDependencyTaskIds.has(task.id)) {
             try {
               if (hasActiveOverlapBlocker) {
-                await this.store.updateTask(task.id, { blockedBy: null, status: "queued" });
-                if (this.shouldLogPreservedQueuedOverlap(task.id, task.overlapBlockedBy)) {
-                  await this.store.logEntry(task.id, `Auto-recovered: preserved queued status — still blocked by file scope overlap with ${task.overlapBlockedBy}`);
-                  recovered++;
-                }
+                const transition = await this.store.transitionQueuedEpisode(task.id, {
+                  signature: `file-scope:${task.overlapBlockedBy}`,
+                  blockedBy: null,
+                  overlapBlockedBy: task.overlapBlockedBy ?? null,
+                  action: `Auto-recovered: preserved queued status — still blocked by file scope overlap with ${task.overlapBlockedBy}`,
+                });
+                if (transition.appended) recovered++;
               } else {
-                this.clearPreservedQueuedOverlapMemo(task.id);
                 // FN-5434: routine scheduler↔self-healing queued-status churn should stay silent; keep state cleanup only.
                 await this.store.updateTask(task.id, { blockedBy: null, overlapBlockedBy: null, status: null });
               }
@@ -6334,7 +6257,6 @@ export class SelfHealingManager extends SelfHealingGitEvidence {
           continue;
         }
 
-        this.clearPreservedQueuedOverlapMemo(task.id);
         const nextBlocker = unresolvedDeps[0] ?? null;
         if (nextBlocker && task.blockedBy !== nextBlocker) {
           try {
@@ -14506,16 +14428,12 @@ const movedTask = await this.store.moveTask(task.id, completeLane);
               const priorClearCount = typeof task.sourceMetadata?.duplicateMarkerClearCount === "number"
                 ? task.sourceMetadata.duplicateMarkerClearCount
                 : 0;
-              const alreadyDismissed = isTriageDuplicateKeepAcknowledged(task.sourceMetadata, marker.canonicalId);
-              const exhausted = alreadyDismissed || priorClearCount >= 1;
-              const patch = exhausted
-                ? buildMarkerExhaustedFailedTaskPatch(marker.canonicalId, priorClearCount)
-                : buildMarkerClearedReplanTaskPatch(marker.canonicalId, priorClearCount);
+              const patch = buildMarkerClearedReplanTaskPatch(marker.canonicalId, priorClearCount);
               await this.store.updateTask(task.id, patch);
               if (typeof this.store.logEntry === "function") {
                 await Promise.resolve(this.store.logEntry(
                   task.id,
-                  exhausted ? buildDuplicateReplanExhaustedError(marker.canonicalId) : TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
+                  TRIAGE_MARKER_CLEARED_REPLAN_LOG_ACTION,
                   buildInactiveDuplicateClearFeedback(marker.canonicalId),
                 )).catch(() => {});
               }

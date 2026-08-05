@@ -1,24 +1,39 @@
-import { useEffect as reactUseEffect } from "react";
+import { createElement, useEffect as reactUseEffect } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, type RenderOptions } from "@testing-library/react";
 import { AppModals } from "../AppModals";
+import { TaskCard } from "../TaskCard";
+import { ListView } from "../ListView";
+import { useTasks } from "../../hooks/useTasks";
+import * as taskApi from "../../api";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import type { ModalManager } from "../../hooks/useModalManager";
 import type { Toast } from "../../hooks/useToast";
 
-// Mock the modals to avoid rendering all of them
-const mockTaskDetailModalProps = vi.fn();
-vi.mock("../TaskDetailModal", () => ({
-  TaskDetailModal: (props: any) => {
-    mockTaskDetailModalProps(props);
-    return (
-      <button data-testid="task-detail-open-detail" onClick={() => props.onOpenDetail?.({ id: "FN-2", title: "Nested" })}>
-        open detail
-      </button>
-    );
-  },
+const sseSubscriptions = vi.hoisted(() => [] as Array<{
+  url: string;
+  events?: Record<string, (event: { data: string }) => void>;
+}>);
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: vi.fn((url: string, options: { events?: Record<string, (event: { data: string }) => void> }) => {
+    sseSubscriptions.push({ url, events: options.events });
+    return vi.fn();
+  }),
 }));
+
+// Spy through the real detail host so lifecycle assertions exercise its rendered state.
+const mockTaskDetailModalProps = vi.fn();
+vi.mock("../TaskDetailModal", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../TaskDetailModal")>();
+  return {
+    ...actual,
+    TaskDetailModal: (props: React.ComponentProps<typeof actual.TaskDetailModal>) => {
+      mockTaskDetailModalProps(props);
+      return createElement(actual.TaskDetailModal, props);
+    },
+  };
+});
 
 const mockSettingsModalProps = vi.fn();
 vi.mock("../SettingsModal", () => ({
@@ -163,8 +178,8 @@ vi.mock("../../hooks/useProjectActions", () => ({
   }),
 }));
 
-// Mock @fusion/core types
-vi.mock("@fusion/core", () => ({}));
+// Preserve runtime core constants because the real TaskDetailModal now renders in this suite.
+vi.mock("@fusion/core", async (importOriginal) => importOriginal<typeof import("@fusion/core")>());
 
 // Mock ModalErrorBoundary
 vi.mock("../ErrorBoundary", () => ({
@@ -178,6 +193,52 @@ function NavigationWrapper({ children }: { children: ReactNode }) {
 
 function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">) {
   return rtlRender(ui, { wrapper: NavigationWrapper, ...options });
+}
+
+const integrationNoop = vi.fn();
+const integrationAsyncNoop = vi.fn(async () => ({}));
+
+/** Drives the same hook-owned board row into every production status renderer. */
+function PlanningStatusConvergenceHarness({ detailTask, modalManager, settings }: {
+  detailTask: Record<string, unknown>;
+  modalManager: ModalManager;
+  settings: Record<string, unknown>;
+}) {
+  const { tasks } = useTasks({ projectId: "project-a" });
+  const task = tasks[0];
+  if (!task) return null;
+
+  return (
+    <>
+      <TaskCard task={task} onOpenDetail={integrationNoop} addToast={integrationNoop} projectId="project-a" />
+      <ListView
+        tasks={tasks}
+        projectId="project-a"
+        onMoveTask={integrationAsyncNoop}
+        onDeleteTask={integrationAsyncNoop}
+        onArchiveTask={integrationAsyncNoop}
+        onMergeTask={integrationAsyncNoop}
+        onOpenDetail={integrationNoop}
+        addToast={integrationNoop}
+      />
+      <AppModals
+        projectId="project-a"
+        tasks={tasks}
+        projects={[]}
+        currentProject={null}
+        addToast={integrationNoop}
+        toasts={[]}
+        removeToast={integrationNoop}
+        modalManager={modalManager}
+        projectActions={{ handleAddProject: integrationNoop, handleSetupComplete: integrationNoop, handleModelOnboardingComplete: integrationNoop }}
+        taskHandlers={{ handleModalCreate: integrationAsyncNoop, handlePlanningTaskCreated: integrationNoop, handlePlanningTasksCreated: integrationNoop, handleSubtaskTasksCreated: integrationNoop, handleGitHubImport: integrationNoop }}
+        taskOperations={{ moveTask: integrationAsyncNoop, deleteTask: integrationAsyncNoop, mergeTask: integrationAsyncNoop, retryTask: integrationAsyncNoop, duplicateTask: integrationAsyncNoop }}
+        deepLink={{ handleDetailClose: integrationNoop }}
+        settings={settings as any}
+      />
+      <output data-testid="planning-harness-detail-id">{String(detailTask.id)}</output>
+    </>
+  );
 }
 
 describe("AppModals", () => {
@@ -269,6 +330,7 @@ describe("AppModals", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sseSubscriptions.length = 0;
     mockTaskDetailModalProps.mockClear();
     mockScheduledTasksModalProps.mockClear();
     mockModelOnboardingModalProps.mockClear();
@@ -407,6 +469,170 @@ describe("AppModals", () => {
     expect(detailTask.log).toEqual([
       { timestamp: "2026-04-25T12:00:00.000Z", action: "Created task" },
     ]);
+  });
+
+  /*
+  FNXC:TaskDetailStateStability 2026-08-05-02:55:
+  This is the rendered production modal reproduction: scheduler resync delivers Todo after the
+  dependency/file-overlap queue transition. The open detail must continuously show Queued because
+  AppModals reconciles its retained detail snapshot with the live board by lifecycle freshness.
+  */
+  it("does not roll an open queued detail back when a stale scheduler board row arrives", async () => {
+    const detail = {
+      id: "FN-QUEUED",
+      title: "Blocked task",
+      description: "",
+      column: "todo",
+      status: "queued",
+      overlapBlockedBy: "FN-UPSTREAM",
+      dependencies: ["FN-UPSTREAM"],
+      steps: [],
+      log: [{ timestamp: "2026-08-05T10:02:00.000Z", action: "Queued for dependency" }],
+      prompt: "# Prompt",
+      createdAt: "2026-08-05T10:00:00.000Z",
+      updatedAt: "2026-08-05T10:02:00.000Z",
+      columnMovedAt: "2026-08-05T10:02:00.000Z",
+    };
+    const staleSchedulerTodo = {
+      ...detail,
+      status: undefined,
+      prompt: undefined,
+      log: [],
+      updatedAt: "2026-08-05T10:00:00.000Z",
+      columnMovedAt: "2026-08-05T10:00:00.000Z",
+    };
+    const manager = { ...mockModalManager, detailTask: detail };
+
+    const renderModal = (tasks: typeof detail[]) => (
+      <AppModals
+        projectId="project-a"
+        tasks={tasks}
+        projects={[]}
+        currentProject={null}
+        addToast={vi.fn()}
+        toasts={mockToasts}
+        removeToast={vi.fn()}
+        modalManager={manager}
+        projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+        taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
+        taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
+        deepLink={{ handleDetailClose: vi.fn() }}
+        settings={mockSettings}
+      />
+    );
+    const { rerender } = render(renderModal([detail]));
+    await waitFor(() => expect(mockTaskDetailModalProps).toHaveBeenCalled());
+
+    rerender(renderModal([staleSchedulerTodo]));
+
+    const renderedTask = mockTaskDetailModalProps.mock.calls.at(-1)?.[0]?.task;
+    expect(renderedTask).toMatchObject({ status: "queued", overlapBlockedBy: "FN-UPSTREAM", prompt: "# Prompt" });
+    expect(renderedTask.log).toEqual(detail.log);
+  });
+
+  it("keeps an open planning detail authoritative while the board has only live planner evidence", async () => {
+    const detail = {
+      id: "FN-8798",
+      title: "Revision task",
+      description: "",
+      column: "triage" as const,
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      log: [],
+      prompt: "# Prompt",
+      createdAt: "2026-08-05T10:00:00.000Z",
+      updatedAt: "2026-08-05T10:01:00.000Z",
+    };
+    const boardRow = {
+      ...detail,
+      status: "needs-replan",
+      prompt: undefined,
+      updatedAt: "2026-08-05T10:00:00.000Z",
+      recentAgentActivityAt: "2026-08-05T10:01:00.000Z",
+    };
+    const manager = { ...mockModalManager, detailTask: detail };
+
+    render(
+      <AppModals
+        projectId="project-a"
+        tasks={[boardRow]}
+        projects={[]}
+        currentProject={null}
+        addToast={vi.fn()}
+        toasts={mockToasts}
+        removeToast={vi.fn()}
+        modalManager={manager}
+        projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+        taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
+        taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
+        deepLink={{ handleDetailClose: vi.fn() }}
+        settings={mockSettings}
+      />,
+    );
+
+    await waitFor(() => expect(mockTaskDetailModalProps).toHaveBeenCalled());
+    expect(mockTaskDetailModalProps.mock.calls.at(-1)?.[0]?.task).toMatchObject({
+      id: "FN-8798",
+      status: "planning",
+      prompt: "# Prompt",
+    });
+    expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
+  });
+
+  it("drives SSE planner activity and its authoritative status update through board, list, and the real detail host", async () => {
+    window.localStorage.setItem("kb:project-a:kb-dashboard-list-columns", JSON.stringify(["title", "status"]));
+    const parkedTask = {
+      id: "FN-8798",
+      title: "Revision task",
+      description: "",
+      column: "triage" as const,
+      status: "needs-replan",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# Prompt",
+      createdAt: "2026-08-05T10:00:00.000Z",
+      updatedAt: "2026-08-05T10:00:00.000Z",
+      columnMovedAt: "2026-08-05T10:00:00.000Z",
+    };
+    const manager = { ...mockModalManager, detailTask: parkedTask };
+    vi.spyOn(taskApi, "fetchTasks").mockResolvedValueOnce([parkedTask] as any);
+    vi.spyOn(taskApi, "fetchBoardWorkflows").mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [{
+        id: "builtin:coding",
+        name: "Coding",
+        columns: [{ id: "triage", name: "Planning", flags: { intake: true } }],
+      }],
+      taskWorkflowIds: { [parkedTask.id]: "builtin:coding" },
+    });
+
+    render(<PlanningStatusConvergenceHarness detailTask={parkedTask} modalManager={manager} settings={mockSettings} />);
+
+    await waitFor(() => expect(sseSubscriptions.some(({ url }) => url.startsWith("/api/events"))).toBe(true));
+    const boardEvents = sseSubscriptions.find(({ url }) => url.startsWith("/api/events"))?.events;
+    act(() => {
+      boardEvents?.["agent:log"]?.({ data: JSON.stringify({
+        taskId: parkedTask.id,
+        timestamp: "2026-08-05T10:01:00.000Z",
+        type: "tool",
+        agent: "triage",
+      }) });
+      boardEvents?.["task:updated"]?.({ data: JSON.stringify({
+        ...parkedTask,
+        status: "planning",
+        updatedAt: "2026-08-05T10:02:00.000Z",
+      }) });
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('.card[data-id="FN-8798"] .card-status-badge')).toHaveTextContent("Planning");
+      expect(document.querySelector(".list-status-badge")).toHaveTextContent("Planning");
+      expect(screen.getByTestId("task-detail-status-badge")).toHaveTextContent("Planning");
+    });
   });
 
   describe("ModelOnboardingModal wiring", () => {
@@ -659,7 +885,9 @@ describe("AppModals", () => {
         />,
       );
 
-      fireEvent.click(screen.getByTestId("task-detail-open-detail"));
+      act(() => {
+        mockTaskDetailModalProps.mock.calls.at(-1)?.[0]?.onOpenDetail({ id: "FN-2", title: "Nested" });
+      });
       expect(pushStateSpy).toHaveBeenCalledTimes(1);
       /*
       FNXC:TaskDetailNav 2026-07-07-09:15:

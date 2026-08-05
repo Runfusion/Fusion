@@ -19,13 +19,16 @@ import { execSync } from "node:child_process";
 import { createAsyncDataLayer, type AsyncDataLayer } from "../../postgres/data-layer.js";
 import {
   addChatMessage,
+  addChatMessageAttachment,
   createChatSession,
   deleteChatMessagesFrom,
   getChatMessages,
+  getChatSession,
+  setInFlightGeneration,
   searchChatSessionsByMessageContent,
   updateChatMessageMetadata,
 } from "../../async-stores/async-chat-store.js";
-import type { ChatMessage, ChatSession } from "../../chat/chat-types.js";
+import type { ChatInFlightGenerationState, ChatMessage, ChatSession } from "../../chat/chat-types.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
@@ -216,6 +219,40 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
     expect((await getChatMessages(ctx.layer.db, sessionA.id)).length).toBe(1);
   });
 
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  Attachment appends and metadata merges are separate jsonb update paths from
+  initial inserts. They must independently enforce the arbitrary-text NUL
+  invariant so a later tool-derived mutation cannot poison a chat row.
+  */
+  it("sanitizes attachment appends and metadata merge updates at their jsonb boundaries", async () => {
+    ctx = await setupCtx();
+    const session = await makeSession(ctx);
+    const message = await addMessage(ctx, session.id, "user", "hello", { clean: true });
+
+    const attached = await addChatMessageAttachment(ctx.layer.db, session.id, message.id, {
+      id: "att\u0000-1",
+      filename: "fu\u0000sion.log",
+      originalName: "fu\u0000sion.log",
+      mimeType: "text/plain\u0000",
+      size: 1,
+      createdAt: "2026-08-05T01:54:00.000Z",
+    });
+    expect(attached.attachments).toEqual([{
+      id: "att-1",
+      filename: "fusion.log",
+      originalName: "fusion.log",
+      mimeType: "text/plain",
+      size: 1,
+      createdAt: "2026-08-05T01:54:00.000Z",
+    }]);
+
+    const merged = await updateChatMessageMetadata(ctx.layer.db, message.id, {
+      ["tool\u0000result"]: { text: "\u0000fnlvl=info\u0000" },
+    });
+    expect(merged.metadata).toEqual({ clean: true, toolresult: { text: "fnlvl=info" } });
+  });
+
   it("updateChatMessageMetadata merges by default, replaces on merge:false, and throws for missing messages", async () => {
     ctx = await setupCtx();
 
@@ -233,6 +270,58 @@ pgDescribe("async chat store content search + edit primitives (PostgreSQL)", () 
     await expect(
       updateChatMessageMetadata(ctx.layer.db, "msg-missing", { x: 1 }),
     ).rejects.toThrow(/not found/);
+  });
+
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  A completed tool result can contain Fusion's raw logger framing
+  (U+0000fnlvl=infoU+0000). Checkpoint persistence must strip it recursively
+  before jsonb binding, preserve all replay fields, and leave the input owned
+  by the live chat callback untouched.
+  */
+  it("persists the NUL-marked in-flight tool snapshot and reads back its sanitized shape", async () => {
+    ctx = await setupCtx();
+    const session = await makeSession(ctx);
+    const snapshot: ChatInFlightGenerationState = {
+      status: "generating",
+      streamingText: "prefix\u0000fnlvl=info\u0000suffix",
+      streamingThinking: "thought\u0000stream",
+      toolCalls: [{
+        toolName: "ba\u0000sh",
+        args: { command: "tail\u0000 /tmp/fusion.log" },
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "log \u0000fnlvl=info\u0000 line" }],
+          ["nested\u0000key"]: ["a\u0000b"],
+        },
+        status: "completed",
+      }],
+      replayFromEventId: 4,
+      updatedAt: "2026-08-05T01:54:00.000Z",
+    };
+
+    const updated = await setInFlightGeneration(ctx.layer.db, session.id, snapshot);
+    expect(updated?.inFlightGeneration).toMatchObject({
+      status: "generating",
+      streamingText: "prefixfnlvl=infosuffix",
+      streamingThinking: "thoughtstream",
+      replayFromEventId: 4,
+      toolCalls: [{
+        toolName: "bash",
+        args: { command: "tail /tmp/fusion.log" },
+        result: {
+          content: [{ type: "text", text: "log fnlvl=info line" }],
+          nestedkey: ["ab"],
+        },
+      }],
+    });
+    expect(snapshot.streamingText).toBe("prefix\u0000fnlvl=info\u0000suffix");
+    expect((snapshot.toolCalls[0].result as { content: Array<{ text: string }> }).content[0]?.text).toBe("log \u0000fnlvl=info\u0000 line");
+
+    const persisted = await getChatSession(ctx.layer.db, session.id);
+    expect(persisted?.inFlightGeneration).toEqual(updated?.inFlightGeneration);
+    await expect(setInFlightGeneration(ctx.layer.db, session.id, null)).resolves.toBeDefined();
+    expect((await getChatSession(ctx.layer.db, session.id))?.inFlightGeneration).toBeNull();
   });
 
   /*

@@ -230,18 +230,25 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
   });
 
   /*
-  FNXC:CITestGate 2026-06-26-06:40:
-  The merge gate is the thin trusted CI surface. ci-workflow.test.ts must pin not only that the Gate job invokes `pnpm test:gate`, but also test:gate's internal composition (guards + engine test:core + cli test:ci-shape) and that engine test:core references the engine-core vitest project — otherwise a rename could hollow the gate while this CI-shape test stays green (FN-7059).
+  FNXC:CITestGate 2026-08-04-15:44:
+  FN-8783 runs independent read-only static validators concurrently, but they
+  still must all finish successfully before the curated lanes begin. Pin the
+  runner and its manifest composition separately: putting the exact inventory
+  only in test:gate would encourage a future serial regression, while checking
+  only the runner could hide a removed policy guard.
   */
-  it("pins test:gate to the audited guard scripts and curated suites", () => {
+  it("pins test:gate to the fail-closed guard runner and curated suites", () => {
     const testGateScript = rootPackageJson.scripts?.["test:gate"] ?? "";
+    const staticGateScript = rootPackageJson.scripts?.["test:gate:static"] ?? "";
 
-    expect(testGateScript).toContain("node scripts/check-no-" + "no" + "hup" + ".mjs"); // process-supervisor-allowlist: asserts the gate wires the checker; not a real spawn
-    expect(testGateScript).toContain("node scripts/check-no-kill-" + "40" + "40" + ".mjs"); // port-4040-allowlist: asserts the gate wires the checker; not a real port bind
-    expect(testGateScript).toContain("node scripts/check-no-test-timeout-appeasement.mjs");
-    expect(testGateScript).toContain("node scripts/check-changeset-format.mjs");
+    expect(testGateScript).toContain("node scripts/run-static-gate-checks.mjs");
+    expect(staticGateScript).toContain("node scripts/check-no-" + "no" + "hup" + ".mjs"); // process-supervisor-allowlist: asserts the gate wires the checker; not a real spawn
+    expect(staticGateScript).toContain("node scripts/check-no-kill-" + "40" + "40" + ".mjs"); // port-4040-allowlist: asserts the gate wires the checker; not a real port bind
+    expect(staticGateScript).toContain("node scripts/check-no-test-timeout-appeasement.mjs");
+    expect(staticGateScript).toContain("node scripts/check-changeset-format.mjs");
     expect(testGateScript).toContain("pnpm --filter @fusion/engine test:core");
     expect(testGateScript).toContain("pnpm --filter @fusion/core test:pg-gate");
+    expect(testGateScript).toContain("pnpm --filter @fusion/core test:unit-gate");
     expect(testGateScript).toContain("pnpm --filter @runfusion/fusion test:ci-shape");
   });
 

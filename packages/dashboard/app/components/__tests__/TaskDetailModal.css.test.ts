@@ -51,6 +51,28 @@ describe("TaskDetailModal CSS contract", () => {
     expect(planBlock).toContain("max-width: 100%;");
   });
 
+  it("FN-8787 uses a reduced shared title inset while preserving task-detail side and bottom insets on desktop and mobile", async () => {
+    const baseCss = await loadAllAppCssBaseOnly();
+    const css = await loadAllAppCss();
+    const baseDetailBodyContentBlock = getCssRuleBlock(baseCss, ".detail-body-content");
+    const taskDetailCss = css.slice(css.indexOf("/* === Detail Modal === */"));
+    const mobileCss = taskDetailCss.slice(taskDetailCss.indexOf("@media (max-width: 768px)"));
+    const mobileDetailBodyContentBlock = getCssRuleBlock(mobileCss, ".detail-body-content");
+    const basePadding = "padding: calc(var(--space-lg) + var(--space-xs));";
+    const mobilePadding = "padding: calc(var(--space-md) + var(--space-xs) / 2);";
+
+    expect(baseDetailBodyContentBlock).toContain(basePadding);
+    expect(baseDetailBodyContentBlock).toContain("padding-block-start: var(--space-md);");
+    expect(baseDetailBodyContentBlock.indexOf(basePadding)).toBeLessThan(
+      baseDetailBodyContentBlock.indexOf("padding-block-start: var(--space-md);"),
+    );
+    expect(mobileDetailBodyContentBlock).toContain(mobilePadding);
+    expect(mobileDetailBodyContentBlock).toContain("padding-block-start: var(--space-sm);");
+    expect(mobileDetailBodyContentBlock.indexOf(mobilePadding)).toBeLessThan(
+      mobileDetailBodyContentBlock.indexOf("padding-block-start: var(--space-sm);"),
+    );
+  });
+
   /*
   FNXC:TaskDetailActivity 2026-07-27-02:15:
   FN-8624 extends FN-8166's symmetric Activity container inset from mobile to

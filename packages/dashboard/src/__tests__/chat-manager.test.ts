@@ -169,6 +169,7 @@ describe("ChatManager.sendMessage", () => {
     });
     mockChatStore.getMessages.mockReturnValue([]);
     mockChatStore.getRoomMessages.mockReturnValue([]);
+    mockChatStore.setInFlightGeneration.mockResolvedValue(undefined);
 
     mockAgentStore.init.mockResolvedValue(undefined);
     mockAgentStore.getAgent.mockResolvedValue({
@@ -203,6 +204,8 @@ describe("ChatManager.sendMessage", () => {
   });
 
   afterEach(() => {
+    __setChatDiagnostics(null);
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -1017,6 +1020,93 @@ describe("ChatManager.sendMessage", () => {
       expect.objectContaining({ status: "generating" }),
     );
     expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+  });
+
+  it("observes a debounced checkpoint rejection without an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    const warn = vi.fn();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    __setChatDiagnostics({ log: vi.fn(), warn, error: vi.fn() });
+
+    let resolvePrompt: (() => void) | undefined;
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(() => new Promise<void>((resolve) => {
+          options.onToolEnd("bash", false, {
+            content: [{ type: "text", text: "log \u0000fnlvl=info\u0000 line" }],
+          });
+          resolvePrompt = resolve;
+        })),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "done" }] },
+      },
+    }));
+    mockChatStore.setInFlightGeneration
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("jsonb rejected"))
+      .mockResolvedValue(undefined);
+
+    const sending = createChatManager().sendMessage("chat-001", "Read the log");
+    await vi.advanceTimersByTimeAsync(200);
+    await Promise.resolve();
+    expect(warn.mock.calls.filter(([message]) => message === "Failed to persist in-flight chat checkpoint for session chat-001")).toEqual([
+      ["Failed to persist in-flight chat checkpoint for session chat-001"],
+    ]);
+    expect(unhandled).not.toHaveBeenCalled();
+    expect(mockChatStore.setInFlightGeneration).toHaveBeenCalledWith("chat-001", expect.objectContaining({
+      toolCalls: [expect.objectContaining({
+        result: { content: [{ type: "text", text: "log \u0000fnlvl=info\u0000 line" }] },
+      })],
+    }));
+
+    resolvePrompt?.();
+    await sending;
+    process.off("unhandledRejection", unhandled);
+    vi.useRealTimers();
+  });
+
+  it("observes an immediate flush rejection and preserves the final clear", async () => {
+    const warn = vi.fn();
+    __setChatDiagnostics({ log: vi.fn(), warn, error: vi.fn() });
+    mockChatStore.setInFlightGeneration
+      .mockRejectedValueOnce(new Error("checkpoint unavailable"))
+      .mockResolvedValue(undefined);
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "done" }] },
+      },
+    }));
+
+    await expect(createChatManager().sendMessage("chat-001", "Hello")).resolves.toBeUndefined();
+    await Promise.resolve();
+    expect(warn.mock.calls.filter(([message]) => message === "Failed to persist in-flight chat checkpoint for session chat-001")).toEqual([
+      ["Failed to persist in-flight chat checkpoint for session chat-001"],
+    ]);
+    expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+  });
+
+  it("cancels a stale debounced snapshot before flushing the latest clear", async () => {
+    vi.useFakeTimers();
+    let onText: ((delta: string) => void) | undefined;
+    __setCreateFnAgent(async (options: any) => {
+      onText = options.onText;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => onText?.("queued")),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "done" }] },
+        },
+      };
+    });
+
+    await createChatManager().sendMessage("chat-001", "Hello");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(mockChatStore.setInFlightGeneration).toHaveBeenCalledTimes(2);
+    expect(mockChatStore.setInFlightGeneration).toHaveBeenLastCalledWith("chat-001", null);
+    vi.useRealTimers();
   });
 
   it("broadcasts done with persisted assistant message snapshot", async () => {

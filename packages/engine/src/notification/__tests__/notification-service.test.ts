@@ -98,6 +98,78 @@ describe("NotificationService deferred failure notifications", () => {
     return { store, service, sendNotification };
   }
 
+  /*
+  FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+  The reported sequence persists a failed snapshot while scheduler recovery owns
+  it. No delivery or durable wedge claim is allowed until the writer clears that
+  ownership at exhaustion, when the existing once-per-episode seam must alert.
+  */
+  it("suppresses recovery-owned failed snapshots and alerts once after exhaustion", async () => {
+    const store = createStore();
+    const sendMessageOnce = vi.fn(async () => ({ message: {} as any, inserted: true }));
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    let activeReason: string | undefined;
+    const claimTaskWedgeNotificationEpisode = vi.fn(async (_taskId: string, reasonKey: string | null) => {
+      if (reasonKey === null) {
+        activeReason = undefined;
+        return { claimed: false };
+      }
+      if (activeReason === reasonKey) return { claimed: false };
+      activeReason = reasonKey;
+      return { claimed: true, episodeId: `episode:${reasonKey}` };
+    });
+    Object.assign(store, { claimTaskWedgeNotificationEpisode });
+    const service = new NotificationService(store as any, {
+      messageStore: { on: () => undefined, sendMessageOnce } as any,
+      failedNotificationGraceMs: 100,
+    });
+    service.registerProvider({ getProviderId: () => "mock", isEventSupported: () => true, sendNotification });
+    await service.start();
+
+    const recovering = task({
+      id: "FN-recovering",
+      status: "failed",
+      error: "opaque executor failure",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: "2026-08-05T05:00:00.000Z",
+    });
+    store.setTask(recovering);
+    store.emit("task:updated", recovering);
+    await flushAsyncHandlers();
+
+    expect(sendMessageOnce).not.toHaveBeenCalled();
+    expect(sendNotification).not.toHaveBeenCalled();
+    expect(claimTaskWedgeNotificationEpisode).not.toHaveBeenCalled();
+    expect(service.getPendingFailureCount()).toBe(0);
+
+    const exhausted = task({
+      ...recovering,
+      recoveryRetryCount: undefined,
+      nextRecoveryAt: undefined,
+      updatedAt: "2026-08-05T05:01:00.000Z",
+    });
+    store.setTask(exhausted);
+    store.emit("task:updated", exhausted);
+    await vi.waitFor(() => expect(sendMessageOnce).toHaveBeenCalledTimes(1));
+    expect(sendNotification).toHaveBeenCalledWith("task-wedged", expect.objectContaining({ taskId: "FN-recovering" }));
+    expect(claimTaskWedgeNotificationEpisode).toHaveBeenCalledTimes(1);
+
+    store.emit("task:updated", exhausted);
+    await flushAsyncHandlers();
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+
+    await service.stop();
+    const restarted = new NotificationService(store as any, { messageStore: { on: () => undefined, sendMessageOnce } as any });
+    restarted.registerProvider({ getProviderId: () => "restarted", isEventSupported: () => true, sendNotification });
+    await restarted.start();
+    store.emit("task:updated", exhausted);
+    await flushAsyncHandlers();
+    expect(sendMessageOnce).toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledTimes(1);
+    await restarted.stop();
+  });
+
   it("Failure that persists past grace dispatches exactly once", async () => {
     const { store, service, sendNotification } = await setup();
     store.setTask(task({ id: "FN-1", status: "failed" }));
@@ -145,11 +217,13 @@ describe("NotificationService deferred failure notifications", () => {
       id: "FN-5628",
       status: "failed",
       error: "Merge handoff refused (lease-handoff-failed): target-not-queued",
+      mergeTransientRetryCount: 1,
     }));
     store.emit("task:updated", task({
       id: "FN-5628",
       status: "failed",
       error: "Merge handoff refused (lease-handoff-failed): target-not-queued",
+      mergeTransientRetryCount: 1,
     }));
 
     await vi.advanceTimersByTimeAsync(500);
@@ -162,8 +236,8 @@ describe("NotificationService deferred failure notifications", () => {
   it("FN-5627: suppresses notification for transient same-SHA spurious-concurrent-advance failures", async () => {
     const { store, service, sendNotification } = await setup();
     const transientError = "Integration branch main advanced concurrently (expected 694970b2f186fac31c1819d55ef30a2ad207b5c3, observed 694970b2f186fac31c1819d55ef30a2ad207b5c3) while applying b26f8fe1ee2d3dc36acf3571d42507b24bd8066b for FN-5626";
-    store.setTask(task({ id: "FN-5626", status: "failed", error: transientError }));
-    store.emit("task:updated", task({ id: "FN-5626", status: "failed", error: transientError }));
+    store.setTask(task({ id: "FN-5626", status: "failed", error: transientError, mergeTransientRetryCount: 1 }));
+    store.emit("task:updated", task({ id: "FN-5626", status: "failed", error: transientError, mergeTransientRetryCount: 1 }));
 
     await vi.advanceTimersByTimeAsync(500);
 

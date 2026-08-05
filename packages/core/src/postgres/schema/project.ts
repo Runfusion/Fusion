@@ -80,6 +80,7 @@ export const tasks = projectSchema.table("tasks", {
   worktree: text("worktree"),
   blockedBy: text("blocked_by"),
   overlapBlockedBy: text("overlap_blocked_by"),
+  queuedLogEpisodeSignature: text("queued_log_episode_signature"),
   paused: integer("paused").default(0),
   userPaused: integer("user_paused").default(0),
   pausedReason: text("paused_reason"),

@@ -2816,6 +2816,37 @@ describe("ListView", () => {
     }
   });
 
+  it("shows Planning in desktop and mobile lists when planner liveness precedes the replan status update", () => {
+    const task = createMockTask({
+      id: "FN-8798-live-replan",
+      column: "triage",
+      status: "needs-replan",
+      recentAgentActivityAt: new Date().toISOString(),
+    });
+
+    const desktopViewport = mockDesktopViewport();
+    try {
+      const { unmount } = renderListView({ tasks: [task] });
+      const row = screen.getByText(task.id).closest("tr") as HTMLElement;
+      expect(within(row).getAllByText("Planning").find((element) => element.classList.contains("list-status-badge"))).toBeDefined();
+      unmount();
+    } finally {
+      desktopViewport.mockRestore();
+    }
+
+    const mobileViewport = mockMobileViewport();
+    try {
+      renderListView({ tasks: [task] });
+      const card = screen.getAllByText(task.id)
+        .map((element) => element.closest(".list-card"))
+        .find((element): element is HTMLElement => element instanceof HTMLElement);
+      expect(card).toBeDefined();
+      expect(within(card!).getAllByText("Planning").find((element) => element.classList.contains("list-status-badge"))).toBeDefined();
+    } finally {
+      mobileViewport.mockRestore();
+    }
+  });
+
   it("renders paused tasks with dimmed styling", () => {
     const tasks = [createMockTask({ id: "FN-001", paused: true })];
 

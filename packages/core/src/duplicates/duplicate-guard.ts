@@ -1,6 +1,8 @@
 import type { Task } from "../types.js";
 import type { TaskStore } from "../store.js";
 import { computeContentFingerprint } from "./duplicate-detection.js";
+import { isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
+import { resolveNearDuplicateCanonicalFlags } from "./near-duplicate-canonical-flags.js";
 import { resolveArchiveTargetForTask } from "../workflows/workflow-lifecycle-traits.js";
 
 /*
@@ -69,6 +71,19 @@ function matchesParentScope(task: Task, sourceParentTaskId?: string | null): boo
   return !sourceParentTaskId || task.sourceParentTaskId === sourceParentTaskId;
 }
 
+async function findActiveDuplicate(
+  store: TaskStore,
+  candidates: readonly Task[],
+  predicate: (task: Task) => boolean,
+): Promise<Task | undefined> {
+  for (const candidate of candidates) {
+    if (!predicate(candidate)) continue;
+    const flags = await resolveNearDuplicateCanonicalFlags(store, candidate);
+    if (!isNearDuplicateCanonicalInactive(candidate, flags)) return candidate;
+  }
+  return undefined;
+}
+
 export async function runDeterministicDuplicateGuard(
   store: TaskStore,
   input: { title?: string | null; description: string },
@@ -88,7 +103,7 @@ export async function runDeterministicDuplicateGuard(
         windowMs,
         includeArchived: false,
       });
-      const deterministicConflict = deterministicMatches.find((match) =>
+      const deterministicConflict = await findActiveDuplicate(store, deterministicMatches, (match) =>
         matchesParentScope(match, opts?.sourceParentTaskId) && !acknowledged.has(match.id),
       );
       if (deterministicConflict) {
@@ -140,7 +155,7 @@ export async function runDeterministicDuplicateGuard(
       windowMs,
       includeArchived: false,
     });
-    const deterministicConflict = deterministicMatches.find((match) =>
+    const deterministicConflict = await findActiveDuplicate(store, deterministicMatches, (match) =>
       matchesParentScope(match, opts.sourceParentTaskId) && !acknowledged.has(match.id),
     );
     if (deterministicConflict) {
@@ -179,7 +194,7 @@ export async function reconcileDeterministicDuplicate(
       includeArchived: false,
     });
 
-    const olderSibling = siblings.find((sibling) =>
+    const olderSibling = await findActiveDuplicate(store, siblings, (sibling) =>
       sibling.id !== args.createdTask.id
       && sibling.createdAt < args.createdTask.createdAt
       && matchesParentScope(sibling, args.sourceParentTaskId),

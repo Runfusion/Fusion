@@ -73,6 +73,27 @@ function stripComments(source: string): string {
 }
 
 /*
+FNXC:WorkflowResolvedColumns 2026-08-05-00:02 (gate cost):
+SHARED comment-stripped read cache. countByFile() already memoised its scan, but the anti-vacuity
+case ("scans a real corpus") re-read the ENTIRE corpus a second time with its own readFileSync loop
+to find moveTask( callers — measured ~270ms of a second full pass over the same unchanging tree. Both
+consumers want the same comment-stripped source, so read+strip each file once and share it.
+*/
+const strippedSourceCache = new Map<string, string>();
+function strippedSource(file: string): string {
+  const cached = strippedSourceCache.get(file);
+  if (cached !== undefined) return cached;
+  let stripped: string;
+  try {
+    stripped = stripComments(readFileSync(resolve(REPO_ROOT, file), "utf8"));
+  } catch {
+    stripped = "";
+  }
+  strippedSourceCache.set(file, stripped);
+  return stripped;
+}
+
+/*
 FNXC:WorkflowResolvedColumns 2026-07-31-23:59:
 MEMOISED for gate admission. Each case called this independently and every call re-read the whole
 corpus, so the scan ran five times for one tree: measured 660ms of the suite's 800ms. The tree cannot
@@ -87,13 +108,7 @@ function countByFile(): Record<string, number> {
   if (countsCache) return countsCache;
   const counts: Record<string, number> = {};
   for (const file of sourceFiles()) {
-    let source: string;
-    try {
-      source = readFileSync(resolve(REPO_ROOT, file), "utf8");
-    } catch {
-      continue;
-    }
-    const hits = stripComments(source).match(MOVE_TARGET);
+    const hits = strippedSource(file).match(MOVE_TARGET);
     if (hits && hits.length > 0) counts[file] = hits.length;
   }
   countsCache = counts;
@@ -115,13 +130,7 @@ describe("moveTask targets resolve the board's own lane", () => {
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(200);
 
-    const callers = files.filter((file) => {
-      try {
-        return /moveTask\s*\(/.test(stripComments(readFileSync(resolve(REPO_ROOT, file), "utf8")));
-      } catch {
-        return false;
-      }
-    });
+    const callers = files.filter((file) => /moveTask\s*\(/.test(strippedSource(file)));
     expect(callers.length).toBeGreaterThan(5);
     expect(callers).toContain("packages/engine/src/self-healing.ts");
   });

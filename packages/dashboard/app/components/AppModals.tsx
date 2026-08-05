@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react"
 import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
+import { mergeTaskSnapshot } from "../hooks/useTasks";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
 import type { Toast, ToastType } from "../hooks/useToast";
@@ -45,6 +46,7 @@ interface AppModalsProps {
   tasks: Task[];
   /* Per-task lifecycle traits, forwarded to Task Detail's blocker fan-out. */
   columnFlagsByTaskId?: ReadonlyMap<string, BlockerFanoutColumnFlags>;
+  globalPaused?: boolean;
   projects: ProjectInfo[];
   currentProject: ProjectInfo | null;
   addToast: (message: string, type?: ToastType) => void;
@@ -107,6 +109,7 @@ export function AppModals({
   projectId,
   tasks,
   columnFlagsByTaskId,
+  globalPaused = false,
   projects,
   currentProject,
   addToast,
@@ -132,20 +135,7 @@ export function AppModals({
   const detailTask = modalManager.detailTask
     ? (() => {
         const liveTask = tasks.find((task) => task.id === modalManager.detailTask?.id);
-        if (!liveTask) {
-          return modalManager.detailTask;
-        }
-
-        if ("prompt" in modalManager.detailTask) {
-          return {
-            ...modalManager.detailTask,
-            ...liveTask,
-            prompt: modalManager.detailTask.prompt,
-            log: modalManager.detailTask.log,
-          };
-        }
-
-        return liveTask;
+        return liveTask ? mergeTaskSnapshot(modalManager.detailTask, liveTask) : modalManager.detailTask;
       })()
     : null;
 
@@ -325,6 +315,7 @@ export function AppModals({
             projectId={projectId}
             tasks={tasks}
             columnFlagsByTaskId={columnFlagsByTaskId}
+            globalPaused={globalPaused}
             onClose={closeDetailWithNav}
             onOpenDetail={openDetailTaskWithNav}
             mobileHeaderMode={modalManager.detailTaskOrigin === "list-mobile" ? "back" : "close"}

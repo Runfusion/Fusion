@@ -2138,9 +2138,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   incremented by real work and the durable counter it maintained was fiction.
 
   `getLiveRunningAgentCounts` SURVIVES and is now the only global readout. It is
-  TELEMETRY, not a limiter: it derives live per-project agent counts from the
-  registered side-effect-safe source so the dashboard can show "N running (all
-  projects)". Nothing gates on it.
+  TELEMETRY, not a capacity limiter: it derives live per-project agent counts
+  from the registered side-effect-safe source so the dashboard can show "N
+  running (all projects)". Task admission does not gate on it.
+
+  FNXC:DevEngineWatch 2026-08-04-01:25:
+  The opt-in source-development restart also reads this conservative telemetry
+  to wait for active work to drain. That is shutdown safety, not capacity
+  arbitration; it never reserves slots or changes task admission.
   */
   async getLiveRunningAgentCounts(options?: { source?: RunningAgentCountSource }): Promise<RunningAgentCounts> {
     this.ensureInitialized();

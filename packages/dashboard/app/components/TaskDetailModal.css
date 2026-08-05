@@ -127,9 +127,16 @@ It is excluded from shell-inset symmetry; FN-7581 Interventions remains at zero 
   position: relative;
 }
 
+/*
+FNXC:TaskDetailTitleSpacing 2026-08-04-18:07:
+The shared task-detail wrapper intentionally uses a smaller block-start inset than its
+side and bottom inset so every modal, embedded, pop-out, and mobile shell keeps the
+user-facing title close to the ID toolbar without changing canonical content spacing.
+*/
 .detail-body-content {
   min-width: 0;
   padding: calc(var(--space-lg) + var(--space-xs));
+  padding-block-start: var(--space-md);
 }
 
 .detail-body::-webkit-scrollbar {
@@ -226,6 +233,24 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
   min-width: 0;
 }
 
+.detail-title-control {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.detail-title-control:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 .detail-summarize-title-btn {
   display: inline-flex;
   align-items: center;
@@ -255,22 +280,6 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
 .detail-summarize-title-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.detail-description-toggle {
-  display: block;
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 13px;
-  padding: 2px 0;
-  margin-bottom: var(--space-md);
-  cursor: pointer;
-  text-align: left;
-}
-
-.detail-description-toggle:hover {
-  color: var(--text);
 }
 
 /*
@@ -1576,7 +1585,6 @@ Planner Chat should not open expanded by default. When the user expands it, the 
   min-height: 0;
 }
 
-.task-detail-content--planner-chat-expanded .detail-description-toggle,
 .task-detail-content--planner-chat-expanded .detail-near-duplicate-banner,
 .task-detail-content--planner-chat-expanded .detail-plan-approval-banner,
 .task-detail-content--planner-chat-expanded .task-fields-section,
@@ -3481,6 +3489,7 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
 
   .detail-body-content {
     padding: calc(var(--space-md) + var(--space-xs) / 2);
+    padding-block-start: var(--space-sm);
   }
 
   .detail-body::-webkit-scrollbar {

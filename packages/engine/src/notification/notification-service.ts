@@ -14,10 +14,9 @@ import type { LifecycleColumns, TaskMoveLanes, WorkflowIrResolverStore } from "@
 import { DASHBOARD_USER_ID, NotificationDispatcher, resolveProjectColumnsForRoles, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, WEDGE_RENOTIFY_COOLDOWN_MS } from "@fusion/core";
 import { DEFAULT_NTFY_EVENTS, buildNtfyClickUrl, formatTaskIdentifier } from "../util/notifier.js";
 import { schedulerLog } from "../logger.js";
-import { classifyTransientMergeError } from "../errors/transient-merge-error-classifier.js";
 import { NtfyNotificationProvider } from "./ntfy-provider.js";
 import { WebhookNotificationProvider } from "./webhook-provider.js";
-import { describeTaskWedge, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
+import { describeTaskRecoveryOwner, describeTaskWedge, type TaskWedgeDescriptor } from "./task-wedge-notification.js";
 
 export interface NotificationServiceOptions {
   /** Project identifier for notification deep links */
@@ -372,14 +371,13 @@ export class NotificationService {
 
   private handleTaskUpdated = (task: Task, meta?: { lanes?: TaskMoveLanes }): void => {
     /*
-    FNXC:TaskWedgeNotifications 2026-07-22-20:00:
-    FN-5627 transient merge failures retain an active recovery owner despite
-    their temporary failed status. Classify them before claiming a durable wedge
-    episode: the generic terminal-failed fallback must not bypass its grace and
-    self-healing suppression, or turn a recoverable flap into an operator alert.
+    FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+    A task update is a point-in-time snapshot. The pure classifier recognizes
+    only persisted recovery ownership, while `maybeNotifyTaskWedge` re-reads
+    live state before a durable claim so recovery cannot produce a false alert.
     */
-    const transientFailure = task.status === "failed" ? classifyTransientMergeError(task.error) : null;
-    const wedge = transientFailure ? null : describeTaskWedge(task);
+    const recoveryOwner = task.status === "failed" ? describeTaskRecoveryOwner(task) : null;
+    const wedge = describeTaskWedge(task);
     /*
     FNXC:TaskWedgeNotifications 2026-07-22-14:30:
     A generic failed push may have been scheduled before a terminal error was
@@ -387,7 +385,7 @@ export class NotificationService {
     only operator notification; dispatch-time suppression below covers races.
     */
     if (wedge) this.cancelPendingFailureNotification(task.id, "classified-terminal-wedge");
-    if (!transientFailure) void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, wedge));
+    void this.enqueueWedgeHandling(task.id, () => this.maybeNotifyTaskWedge(task, wedge));
     void this.maybeSuppressTransientFailedNotification(task, `status=${task.status ?? "undefined"}`);
 
     /*
@@ -411,27 +409,12 @@ export class NotificationService {
       return;
     }
 
-    if (task.status === "failed" && !wedge) {
-      // FN-5627: Suppress notifications entirely for transient merge failure
-      // classes recognized by `classifyTransientMergeError`. These are
-      // recovered automatically by `SelfHealingManager.recoverTransientMergeFailures`
-      // and the per-tick auto-recovery in `project-engine.ts` fast-path; the
-      // task either lands cleanly on a retry or stays in in-review for the
-      // bounded recovery budget to handle. Without this guard, every flap
-      // cycle (typically every ~5 min when the merger keeps hitting the same
-      // transient class) fires another ntfy alarm even though the task is
-      // never genuinely stuck — producing user-facing alarm spam with no
-      // actionable information.
-      const transientClass = classifyTransientMergeError(task.error);
-      if (transientClass) {
-        this.failureNotificationSuppressedCount += 1;
-        schedulerLog.debug(
-          `[notify] ${task.id} transient merge failure (${transientClass}) — suppressed notification (self-heal in flight)`,
-        );
-        return;
-      }
+    if (task.status === "failed" && recoveryOwner) {
+      this.failureNotificationSuppressedCount += 1;
+      schedulerLog.debug(`[notify] ${task.id} recovery-owned failure — suppressed notification`);
+    } else if (task.status === "failed" && !wedge) {
       if (this.failureNotificationMode === "all") {
-        this.maybeNotify(task.id, "failed", this.createTaskPayload(task, "failed"));
+        void this.maybeNotifyImmediateFailure(task);
       } else {
         this.scheduleFailureNotification(task);
       }
@@ -543,7 +526,21 @@ export class NotificationService {
   }
 
   private async maybeNotifyTaskWedge(task: Task, suppliedDescriptor?: TaskWedgeDescriptor | null): Promise<void> {
-    const descriptor = suppliedDescriptor ?? describeTaskWedge(task);
+    // Task events carry snapshots. Re-read before a durable claim so an immediate
+    // recovery update cannot turn a stale failed event into an operator alert.
+    const liveTask = this.store.getTask ? (await this.store.getTask(task.id)) ?? task : task;
+    const recoveryOwner = describeTaskRecoveryOwner(liveTask);
+    if (recoveryOwner) {
+      // Recovery ownership is not a wedge episode. Resolve only an episode we
+      // can prove active, avoiding a write/claim for a never-notified snapshot.
+      if (this.activeWedgeReasons.has(task.id) || liveTask.wedgeNotification?.status === "active") {
+        this.activeWedgeReasons.delete(task.id);
+        await this.store.claimTaskWedgeNotificationEpisode?.(task.id, null);
+      }
+      return;
+    }
+    const descriptor = suppliedDescriptor ?? describeTaskWedge(liveTask);
+    task = liveTask;
     let episode: string | undefined;
     if (!descriptor) {
       /*
@@ -1021,6 +1018,19 @@ export class NotificationService {
     this.failureNotificationMode = settings.failureNotificationMode ?? "sticky-only";
   }
 
+  private async maybeNotifyImmediateFailure(task: Task): Promise<void> {
+    const liveTask = this.store.getTask ? (await this.store.getTask(task.id)) ?? task : task;
+    if (
+      liveTask.status !== "failed"
+      || describeTaskRecoveryOwner(liveTask)
+      || describeTaskWedge(liveTask)
+    ) {
+      this.failureNotificationSuppressedCount += 1;
+      return;
+    }
+    this.maybeNotify(liveTask.id, "failed", this.createTaskPayload(liveTask, "failed"));
+  }
+
   private scheduleFailureNotification(task: Task): void {
     if (this.pendingFailureNotifications.has(task.id)) {
       return;
@@ -1094,17 +1104,15 @@ export class NotificationService {
       return;
     }
 
-    // FN-5627 defense-in-depth: even when a failure notification was scheduled
-    // (e.g., the failure happened slightly before the transient classifier
-    // suppression landed on a newer cycle), re-check at dispatch time before
-    // terminal-wedge classification. A transient failed task still has an
-    // automatic recovery owner and must not claim a wedge episode.
-    const transientClassAtDispatch = classifyTransientMergeError(task.error);
-    if (transientClassAtDispatch) {
+    /*
+    FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+    A grace timer owns only delayed generic delivery, never the task lifecycle.
+    Re-check durable recovery ownership here so a retry scheduled after the
+    original failed event produces neither a mailbox row nor a provider dispatch.
+    */
+    if (describeTaskRecoveryOwner(task)) {
       this.failureNotificationSuppressedCount += 1;
-      schedulerLog.debug(
-        `[notify] ${taskId} transient merge failure (${transientClassAtDispatch}) at dispatch time — suppressed notification (self-heal in flight)`,
-      );
+      schedulerLog.debug(`[notify] ${taskId} recovery-owned failure at dispatch time — suppressed notification`);
       return;
     }
 

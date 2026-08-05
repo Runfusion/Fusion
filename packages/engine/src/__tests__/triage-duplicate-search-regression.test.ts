@@ -32,7 +32,7 @@ const FAST_PLANNING_PROMPT = builtinSeamPrompt("planning-fast");
 /**
  * FN-4726 / FN-4734 / FN-4741: triage created repeated duplicate tasks after equivalent
  * work had already landed. FN-4774 fixed this by (1) exposing fn_task_search in triage,
- * (2) guiding the canonical triage policy prompt to search done/archived before creating, and
+ * (2) guiding the canonical triage policy prompt to search active work before creating, and
  * (3) preserving that guidance in FAST_PLANNING_PROMPT. FN-4815 pins this contract.
  */
 describe("FN-4815 triage duplicate-search regression", () => {
@@ -53,18 +53,20 @@ describe("FN-4815 triage duplicate-search regression", () => {
   it("standard prompt guidance keeps duplicate-search instructions", () => {
     expect(TRIAGE_POLICY_PROMPT).toContain("Duplicate check");
     expect(TRIAGE_POLICY_PROMPT).toContain("fn_task_search");
-    expect(TRIAGE_POLICY_PROMPT).toContain("including done and archived tasks");
+    expect(TRIAGE_POLICY_PROMPT).toContain("includeDone: false");
+    expect(TRIAGE_POLICY_PROMPT).toContain("includeArchived: false");
     expect(/Duplicate check[\s\S]{0,700}(done|archived)/i.test(TRIAGE_POLICY_PROMPT)).toBe(true);
   });
 
   it("fast prompt guidance keeps duplicate-search instructions", () => {
     expect(FAST_PLANNING_PROMPT).toContain("Duplicate check");
     expect(FAST_PLANNING_PROMPT).toContain("fn_task_search");
-    expect(FAST_PLANNING_PROMPT).toContain("For any likely match in `done` or `archived`");
+    expect(FAST_PLANNING_PROMPT).toContain("includeDone: false");
+    expect(FAST_PLANNING_PROMPT).toContain("includeArchived: false");
     expect(/Duplicate check[\s\S]{0,700}(done|archived)/i.test(FAST_PLANNING_PROMPT)).toBe(true);
   });
 
-  it("end-to-end duplicate discovery via fixture shows done match before create", async () => {
+  it("end-to-end duplicate discovery excludes done matches by default", async () => {
     const scenario = createTriageDuplicateScenario();
     const store = scenario.buildMockStore();
     const processor = new TriageProcessor(store, "/tmp/root");
@@ -82,11 +84,10 @@ describe("FN-4815 triage duplicate-search regression", () => {
 
     expect(store.searchTasks).toHaveBeenCalledWith(scenario.searchQuery, {
       slim: true,
-      includeArchived: true,
+      includeArchived: false,
       limit: 20,
     });
-    expect(output).toContain(`${scenario.doneTask.id} (done):`);
-    expect(output).toContain("(done)");
+    expect(output).not.toContain(`${scenario.doneTask.id} (done):`);
   });
 
   it("FN-4726/FN-4734: recently-merged done task touching register-session-diff-routes.ts surfaces via fn_task_search", async () => {

@@ -2715,6 +2715,27 @@ describe("POST /tasks/:id/review/address", () => {
     return app;
   }
 
+  function authorizeMarkedTopLevelReviewNodes(...nodes: Array<{ id: string; kind?: "prompt" | "gate" | "script" | "optional-group" }>) {
+    const workflowId = "WF-review-kind";
+    const workflowIr = {
+      version: "v1" as const,
+      name: "Marked review nodes",
+      nodes: [
+        { id: "start", kind: "start" as const },
+        ...nodes.map(({ id, kind = "prompt" }) => ({ id, kind, config: { reviewKind: "code" } })),
+        { id: "end", kind: "end" as const },
+      ],
+      edges: [
+        { from: "start", to: nodes[0]?.id ?? "end" },
+        ...nodes.slice(0, -1).map((node, index) => ({ from: node.id, to: nodes[index + 1]!.id })),
+        ...(nodes.length > 0 ? [{ from: nodes[nodes.length - 1]!.id, to: "end" }] : []),
+      ],
+    };
+    store.getTaskWorkflowSelection = vi.fn().mockReturnValue({ workflowId, stepIds: [] });
+    store.getTaskWorkflowSelectionAsync = vi.fn().mockResolvedValue({ workflowId, stepIds: [] });
+    store.getWorkflowDefinition = vi.fn().mockResolvedValue({ ir: workflowIr });
+  }
+
   function mockReviewerBlockLogs() {
     (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
@@ -2748,6 +2769,198 @@ describe("POST /tasks/:id/review/address", () => {
       ],
     });
   }
+
+  it("normalizes current workflow review results into stable canonical items", async () => {
+    const taskWithWorkflowReviews = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-009",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      workflowStepResults: [
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "passed", verdict: "APPROVE_WITH_NOTES", output: "1. Keep the assertion focused.", completedAt: "2026-01-02T00:00:00.000Z" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", phase: "pre-merge", status: "failed", verdict: "REVISE", notes: "Clarify the rollback plan.", startedAt: "2026-01-03T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", phase: "pre-merge", status: "advisory_failure", verdict: "APPROVE", completedAt: "2026-01-04T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Invalid marked builtin", source: "optional-group", status: "advisory_failure", verdict: "REVISE", reviewKind: "invalid" as unknown as "code", output: "Invalid marker must not become legacy compatibility.", completedAt: "2026-01-04T01:00:00.000Z" },
+        { workflowStepId: "custom-review", workflowStepName: "Custom Review", status: "passed", verdict: "REVISE", output: "Must not be inferred." },
+        { workflowStepId: "custom-plan", workflowStepName: "Custom Plan", source: "node", status: "failed", reviewKind: "plan", notes: "Persisted marker qualifies this feedback.", completedAt: "2026-01-05T00:00:00.000Z" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", status: "pending", verdict: "REVISE" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "skipped", verdict: "REVISE" },
+        { workflowStepId: "code-review", workflowStepName: "Code Review", status: "passed", verdict: "REVISE", supersededAt: "2026-01-05T00:00:00.000Z" },
+        { workflowStepId: "superseded-custom", workflowStepName: "Superseded Custom", source: "node", status: "failed", reviewKind: "code", output: "Must be excluded even when only the reason remains.", supersededReason: "replaced" },
+        { workflowStepId: "plan-review", workflowStepName: "Plan Review", status: "failed", verdict: "REVISE", bypassedAt: "2026-01-05T00:00:00.000Z" },
+      ],
+      log: [{ timestamp: reviewerBlockTimestamp, action: "code review Step 1: REVISE - legacy fallback must not duplicate structured data" }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithWorkflowReviews);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([{ agent: "reviewer", type: "text", text: "## Code Review:\\n### Verdict: REVISE" }]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-plan" });
+
+    const first = await REQUEST(buildApp(), "GET", "/api/tasks/FN-009/review");
+    const refreshed = await REQUEST(buildApp(), "POST", "/api/tasks/FN-009/review/refresh");
+
+    expect(first.status).toBe(200);
+    expect(refreshed.status).toBe(200);
+    expect(first.body.items).toHaveLength(4);
+    expect(first.body.items.map((item: { body: string; reviewType: string }) => [item.body, item.reviewType])).toEqual(expect.arrayContaining([
+      ["1. Keep the assertion focused.", "code"],
+      ["Clarify the rollback plan.", "plan"],
+      ["Persisted marker qualifies this feedback.", "plan"],
+      ["No written feedback was provided by this review step.", "code"],
+    ]));
+    expect(first.body.summary).toEqual({ summary: "Custom Plan failed" });
+    expect(first.body.items.map((item: { itemId: string }) => item.itemId)).toEqual(refreshed.body.items.map((item: { itemId: string }) => item.itemId));
+    expect(store.getAgentLogs).not.toHaveBeenCalled();
+  });
+
+  it("does not expose materialized template identities even when manually marked", async () => {
+    const taskWithMaterializedResult = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-011",
+      workflowStepResults: [{
+        workflowStepId: "steps#0:step-execute",
+        workflowStepName: "Template review",
+        source: "node",
+        status: "passed",
+        reviewKind: "code",
+        output: "A manually persisted template result must not be addressable.",
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithMaterializedResult);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-011/review");
+    expect(review.status).toBe(200);
+    expect(review.body.items).toEqual([]);
+
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-011/review/address", JSON.stringify({
+      selectedItems: [{ id: "workflow-review-forged", source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(400);
+  });
+
+  it("accepts marked top-level review node ids containing template-like delimiters", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-011-delimiters",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [
+        { workflowStepId: "architecture::review", workflowStepName: "Architecture review", source: "node", status: "passed", reviewKind: "plan", output: "Exact top-level identity is authoritative." },
+        { workflowStepId: "review#12:code", workflowStepName: "Code review", source: "optional-group", status: "failed", reviewKind: "code", notes: "Punctuation does not imply a template instance." },
+      ],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes(
+      { id: "architecture::review", kind: "prompt" },
+      { id: "review#12:code", kind: "optional-group" },
+    );
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-delimiter" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-011-delimiters/review");
+    expect(review.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Architecture review passed", reviewType: "plan" }),
+      expect.objectContaining({ title: "Code review failed", reviewType: "code" }),
+    ]));
+
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-011-delimiters/review/address", JSON.stringify({
+      selectedItems: [{ id: review.body.items[0].itemId, source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(200);
+  });
+
+  it("addresses a marked custom review with a server-owned canonical snapshot", async () => {
+    const task = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-012",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      reviewState: undefined,
+      workflowStepResults: [{
+        workflowStepId: "custom-code-check",
+        workflowStepName: "Custom code check",
+        source: "node",
+        status: "failed",
+        reviewKind: "code",
+        output: "Use the authoritative persisted feedback.",
+        completedAt: "2026-01-06T00:00:00.000Z",
+      }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    authorizeMarkedTopLevelReviewNodes({ id: "custom-code-check" });
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-custom" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...task, column: "in-progress", status: null });
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-012/review");
+    expect(review.body.items).toEqual([expect.objectContaining({
+      title: "Custom code check failed",
+      body: "Use the authoritative persisted feedback.",
+      reviewType: "code",
+      sourceMode: "reviewer-agent",
+    })]);
+    const itemId = review.body.items[0].itemId;
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-012/review/address", JSON.stringify({
+      selectedItems: [{ id: itemId, source: "reviewer-agent", body: "FORGED" }],
+    }), { "Content-Type": "application/json" });
+
+    expect(address.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-012", expect.objectContaining({
+      reviewState: expect.objectContaining({
+        addressing: [expect.objectContaining({ itemId, snapshot: expect.objectContaining({ body: "Use the authoritative persisted feedback." }) })],
+      }),
+    }));
+  });
+
+  it.each([
+    ["unmarked", { workflowStepId: "review-by-name", workflowStepName: "Review", source: "node", status: "failed", verdict: "REVISE", output: "lookalike" }],
+    ["pending", { workflowStepId: "pending", workflowStepName: "Pending", source: "node", status: "pending", reviewKind: "plan", output: "not terminal" }],
+    ["skipped", { workflowStepId: "skipped", workflowStepName: "Skipped", source: "node", status: "skipped", reviewKind: "code", output: "not current" }],
+    ["bypassed", { workflowStepId: "bypassed", workflowStepName: "Bypassed", source: "node", status: "failed", reviewKind: "code", output: "not current", bypassReason: "operator" }],
+    ["superseded", { workflowStepId: "superseded", workflowStepName: "Superseded", source: "node", status: "passed", reviewKind: "plan", output: "not current", supersededReason: "retry" }],
+    ["prior attempt only", { workflowStepId: "prior", workflowStepName: "Prior", source: "node", status: "skipped", priorAttempts: [{ workflowStepId: "prior", workflowStepName: "Prior", source: "node", status: "failed", reviewKind: "code", output: "history only" }] }],
+    ["blank", { workflowStepId: "blank", workflowStepName: "Blank", source: "optional-group", status: "passed", reviewKind: "code", output: "   ", notes: "" }],
+    ["template instance", { workflowStepId: "group::child", workflowStepName: "Template", source: "node", status: "passed", reviewKind: "code", output: "not addressable" }],
+  ])("rejects GET and canonical address for excluded marked custom %s results", async (_state, result) => {
+    const task = { ...FAKE_TASK_DETAIL, id: "FN-013", workflowStepResults: [result], reviewState: undefined };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-013/review");
+    const refreshed = await REQUEST(buildApp(), "POST", "/api/tasks/FN-013/review/refresh");
+    expect(review.body.items).toEqual([]);
+    expect(refreshed.body.items).toEqual([]);
+    const address = await REQUEST(buildApp(), "POST", "/api/tasks/FN-013/review/address", JSON.stringify({
+      selectedItems: [{ id: "workflow-review-forged", source: "reviewer-agent" }],
+    }), { "Content-Type": "application/json" });
+    expect(address.status).toBe(400);
+  });
+
+  it("uses legacy activity review feedback when workflow results are absent or unsupported", async () => {
+    const taskWithUnsupportedWorkflowReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-010",
+      workflowStepResults: [{ workflowStepId: "custom-review", workflowStepName: "Custom Review", status: "passed", verdict: "REVISE", output: "not a current built-in review node" }],
+      log: [{ timestamp: fallbackTimestamp, action: "plan review Step 2: RETHINK - revise the approach" }],
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithUnsupportedWorkflowReview);
+    (store.getAgentLogs as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-010/review");
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([expect.objectContaining({
+      itemId: fallbackItemId,
+      title: "plan review RETHINK",
+      body: "plan review Step 2: RETHINK - revise the approach",
+      verdict: "RETHINK",
+      reviewType: "plan",
+    })]);
+    expect(store.getAgentLogs).toHaveBeenCalledWith("FN-010");
+  });
 
   it("resumes reviewer-agent in-review tasks using canonical log-derived review ids when reviewState is absent", async () => {
     const taskWithoutPersistedItems = {
@@ -2783,6 +2996,68 @@ describe("POST /tasks/:id/review/address", () => {
     expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("Fix tests before merge."), "user");
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
     expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
+  });
+
+  it("addresses workflow review items by canonical id without trusting forged client feedback", async () => {
+    const taskWithWorkflowReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-009",
+      column: "in-review",
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      sessionFile: null,
+      workflowStepResults: [{
+        workflowStepId: "code-review",
+        workflowStepName: "Code Review",
+        phase: "pre-merge",
+        status: "passed",
+        verdict: "APPROVE_WITH_NOTES",
+        output: "Canonical advisory: preserve this text.",
+        completedAt: "2026-01-05T00:00:00.000Z",
+      }],
+      reviewState: undefined,
+    };
+    const movedTask = { ...taskWithWorkflowReview, column: "in-progress", status: null };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithWorkflowReview);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+
+    const review = await REQUEST(buildApp(), "GET", "/api/tasks/FN-009/review");
+    const itemId = review.body.items[0].itemId;
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-009/review/address", JSON.stringify({
+      selectedItems: [{
+        id: itemId,
+        source: "reviewer-agent",
+        summary: "FORGED summary",
+        body: "FORGED body",
+        author: "attacker",
+        filePath: "forged.ts",
+        lineNumber: 999,
+        url: "https://invalid.example/forged",
+      }],
+    }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-009", {
+      reviewState: expect.objectContaining({
+        addressing: [expect.objectContaining({
+          itemId,
+          snapshot: expect.objectContaining({
+            summary: "Code Review APPROVE_WITH_NOTES",
+            body: "Canonical advisory: preserve this text.",
+            authorLogin: "reviewer-agent",
+            filePath: undefined,
+            lineNumber: undefined,
+            url: undefined,
+          }),
+        })],
+      }),
+    });
+    const steering = (store.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(steering).toContain("Canonical advisory: preserve this text.");
+    expect(steering).not.toContain("FORGED");
+    expect(steering).not.toContain("invalid.example");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-009", "in-progress", { preserveProgress: true });
   });
 
   it("accepts reviewer-agent fallback log review ids when no reviewer text block exists", async () => {

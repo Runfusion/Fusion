@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
-import { getTaskStatusBadgeLabel, hasTaskStatusBadge } from "../taskStatusBadgeLabel";
+import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive, PLANNER_ACTIVITY_LIVE_WINDOW_MS } from "../taskStatusBadgeLabel";
 
 const t = ((key: string, fallback?: string) => fallback ?? key) as TFunction<"app">;
 
@@ -21,6 +21,26 @@ describe("hasTaskStatusBadge", () => {
     expect(hasTaskStatusBadge(null)).toBe(false);
     expect(hasTaskStatusBadge(undefined)).toBe(false);
     expect(hasTaskStatusBadge(" ")).toBe(false);
+  });
+});
+
+describe("isTaskPlanningActive", () => {
+  it("accepts planning status or fresh, unpaused planner activity on a replan card only", () => {
+    const now = Date.parse("2026-08-05T10:05:00.000Z");
+    expect(isTaskPlanningActive({ status: "planning" }, { globalPaused: true, now })).toBe(true);
+    expect(isTaskPlanningActive({ status: "needs-replan", recentAgentActivityAt: "2026-08-05T10:01:00.000Z" }, { now })).toBe(true);
+    expect(isTaskPlanningActive({ status: "needs-replan", recentAgentActivityAt: "2026-08-05T10:01:00.000Z" }, { globalPaused: true, now })).toBe(false);
+    expect(isTaskPlanningActive({ status: "needs-replan" }, { now })).toBe(false);
+    expect(isTaskPlanningActive({ status: undefined, recentAgentActivityAt: "2026-08-05T10:01:00.000Z" }, { now })).toBe(false);
+  });
+
+  it("expires historical or malformed planner activity", () => {
+    const now = Date.parse("2026-08-05T10:05:00.000Z");
+    expect(isTaskPlanningActive(
+      { status: "needs-replan", recentAgentActivityAt: new Date(now - PLANNER_ACTIVITY_LIVE_WINDOW_MS - 1).toISOString() },
+      { now },
+    )).toBe(false);
+    expect(isTaskPlanningActive({ status: "needs-replan", recentAgentActivityAt: "not-a-date" }, { now })).toBe(false);
   });
 });
 

@@ -6,7 +6,7 @@
 export type TaskReviewMode = "pull-request" | "direct";
 export type TaskReviewSource = "github-pr" | "reviewer-agent";
 export type TaskReviewDecision = "approved" | "changes-requested" | "commented" | "pending";
-export type TaskReviewVerdict = "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE";
+export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE";
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
 
@@ -163,6 +163,10 @@ export interface TaskReviewDataItem {
   line?: number;
   threadId?: string;
   reviewState?: string | null;
+  /** Machine-readable reviewer verdict when the source supplied one. */
+  verdict?: TaskReviewVerdict;
+  /** Review lane that produced the item when known. */
+  reviewType?: TaskReviewerType;
   isResolved?: boolean;
   progressStatus?: "queued" | "in-progress" | "addressed" | "failed" | null;
 }

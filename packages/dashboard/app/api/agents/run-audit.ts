@@ -257,6 +257,8 @@ function mapTaskReviewDataToLegacy(data: TaskReviewData): TaskReviewResponse {
     threadId: item.threadId,
     htmlUrl: item.url,
     state: item.reviewState ?? undefined,
+    verdict: item.verdict,
+    reviewType: item.reviewType,
     summary: item.title ?? undefined,
     isResolved: item.isResolved,
     ...(typeof item.line === "number" ? { line: item.line } : {}),

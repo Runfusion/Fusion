@@ -2148,6 +2148,41 @@ function stepwiseDef(): WorkflowDefinition {
 /** A v2 workflow with an optional-group container (defaultOn:false) holding one
  *  template child, so the editor's optional-group surfaces have something to
  *  render, toggle, and delete. */
+function topLevelReviewDef(kind: "prompt" | "gate" | "script", reviewKind?: "plan" | "code"): WorkflowDefinition {
+  const definition = optionalGroupDef();
+  definition.id = `WF-${kind}`;
+  definition.name = `${kind} review`;
+  definition.ir.nodes = [
+    { id: "start", kind: "start", column: "plan" },
+    { id: "review", kind, column: "in-progress", config: { ...(reviewKind ? { reviewKind } : {}) } },
+    { id: "end", kind: "end", column: "done" },
+  ];
+  definition.ir.edges = [{ from: "start", to: "review" }, { from: "review", to: "end" }];
+  return definition;
+}
+
+function loopTemplateDef(): WorkflowDefinition {
+  const definition = optionalGroupDef();
+  definition.id = "WF-LOOP";
+  definition.name = "Loop template";
+  definition.ir.nodes = [
+    { id: "start", kind: "start", column: "plan" },
+    {
+      id: "repeat",
+      kind: "loop",
+      column: "in-progress",
+      config: {
+        maxIterations: 1,
+        exitWhen: { type: "output-contains", value: "DONE" },
+        template: { nodes: [{ id: "inner", kind: "prompt", config: { prompt: "loop work" } }], edges: [] },
+      },
+    },
+    { id: "end", kind: "end", column: "done" },
+  ];
+  definition.ir.edges = [{ from: "start", to: "repeat" }, { from: "repeat", to: "end" }];
+  return definition;
+}
+
 function optionalGroupDef(): WorkflowDefinition {
   return {
     id: "WF-OPT",
@@ -2296,6 +2331,177 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     expect(group).toBeTruthy();
     const template = group!.config!.template as { nodes: unknown[] };
     expect(template.nodes).toHaveLength(1);
+  });
+
+  it.each(["prompt", "gate", "script"] as const)("renders, saves, and reopens review kind for top-level %s nodes", async (kind) => {
+    const definition = topLevelReviewDef(kind, "plan");
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+
+    const renderEditor = () => render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    renderEditor();
+    const node = await waitFor(() => {
+      const candidate = document.querySelector(`.react-flow__node[data-id="review"]`);
+      expect(candidate).toBeInTheDocument();
+      return candidate as HTMLElement;
+    });
+    fireEvent.click(node);
+    const reviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reviewKind.value).toBe("plan");
+    fireEvent.change(reviewKind, { target: { value: "code" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const savedIr = (updates as { ir: WorkflowDefinition["ir"] }).ir;
+    const saved = savedIr.nodes.find((candidate) => candidate.id === "review");
+    expect(saved?.config?.reviewKind).toBe("code");
+
+    cleanup();
+    vi.mocked(fetchWorkflows).mockResolvedValue([{ ...definition, ir: savedIr }]);
+    renderEditor();
+    fireEvent.click(await waitFor(() => {
+      const candidate = document.querySelector(`.react-flow__node[data-id="review"]`);
+      expect(candidate).toBeInTheDocument();
+      return candidate as HTMLElement;
+    }));
+    expect((await screen.findByTestId("wf-review-kind") as HTMLSelectElement).value).toBe("code");
+  });
+
+  it.each([
+    ["optional-group", optionalGroupDef(), "opt", "verify"],
+    ["foreach", stepwiseDef(), "loop", "exec"],
+    ["loop", loopTemplateDef(), "repeat", "inner"],
+  ] as const)("does not render review kind for %s template nodes", async (_containerKind, definition, parentId, childId) => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const templateNode = await waitFor(() => {
+      const candidate = document.querySelector(`.react-flow__node[data-id="${foreachChildFlowId(parentId, childId)}"]`);
+      expect(candidate).toBeInTheDocument();
+      return candidate as HTMLElement;
+    });
+    fireEvent.click(templateNode);
+    expect(screen.queryByTestId("wf-review-kind")).not.toBeInTheDocument();
+  });
+
+  /*
+   * FNXC:WorkflowReviewKind 2026-08-05-03:32:
+   * The optional-group inspector is a top-level authoring surface. Saving and
+   * reopening must preserve an explicit marker, while Not a review deletes it
+   * instead of serializing a false review sentinel.
+   */
+  it("edits, reopens, and clears the top-level optional-group review kind without a sentinel", async () => {
+    const definition = optionalGroupDef();
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-node-optional-group"));
+    const reviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reviewKind.value).toBe("");
+    fireEvent.change(reviewKind, { target: { value: "code" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const savedIr = (updates as { ir: WorkflowDefinition["ir"] }).ir;
+    expect(savedIr.nodes.find((node) => node.id === "opt")?.config?.reviewKind).toBe("code");
+
+    cleanup();
+    vi.mocked(fetchWorkflows).mockResolvedValue([{ ...definition, ir: savedIr }]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-node-optional-group"));
+    const reopenedReviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reopenedReviewKind.value).toBe("code");
+    fireEvent.change(reopenedReviewKind, { target: { value: "" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(2));
+    const [, clearedUpdates] = vi.mocked(updateWorkflow).mock.calls[1];
+    const clearedIr = (clearedUpdates as { ir: WorkflowDefinition["ir"] }).ir;
+    expect(clearedIr.nodes.find((node) => node.id === "opt")?.config).not.toHaveProperty("reviewKind");
+  });
+
+  it("clears reviewKind instead of serializing an empty sentinel", async () => {
+    const definition = optionalGroupDef();
+    const group = definition.ir.nodes.find((node) => node.id === "opt");
+    if (!group) throw new Error("optional group fixture missing");
+    group.config = { ...group.config, reviewKind: "code" };
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-node-optional-group"));
+    const reviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reviewKind.value).toBe("code");
+    fireEvent.change(reviewKind, { target: { value: "" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const savedGroup = (updates as { ir: { nodes: Array<{ id: string; config?: Record<string, unknown> }> } }).ir.nodes.find((node) => node.id === "opt");
+    expect(savedGroup?.config).not.toHaveProperty("reviewKind");
+  });
+
+  it.each(["prompt", "gate", "script"] as const)("edits, reopens, and clears review kind in mobile top-level %s detail", async (kind) => {
+    mockWorkflowEditorViewport("mobile");
+    const definition = topLevelReviewDef(kind, "plan");
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: `${kind} review` }));
+    const row = await screen.findByTestId("mobile-wf-node-review");
+    fireEvent.click(within(row).getAllByRole("button")[0]);
+    const reviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reviewKind.value).toBe("plan");
+    fireEvent.change(reviewKind, { target: { value: "code" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const savedIr = (updates as { ir: WorkflowDefinition["ir"] }).ir;
+    expect(savedIr.nodes.find((node) => node.id === "review")?.config?.reviewKind).toBe("code");
+
+    cleanup();
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([{ ...definition, ir: savedIr }]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: `${kind} review` }));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-review")).getAllByRole("button")[0]);
+    const reopenedReviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reopenedReviewKind.value).toBe("code");
+    fireEvent.change(reopenedReviewKind, { target: { value: "" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(2));
+    const [, clearedUpdates] = vi.mocked(updateWorkflow).mock.calls[1];
+    expect((clearedUpdates as { ir: WorkflowDefinition["ir"] }).ir.nodes.find((node) => node.id === "review")?.config ?? {}).not.toHaveProperty("reviewKind");
+  });
+
+  it("edits, reopens, and clears review kind in the mobile optional-group detail", async () => {
+    mockWorkflowEditorViewport("mobile");
+    const definition = optionalGroupDef();
+    vi.mocked(fetchWorkflows).mockResolvedValue([definition]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...definition, ...(updates as object) }));
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Optional" }));
+    fireEvent.click(await screen.findByTestId("wf-node-optional-group"));
+    const reviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reviewKind.value).toBe("");
+    fireEvent.change(reviewKind, { target: { value: "code" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(1));
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const savedIr = (updates as { ir: WorkflowDefinition["ir"] }).ir;
+    expect(savedIr.nodes.find((node) => node.id === "opt")?.config?.reviewKind).toBe("code");
+
+    cleanup();
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([{ ...definition, ir: savedIr }]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Optional" }));
+    fireEvent.click(await screen.findByTestId("wf-node-optional-group"));
+    const reopenedReviewKind = await screen.findByTestId("wf-review-kind") as HTMLSelectElement;
+    expect(reopenedReviewKind.value).toBe("code");
+    fireEvent.change(reopenedReviewKind, { target: { value: "" } });
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(2));
+    const [, clearedUpdates] = vi.mocked(updateWorkflow).mock.calls[1];
+    expect((clearedUpdates as { ir: WorkflowDefinition["ir"] }).ir.nodes.find((node) => node.id === "opt")?.config).not.toHaveProperty("reviewKind");
   });
 
   it("edits optional-group maxRevisions and unbounded revision mode", async () => {

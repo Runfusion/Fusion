@@ -2487,6 +2487,23 @@ describe("TaskCard", () => {
     expect(screen.queryByText("Replan")).not.toBeInTheDocument();
   });
 
+  it("shows Planning when a live planner log reaches a needs-replan board row before its status update", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          status: "needs-replan",
+          recentAgentActivityAt: new Date().toISOString(),
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Planning")).toHaveClass("card-status-badge");
+    expect(screen.queryByText("Queued to revise")).not.toBeInTheDocument();
+  });
+
   it.each([
     { column: "todo" as const, status: "planning" },
     { column: "in-progress" as const, status: "planning" },

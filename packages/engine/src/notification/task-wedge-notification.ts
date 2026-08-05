@@ -1,4 +1,5 @@
 import type { Task } from "@fusion/core";
+import { hasTransientMergeRecoveryOwner } from "../errors/transient-merge-error-classifier.js";
 
 /** A bounded, operator-safe description of a task that cannot make progress. */
 export interface TaskWedgeDescriptor {
@@ -6,6 +7,31 @@ export interface TaskWedgeDescriptor {
   reason: string;
   action: string;
   gate?: string;
+}
+
+/** Durable evidence that a failed snapshot remains assigned to a bounded automatic recovery path. */
+export interface TaskRecoveryOwner {
+  kind: "scheduled-recovery" | "transient-merge-retry";
+}
+
+/*
+FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+Mailbox and push wedge alerts mean an operator must act. A failed snapshot with
+both scheduler retry fields, or an in-budget transient-merge retry marker, is
+still owned by Fusion and must not create an actionable notification episode.
+*/
+export function describeTaskRecoveryOwner(task: Task): TaskRecoveryOwner | null {
+  if (hasTransientMergeRecoveryOwner(task)) return { kind: "transient-merge-retry" };
+  if (
+    typeof task.recoveryRetryCount === "number"
+    && Number.isInteger(task.recoveryRetryCount)
+    && task.recoveryRetryCount >= 0
+    && typeof task.nextRecoveryAt === "string"
+    && Number.isFinite(Date.parse(task.nextRecoveryAt))
+  ) {
+    return { kind: "scheduled-recovery" };
+  }
+  return null;
 }
 
 /**
@@ -144,13 +170,12 @@ export function describeTaskWedge(task: Task): TaskWedgeDescriptor | null {
     return { reasonKey: "merge-blocked", reason: "Merge verification cannot progress without operator action.", action: "Fix the failing verification, then retry the task." };
   }
   /*
-  FNXC:TaskWedgeNotifications 2026-07-22-20:00:
-  An opaque failure or exhausted merge-retry budget is terminal evidence when no
-  named writer classified it. NotificationService checks FN-5627 transient merge
-  failures before calling this classifier, preserving self-healing ownership.
-  Failures without either signal retain the generic grace path because recovery
-  may still own them.
+  FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+  The generic fallback cannot convert a recovery-owned failed snapshot into an
+  operator alert. Explicit terminal pause and error contracts above remain
+  actionable; recovery exhaustion clears its durable marker and reaches this path.
   */
+  if (describeTaskRecoveryOwner(task)) return null;
   if (!error && (task.mergeRetries ?? 0) < 3) return null;
   return {
     reasonKey: "terminal-failed",

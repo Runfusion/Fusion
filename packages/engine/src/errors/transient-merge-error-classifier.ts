@@ -54,7 +54,11 @@
  */
 // Imports the import-free leaf, NOT `transient-error-detector.js` — that module pulls
 // `usage-limit-detector.js → logger.js`, the exact chain FN-5627 split this file out to avoid.
+import type { Task } from "@fusion/core";
 import { isTransientError } from "./transient-error-patterns.js";
+
+/** Shared persisted retry budget for automatic transient merge recovery. */
+export const MAX_AUTO_MERGE_TRANSIENT_RETRIES = 5;
 
 /*
 FNXC:MergeReliability 2026-07-15-18:30:
@@ -93,4 +97,18 @@ export function classifyTransientMergeError(error: string | null | undefined): s
     return "network-transport-failure";
   }
   return null;
+}
+
+/*
+FNXC:TaskWedgeNotifications 2026-08-05-04:53:
+A transient-error string is diagnostic evidence, not notification ownership by
+itself. Fusion suppresses terminal alerts only after the merge writer persists
+an in-budget retry marker; the same shared cap makes exhaustion operator-actionable.
+*/
+export function hasTransientMergeRecoveryOwner(task: Pick<Task, "error" | "mergeTransientRetryCount">): boolean {
+  return classifyTransientMergeError(task.error) !== null
+    && typeof task.mergeTransientRetryCount === "number"
+    && Number.isInteger(task.mergeTransientRetryCount)
+    && task.mergeTransientRetryCount >= 0
+    && task.mergeTransientRetryCount < MAX_AUTO_MERGE_TRANSIENT_RETRIES;
 }

@@ -59,8 +59,25 @@ describe("sanitizeTextValue", () => {
 });
 
 describe("sanitizeJsonbValue", () => {
-  it("deep-strips NUL from an object destined for a jsonb column", () => {
-    expect(sanitizeJsonbValue({ note: "tail\u0000end" })).toEqual({ note: "tailend" });
+  it("deep-strips NUL from nested values, keys, and repeated logger markers", () => {
+    const snapshot = {
+      ["tool\u0000result"]: {
+        content: ["\u0000fnlvl=info\u0000first", { text: "\u0000fnlvl=warn\u0000second" }],
+      },
+    };
+    expect(sanitizeJsonbValue(snapshot)).toEqual({
+      toolresult: {
+        content: ["fnlvl=infofirst", { text: "fnlvl=warnsecond" }],
+      },
+    });
+    expect(snapshot["tool\u0000result"].content[0]).toBe("\u0000fnlvl=info\u0000first");
+  });
+
+  it("preserves clean JSON identity while leaving null and undefined intact", () => {
+    const clean = { nested: ["clean", { value: true }] };
+    expect(sanitizeJsonbValue(clean)).toBe(clean);
+    expect(sanitizeJsonbValue(null)).toBe(null);
+    expect(sanitizeJsonbValue(undefined)).toBe(undefined);
   });
 
   it("passes through null/undefined unchanged", () => {

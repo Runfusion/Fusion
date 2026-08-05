@@ -93,6 +93,23 @@ describe("optional-group validation", () => {
     expect(resolveOptionalStepRevisionBudget("sometimes", 3)).toEqual({ unbounded: false, max: 3 });
   });
 
+  it.each(["plan", "code"] as const)("rejects valid reviewKind in every optional-group template node as unsupported placement", (reviewKind) => {
+    const template = groupTemplate();
+    template.nodes = template.nodes.map((node, index) => ({
+      ...node,
+      id: `nested-review-${index}`,
+      kind: index === 0 ? "prompt" : "gate",
+      config: { ...node.config, reviewKind },
+    }));
+    expect(() => parseWorkflowIr(groupIr({ template }))).toThrow(/nested-review-0.*unsupported nested template placement/);
+  });
+
+  it.each(["", "review", true, null])("rejects malformed optional-group template reviewKind before placement", (reviewKind) => {
+    const template = groupTemplate();
+    template.nodes[0] = { ...template.nodes[0], id: "nested-review", config: { reviewKind } };
+    expect(() => parseWorkflowIr(groupIr({ template }))).toThrow(/nested-review.*invalid reviewKind/);
+  });
+
   it("rejects an empty template", () => {
     expect(() => parseWorkflowIr(groupIr({ template: { nodes: [], edges: [] } }))).toThrow(/non-empty/);
   });

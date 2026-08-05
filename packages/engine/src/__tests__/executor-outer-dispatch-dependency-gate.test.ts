@@ -119,17 +119,14 @@ describe("executor outer dispatch dependency gate", () => {
       preserveResumeState: true,
       recoveryRehome: true,
     }));
-    expect(store.updateTask).toHaveBeenCalledWith(
-      child.id,
-      expect.objectContaining({ status: "queued", blockedBy: parent.id }),
-      undefined,
-    );
-    expect(store.logEntry).toHaveBeenCalledWith(
-      child.id,
-      expect.stringContaining("queued — unmet dependencies: FN-PARENT"),
-      expect.stringContaining("dependency gate blocked"),
-      undefined,
-    );
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
+      signature: "dependency:FN-PARENT",
+      blockedBy: parent.id,
+    }));
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
+      action: expect.stringContaining("queued — unmet dependencies: FN-PARENT"),
+      outcome: expect.stringContaining("dependency gate blocked"),
+    }));
     expect(graph).not.toHaveBeenCalled();
     // FNXC:DependencyGating 2026-07-16-00:00: A dependency-gated outer return
     // must drop the scheduler's reservation because no downstream owner can take it.
@@ -148,11 +145,10 @@ describe("executor outer dispatch dependency gate", () => {
 
     await executor.execute(child);
 
-    expect(store.updateTask).toHaveBeenCalledWith(
-      child.id,
-      expect.objectContaining({ status: "queued", blockedBy: parent.id }),
-      undefined,
-    );
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
+      signature: "dependency:FN-PARENT",
+      blockedBy: parent.id,
+    }));
     expect(graph).not.toHaveBeenCalled();
   });
 
@@ -167,7 +163,7 @@ describe("executor outer dispatch dependency gate", () => {
     await executor.execute(child);
 
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalledWith(child.id, expect.objectContaining({ status: "queued" }), undefined);
+    expect(store.transitionQueuedEpisode).not.toHaveBeenCalled();
     expect(graph).toHaveBeenCalledWith(child, { alreadyClaimed: true });
   });
 
@@ -196,11 +192,10 @@ describe("executor outer dispatch dependency gate", () => {
     await executor.execute(child);
 
     expect(store.getCompletionHandoffAcceptedMarker).toHaveBeenCalledWith(parent.id);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      child.id,
-      expect.objectContaining({ status: "queued", blockedBy: parent.id }),
-      undefined,
-    );
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
+      signature: "dependency:FN-PARENT",
+      blockedBy: parent.id,
+    }));
     expect(graph).not.toHaveBeenCalled();
   });
 

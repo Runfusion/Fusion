@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   worktree text,
   blocked_by text,
   overlap_blocked_by text,
+  queued_log_episode_signature text,
   paused integer DEFAULT 0,
   user_paused integer DEFAULT 0,
   paused_reason text,

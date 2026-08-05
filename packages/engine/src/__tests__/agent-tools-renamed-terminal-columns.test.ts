@@ -106,17 +106,12 @@ describe("agent task-discovery tools resolve the terminal lane by ROLE, not by i
     });
   }
 
-  it("fn_task_search still returns the finished card when includeDone is left at its default", async () => {
-    /*
-    The other direction, and the reason the helper is only invoked when `includeDone` is false: the tool
-    documents itself as searching "including done and archived tasks by default", which is what makes it
-    usable for duplicate detection. A conversion that filtered unconditionally would pass every case above.
-    */
+  it("fn_task_search omits the finished card when includeDone is left at its default", async () => {
     const { store } = fixture(RENAMED_VOCAB);
     const result = await createTaskSearchTool(store).execute("call-3", { query: "a" } as never);
 
-    expect(result.content[0].text).toContain("FN-9102");
-    expect(result.details).toMatchObject({ count: 3 });
+    expect(result.content[0].text).not.toContain("FN-9102");
+    expect(result.details).toMatchObject({ count: 2 });
   });
 
   it("falls back to the legacy terminal pair when the workflow cannot be resolved", async () => {

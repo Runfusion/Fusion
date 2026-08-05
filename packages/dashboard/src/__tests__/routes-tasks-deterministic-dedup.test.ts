@@ -152,6 +152,64 @@ describe("task deterministic dedup", () => {
     expect((res.body as { details: { matches: Array<{ deterministic: boolean; id: string }> } }).details.matches[0]).toMatchObject({ deterministic: true, id: "FN-1" });
   });
 
+  it("allows a direct-user repeat of an exact completed task", async () => {
+    const { app, store, tasks } = buildApp([
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "done", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+    ]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      title: TITLE,
+      description: DESCRIPTION,
+      source: { sourceType: "dashboard_ui" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+    expect((store.createTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(tasks.find((task) => task.id !== "FN-1")?.column).toBe("todo");
+  });
+
+  it("still blocks a direct-user duplicate of active work", async () => {
+    const { app } = buildApp([
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "todo", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+    ]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      title: TITLE,
+      description: DESCRIPTION,
+      source: { sourceType: "dashboard_ui" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(409);
+  });
+
+  it("allows a direct-user repeat of archived exact work", async () => {
+    const { app } = buildApp([
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+    ]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      title: TITLE,
+      description: DESCRIPTION,
+      source: { sourceType: "dashboard_ui" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+  });
+
+  it("allows a programmatic repeat of archived exact work", async () => {
+    const { app } = buildApp([
+      mkTask({ id: "FN-1", title: TITLE, description: DESCRIPTION, column: "archived", source: { sourceType: "api", sourceMetadata: { contentFingerprint: FINGERPRINT } } }),
+    ]);
+
+    const res = await performRequest(app, "POST", "/api/tasks", JSON.stringify({
+      title: TITLE,
+      description: DESCRIPTION,
+      source: { sourceType: "api" },
+    }), { "content-type": "application/json" });
+
+    expect(res.status).toBe(201);
+  });
+
   it("concurrent identical submissions keep one canonical row", async () => {
     const { app, tasks } = buildApp();
     const body = JSON.stringify({ title: TITLE, description: DESCRIPTION });

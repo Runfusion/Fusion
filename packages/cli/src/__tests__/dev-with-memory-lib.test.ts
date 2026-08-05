@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildForwardedDevArgs,
   buildDevNodeArgs,
+  createDevWatchRestartCoordinator,
   getPrebuildCommand,
   normalizePrebuildMode,
   parseDevWrapperArgs,
   resolvePrebuildMode,
 } from "../../../../scripts/dev-with-memory-lib.mjs";
+import {
+  createDevSourceWatcher,
+  isRestartableSourceFile,
+} from "../../../../scripts/lib/dev-source-watch.mjs";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("buildDevNodeArgs", () => {
   it("enables source-condition resolution before loading the tsx runtime", () => {
@@ -44,6 +53,26 @@ describe("dev-with-memory prebuild options", () => {
       inspectFlags: ["--inspect=9230"],
       args: ["dashboard", "--port", "4050"],
       requestedPrebuild: "none",
+      watchSource: false,
+      watchSourceFromFlag: false,
+    });
+  });
+
+  it("keeps the wrapper-only watch flag out of CLI arguments", () => {
+    expect(parseDevWrapperArgs(["--watch", "dashboard", "--port", "4050"], {})).toEqual({
+      inspectFlags: [],
+      args: ["dashboard", "--port", "4050"],
+      requestedPrebuild: "auto",
+      watchSource: true,
+      watchSourceFromFlag: true,
+    });
+  });
+
+  it("allows source watching to be enabled through the development environment", () => {
+    expect(parseDevWrapperArgs(["dashboard"], { FUSION_DEV_WATCH: "1" })).toMatchObject({
+      args: ["dashboard"],
+      watchSource: true,
+      watchSourceFromFlag: false,
     });
   });
 
@@ -118,5 +147,177 @@ describe("dev-with-memory prebuild options", () => {
       args: ["build"],
       label: "workspace build",
     });
+  });
+});
+
+describe("development source restart watcher", () => {
+  it("holds source changes until the child acknowledges its IPC listener", () => {
+    const send = vi.fn((_message: unknown, callback?: (error?: Error) => void) => callback?.());
+    const child = { connected: true, send };
+    const coordinator = createDevWatchRestartCoordinator({ log: vi.fn(), warn: vi.fn() });
+    coordinator.attach(child);
+
+    coordinator.request(["packages/core/src/store.ts"]);
+    expect(send).not.toHaveBeenCalled();
+
+    coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
+    expect(send).toHaveBeenCalledWith(
+      { type: "fusion:dev-source-changed" },
+      expect.any(Function),
+    );
+    expect(coordinator.detach(child)).toBe(true);
+  });
+
+  it("re-arms after the watched child is replaced", () => {
+    const first = { connected: true, send: vi.fn((_message: unknown, callback?: (error?: Error) => void) => callback?.()) };
+    const second = { connected: true, send: vi.fn((_message: unknown, callback?: (error?: Error) => void) => callback?.()) };
+    const coordinator = createDevWatchRestartCoordinator({ log: vi.fn(), warn: vi.fn() });
+
+    coordinator.attach(first);
+    coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
+    coordinator.request(["packages/core/src/first.ts"]);
+    expect(coordinator.detach(first)).toBe(true);
+
+    coordinator.attach(second);
+    coordinator.request(["packages/core/src/second.ts"]);
+    expect(second.send).not.toHaveBeenCalled();
+    coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
+    expect(second.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains changes while the child is disconnected and sends them later", () => {
+    const log = vi.fn();
+    const warn = vi.fn();
+    const send = vi.fn((_message: unknown, callback?: (error?: Error) => void) => callback?.());
+    const child = { connected: false, send };
+    const coordinator = createDevWatchRestartCoordinator({ log, warn });
+    coordinator.attach(child);
+    coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
+
+    coordinator.request(["packages/core/src/first.ts"]);
+    child.connected = true;
+    coordinator.request(["packages/core/src/second.ts"]);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("not connected"));
+    expect(send).toHaveBeenCalledWith(
+      { type: "fusion:dev-source-changed" },
+      expect.any(Function),
+    );
+    expect(log).toHaveBeenLastCalledWith(
+      expect.stringContaining("packages/core/src/first.ts, packages/core/src/second.ts"),
+    );
+  });
+
+  it("retains changes after a send callback error and retries later", () => {
+    const log = vi.fn();
+    const warn = vi.fn();
+    const send = vi.fn()
+      .mockImplementationOnce((_message: unknown, callback?: (error?: Error) => void) => callback?.(new Error("send failed")))
+      .mockImplementationOnce((_message: unknown, callback?: (error?: Error) => void) => callback?.());
+    const child = { connected: true, send };
+    const coordinator = createDevWatchRestartCoordinator({ log, warn });
+    coordinator.attach(child);
+    coordinator.onMessage({ type: "fusion:dev-source-restart-armed" });
+
+    coordinator.request(["packages/core/src/first.ts"]);
+    coordinator.request(["packages/core/src/second.ts"]);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("send failed"));
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenLastCalledWith(
+      expect.stringContaining("packages/core/src/first.ts, packages/core/src/second.ts"),
+    );
+  });
+
+  it("restarts for runtime sources but ignores tests and generated declarations", () => {
+    expect(isRestartableSourceFile("store.ts")).toBe(true);
+    expect(isRestartableSourceFile("routes/system.tsx")).toBe(true);
+    expect(isRestartableSourceFile("__tests__/store.test.ts")).toBe(false);
+    expect(isRestartableSourceFile("store.spec.ts")).toBe(false);
+    expect(isRestartableSourceFile("generated/runtime.d.ts")).toBe(false);
+    expect(isRestartableSourceFile("README.md")).toBe(false);
+  });
+
+  it("coalesces source events into one restart and reports the changed paths", () => {
+    vi.useFakeTimers();
+    const listeners: Array<(eventType: string, filename: string | Buffer | null) => void> = [];
+    const close = vi.fn();
+    const onRestart = vi.fn();
+
+    const watcher = createDevSourceWatcher({
+      rootDir: "/repo",
+      watchPaths: ["packages/core/src", "packages/engine/src"],
+      debounceMs: 250,
+      watch: (_path, _options, listener) => {
+        listeners.push(listener);
+        return { close, on: vi.fn() };
+      },
+      onRestart,
+    });
+
+    listeners[0]?.("change", "store.ts");
+    listeners[1]?.("rename", "triage.ts");
+    listeners[1]?.("change", "__tests__/triage.test.ts");
+
+    vi.advanceTimersByTime(249);
+    expect(onRestart).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(onRestart).toHaveBeenCalledWith([
+      "packages/core/src/store.ts",
+      "packages/engine/src/triage.ts",
+    ]);
+
+    watcher.close();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not starve a restart during a sustained source event stream", () => {
+    vi.useFakeTimers();
+    let listener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    const onRestart = vi.fn();
+    const watcher = createDevSourceWatcher({
+      rootDir: "/repo",
+      watchPaths: ["packages/core/src"],
+      debounceMs: 350,
+      maxWaitMs: 1_000,
+      watch: (_path, _options, nextListener) => {
+        listener = nextListener;
+        return { close: vi.fn(), on: vi.fn() } as never;
+      },
+      onRestart,
+    });
+
+    for (let elapsed = 0; elapsed < 1_000; elapsed += 200) {
+      listener?.("change", `file-${elapsed}.ts`);
+      vi.advanceTimersByTime(200);
+    }
+    vi.advanceTimersByTime(1);
+
+    expect(onRestart).toHaveBeenCalledTimes(1);
+    watcher.close();
+  });
+
+  it("continues closing source watchers when one close throws", () => {
+    const logger = { warn: vi.fn() };
+    const closes = [
+      vi.fn(() => {
+        throw new Error("close failed");
+      }),
+      vi.fn(),
+    ];
+    let index = 0;
+    const watcher = createDevSourceWatcher({
+      rootDir: "/repo",
+      watchPaths: ["packages/core/src", "packages/engine/src"],
+      watch: () => ({ close: closes[index++]!, on: vi.fn() }) as never,
+      onRestart: vi.fn(),
+      logger,
+    });
+
+    expect(() => watcher.close()).not.toThrow();
+    expect(closes[0]).toHaveBeenCalledOnce();
+    expect(closes[1]).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("close failed"));
   });
 });

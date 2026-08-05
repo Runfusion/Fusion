@@ -1518,6 +1518,23 @@ export class ChatManager {
     this.cliChatProjectId = projectId;
   }
 
+  /*
+  FNXC:ChatPersistence 2026-08-05-01:54:
+  Checkpoint snapshots contain environment-controlled tool output. Persistence
+  is best-effort for crash recovery, but every fire-and-forget write must have
+  its rejection observed so one failed jsonb write cannot become a process-wide
+  unhandled rejection or interrupt the streaming turn.
+  */
+  private persistInFlightGeneration(sessionId: string, snapshot: ChatInFlightGenerationState | null): void {
+    try {
+      void this.chatStore.setInFlightGeneration(sessionId, snapshot).catch(() => {
+        diagnostics.warn(`Failed to persist in-flight chat checkpoint for session ${sessionId}`);
+      });
+    } catch {
+      diagnostics.warn(`Failed to persist in-flight chat checkpoint for session ${sessionId}`);
+    }
+  }
+
   private queueInFlightGenerationPersist(sessionId: string, snapshot: ChatInFlightGenerationState | null): void {
     const existingTimer = this.inFlightPersistTimers.get(sessionId);
     if (existingTimer) {
@@ -1526,7 +1543,7 @@ export class ChatManager {
 
     const timer = setTimeout(() => {
       this.inFlightPersistTimers.delete(sessionId);
-      this.chatStore.setInFlightGeneration(sessionId, snapshot);
+      this.persistInFlightGeneration(sessionId, snapshot);
     }, IN_FLIGHT_PERSIST_DEBOUNCE_MS);
     this.inFlightPersistTimers.set(sessionId, timer);
   }
@@ -1537,7 +1554,7 @@ export class ChatManager {
       clearTimeout(existingTimer);
       this.inFlightPersistTimers.delete(sessionId);
     }
-    this.chatStore.setInFlightGeneration(sessionId, snapshot);
+    this.persistInFlightGeneration(sessionId, snapshot);
   }
 
   private async getChatModelSettings(): Promise<{

@@ -891,6 +891,7 @@ export class WorkflowGraphExecutor {
             phase: stepPhase,
             status: "pending",
             source: "optional-group",
+            ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
             startedAt: stepStartedAt,
             // U3/KTD-4: stamp the lease owner so a concurrent/crashed re-entry
             // adopts this pending gate instead of dispatching a second reviewer.
@@ -972,6 +973,7 @@ export class WorkflowGraphExecutor {
             phase: stepPhase,
             source: "optional-group",
             status: stepStatus,
+            ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
             ...(verdict ? { verdict } : {}),
             ...(stepOutput !== undefined ? { output: stepOutput } : {}),
             ...(stepNotes !== undefined ? { notes: stepNotes } : {}),
@@ -1673,13 +1675,19 @@ export class WorkflowGraphExecutor {
     return failureResult;
   }
 
+  /** FNXC:WorkflowReviewKind 2026-08-05-02:31: Persist only the declared closed
+   * marker; execution never derives review semantics from a label, verdict, or gate mode. */
+  private workflowReviewKind(node: WorkflowIrNode): WorkflowStepResult["reviewKind"] | undefined {
+    return node.config?.reviewKind === "plan" || node.config?.reviewKind === "code"
+      ? node.config.reviewKind
+      : undefined;
+  }
+
   private shouldRecordNodeProgress(node: WorkflowIrNode): boolean {
-    /*
-     * FNXC:WorkflowNodeProgress 2026-06-29-15:05:
-     * Compound Engineering stages are top-level skill prompt/gate nodes, not parsed implementation steps or optional toggles. Record those skill nodes into `task.workflowStepResults` so cards and task details show the active CE stage while avoiding duplicate records for ordinary model prompts and optional-group template internals.
-     */
     const skillName = typeof node.config?.skillName === "string" ? node.config.skillName.trim() : "";
-    return skillName.length > 0 && (node.kind === "prompt" || node.kind === "gate");
+    const markedReview = this.workflowReviewKind(node) !== undefined;
+    return (markedReview && (node.kind === "prompt" || node.kind === "gate" || node.kind === "script"))
+      || (skillName.length > 0 && (node.kind === "prompt" || node.kind === "gate"));
   }
 
   private workflowNodeProgressName(node: WorkflowIrNode): string {
@@ -1695,6 +1703,7 @@ export class WorkflowGraphExecutor {
       phase: node.config?.phase === "post-merge" ? "post-merge" : "pre-merge",
       source: "node",
       status: "pending",
+      ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
       startedAt,
     };
     await this.recordOptionalGroupStepResult(taskId, result);
@@ -1732,6 +1741,7 @@ export class WorkflowGraphExecutor {
       phase: started?.phase ?? (node.config?.phase === "post-merge" ? "post-merge" : "pre-merge"),
       source: "node",
       status,
+      ...(this.workflowReviewKind(node) ? { reviewKind: this.workflowReviewKind(node) } : {}),
       ...(output !== undefined ? { output } : {}),
       ...(notes !== undefined ? { notes } : {}),
       startedAt: started?.startedAt ?? new Date().toISOString(),

@@ -47,6 +47,8 @@ export type WorkflowIrNodeKind =
   | "ask-user"
   | "exit-gate";
 
+import type { WorkflowReviewKind } from "../types/workflow/workflow-steps.js";
+
 export interface WorkflowIrNode {
   id: string;
   kind: WorkflowIrNodeKind;
@@ -54,6 +56,7 @@ export interface WorkflowIrNode {
   column?: string;
   /** Plugin-namespaced extension metadata keyed as `plugin:<pluginId>:<extensionId>`. */
   extensions?: Record<string, Record<string, unknown>>;
+  /** Open node config; supported top-level review producers may set `reviewKind`. */
   config?: Record<string, unknown>;
 }
 
@@ -217,6 +220,8 @@ Built-in Plan Review/spec and Code Review groups have workflow-value overrides (
  *  graph attempt. Unlike `foreach`/`loop`, the template has no internal iteration;
  *  an outer remediation edge may re-enter it subject to `maxRevisions`. */
 export interface WorkflowOptionalGroupConfig {
+  /** Optional direct-review classification, legal only on the top-level group. */
+  reviewKind?: WorkflowReviewKind;
   /** Workflow-author default for whether new tasks enable this group. */
   defaultOn?: boolean;
   /** Display name for the group (editor + per-task toggle surfaces). */

@@ -71,6 +71,14 @@ export default defineConfig({
           inherited via extends:true, so @fusion/test-utils/@fusion/plugin-sdk/@fusion/dashboard
           stay on their root aliases and only @fusion/core is overridden here.
 
+          FNXC:MergeGatePerformance 2026-08-04-15:44:
+          FN-8783 confirms W32's engine-core lane has 22 exact policy files.
+          The current core bundle remains the only evidence-backed import-path
+          optimization: it is rebuilt every run, retains mock interception, and
+          avoids the measured-slower engine-graph bundle designs below. Keep pool,
+          worker budgeting, file parallelism, and this alias intact; membership is
+          pinned in scripts/__tests__/engine-vitest-gate-policy.test.mjs.
+
           FNXC:EngineTests 2026-07-08-04:50:
           FN-7669: the @fusion/core alias now points at a PRE-BUNDLED single ESM
           file (packages/core/.gate-bundle/core.mjs — a SIBLING of
@@ -80,8 +88,8 @@ export default defineConfig({
           bundle, see scripts/build-engine-core-gate-bundle.mjs for the full repro)
           instead of directly at index.gate.ts's source. FN-7668 profiled the
           gate's dominant wall-time cost as vitest/Vite SSR's import-phase — each
-          of the 18 pool:"forks" processes independently re-resolving+evaluating
-          the ~430-file barrel closure with zero cross-fork sharing. esbuild-
+          of the fork workers independently re-resolving+evaluating the ~430-file
+          barrel closure with zero cross-fork sharing. esbuild-
           bundling the index.gate.ts closure (220 first-party files, the
           @fusion/core slice of that ~430) into one file
           (scripts/build-engine-core-gate-bundle.mjs, wired below via globalSetup
@@ -90,8 +98,8 @@ export default defineConfig({
           fork. See the task's docs document for the full A/B measurement,
           coverage-parity proof, and land/no-land rationale.
           @fusion/engine is deliberately left on the full barrel, unbundled: none
-          of the 18 curated gate files import "@fusion/engine" at all (verified by
-          grep across all 18 files), so bundling it would be zero-benefit
+          of the originally profiled curated files imported "@fusion/engine" at
+          all, so bundling it would be zero-benefit
           churn/risk — and it would additionally risk double-registering or
           dead-locking the core↔engine circular-import DI
           (`void import("@fusion/core").then(setCreateFnAgent...)` in
@@ -100,7 +108,7 @@ export default defineConfig({
           FNXC:EngineTests 2026-07-08-06:20:
           FN-7670 prototyped extending this same lever to the @fusion/engine
           RELATIVE-import production graph (`../merger.js`, `../hold-release.js`,
-          `../scheduler.js`, `../workflow-node-handlers.js`, ...) that the 18 gate
+          `../scheduler.js`, `../workflow-node-handlers.js`, ...) that curated gate
           files reach directly — NOT the barrel above, which stays untouched per
           the paragraph above regardless. It built a fully working, coverage-
           parity-preserving, mock-safe bundle (171 first-party files → 35 output
@@ -151,8 +159,8 @@ export default defineConfig({
           /*
           FNXC:EngineTests 2026-07-08-04:50:
           FN-7669: prepend the gate-bundle builder to this project's globalSetup so
-          the @fusion/core bundle above is rebuilt before any of the 18 forks spawn
-          and resolve the alias. REBUILD-EVERY-RUN is the invalidation model — the
+          the @fusion/core bundle above is rebuilt before fork workers spawn and
+          resolve the alias. REBUILD-EVERY-RUN is the invalidation model — the
           builder's own esbuild dependency graph (not a hand list) determines what
           gets bundled, and because it reruns on every gate invocation there is no
           drift surface. The original root-level vitest-teardown.ts worker-root
@@ -170,6 +178,20 @@ export default defineConfig({
           The curated engine-core merge gate hits a Node 24.15.0/macOS libuv kqueue SIGABRT when Vitest thread workers close unmanaged file descriptors. Scope fork workers to this gate so the broad default engine suite keeps its explicit worker-thread behavior.
           */
           pool: "forks",
+          experimental: {
+            /*
+            FNXC:MergeGatePerformance 2026-08-04-16:09:
+            FN-8783 retains all 22 forked files but enables Vitest's validated
+            filesystem transform cache only for engine-core. Fork isolation still
+            evaluates every test and preserves mocks; caching immutable Vite
+            transforms avoids repeating import/setup compilation on warm gate runs.
+            Keep this cache project-scoped so broad engine lanes cannot inherit
+            gate-specific artifacts, and let Vitest invalidate entries from its
+            transform dependency graph rather than maintaining an unsafe file list.
+            */
+            fsModuleCache: true,
+            fsModuleCachePath: resolve(__dirname, "node_modules/.engine-core-fs-module-cache"),
+          },
           // The curated merge-gate suite (see docs/testing.md "Merge gate").
           // Membership is an explicit allow-list, NOT a glob: tests earn their
           // way in with evidence of value, and a flaky gate test is evicted by

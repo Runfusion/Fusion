@@ -1250,7 +1250,7 @@ async function findDefinedFeatureBootstrapDuplicate(
   this path — on a renamed archive lane an archived sibling became a bootstrap canonical, and
   `claimDefinedFeatureTask` then rejects the non-live row, so the claim fails outright.
   */
-  const isArchivedCandidate = await resolveArchivedColumnsForTasks(store, candidates);
+  const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, candidates);
   const matches = findSameAgentDuplicates({
     title: input.title,
     description: input.description,
@@ -1263,7 +1263,7 @@ async function findDefinedFeatureBootstrapDuplicate(
     task boundary. An archived sibling cannot be a bootstrap canonical because
     claimDefinedFeatureTask rejects non-live task rows.
     */
-    if (Number.isNaN(createdAt) || task.deletedAt || isArchivedCandidate(task)) return [];
+    if (Number.isNaN(createdAt) || task.deletedAt || isTerminalCandidate(task)) return [];
     return [{
       id: task.id,
       title: task.title ?? "",
@@ -1350,31 +1350,6 @@ export async function resolveTerminalColumnsForTasks(
     terminalByTaskId.set(task.id, columns);
   }
   return (task: Task) => terminalByTaskId.get(task.id)?.has(task.column) === true;
-}
-
-/**
- * MEMBERSHIP over the `archived` role for a fixed task set, unioned with the legacy id.
- *
- * Split from `resolveTerminalColumnsForTasks` rather than parameterised: the two callers ask genuinely
- * different questions — "is this finished?" (complete OR archived) versus "is this archived?" — and
- * collapsing them would make an archived-only guard also reject completed rows.
- */
-async function resolveArchivedColumnsForTasks(
-  store: TaskStore,
-  tasks: readonly Task[],
-): Promise<(task: Task) => boolean> {
-  const cache = new Map<string, Awaited<ReturnType<typeof fusionCore.resolveWorkflowIrForTask>>>();
-  const archivedByTaskId = new Map<string, ReadonlySet<string>>();
-  for (const task of tasks) {
-    if (archivedByTaskId.has(task.id)) continue;
-    const columns = new Set<string>(["archived"]);
-    try {
-      const ir = await fusionCore.resolveWorkflowIrForTask(store, task.id, cache);
-      if (ir) for (const id of fusionCore.columnsWithFlag(ir, "archived")) columns.add(id);
-    } catch { /* degraded: legacy id only */ }
-    archivedByTaskId.set(task.id, columns);
-  }
-  return (task: Task) => archivedByTaskId.get(task.id)?.has(task.column) === true;
 }
 
 export async function createAgentTask(
@@ -1467,11 +1442,12 @@ export async function createAgentTask(
       try {
         const acknowledged = new Set(options?.acknowledgedDuplicates ?? []);
         const candidates = await store.findRecentTasksBySourceParentTaskId(sourceParentTaskId);
+        const isTerminalCandidate = await resolveTerminalColumnsForTasks(store, candidates);
         const matches = findSameAgentDuplicates({
           title: input.title,
           description: input.description,
           sourceParentTaskId,
-        }, candidates.map((candidate) => ({
+        }, candidates.filter((candidate) => !isTerminalCandidate(candidate)).map((candidate) => ({
           id: candidate.id,
           title: candidate.title ?? "",
           description: candidate.description,
@@ -1816,8 +1792,8 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
     name: "fn_task_search",
     label: "Search Tasks",
     description:
-      "Keyword search across tasks, including done and archived tasks by default. " +
-      "Use for duplicate detection and work discovery before filing new tasks.",
+      "Keyword search across active tasks by default. " +
+      "Done and archived history is opt-in and must not be used for duplicate detection.",
     parameters: taskSearchParams,
     execute: async (_id: string, params: Static<typeof taskSearchParams>) => {
       const query = params.query.trim();
@@ -1830,10 +1806,10 @@ export function createTaskSearchTool(store: TaskStore): ToolDefinition {
       const limit = Math.min(50, Math.max(1, Math.floor(params.limit ?? 20)));
       const results = await store.searchTasks(query, {
         slim: true,
-        includeArchived: params.includeArchived ?? true,
+        includeArchived: params.includeArchived ?? false,
         limit,
       });
-      const includeDone = params.includeDone ?? true;
+      const includeDone = params.includeDone ?? false;
       const isTerminalResult = includeDone ? undefined : await resolveTerminalColumnsForTasks(store, results);
       const filtered = includeDone ? results : results.filter((task) => !isTerminalResult!(task));
       const lines = filtered.map(formatTaskSummaryLine);

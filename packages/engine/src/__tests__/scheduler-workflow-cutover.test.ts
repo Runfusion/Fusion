@@ -53,6 +53,12 @@ function storeWith(
   workflows: { selections?: Record<string, string>; definitions?: Record<string, WorkflowIr> } = {},
 ): TaskStore {
   const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+  const updateTask = vi.fn(async (id: string, patch: Partial<Task>) => {
+    const current = byId.get(id);
+    if (current) Object.assign(current, patch);
+    return current as Task;
+  });
+  const logEntry = vi.fn(async () => undefined);
   return {
     listTasks: vi.fn(async () => [...byId.values()]),
     getTask: vi.fn(async (id: string) => byId.get(id) ?? null),
@@ -63,11 +69,7 @@ function storeWith(
       ...settings,
     })),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => ({ ...settings, ...patch })),
-    updateTask: vi.fn(async (id: string, patch: Partial<Task>) => {
-      const current = byId.get(id);
-      if (current) Object.assign(current, patch);
-      return current as Task;
-    }),
+    updateTask,
     moveTask: vi.fn(async (id: string, column: Task["column"]) => {
       const current = byId.get(id);
       if (current) current.column = column;
@@ -80,7 +82,22 @@ function storeWith(
       return { task: current, moved: true };
     }),
     parseFileScopeFromPrompt: vi.fn(async () => []),
-    logEntry: vi.fn(async () => undefined),
+    logEntry,
+    transitionQueuedEpisode: vi.fn(async (id: string, transition: { signature: string; blockedBy: string | null; overlapBlockedBy: string | null; action: string }) => {
+      const current = byId.get(id)!;
+      const appended = !(current.status === "queued"
+        && (current.blockedBy ?? null) === transition.blockedBy
+        && (current.overlapBlockedBy ?? null) === transition.overlapBlockedBy
+        && current.queuedLogEpisodeSignature === transition.signature);
+      await updateTask(id, {
+        status: "queued",
+        blockedBy: transition.blockedBy,
+        overlapBlockedBy: transition.overlapBlockedBy,
+        queuedLogEpisodeSignature: transition.signature,
+      });
+      if (appended) await logEntry(id, transition.action);
+      return { appended, task: current };
+    }),
     getRootDir: vi.fn(() => "/tmp/project"),
     getTasksDir: vi.fn(() => "/tmp/project/.fusion/tasks"),
     on: vi.fn(),
@@ -388,12 +405,119 @@ describe("Scheduler workflow cutover", () => {
 
     await scheduler.schedule();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-002", {
-      status: "queued",
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
+      signature: "dependency:FN-001",
       blockedBy: "FN-001",
+      overlapBlockedBy: null,
+      action: "queued — unmet dependencies: FN-001",
     });
     expect(store.moveTaskIf).not.toHaveBeenCalledWith("FN-002", "in-progress", expect.anything(), expect.anything());
     expect(onBlocked).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-002" }), ["FN-001"]);
+  });
+
+  it("clears a stale overlap blocker while preserving an unfinished dependency", async () => {
+    const blocker = task({ id: "FN-001", column: "in-progress", paused: true, userPaused: true });
+    const dependent = task({
+      id: "FN-002",
+      dependencies: ["FN-001"],
+      status: "queued",
+      blockedBy: "FN-001",
+      overlapBlockedBy: "FN-001",
+    });
+    const store = storeWith([blocker, dependent], { groupOverlappingFiles: true });
+    vi.mocked(store.parseFileScopeFromPrompt).mockResolvedValue(["packages/engine/src/scheduler.ts"]);
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
+      signature: "dependency:FN-001",
+      blockedBy: "FN-001",
+      overlapBlockedBy: null,
+      action: "queued — unmet dependencies: FN-001",
+    });
+  });
+
+  it("derives an active overlapping lease while the dependency remains unfinished", async () => {
+    const blocker = task({ id: "FN-001", column: "in-progress" });
+    const dependent = task({
+      id: "FN-002",
+      dependencies: ["FN-001"],
+      status: "queued",
+      blockedBy: "FN-001",
+    });
+    const store = storeWith([blocker, dependent], { groupOverlappingFiles: true });
+    vi.mocked(store.parseFileScopeFromPrompt).mockImplementation(async (id) => (
+      id === "FN-001" || id === "FN-002" ? ["packages/engine/src/scheduler.ts"] : []
+    ));
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
+      signature: "dependency:FN-001",
+      blockedBy: "FN-001",
+      overlapBlockedBy: "FN-001",
+      action: "queued — unmet dependencies: FN-001",
+    });
+  });
+
+  it("clears an active but non-overlapping lease while preserving an unfinished dependency", async () => {
+    const blocker = task({ id: "FN-001", column: "in-progress" });
+    const dependent = task({
+      id: "FN-002",
+      dependencies: ["FN-001"],
+      status: "queued",
+      blockedBy: "FN-001",
+      overlapBlockedBy: "FN-001",
+    });
+    const store = storeWith([blocker, dependent], { groupOverlappingFiles: true });
+    vi.mocked(store.parseFileScopeFromPrompt).mockImplementation(async (id) => (
+      id === "FN-001" ? ["packages/core/src/store.ts"] : ["packages/engine/src/scheduler.ts"]
+    ));
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
+      signature: "dependency:FN-001",
+      blockedBy: "FN-001",
+      overlapBlockedBy: null,
+      action: "queued — unmet dependencies: FN-001",
+    });
+  });
+
+  it("keeps scheduling after a dependency-blocked task file scope cannot be read", async () => {
+    const blocker = task({ id: "FN-001", column: "in-progress" });
+    const dependent = task({
+      id: "FN-002",
+      dependencies: ["FN-001"],
+      status: "queued",
+      blockedBy: "FN-001",
+      overlapBlockedBy: "FN-001",
+      priority: "urgent",
+    });
+    const ready = task({ id: "FN-003", priority: "normal" });
+    const store = storeWith([blocker, dependent, ready], { groupOverlappingFiles: true });
+    vi.mocked(store.parseFileScopeFromPrompt).mockImplementation(async (id) => {
+      if (id === "FN-002") throw new Error("scope read failed");
+      return id === "FN-001" ? ["packages/engine/src/scheduler.ts"] : ["packages/core/src/store.ts"];
+    });
+    const scheduler = new Scheduler(store);
+    (scheduler as unknown as { running: boolean }).running = true;
+
+    await scheduler.schedule();
+
+    expect(store.transitionQueuedEpisode).toHaveBeenCalledWith("FN-002", {
+      signature: "dependency:FN-001",
+      blockedBy: "FN-001",
+      overlapBlockedBy: null,
+      action: "queued — unmet dependencies: FN-001",
+    });
+    expect(store.moveTaskIf).toHaveBeenCalledWith("FN-003", "in-progress", expect.anything(), expect.anything());
   });
 
   it("does not clear status or release work when maxConcurrent is full", async () => {

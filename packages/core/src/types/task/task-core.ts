@@ -660,6 +660,11 @@ export interface Task {
    *  Cleared when the overlap resolves (the blocker task moves to done or its
    *  scope no longer overlaps). */
   overlapBlockedBy?: string;
+  /**
+   * Durable identity of the currently reported dependency/file-scope queue episode.
+   * Internal producers use it to make persisted queue activity edge-triggered.
+   */
+  queuedLogEpisodeSignature?: string;
   /** When true, all automated agent and scheduler interaction is suspended. */
   paused?: boolean;
   /** When true, this task was explicitly moved back to todo by a user and should not auto-dispatch. */

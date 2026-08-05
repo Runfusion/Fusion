@@ -72,9 +72,10 @@ pnpm local             # fast local dashboard/API + AI engine startup on a safe 
 pnpm local --no-engine # fast local dashboard/API-only startup
 pnpm local --prebuild <none|client|full>  # local dashboard/API + AI engine startup with an explicit prebuild level
 pnpm dev               # source-mode CLI; dashboard gets a client-only prebuild, other commands skip it
+pnpm dev:watch         # dashboard + engine; gracefully restart runtime source after active agents drain
 FUSION_DEV_PREBUILD=full pnpm dev dashboard  # production-like full workspace prebuild
 pnpm dev:ui            # dashboard dev server only
-pnpm dev:hmr           # dashboard API + Vite HMR UI, with no startup prebuild
+pnpm dev:hmr           # dashboard API + Vite UI HMR + graceful runtime source restarts
 pnpm lint              # lint all packages
 pnpm test              # merge-gate suite + changed-only affected tests (bounded; never full-suite)
 pnpm test:gate         # the merge gate: curated engine-core suite + CI-shape test

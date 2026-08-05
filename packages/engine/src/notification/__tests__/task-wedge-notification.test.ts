@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { WEDGE_RENOTIFY_COOLDOWN_MS, type NotificationProvider, type Settings, type Task } from "@fusion/core";
 import { NotificationService } from "../notification-service.js";
-import { describeSelfHealingNoActionWedge, describeTaskWedge } from "../task-wedge-notification.js";
+import { MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "../../errors/transient-merge-error-classifier.js";
+import { describeSelfHealingNoActionWedge, describeTaskRecoveryOwner, describeTaskWedge } from "../task-wedge-notification.js";
 
 type Listener = (task: Task) => void;
 
@@ -315,6 +316,29 @@ describe("task wedge notifications", () => {
   ])("classifies automated terminal pause %s as %s", (pausedReason, reasonKey) => {
     const { task } = fixture();
     expect(describeTaskWedge(task({ status: "failed", paused: true, pausedReason }))).toMatchObject({ reasonKey });
+  });
+
+  it.each([
+    ["missing error and recovery metadata", { error: undefined }, false, null],
+    ["scheduled executor recovery", { error: "opaque failure", recoveryRetryCount: 1, nextRecoveryAt: "2026-08-05T05:00:00.000Z" }, true, null],
+    ["persisted transient merge retry", { error: "socket hang up", mergeTransientRetryCount: 1 }, true, null],
+    ["exhausted transient merge retry", { error: "socket hang up", mergeTransientRetryCount: MAX_AUTO_MERGE_TRANSIENT_RETRIES }, false, "terminal-failed"],
+    ["cleared recovery state", { error: "opaque failure", recoveryRetryCount: null, nextRecoveryAt: null }, false, "terminal-failed"],
+  ])("classifies %s without treating raw error text as automatic ownership", (_name, overrides, hasOwner, reasonKey) => {
+    const { task } = fixture();
+    const failed = task(overrides as Partial<Task>);
+    expect(describeTaskRecoveryOwner(failed)).toEqual(hasOwner ? expect.anything() : null);
+    expect(describeTaskWedge(failed)).toEqual(reasonKey === null ? null : expect.objectContaining({ reasonKey }));
+  });
+
+  it("keeps explicit terminal pause reasons actionable despite stale recovery metadata", () => {
+    const { task } = fixture();
+    expect(describeTaskWedge(task({
+      paused: true,
+      pausedReason: "error-retry-exhausted",
+      recoveryRetryCount: 1,
+      nextRecoveryAt: "2026-08-05T05:00:00.000Z",
+    }))).toMatchObject({ reasonKey: "heartbeat-retry-exhausted" });
   });
 
   it("classifies an otherwise unknown persisted failure with a bounded fallback", () => {

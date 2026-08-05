@@ -95,7 +95,7 @@ import { ResearchProviderRegistry } from "./research/provider-registry.js";
 import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { finalizeProvenAutoMergeTask } from "./merge/auto-merge-finalization.js";
 import { isTransientError } from "./errors/transient-error-detector.js";
-import { classifyTransientMergeError } from "./errors/transient-merge-error-classifier.js";
+import { classifyTransientMergeError, MAX_AUTO_MERGE_TRANSIENT_RETRIES } from "./errors/transient-merge-error-classifier.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
 import {
   deliverPostgresMigrationCompleteNoticeIfNeeded,
@@ -566,7 +566,7 @@ export class ProjectEngine {
    *
    *  Readable (not private) so tests derive the cap from this single source of truth rather
    *  than hardcoding it — the FN-8004 bump broke two suites that had baked in the old `3`. */
-  static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = 5;
+  static readonly MAX_AUTO_MERGE_TRANSIENT_RETRIES = MAX_AUTO_MERGE_TRANSIENT_RETRIES;
   private static readonly MERGE_REQUEST_RETRY_EXHAUSTED_AGE_MS = 30 * 60 * 1000;
   /** Cap on outer in-review→in-progress bounces caused by deterministic
    *  verification failures during auto-merge. After this many failed merges
@@ -1457,6 +1457,12 @@ export class ProjectEngine {
 
     this.started = false;
     runtimeLog.log(`ProjectEngine stopped for ${this.config.projectId}`);
+  }
+
+  /** Stop new lifecycle admission while allowing active work to finish. */
+  beginDrain(): void {
+    this.shuttingDown = true;
+    this.runtime.beginDrain();
   }
 
   // ── Public accessors ──

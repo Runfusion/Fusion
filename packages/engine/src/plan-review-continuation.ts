@@ -22,6 +22,14 @@ export type StrandedHoldContinuationReason =
   | "awaiting-approval"
   | "paused" | "engine-paused" | "live" | "too-fresh" | "auto-merge-off" | "ready";
 
+/** The durable outcome of resuming a manually approved pre-release Plan Review. */
+export type ApprovedPlanReviewHandoffResult = {
+  resumed: boolean;
+  reason: "seeded" | "not-plan-in-place" | "awaiting-approval" | "paused" | "needs-replan"
+    | "active-continuation" | "plan-review-passed";
+  workItemId?: string;
+};
+
 /**
  * FNXC:StrandedHoldContinuation 2026-07-26-12:00:
  * Both normal specification completion and FN-8592 self-healing use this
@@ -86,6 +94,36 @@ export async function seedPreReleasePlanReviewContinuation(
   if (options.atomic) return store.seedStrandedPlanReviewContinuation(input);
   const item = await store.replaceActiveTaskWorkflowContinuation(input);
   return { seeded: true, workItemId: item.id };
+}
+
+/**
+ * FNXC:PlanApprovalDispatch 2026-08-05-01:57:
+ * Dashboard approval clears the human hold but does not own Plan Review's verdict or capacity
+ * boundary. This public engine seam resumes the graph by atomically seeding its normal runnable
+ * continuation only after approval is durable. The conditional store writer serializes every
+ * concurrent continuation writer, preserves terminal history, and refuses duplicate active work.
+ *
+ * Approval callers must hold `withPlanningLifecycleLock` around their state transition and this
+ * handoff. A failed seed leaves ordinary stranded-continuation recovery as the restart owner;
+ * this seam never manufactures a satisfied review result or a capacity continuation.
+ */
+export async function resumeApprovedPlanReviewHandoff(
+  store: TaskStore,
+  task: Task,
+  ir: WorkflowIr,
+): Promise<ApprovedPlanReviewHandoffResult> {
+  const node = resolvePreReleasePlanReviewNode(ir);
+  if (!node || node.column !== task.column) return { resumed: false, reason: "not-plan-in-place" };
+  if (isTaskBlockedOnApproval(task)) return { resumed: false, reason: "awaiting-approval" };
+  if (task.paused === true || task.userPaused === true) return { resumed: false, reason: "paused" };
+  if (task.status === "needs-replan") return { resumed: false, reason: "needs-replan" };
+
+  const seeded = await seedPreReleasePlanReviewContinuation(store, task, ir, { atomic: true });
+  if (seeded.seeded) return { resumed: true, reason: "seeded", workItemId: seeded.workItemId };
+  return {
+    resumed: false,
+    reason: seeded.reason ?? "not-plan-in-place",
+  };
 }
 
 /**
