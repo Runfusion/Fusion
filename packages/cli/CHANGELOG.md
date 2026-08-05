@@ -1,5 +1,22 @@
 # @runfusion/fusion
 
+## 0.75.1-beta.1
+
+### Patch Changes
+
+- 9c77788: summary: Hide stale file-overlap blockers when a task is queued on an unfinished dependency.
+  category: fix
+  dev: Scheduler dependency transitions now retain only overlap blockers backed by an active overlapping lease.
+- e75c788: summary: Classify custom workflow review nodes for direct Review-tab feedback.
+  category: feature
+  dev: Persists explicit plan/code reviewKind snapshots on supported top-level workflow results.
+- ec10411: summary: Select individual structured workflow review findings for same-task revision.
+  category: feature
+  dev: Review-kind results persist normalized finding IDs, location, and severity in existing JSONB history.
+- 26219b8: summary: Suppress task failure alerts while Fusion automatically recovers the task.
+  category: fix
+  dev: Wedge episodes now require recovery ownership to be absent or exhausted.
+
 ## 0.75.1-beta.0
 
 ### Patch Changes

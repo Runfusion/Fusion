@@ -2,6 +2,25 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.75.1-beta.1
+
+### Highlights
+
+- Send a single structured review finding back for same-task revision
+- Custom workflow review nodes now classify as plan or code in the Review tab
+- Task failure alerts stay quiet while Fusion is already recovering the task
+- Stale file-overlap blockers no longer show on tasks queued behind a dependency
+
+### New
+
+- Pick individual findings out of a structured workflow review and send just those back for revision on the same task, instead of rejecting the whole result.
+- Custom workflow review nodes are classified as plan or code reviews, so their results accept direct feedback from the Review tab.
+
+### Fixed
+
+- Failure alerts are suppressed while Fusion still owns and is attempting automatic recovery of a task; you only get alerted once recovery is exhausted.
+- A task queued on an unfinished dependency no longer displays file-overlap blockers left over from a lease that is no longer active.
+
 ## 0.75.1-beta.0
 
 ### Highlights

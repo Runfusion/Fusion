@@ -1,5 +1,11 @@
 # @fusion-plugin-examples/ci-status
 
+## 0.2.84-beta.1
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.75.1-beta.1
+
 ## 0.2.84-beta.0
 
 ### Patch Changes

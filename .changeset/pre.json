@@ -40,8 +40,12 @@
     "@fusion-plugin-examples/whatsapp-chat": "0.1.52"
   },
   "changesets": [
+    "fix-stale-overlap-display",
     "fn-8791-chat-nul-checkpoint",
     "fn-8792-plan-approval-dispatch",
-    "fn-8793-workflow-review-items"
+    "fn-8793-workflow-review-items",
+    "fn-8794-review-kind",
+    "fn-8795-structured-review-findings",
+    "fn-8799-recovery-notifications"
   ]
 }
