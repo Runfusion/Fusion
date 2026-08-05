@@ -44,7 +44,7 @@ import {
 
 import { recoverStaleTransitionPendingImpl } from "../../../core/src/task-store/lifecycle-ops.js";
 import { RENAMED_VOCAB, lifecycleIr } from "./_workflow-vocabulary-fixture.js";
-import { writeTransitionPendingAsync } from "../../../core/src/task-store/async-transition-pending.js";
+import { writeTransitionPendingAsync } from "../../../core/src/task-store/async/async-transition-pending.js";
 import {
   pgDescribe,
   createSharedPgTaskStoreTestHarness,

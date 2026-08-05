@@ -25,9 +25,9 @@ is where the irreversible work happens; every merge-safety guard assumes one.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SETTINGS_SOURCES = [
-  join(HERE, "..", "settings-schema.ts"),
-  join(HERE, "..", "types", "settings-scope.ts"),
-  join(HERE, "..", "types", "merge-policy.ts"),
+  join(HERE, "..", "config", "settings-schema.ts"),
+  join(HERE, "..", "types", "settings", "settings-scope.ts"),
+  join(HERE, "..", "types", "merge", "merge-policy.ts"),
 ];
 
 /**

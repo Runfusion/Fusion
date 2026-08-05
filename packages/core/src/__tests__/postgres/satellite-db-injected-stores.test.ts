@@ -258,7 +258,7 @@ pgDescribe("PostgreSQL satellite DB-injected stores (VAL-DATA-016)", () => {
     Pin the TTL for the test instead of chasing the default, so the expiry rule is what is under test
     rather than whatever the shipping default happens to be.
     */
-    const { configureApprovalRequestTtls } = await import("../../types/agents.js");
+    const { configureApprovalRequestTtls } = await import("../../types/agents/index.js");
     configureApprovalRequestTtls({ grantTtlMs: 60_000 });
     const staleDecidedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     await ctx.layer.db

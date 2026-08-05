@@ -36,10 +36,15 @@ const workspaceRoot = join(__dirname, "..", "..", "..", "..", "..");
  * Paths are repo-relative. Keep in sync with docs/postgres-migration-review-2026-07-14.md
  * "Intentional remaining SQLite readers" and the SQLite migration inventory.
  */
+/*
+FNXC:FullSuiteBookkeeping 2026-08-05-00:20:
+Code organization peels moved project-identity and sqlite-validation under central/ and db/.
+Keep the same six cutover-approved read-only DatabaseSync seams; only the repo-relative paths change.
+*/
 export const AUTHORIZED_PRODUCTION_DATABASE_SYNC_CONSTRUCTORS = [
   "packages/core/src/postgres/sqlite-migrator.ts",
-  "packages/core/src/project-identity.ts",
-  "packages/core/src/sqlite-validation.ts",
+  "packages/core/src/central/project-identity.ts",
+  "packages/core/src/db/sqlite-validation.ts",
   "packages/core/src/postgres/startup-factory.ts",
   "packages/cli/src/commands/db.ts",
   "scripts/lib/start-local-project.mjs",

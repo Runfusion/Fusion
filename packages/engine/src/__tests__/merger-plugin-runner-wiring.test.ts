@@ -134,7 +134,7 @@ describe("Session advisor + PR response PluginRunner wiring for Grok CLI", () =>
   });
 
   it("makePrResponseAgentRunner forwards pluginRunner into createResolvedAgentSession", () => {
-    const source = readFileSync(resolve(__dirname, "../pr-response-run-ops.ts"), "utf8");
+    const source = readFileSync(resolve(__dirname, "../merge/pr-response-run-ops.ts"), "utf8");
     const fnIndex = source.indexOf("export function makePrResponseAgentRunner(");
     const createIndex = source.indexOf("createResolvedAgentSession({", fnIndex);
     const pluginRunnerParamIndex = source.indexOf("pluginRunner?:", fnIndex);
@@ -151,7 +151,7 @@ describe("Session advisor + PR response PluginRunner wiring for Grok CLI", () =>
   });
 
   it("buildPrNodeDeps / in-process-runtime thread pluginRunner into PR respond", () => {
-    const prNodes = readFileSync(resolve(__dirname, "../pr-nodes.ts"), "utf8");
+    const prNodes = readFileSync(resolve(__dirname, "../merge/pr-nodes.ts"), "utf8");
     const runtime = readFileSync(resolve(__dirname, "../runtimes/in-process-runtime.ts"), "utf8");
 
     expect(prNodes).toMatch(/buildRespondCallback\([\s\S]*pluginRunner/);

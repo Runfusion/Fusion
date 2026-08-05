@@ -483,7 +483,7 @@ name: Archive CEO
     });
 
     it("does not reference child-process tar extraction in production source", () => {
-      const parserSource = readFileSync(new URL("../agent-companies-parser.ts", import.meta.url), "utf-8");
+      const parserSource = readFileSync(new URL("../agents/agent-companies-parser.ts", import.meta.url), "utf-8");
       expect(parserSource).not.toContain("node:child_process");
       expect(parserSource).not.toContain("execSync(");
       expect(parserSource).not.toContain("execFile(");

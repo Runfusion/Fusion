@@ -186,7 +186,7 @@ describe("send-message registration wiring", () => {
   it("forwards the in-scope AgentStore at every engine registration", async () => {
     const [executor, stepSessionExecutor, heartbeat] = await Promise.all([
       readFile(fileURLToPath(new URL("../executor.ts", import.meta.url)), "utf8"),
-      readFile(fileURLToPath(new URL("../step-session-executor.ts", import.meta.url)), "utf8"),
+      readFile(fileURLToPath(new URL("../execution/step-session-executor.ts", import.meta.url)), "utf8"),
       readFile(fileURLToPath(new URL("../agent-heartbeat.ts", import.meta.url)), "utf8"),
     ]);
 

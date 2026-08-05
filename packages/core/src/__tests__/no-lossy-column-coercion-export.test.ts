@@ -15,7 +15,7 @@ to a legacy one is the defect, regardless of what it is called.
 */
 import { describe, expect, it } from "vitest";
 import * as core from "../index.js";
-import { normalizeColumnId } from "../types/board.js";
+import { normalizeColumnId } from "../types/board/index.js";
 
 describe("no lossy column coercion on the core public surface", () => {
   it("does not export the deleted normalizeColumn", () => {

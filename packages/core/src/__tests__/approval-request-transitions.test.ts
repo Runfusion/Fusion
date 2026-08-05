@@ -15,7 +15,7 @@ import {
   isApprovalRequestExpired,
   isValidApprovalRequestTransition,
   type ApprovalRequestStatus,
-} from "../types/agents.js";
+} from "../types/agents/index.js";
 
 describe("isValidApprovalRequestTransition", () => {
   // Hardcoded 16-row expectation table: [from, to, expected].

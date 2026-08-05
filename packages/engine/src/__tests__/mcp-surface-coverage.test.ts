@@ -116,7 +116,7 @@ describe("MCP surface coverage", () => {
 
   it("keeps the PR response merger seam wired to resolved MCP", () => {
     expectResolvedMcpForwarded(
-      "src/pr-response-run-ops.ts",
+      "src/merge/pr-response-run-ops.ts",
       "const mcpServers = store ? (await resolveMcpServersForStore(store)).servers : undefined;",
       "const { session } = await createResolvedAgentSession({",
       "mcpServers,",

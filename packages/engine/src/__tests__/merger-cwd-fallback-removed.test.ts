@@ -136,7 +136,7 @@ describe("FN-5348 cwd integration fallback removed", () => {
     expect(merger).not.toMatch(cwdModeAssignmentRegex);
 
     const autoRecoveryRoot = new URL("../", import.meta.url);
-    const autoRecovery = readFileSync(new URL("../auto-recovery.ts", import.meta.url), "utf-8");
+    const autoRecovery = readFileSync(new URL("../healing/auto-recovery.ts", import.meta.url), "utf-8");
     expect(autoRecovery).not.toMatch(cwdModeAssignmentRegex);
 
     const autoRecoveryHandlersDir = new URL("../auto-recovery-handlers/", import.meta.url);

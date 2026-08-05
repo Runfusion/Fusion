@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { definePlugin } from "../index.js";
-import type { FusionPlugin, PluginUiContributionSurface } from "../../../core/src/plugin-types.js";
+import type { FusionPlugin, PluginUiContributionSurface } from "../../../core/src/plugins/plugin-types.js";
 import type { TaskStore } from "../../../core/src/store.js";
-import { validatePluginManifest } from "../../../core/src/plugin-types.js";
+import { validatePluginManifest } from "../../../core/src/plugins/plugin-types.js";
 
 type AssertNever<T extends never> = T;
 type NoStaleStructuredSurface = AssertNever<Extract<
@@ -157,7 +157,7 @@ describe("Plugin SDK", () => {
   describe("type exports", () => {
     it("exports PluginManifest type", () => {
       // This is a compile-time test - if types are exported correctly, this will compile
-      const manifest: import("../../../core/src/plugin-types.js").PluginManifest = {
+      const manifest: import("../../../core/src/plugins/plugin-types.js").PluginManifest = {
         id: "test",
         name: "Test",
         version: "1.0.0",
@@ -181,7 +181,7 @@ describe("Plugin SDK", () => {
     });
 
     it("exports CLI provider contract types", () => {
-      const cliProvider: import("../../../core/src/plugin-types.js").CliProviderContribution = {
+      const cliProvider: import("../../../core/src/plugins/plugin-types.js").CliProviderContribution = {
         providerId: "cursor-cli",
         displayName: "Cursor CLI",
         binaryName: "cursor-agent",
@@ -193,7 +193,7 @@ describe("Plugin SDK", () => {
     });
 
     it("exports PluginContext type", () => {
-      const ctx: import("../../../core/src/plugin-types.js").PluginContext = {
+      const ctx: import("../../../core/src/plugins/plugin-types.js").PluginContext = {
         pluginId: "test",
         taskStore: {} as unknown as TaskStore,
         settings: {},
@@ -210,7 +210,7 @@ describe("Plugin SDK", () => {
 
     it("exports PluginUiSlotDefinition type", () => {
       // This is a compile-time test - if types are exported correctly, this will compile
-      const slot: import("../../../core/src/plugin-types.js").PluginUiSlotDefinition = {
+      const slot: import("../../../core/src/plugins/plugin-types.js").PluginUiSlotDefinition = {
         slotId: "task-detail-tab",
         label: "Task Details",
         icon: "FileText",
@@ -224,7 +224,7 @@ describe("Plugin SDK", () => {
 
     it("PluginUiSlotDefinition icon is optional", () => {
       // This is a compile-time test - if types are exported correctly, this will compile
-      const slot: import("../../../core/src/plugin-types.js").PluginUiSlotDefinition = {
+      const slot: import("../../../core/src/plugins/plugin-types.js").PluginUiSlotDefinition = {
         slotId: "header-action",
         label: "Header Action",
         componentPath: "./components/HeaderAction.js",

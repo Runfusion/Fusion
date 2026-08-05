@@ -7,13 +7,13 @@ import { describe, expect, it } from "vitest";
  * User-configured command paths must stay on bounded async execution APIs; this focused registry intentionally excludes git-plumbing execSync call sites so deterministic repository checks can keep using synchronous child-process APIs where appropriate.
  *
  * Protected registry for user-configured commands:
- * - packages/engine/src/verification-utils.ts :: execWithProcessGroup — delegates command execution through the sandbox backend streaming API; caller-owned options must carry bounds.
- * - packages/engine/src/verification-utils.ts :: runVerificationCommand — runs configured test/build commands through execWithProcessGroup with timeout and VERIFICATION_COMMAND_MAX_BUFFER.
- * - packages/engine/src/run-verification-tool.ts :: runVerificationCommand — backs fn_run_verification with superviseSpawn and maxLifetimeMs.
+ * - packages/engine/src/execution/verification-utils.ts :: execWithProcessGroup — delegates command execution through the sandbox backend streaming API; caller-owned options must carry bounds.
+ * - packages/engine/src/execution/verification-utils.ts :: runVerificationCommand — runs configured test/build commands through execWithProcessGroup with timeout and VERIFICATION_COMMAND_MAX_BUFFER.
+ * - packages/engine/src/execution/run-verification-tool.ts :: runVerificationCommand — backs fn_run_verification with superviseSpawn and maxLifetimeMs.
  * - packages/engine/src/executor.ts :: runConfiguredCommand — runs settings.scripts, settings.setupScript, settings.worktreeInitCommand, and workflow script commands through backend.run with timeoutMs and maxBuffer.
  * - packages/engine/src/merger.ts :: runConfiguredMergeWorktreeCommand — runs configured merge-worktree commands through backend.run with timeoutMs and maxBuffer.
  * - FNXC:EngineTests 2026-06-27-10:05: U7c removed the legacy merger-side executePostMergeScriptStep path; the static guard must track only live user-configured command surfaces so registry drift fails for real protected functions, not deleted ones.
- * - packages/engine/src/routine-runner.ts :: executeCommand — runs configured automation/routine commands through backend.run with timeoutMs and maxBuffer.
+ * - packages/engine/src/scheduling/routine-runner.ts :: executeCommand — runs configured automation/routine commands through backend.run with timeoutMs and maxBuffer.
  * - packages/engine/src/sandbox/native.ts :: NativeSandboxBackend.run — default sandbox backend uses superviseSpawn with maxLifetimeMs plus timeoutMs/maxBuffer enforcement.
  * - packages/engine/src/sandbox/bubblewrap-backend.ts :: BubblewrapBackend.run — isolating backend delegates to native fallback or runBwrapSpawn; runBwrapSpawn uses spawn with timeoutMs and maxBuffer enforcement.
  * - packages/engine/src/sandbox/bubblewrap-backend.ts :: BubblewrapBackend.runBwrapSpawn — concrete bubblewrap spawn path uses setTimeout(options.timeoutMs) and options.maxBuffer.
@@ -34,7 +34,7 @@ type GuardEntry = {
 
 const protectedCommandPaths: GuardEntry[] = [
   {
-    file: "src/verification-utils.ts",
+    file: "src/execution/verification-utils.ts",
     name: "execWithProcessGroup",
     signature: "export async function execWithProcessGroup(",
     requiredSafeguards: [
@@ -48,7 +48,7 @@ const protectedCommandPaths: GuardEntry[] = [
     command spawn lives in runVerificationCommandUnlocked (execWithProcessGroup + bounds).
     Guard the unlocked body so slot extraction cannot reintroduce unbounded exec.
     */
-    file: "src/verification-utils.ts",
+    file: "src/execution/verification-utils.ts",
     name: "runVerificationCommandUnlocked",
     signature: "async function runVerificationCommandUnlocked(",
     requiredSafeguards: [
@@ -58,7 +58,7 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
-    file: "src/verification-utils.ts",
+    file: "src/execution/verification-utils.ts",
     name: "runVerificationCommand",
     signature: "export async function runVerificationCommand(",
     requiredSafeguards: [
@@ -67,7 +67,8 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
-    file: "src/run-verification-tool.ts",
+    // FNXC:FullSuiteBookkeeping 2026-08-05-00:30: run-verification-tool peels under execution/ with the rest of the session/verification surface.
+    file: "src/execution/run-verification-tool.ts",
     name: "runVerificationCommandUnlocked",
     signature: "async function runVerificationCommandUnlocked(",
     requiredSafeguards: [
@@ -76,7 +77,7 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
-    file: "src/run-verification-tool.ts",
+    file: "src/execution/run-verification-tool.ts",
     name: "runVerificationCommand",
     signature: "export async function runVerificationCommand(",
     requiredSafeguards: [
@@ -105,7 +106,7 @@ const protectedCommandPaths: GuardEntry[] = [
     ],
   },
   {
-    file: "src/routine-runner.ts",
+    file: "src/scheduling/routine-runner.ts",
     name: "executeCommand",
     signature: "private async executeCommand(",
     requiredSafeguards: [
