@@ -899,7 +899,7 @@ function getWorkflowReviewKind(
   return undefined;
 }
 
-function buildWorkflowReviewItemId(task: Task, result: WorkflowStepResult): string {
+function buildWorkflowReviewItemId(task: Task, result: WorkflowStepResult, findingId?: string): string {
   const identity = JSON.stringify({
     taskId: task.id,
     workflowStepId: result.workflowStepId,
@@ -912,6 +912,7 @@ function buildWorkflowReviewItemId(task: Task, result: WorkflowStepResult): stri
     startedAt: result.startedAt,
     output: result.output,
     notes: result.notes,
+    findingId,
   });
   return `workflow-review-${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
 }
@@ -922,8 +923,26 @@ async function buildWorkflowReviewItems(task: Task, store: TaskStore): Promise<T
     .flatMap((result): TaskReviewItem[] => {
       const reviewType = getWorkflowReviewKind(result, declaredTopLevelReviewResultSources);
       if (!reviewType) return [];
-      const body = result.output?.trim() || result.notes?.trim() || "No written feedback was provided by this review step.";
       const timestamp = result.completedAt ?? result.startedAt ?? task.updatedAt ?? task.createdAt;
+      if (result.findings?.length) {
+        return result.findings.map((finding) => ({
+          itemId: buildWorkflowReviewItemId(task, result, finding.id),
+          sourceMode: "reviewer-agent" as const,
+          title: finding.title,
+          body: finding.body,
+          author: "reviewer-agent",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...(finding.filePath ? { filePath: finding.filePath } : {}),
+          ...(finding.line ? { line: finding.line } : {}),
+          ...(finding.severity ? { severity: finding.severity } : {}),
+          reviewState: result.verdict,
+          verdict: result.verdict,
+          reviewType,
+          progressStatus: null,
+        }));
+      }
+      const body = result.output?.trim() || result.notes?.trim() || "No written feedback was provided by this review step.";
       return [{
         itemId: buildWorkflowReviewItemId(task, result),
         sourceMode: "reviewer-agent",
@@ -6264,6 +6283,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         updatedAt: item.updatedAt ?? undefined,
         path: item.filePath,
         line: item.line,
+        severity: item.severity,
         threadId: item.threadId,
         htmlUrl: item.url,
         state: item.reviewState ?? undefined,
@@ -6312,6 +6332,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           author: item.author.login,
           filePath: item.path,
           lineNumber: item.line,
+          severity: item.severity,
           threadId: item.threadId,
           url: item.htmlUrl,
         };
@@ -6349,6 +6370,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
               authorLogin: item.author,
               filePath: item.filePath,
               lineNumber: item.lineNumber,
+              severity: item.severity,
               threadId: item.threadId,
               url: item.url,
             },

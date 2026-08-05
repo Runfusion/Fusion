@@ -21,10 +21,14 @@ import { resolveEffectiveAgent, THINKING_LEVELS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
-import { WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY } from "../workflows/workflow-graph-executor.js";
+import {
+  WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY,
+  WORKFLOW_REVIEW_KIND_CONTEXT_KEY,
+} from "../workflows/workflow-graph-executor.js";
 import { workflowNodeRequiresWorktree } from "../workflows/workflow-node-execution-needs.js";
 import {
   FUSION_WORKFLOW_STEP_CONVENTIONS_PREAMBLE,
+  parseWorkflowStepOutput,
   type WorkflowStepOutcome,
 } from "./workflow-step-verdict.js";
 import { parseAwaitInputSentinel } from "./await-input-parse.js";
@@ -132,6 +136,17 @@ export async function runGraphCustomNode(
     const optionalGroupId = typeof graphContext?.[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
       ? graphContext[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
       : undefined;
+    /*
+    FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+    Carry plan/code reviewKind from node config or optional-group graph context onto the
+    synthesized WorkflowStep so prompt nodes emit findings JSON and script nodes can attach
+    normalized findings without inventing review metadata for unmarked scripts.
+    */
+    const declaredReviewKind = cfg.reviewKind === "plan" || cfg.reviewKind === "code"
+      ? cfg.reviewKind
+      : graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "plan" || graphContext?.[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] === "code"
+        ? graphContext[WORKFLOW_REVIEW_KIND_CONTEXT_KEY] as "plan" | "code"
+        : undefined;
     /*
     FNXC:FastOptionalSteps 2026-06-30-09:14:
     Fast skips top-level custom prompt/script/gate review bodies by default, but an enabled optional-group template is explicit operator intent. The graph marks those template nodes so Browser Verification and custom optional groups still run under fast mode.
@@ -403,6 +418,9 @@ export async function runGraphCustomNode(
     if (optionalGroupId) {
       (step as WorkflowStep & { optionalGroupId?: string }).optionalGroupId = optionalGroupId;
     }
+    if (declaredReviewKind) {
+      (step as WorkflowStep & { reviewKind?: "plan" | "code" }).reviewKind = declaredReviewKind;
+    }
     if (cfg.reviewCanFixInline === true) {
       (step as WorkflowStep & { reviewCanFixInline?: boolean }).reviewCanFixInline = true;
     }
@@ -429,9 +447,19 @@ export async function runGraphCustomNode(
     // sets FUSION_HEADLESS=1 only when this is explicitly true.
     const unattended = deps.graphUnattendedRuns.has(live.id);
 
-    const outcome = mode === "script"
+    let outcome: WorkflowStepOutcome = mode === "script"
       ? await deps.executeScriptWorkflowStep(live, step, worktreePath, settings, nodeEnv)
       : await deps.executeWorkflowStep(live, step, worktreePath, settings, nodeEnv, { unattended });
+    /*
+     * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+     * Script nodes retain their exit-code verdict semantics, but an explicitly classified review
+     * script may attach the same trailing JSON findings as prompt nodes. Unmarked scripts never
+     * gain review metadata merely because their output happens to contain a findings key.
+     */
+    if (declaredReviewKind && typeof outcome.output === "string") {
+      const parsedReviewOutput = parseWorkflowStepOutput(outcome.output, { requireVerdict: false });
+      if (parsedReviewOutput.findings?.length) outcome = { ...outcome, findings: parsedReviewOutput.findings };
+    }
 
     // Skill-emitted await-input (U6): if the skill asked the user a blocking
     // question via the ===FUSION_AWAIT_INPUT=== sentinel, park the task
@@ -470,6 +498,8 @@ export async function runGraphCustomNode(
     const contextPatch: Record<string, unknown> = {};
     if (typeof stepOutput === "string") contextPatch.output = stepOutput;
     if (typeof stepNotes === "string" && stepNotes) contextPatch.notes = stepNotes;
+    const stepFindings = outcome.findings;
+    if (stepFindings?.length) contextPatch.findings = stepFindings;
     if (cfg.summaryTarget === "task" && typeof stepOutput === "string" && stepOutput.trim()) {
       /*
        * FNXC:WorkflowCompletion 2026-06-29-11:09:

@@ -50,6 +50,18 @@ describe("workflow malformed-verdict gate", () => {
     expect(parseWorkflowStepOutput("native skill output", { requireVerdict: false })).toEqual({ output: "native skill output" });
   });
 
+  it("extracts only validated findings from the selected trailing verdict JSON", () => {
+    expect(parseWorkflowStepOutput('prose {"verdict":"REVISE","notes":"old"}\n{"verdict":"REVISE","notes":"new","findings":[{"id":"a","title":"Issue","body":"Fix it","line":3,"severity":"high"},{"id":"a","title":"Second","body":"Also fix"},{"title":"bad","body":""}]}')).toMatchObject({
+      verdict: "REVISE",
+      notes: "new",
+      findings: [
+        { id: "a", title: "Issue", body: "Fix it", line: 3, severity: "high" },
+        { id: "a-2", title: "Second", body: "Also fix" },
+      ],
+    });
+    expect(parseWorkflowStepOutput("REQUEST REVISION\n1. prose only").findings).toBeUndefined();
+  });
+
   it("keeps a blocking graph gate with a genuine REVISE verdict from passing", async () => {
     // A PARSED non-pass verdict still blocks (only unparseable/malformed output
     // was relaxed to a non-blocking advisory — see the ReviewLeniency note above).

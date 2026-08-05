@@ -31,6 +31,24 @@ export type WorkflowStepMode = "prompt" | "script";
 export type WorkflowStepToolMode = "readonly" | "coding";
 export type WorkflowStepGateMode = "gate" | "advisory";
 
+/** Closed severity vocabulary shared by persisted workflow findings and Review-tab items. */
+export type WorkflowReviewFindingSeverity = "low" | "medium" | "high" | "critical";
+
+/**
+ * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+ * Review-kind nodes persist independently actionable feedback in the existing JSONB result so
+ * Review-tab selection never depends on model prose or client-provided metadata. Finding identity
+ * is normalized before persistence; historical prose-only rows intentionally omit this field.
+ */
+export interface WorkflowReviewFinding {
+  id: string;
+  title: string;
+  body: string;
+  filePath?: string;
+  line?: number;
+  severity?: WorkflowReviewFindingSeverity;
+}
+
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
 
@@ -257,6 +275,8 @@ export interface WorkflowStepResult {
   reviewKind?: WorkflowReviewKind;
   /** Output from the workflow step agent (findings, errors, etc.) */
   output?: string;
+  /** Normalized structured advisory findings from an explicitly classified review node. */
+  findings?: WorkflowReviewFinding[];
   /**
    * Machine-readable verdict from prompt-mode structured output.
    * Absent for script-mode steps and legacy prose-only prompt outputs.

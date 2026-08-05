@@ -3,6 +3,7 @@
  * Workflow-step conventions + verdict parsers peeled from executor.ts (wave18 / U4 Slice A).
  */
 import { proseSignalsClearApproval, extractJsonObjectCandidates } from "../execution/reviewer.js";
+import { normalizeWorkflowReviewFindings, type WorkflowReviewFinding } from "@fusion/core";
 
 /**
  * (U2 / KTD-2) Fusion workflow-step conventions preamble, prepended to a skill
@@ -48,6 +49,8 @@ export interface WorkflowStepOutcome {
   verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
   /** Notes extracted from structured JSON output (distinct from raw output). */
   notes?: string;
+  /** Normalized independently actionable feedback from a review-kind node. */
+  findings?: WorkflowReviewFinding[];
   /** Set when the call exceeded `settings.workflowStepTimeoutMs`. Signals the
    *  caller to escalate to the fallback model rather than treat the failure
    *  as a generic revision request. */
@@ -68,7 +71,7 @@ export type WorkflowStepResult =
   | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
-export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string } | null {
+export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string; findings?: WorkflowReviewFinding[] } | null {
   const trimmed = rawOutput.trim();
   const candidates: string[] = [];
   const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -83,7 +86,7 @@ export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE
 
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     try {
-      const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown };
+      const parsed = JSON.parse(candidates[i]) as { verdict?: unknown; notes?: unknown; findings?: unknown };
       if (!parsed || typeof parsed.verdict !== "string") continue;
       /*
       FNXC:ReviewLeniency 2026-07-01-23:30:
@@ -97,9 +100,16 @@ export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE
         verdict = "REVISE";
       }
       if (!verdict) continue;
+      /*
+      FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+      Review-kind prompt/script JSON may include a findings array. Normalize through core so invalid
+      entries never poison the step outcome or Review-tab selection contract.
+      */
+      const findings = normalizeWorkflowReviewFindings(parsed.findings);
       return {
         verdict,
         notes: typeof parsed.notes === "string" ? parsed.notes : "",
+        ...(findings ? { findings } : {}),
       };
     } catch {
       // continue
@@ -153,6 +163,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
   output: string;
   verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
   notes?: string;
+  findings?: WorkflowReviewFinding[];
   malformed?: boolean;
 } {
   const trimmed = rawOutput.trim();
@@ -162,6 +173,7 @@ export function parseWorkflowStepOutput(rawOutput: string, options: { requireVer
       output: parsed.notes || "",
       verdict: parsed.verdict,
       notes: parsed.notes,
+      ...(parsed.findings ? { findings: parsed.findings } : {}),
     };
   }
 

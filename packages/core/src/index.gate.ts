@@ -2247,6 +2247,10 @@ Keep this gate-safe barrel's workflow-step-results re-exports in SYNC with the m
 */
 export {
   upsertWorkflowStepResult,
+  normalizeWorkflowReviewFindings,
+  isWorkflowReviewFindingSeverity,
+  MAX_WORKFLOW_REVIEW_FINDINGS,
+  WORKFLOW_REVIEW_FINDING_SEVERITIES,
   MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
   PLAN_REVIEW_LEASE_STALENESS_MS,
   classifyReviewLease,

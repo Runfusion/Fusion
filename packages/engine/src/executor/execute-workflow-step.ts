@@ -121,8 +121,15 @@ export async function executeWorkflowStep(
     // only (default false = board run); see runGraphCustomNode / KTD-3.
     const unattended = stepOptions?.unattended === true;
     const isPlanReviewStep = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
+    /*
+    FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+    reviewKind is carried from graph synthesis (cfg.reviewKind / optional-group context) so prompt
+    nodes that classify as plan/code review emit the structured findings schema and return
+    normalized findings on the step outcome for the Review tab.
+    */
     const workflowStepMetadata = workflowStep as WorkflowStep & {
       optionalGroupId?: string;
+      reviewKind?: "plan" | "code";
       reviewCanFixInline?: boolean;
       requireExternalIntegrationEvidence?: boolean;
     };
@@ -300,6 +307,7 @@ export async function executeWorkflowStep(
     const isSkillStep = typeof workflowStep.skillName === "string" && workflowStep.skillName.trim().length > 0;
     const isSummaryProjectionStep = (workflowStep as WorkflowStep & { summaryTarget?: string }).summaryTarget === "task";
     const requireVerdict = !isSummaryProjectionStep && (workflowStep.gateMode === "gate" || !isSkillStep);
+    const reviewFindingsContract = workflowStepMetadata.reviewKind === "plan" || workflowStepMetadata.reviewKind === "code";
     const verdictBlock = requireVerdict
       ? `
 
@@ -307,7 +315,9 @@ export async function executeWorkflowStep(
 
   When your review is complete, your final line MUST be a single JSON object (no markdown fences):
 
-  {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
+  ${reviewFindingsContract
+    ? "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\",\"findings\":[{\"id\":\"stable-id\",\"title\":\"concise issue\",\"body\":\"actionable detail\",\"filePath\":\"optional/path\",\"line\":1,\"severity\":\"low|medium|high|critical\"}]}"
+    : "{\"verdict\":\"APPROVE|APPROVE_WITH_NOTES|REVISE\",\"notes\":\"...\"}"}
 
   Rules:
   - Output exactly one trailing JSON object and stop.
@@ -738,6 +748,7 @@ export async function executeWorkflowStep(
             output: parsed.output,
             verdict: parsed.verdict,
             notes: parsed.notes,
+            ...(parsed.findings ? { findings: parsed.findings } : {}),
           };
         }
 

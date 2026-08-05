@@ -1,4 +1,52 @@
-import type { WorkflowStepResult } from "../types.js";
+import type { WorkflowReviewFinding, WorkflowReviewFindingSeverity, WorkflowStepResult } from "../types.js";
+
+export const WORKFLOW_REVIEW_FINDING_SEVERITIES = ["low", "medium", "high", "critical"] as const;
+export const MAX_WORKFLOW_REVIEW_FINDINGS = 20;
+const MAX_FINDING_ID_LENGTH = 128;
+const MAX_FINDING_TITLE_LENGTH = 240;
+const MAX_FINDING_BODY_LENGTH = 4_000;
+const MAX_FINDING_PATH_LENGTH = 1_000;
+
+/**
+ * FNXC:WorkflowReviewFindings 2026-08-05-06:29:
+ * Model findings are untrusted JSON. Normalize them once at the core persistence boundary so every
+ * writer stores collision-free IDs and bounded operator-facing text; malformed entries are dropped
+ * rather than becoming selectable feedback.
+ */
+export function normalizeWorkflowReviewFindings(raw: unknown): WorkflowReviewFinding[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const normalized: WorkflowReviewFinding[] = [];
+  const usedIds = new Set<string>();
+  for (const candidate of raw) {
+    if (normalized.length >= MAX_WORKFLOW_REVIEW_FINDINGS || !candidate || typeof candidate !== "object") continue;
+    const value = candidate as Record<string, unknown>;
+    const title = boundedTrimmedString(value.title, MAX_FINDING_TITLE_LENGTH);
+    const body = boundedTrimmedString(value.body, MAX_FINDING_BODY_LENGTH);
+    if (!title || !body) continue;
+    const baseId = boundedTrimmedString(value.id, MAX_FINDING_ID_LENGTH) || `finding-${normalized.length + 1}`;
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) id = `${baseId.slice(0, Math.max(1, MAX_FINDING_ID_LENGTH - String(suffix).length - 1))}-${suffix++}`;
+    usedIds.add(id);
+    const filePath = boundedTrimmedString(value.filePath, MAX_FINDING_PATH_LENGTH);
+    const line = typeof value.line === "number" && Number.isFinite(value.line) && value.line > 0
+      ? Math.floor(value.line)
+      : undefined;
+    const severity = isWorkflowReviewFindingSeverity(value.severity) ? value.severity : undefined;
+    normalized.push({ id, title, body, ...(filePath ? { filePath } : {}), ...(line ? { line } : {}), ...(severity ? { severity } : {}) });
+  }
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function boundedTrimmedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed.length <= maxLength ? trimmed : undefined;
+}
+
+export function isWorkflowReviewFindingSeverity(value: unknown): value is WorkflowReviewFindingSeverity {
+  return typeof value === "string" && (WORKFLOW_REVIEW_FINDING_SEVERITIES as readonly string[]).includes(value);
+}
 
 /*
 FNXC:WorkflowStepResults 2026-07-09-00:20:

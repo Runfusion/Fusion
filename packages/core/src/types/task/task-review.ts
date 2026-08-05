@@ -9,6 +9,7 @@ export type TaskReviewDecision = "approved" | "changes-requested" | "commented" 
 export type TaskReviewVerdict = "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE" | "RETHINK" | "UNAVAILABLE";
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
+export type TaskReviewFindingSeverity = "low" | "medium" | "high" | "critical";
 
 export interface LegacyTaskReviewItem {
   id: string;
@@ -79,6 +80,7 @@ export interface TaskReviewStateItem {
   threadId?: string;
   githubCommentId?: number;
   path?: string;
+  line?: number;
   diffSide?: string;
   body: string;
   author: TaskReviewAuthor;
@@ -92,6 +94,7 @@ export interface TaskReviewStateItem {
   verdict?: TaskReviewVerdict;
   step?: number;
   summary?: string;
+  severity?: TaskReviewFindingSeverity;
 }
 
 export type ReviewAddressingStatus = "queued" | "in-progress" | "addressed" | "failed";
@@ -105,6 +108,7 @@ export interface ReviewAddressingSnapshot {
   authorLogin?: string;
   filePath?: string;
   lineNumber?: number;
+  severity?: TaskReviewFindingSeverity;
   threadId?: string;
   url?: string;
 }
@@ -161,6 +165,7 @@ export interface TaskReviewDataItem {
   url?: string;
   filePath?: string;
   line?: number;
+  severity?: TaskReviewFindingSeverity;
   threadId?: string;
   reviewState?: string | null;
   /** Machine-readable reviewer verdict when the source supplied one. */
