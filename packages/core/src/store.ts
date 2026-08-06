@@ -1688,6 +1688,108 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
   /*
+   * FNXC:StepResume 2026-08-06-02:12:
+   * STAS-032: Operator/privileged-only escape hatch for a card stranded in
+   * `in-review` or `in-progress` with a workflow step permanently in `pending`
+   * status (leading real-world cause: the Runfusion/Fusion#1946 dispatched
+   * prompt node verdict callback never received). Transitions the stuck
+   * `pending` pre-merge step to `status: "failed"` with resume audit metadata
+   * (who/when/why/prior status) so the existing `fn_task_bypass_review` escape
+   * hatch can then clear the merge blocker (FN-7720). Requires a mandatory
+   * `reason` and `stepId`; audit-logged via the `task:resume-step` run-audit
+   * event. A resumed result is a terminal `failed` result and does NOT clear,
+   * create, or alter any other merge-blocker condition. NOT exposed to
+   * executor/reviewer/triage agent tool surfaces — see `fn_workflow_step_resume`
+   * registration comments for the same rule.
+   */
+  async resumeWorkflowStep(
+    id: string,
+    options: { stepId: string; reason: string; actor: string },
+  ): Promise<Task> {
+    const reason = options.reason?.trim();
+    if (!reason) {
+      throw new Error("resumeWorkflowStep requires a non-empty reason");
+    }
+    const stepId = options.stepId?.trim();
+    if (!stepId) {
+      throw new Error("resumeWorkflowStep requires a non-empty stepId");
+    }
+    const actor = options.actor?.trim() || "operator";
+
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.column !== "in-review" && task.column !== "in-progress") {
+        throw new Error(
+          `Cannot resume workflow step for ${id}: requires task to be in 'in-review' or 'in-progress'`,
+        );
+      }
+      if (task.paused) {
+        throw new Error(`Cannot resume workflow step for ${id}: task is paused`);
+      }
+
+      const results = task.workflowStepResults ?? [];
+      const target = results.find((r) => r.workflowStepId === stepId);
+      if (!target) {
+        throw new Error(
+          `Cannot resume workflow step for ${id}: step '${stepId}' not found in workflowStepResults`,
+        );
+      }
+      if (target.status !== "pending") {
+        throw new Error(
+          `Cannot resume workflow step for ${id}: only pending steps can be resumed`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      const resumed: import("./types.js").WorkflowStepResult = {
+        ...target,
+        status: "failed",
+        completedAt: now,
+        resumedAt: now,
+        resumedBy: actor,
+        resumeReason: reason,
+        resumedFromStatus: target.status,
+      };
+
+      const nextResults = [...results];
+      const targetIndex = nextResults.indexOf(target);
+      nextResults[targetIndex] = resumed;
+      task.workflowStepResults = nextResults;
+
+      if (!task.log) {
+        task.log = [];
+      }
+      task.updatedAt = now;
+      task.log.push({
+        timestamp: now,
+        action: `Workflow step resumed: ${target.workflowStepName} (${target.workflowStepId}) by ${actor} — ${reason}`,
+      });
+
+      await this.recordRunAuditEvent({
+        taskId: task.id,
+        agentId: actor,
+        runId: this.makeSyntheticDeleteRunId(task.id),
+        domain: "database",
+        mutationType: "task:resume-step",
+        target: task.id,
+        metadata: {
+          workflowStepId: target.workflowStepId,
+          workflowStepName: target.workflowStepName,
+          resumedFromStatus: target.status,
+          reason,
+        },
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+  /*
   FNXC:WorkflowEvents 2026-08-01-06:11:
   One seam decorates every TaskStore `task:updated` emission, including hot synchronous paths, with a
   cached answer only. Explicit metadata wins; runtime and process bridge EventEmitters do not call this

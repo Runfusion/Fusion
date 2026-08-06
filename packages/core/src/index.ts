@@ -1153,6 +1153,7 @@ export {
   resolveTaskMergeTarget,
   AWAITING_APPROVAL_PAUSE_REASON,
   isTaskBlockedOnApproval,
+  findPendingPreMergeStep,
   type MergeTargetResolution,
   type MergeTargetResolverOptions,
 } from "./merge/task-merge.js";

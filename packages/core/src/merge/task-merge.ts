@@ -566,3 +566,26 @@ export async function getTaskCompletionBlocker(
 
   return undefined;
 }
+
+/*
+FNXC:StepResume 2026-07-19-21:34:
+Operator escape hatch for in-review tasks with permanently pending workflow steps.
+Finds the latest pre-merge workflow step in pending status so the operator can
+then resume/bypass it. Does not consider post-merge steps.
+*/
+export function findPendingPreMergeStep(
+  task: Pick<Task, "workflowStepResults">,
+): WorkflowStepResult | undefined {
+  if (!task.workflowStepResults) return undefined;
+
+  const pendingPreMerge = task.workflowStepResults.filter(
+    (step) => step.phase !== "post-merge" && step.status === "pending",
+  );
+
+  if (pendingPreMerge.length === 0) return undefined;
+
+  // Return the newest pending pre-merge step (by startedAt, descending)
+  return pendingPreMerge.sort(
+    (a, b) => new Date(b.startedAt ?? 0).getTime() - new Date(a.startedAt ?? 0).getTime(),
+  )[0];
+}
