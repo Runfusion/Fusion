@@ -79,7 +79,7 @@ import { EvalStore } from "./eval/eval-store.js";
 import { AsyncEvalStore } from "./async-stores/async-eval-store.js";
 import { CentralCore } from "./central/central-core.js";
 import { SecretsStore } from "./secrets/secrets-store.js";
-import { getLatestFailedPreMergeReviewStep } from "./merge/task-merge.js";
+import { getLatestFailedPreMergeReviewStep, findPendingPreMergeStep } from "./merge/task-merge.js";
 import { createLogger } from "./process/logger.js";
 import { type UsageEventInput } from "./tasks/usage-events.js";
 import { assertNotLinkedWorktreeOfExistingProject, assertProjectRootDir } from "./central/project-root-guard.js";
@@ -1720,20 +1720,43 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
 
-      if (task.column !== "in-review" && task.column !== "in-progress") {
-        throw new Error(
-          `Cannot resume workflow step for ${id}: requires task to be in 'in-review' or 'in-progress'`,
-        );
-      }
       if (task.paused) {
         throw new Error(`Cannot resume workflow step for ${id}: task is paused`);
       }
 
-      const results = task.workflowStepResults ?? [];
-      const target = results.find((r) => r.workflowStepId === stepId);
-      if (!target) {
+      // FNXC:StepResume 2026-08-06-17:42:
+      // Resolve the review and WIP lanes against the task's actual workflow IR instead of
+      // hardcoded 'in-review'/'in-progress' literals. A board whose review lane is named
+      // differently (or carries review on a humanReview/mergeBlocker-only lane) would
+      // otherwise reject a legitimately stuck task. This mirrors bypassFailedPreMergeReviewStep's
+      // lane resolution; the WIP side uses the workflow's countsTowardWip columns.
+      const resumeIr = await resolveWorkflowIrForTask(this, task.id).catch(() => undefined);
+      const reviewColumns: ReadonlySet<string> =
+        resumeIr === undefined || !declaresAnyLifecycleTrait(resumeIr)
+          ? new Set(["in-review"])
+          : new Set(resolveReviewColumns(resumeIr));
+      const wipColumns = await resolveProjectColumnsForRoles(this, ["countsTowardWip"]);
+      const resumeInReview = reviewColumns.has(task.column);
+      const resumeInProgress = wipColumns.has(task.column);
+      if (!resumeInReview && !resumeInProgress) {
+        const named = reviewColumns.size > 0 ? [...reviewColumns].map((c) => `'${c}'`).join(" or ") : "a review lane";
         throw new Error(
-          `Cannot resume workflow step for ${id}: step '${stepId}' not found in workflowStepResults`,
+          `Cannot resume workflow step for ${id}: task is in '${task.column}', must be in ${named} or a WIP (in-progress) lane`,
+        );
+      }
+
+      const results = task.workflowStepResults ?? [];
+      // Only a pending PRE-MERGE step may be resumed: post-merge steps are never the stuck prompt
+      // verdict target, and resuming one would fabricate a terminal 'failed' result the merge gate
+      // does not own. findPendingPreMergeStep (used to name the candidate below) enforces the same
+      // pre-merge boundary as the operator-only resume surface.
+      const target = results.find((r) => r.workflowStepId === stepId && r.phase !== "post-merge");
+      if (!target) {
+        const pendingPreMerge = findPendingPreMergeStep(task);
+        const candidateName = pendingPreMerge ? pendingPreMerge.workflowStepName : undefined;
+        throw new Error(
+          `Cannot resume workflow step for ${id}: step '${stepId}' not found as a pending pre-merge step` +
+            (candidateName ? ` (pending pre-merge step found: '${candidateName}')` : ""),
         );
       }
       if (target.status !== "pending") {
@@ -1752,6 +1775,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         resumeReason: reason,
         resumedFromStatus: target.status,
       };
+      // A resumed result is terminal 'failed' — never carry lease ownership forward onto a
+      // completed step result. The lease was held by the (never-completed) dispatched prompt node;
+      // preserving leaseOwner/leaseNodeId on the failed record would strand successor lease logic.
+      delete resumed.leaseOwner;
+      delete resumed.leaseNodeId;
 
       const nextResults = [...results];
       const targetIndex = nextResults.indexOf(target);

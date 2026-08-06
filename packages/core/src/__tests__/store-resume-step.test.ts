@@ -110,7 +110,7 @@ pgDescribe("TaskStore.resumeWorkflowStep", () => {
     ).rejects.toThrow(/only pending steps can be resumed/);
   });
 
-  it("rejects when the step is not found", async () => {
+  it("rejects when the step is not found as a pending pre-merge step", async () => {
     await seedInReviewTask("FN-RES-004", { workflowStepResults: [] });
     await expect(
       store().resumeWorkflowStep("FN-RES-004", {
@@ -118,7 +118,20 @@ pgDescribe("TaskStore.resumeWorkflowStep", () => {
         reason: "x",
         actor: "operator",
       }),
-    ).rejects.toThrow(/not found in workflowStepResults/);
+    ).rejects.toThrow(/not found as a pending pre-merge step/);
+  });
+
+  it("rejects resuming a post-merge step (pre-merge boundary, FNXC:StepResume)", async () => {
+    await seedInReviewTask("FN-RES-004B", {
+      workflowStepResults: [pendingStep({ workflowStepId: "post-deploy", workflowStepName: "Post Deploy", phase: "post-merge" })],
+    });
+    await expect(
+      store().resumeWorkflowStep("FN-RES-004B", {
+        stepId: "post-deploy",
+        reason: "x",
+        actor: "operator",
+      }),
+    ).rejects.toThrow(/not found as a pending pre-merge step/);
   });
 
   it("rejects a blank reason", async () => {
@@ -154,7 +167,7 @@ pgDescribe("TaskStore.resumeWorkflowStep", () => {
         reason: "x",
         actor: "operator",
       }),
-    ).rejects.toThrow(/requires task to be in 'in-review' or 'in-progress'/);
+    ).rejects.toThrow(/task is in 'todo', must be in .* or a WIP/);
   });
 
   it("works on tasks in in-progress column", async () => {
@@ -196,5 +209,25 @@ pgDescribe("TaskStore.resumeWorkflowStep", () => {
     expect(result?.startedAt).toBe("2026-07-17T16:10:10.052Z");
     expect(result?.status).toBe("failed");
     expect(result?.resumedFromStatus).toBe("pending");
+  });
+
+  it("clears lease ownership on the resumed step result (FNXC:StepResume lease cleanup)", async () => {
+    await seedInReviewTask("FN-RES-010", {
+      workflowStepResults: [
+        pendingStep({ leaseOwner: "agent-reviewer-1", leaseNodeId: "review-1" }),
+      ],
+    });
+
+    const updated = await store().resumeWorkflowStep("FN-RES-010", {
+      stepId: "code-review",
+      reason: "lease owner never completed the verdict callback",
+      actor: "operator",
+    });
+
+    const result = updated.workflowStepResults?.[0];
+    expect(result?.status).toBe("failed");
+    // A terminal 'failed' result must not carry the stale dispatch lease forward.
+    expect(result?.leaseOwner).toBeUndefined();
+    expect(result?.leaseNodeId).toBeUndefined();
   });
 });

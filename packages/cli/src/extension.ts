@@ -871,6 +871,7 @@ The guard runs FIRST in each tool's execute, before any store access or param va
 const WITHHELD_FROM_AGENT_EXTENSION_TOOLS: ReadonlySet<string> = new Set([
   "fn_task_delete",
   "fn_task_bypass_review",
+  "fn_workflow_step_resume",
   "fn_mission_delete",
   "fn_milestone_delete",
   "fn_slice_delete",
@@ -2578,14 +2579,17 @@ export default function kbExtension(pi: ExtensionAPI) {
   // ── fn_workflow_step_resume ────────────────────────────────────
 
   /*
+   * FNXC:StepResume 2026-08-06-17:42:
    * Operator escape hatch for in-review/in-progress tasks with workflow steps
    * stuck in `pending` because a dispatched prompt node verdict callback was
    * never received (Runfusion/Fusion#1946). Transitions the stuck `pending` step to
    * `failed` so the existing `fn_task_bypass_review` escape hatch can then clear
    * the merge blocker. Registered ONLY on this pi-extension/CLI operator tool
    * surface — deliberately NOT wired into executor/reviewer/triage agent tool
-   * lists. Requires a mandatory `reason` and `stepId`; audit-logged via
-   * store.resumeWorkflowStep's run-audit event.
+   * lists; the WITHHELD_FROM_AGENT_EXTENSION_TOOLS guard below is the hard
+   * enforcement that an agent session cannot reach it (operator-only, mandatory
+   * `reason` and `stepId`, audit-logged via store.resumeWorkflowStep's run-audit
+   * event).
    */
   pi.registerTool({
     name: "fn_workflow_step_resume",
@@ -2606,6 +2610,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const withheldDenied = denyWithheldToolForAgentPrincipal("fn_workflow_step_resume", ctx as ExtensionCallerContext);
+      if (withheldDenied) return withheldDenied;
       const store = await getStore(ctx.cwd);
       const fnCtx = ctx as typeof ctx & { agentId?: string };
       const actor = fnCtx.agentId ?? "cli-operator";
