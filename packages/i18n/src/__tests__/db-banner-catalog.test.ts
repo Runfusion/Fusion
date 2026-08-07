@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const locales = ["en", "es", "fr", "ko", "zh-CN", "zh-TW"] as const;
+const locales = ["en", "es", "fr", "ko", "pt-BR", "zh-CN", "zh-TW"] as const;
 
 describe("database health banner catalogs", () => {
   it.each(locales)("uses renderable rich-text guidance in %s", (locale) => {
