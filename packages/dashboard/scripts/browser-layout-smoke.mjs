@@ -145,10 +145,10 @@ export function createSmokeHtml() {
   advisor toggle. Omitting it understates the primary group's minimum width and could conceal a
   300px overflow or wrap regression on either Board or List.
 
-  FNXC:QuickAddActionRow 2026-08-07-22:49:
-  pt-BR joined the supported translations (previously machine-drafted scaffold, now fully
-  translated) — add it here so the smoke keeps measuring the widest emitted-font label across
-  every shipped locale.
+  FNXC:QuickAddActionRow 2026-08-07-23:56:
+  pt-BR joined the supported translations (the scaffold was previously empty and now carries
+  machine-drafted translations) — add it here so the smoke keeps measuring the widest
+  emitted-font label across every shipped locale.
   */
   const localizedSaveLabels = [
     ["en", "Save"],

@@ -2030,7 +2030,7 @@
   },
   "dbBanner": {
     "body": "A verificação de integridade do PostgreSQL do Fusion reportou uma falha. Revise os detalhes abaixo antes de continuar com operações críticas.",
-    "instructions": "Faça backup do projeto, verifique os <cmd>database logs</cmd> e a conectividade e as permissões do PostgreSQL, depois atualize a verificação de integridade. Consulte <docsLink>docs/storage.md</docsLink> para orientações sobre armazenamento e recuperação.",
+    "instructions": "Faça backup do projeto, verifique os <cmd>logs do banco de dados</cmd> e a conectividade e as permissões do PostgreSQL, depois atualize a verificação de integridade. Consulte <docsLink>docs/storage.md</docsLink> para orientações sobre armazenamento e recuperação.",
     "lastChecked": "Última verificação: {{checkedAtLabel}}",
     "refreshHealth": "Verificar novamente",
     "refreshing": "Atualizando…",

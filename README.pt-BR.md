@@ -66,7 +66,7 @@ fusion dashboard
 
 ```bash
 brew install runfusion/fusion/fusion
-fusion dashboard            # or: fn dashboard
+fusion dashboard            # ou: fn dashboard
 ```
 
 A instalação totalmente qualificada faz auto-tap e, no Homebrew 6.0+, confia somente na fórmula do Fusion. Se você já executou `brew tap runfusion/fusion` e a instalação pelo nome curto falhar com "untrusted tap", execute `brew trust --formula runfusion/fusion/fusion` e depois `brew install fusion`.
@@ -75,7 +75,7 @@ A instalação totalmente qualificada faz auto-tap e, no Homebrew 6.0+, confia s
 
 ```bash
 npm install -g @runfusion/fusion
-fn dashboard                # or: fusion dashboard
+fn dashboard                # ou: fusion dashboard
 ```
 
 **A partir de um clone** (para desenvolvimento):
@@ -626,24 +626,24 @@ Rotinas são tarefas de agente de IA disparadas por agendamentos cron, webhooks 
 ## Exemplos rápidos da CLI
 
 ```bash
-fn task create "Fix the login bug"                    # Quick entry → planning
-fn task plan "Build auth system"                      # AI-guided planning
-fn task import owner/repo --labels bug                # Import GitHub issues
-fn task show FN-001                                   # View task details
-fn task logs FN-001 --follow                          # Stream execution logs
-fn task steer FN-001 "Use TypeScript"                 # Guide the agent mid-execution
+fn task create "Fix the login bug"                    # Entrada rápida → planejamento
+fn task plan "Build auth system"                      # Planejamento guiado por IA
+fn task import owner/repo --labels bug                # Importar issues do GitHub
+fn task show FN-001                                   # Ver detalhes da tarefa
+fn task logs FN-001 --follow                          # Transmitir logs de execução
+fn task steer FN-001 "Use TypeScript"                 # Guiar o agente durante a execução
 
-fn project add my-app /path/to/app                    # Register a project
-fn project list                                       # List all projects
+fn project add my-app /path/to/app                    # Registrar um projeto
+fn project list                                       # Listar todos os projetos
 
-fn settings set maxConcurrent 4                       # Configure settings
-fn settings export                                    # Export configuration
+fn settings set maxConcurrent 4                       # Definir configurações
+fn settings export                                    # Exportar configuração
 
-fn mission create "Auth System" "Build auth"          # Create mission
-fn mission activate-slice <slice-id>                  # Activate a slice
+fn mission create "Auth System" "Build auth"          # Criar missão
+fn mission activate-slice <slice-id>                  # Ativar uma fatia
 
-fn skills search react                                # Search skills.sh
-fn skills install firebase/agent-skills               # Install agent skills
+fn skills search react                                # Buscar no skills.sh
+fn skills install firebase/agent-skills               # Instalar habilidades de agente
 ```
 
 ---
@@ -662,17 +662,17 @@ fn skills install firebase/agent-skills               # Install agent skills
 ## Desenvolvimento
 
 ```bash
-pnpm install                  # Install dependencies
-pnpm local                    # Start local dashboard/API + AI engine on a non-4040 port
-pnpm local --no-engine        # Start local dashboard/API only
-pnpm build                    # Build default workspace packages (excludes desktop/mobile)
-pnpm build:all                # Build all packages (including desktop/mobile)
-pnpm dev dashboard            # Run dashboard + AI engine
-pnpm dev:watch                # Dashboard + AI engine; restart on source edits after agents drain
-pnpm dev:ui                   # Dashboard only (no AI engine)
-pnpm lint                     # Lint all packages
-pnpm typecheck                # Type-check all packages
-pnpm test                     # Run all tests
+pnpm install                  # Instalar dependências
+pnpm local                    # Iniciar painel/API local + motor de IA em uma porta diferente da 4040
+pnpm local --no-engine        # Iniciar apenas o painel/API local
+pnpm build                    # Compilar pacotes padrão do workspace (exclui desktop/mobile)
+pnpm build:all                # Compilar todos os pacotes (incluindo desktop/mobile)
+pnpm dev dashboard            # Executar painel + motor de IA
+pnpm dev:watch                # Painel + motor de IA; reinicia em edições de código-fonte após o esvaziamento dos agentes
+pnpm dev:ui                   # Apenas o painel (sem motor de IA)
+pnpm lint                     # Executar lint em todos os pacotes
+pnpm typecheck                # Verificar tipos em todos os pacotes
+pnpm test                     # Executar todos os testes
 ```
 
 ### Compilar um executável independente
@@ -680,8 +680,8 @@ pnpm test                     # Run all tests
 Compile um único binário `fn` autocontido usando o [Bun](https://bun.sh/):
 
 ```bash
-pnpm build:exe                # Build for current platform
-pnpm build:exe:all            # Cross-compile for all platforms
+pnpm build:exe                # Compilar para a plataforma atual
+pnpm build:exe:all            # Compilação cruzada para todas as plataformas
 ```
 
 ---
