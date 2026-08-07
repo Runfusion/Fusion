@@ -6751,7 +6751,7 @@
       "executorToolFailureRetryBackoffMs": "Tool-failure retry backoff (ms)",
       "executorToolFailureRetryBackoffMsHelp": "Unref'd wait before retrying. Default: 2000.",
       "executorToolFailureThreshold": "Consecutive tool failures",
-      "executorToolFailureThresholdHelp": "Terminal tool errors required before retrying. Default: 3.",
+      "executorToolFailureThresholdHelp": "Terminal tool errors required before retrying. Default: 1.",
       "executorModelEscalationEnabled": "Escalate after tool-failure retries",
       "executorModelEscalationEnabledHelp": "After same-model retries are exhausted, try one configured alternate model or node. Default: disabled.",
       "executorEscalationProvider": "Escalation provider",

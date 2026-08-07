@@ -2,6 +2,80 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.75.1
+
+### Highlights
+
+- Secrets now bind to the selected project, work in chat approvals, and land in new worktrees
+- Approving a task plan resumes Plan Review automatically
+- Pick individual structured review findings to send back for same-task revision
+- No failure alerts while Fusion is still auto-recovering the task
+- Dashboard cards refresh reliably after unpause, tab resume, and SSE reconnect
+
+### New
+
+- Select individual structured workflow review findings and send just those back for a same-task revision, with location and severity preserved.
+- Custom workflow review nodes are now classified as plan or code review, so their results accept feedback directly from the Review tab.
+
+### Fixed
+
+- Dashboard secret management is bound to the selected project; requests without an explicit project are rejected rather than resolved from fallback context.
+- Chat-agent secret approvals work again, and failed decisions now show an actionable reason.
+- Secrets env files are restored in fresh task worktrees.
+- Approving a task plan hands off to the engine so Plan Review resumes on its own instead of stalling.
+- Workflow review feedback selection works again for same-task revisions.
+- Task failure alerts stay quiet while Fusion still owns and is retrying the recovery.
+- Task detail refreshes immediately after unpausing instead of showing stale state.
+- Dashboard cards revalidate on focus, tab visibility, browser back/forward resume, and SSE reconnect.
+- Long task-detail titles stay stable when expanded or collapsed, and no longer flicker during window resize.
+- Stale file-overlap blockers are hidden when a task is simply queued behind an unfinished dependency.
+- An operator's review hold is honored before a mission task joins its shared branch.
+- Stopping a task now cancels its pending workspace merge contention retries.
+- Chat checkpoints no longer fail on tool output containing NUL bytes.
+
+## 0.75.1-beta.2
+
+### Highlights
+
+- Dashboard secrets now bind to the selected project instead of a fallback context
+- Chat-agent secret approvals work again and failed decisions show an actionable reason
+- Fresh task worktrees get their secrets-env files restored
+- Task detail unpause refreshes state immediately, and cards revalidate after tab or browser resume
+- An operator's review hold is honored before a mission task joins its shared branch
+
+### Security
+
+- Dashboard secret management is bound to the selected project: secrets routes reject requests that arrive without an explicit project before any fallback context resolution.
+
+### Fixed
+
+- Chat-agent secret approvals no longer fail silently; prompt-gated secret reads keep the registered engine session principal, and a failed decision now surfaces an actionable reason.
+- Fresh task worktrees again receive their secrets-env files, because the runtime shares the project secrets store with executor and heartbeat worktree acquisition.
+- Unpausing from task detail refreshes dashboard state right away through the shared lifecycle reconciliation path.
+- Dashboard cards revalidate reliably after browser and tab resume; focus, visibility, page-show, and SSE reconnect now share one fenced revalidation path.
+- Long task-detail titles stay stable when expanded or collapsed, and no longer flicker during window resize.
+- An operator's explicit review hold is respected before a mission task joins its shared branch; mission policy auto-merge values stay distinct from per-task operator overrides.
+- Stopping a workspace merge now cancels its pending contention retries instead of letting a busy re-enqueue timer fire later.
+
+## 0.75.1-beta.1
+
+### Highlights
+
+- Send a single structured review finding back for same-task revision
+- Custom workflow review nodes now classify as plan or code in the Review tab
+- Task failure alerts stay quiet while Fusion is already recovering the task
+- Stale file-overlap blockers no longer show on tasks queued behind a dependency
+
+### New
+
+- Pick individual findings out of a structured workflow review and send just those back for revision on the same task, instead of rejecting the whole result.
+- Custom workflow review nodes are classified as plan or code reviews, so their results accept direct feedback from the Review tab.
+
+### Fixed
+
+- Failure alerts are suppressed while Fusion still owns and is attempting automatic recovery of a task; you only get alerted once recovery is exhausted.
+- A task queued on an unfinished dependency no longer displays file-overlap blockers left over from a lease that is no longer active.
+
 ## 0.75.1-beta.0
 
 ### Highlights

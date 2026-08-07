@@ -210,6 +210,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     enqueueMergeQueue: vi.fn().mockResolvedValue(undefined),
     peekMergeQueue: vi.fn().mockReturnValue([]),
     mergeTask: vi.fn().mockResolvedValue(undefined),
+    getBranchGroup: vi.fn().mockResolvedValue(null),
     archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
     /*
     FNXC:PgMigrationQuarantine 2026-07-16-08:00:
@@ -5107,6 +5108,111 @@ describe("SelfHealingManager", () => {
         "FN-352",
         expect.stringContaining("eligible in-review task was merged"),
       );
+
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:SharedBranchMemberHold 2026-08-05-23:14:
+    A self-healing sweep is a production merge requester. It must preserve the
+    intentional mission member fast path under global Off, but never bypass an
+    operator-authored task Off hold while doing recovery admission.
+    */
+    it("re-enqueues a mission-policy shared member under global auto-merge off but preserves a user hold", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: false,
+        integrationBranch: "main",
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.getBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "open",
+        branchName: "mission/M-8811",
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-8811-MISSION",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-8811-mission",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          autoMerge: false,
+          autoMergeProvenance: "mission",
+          branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" },
+          log: [],
+        },
+        {
+          id: "FN-8811-USER",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-8811-user",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-2", status: "passed", phase: "pre-merge" }],
+          autoMerge: false,
+          autoMergeProvenance: "user",
+          branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" },
+          log: [],
+        },
+      ]);
+
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(1);
+      expect(enqueueMerge).toHaveBeenCalledTimes(1);
+      expect(enqueueMerge).toHaveBeenCalledWith("FN-8811-MISSION");
+      expect(enqueueMerge).not.toHaveBeenCalledWith("FN-8811-USER");
+
+      managerWithRecovery.stop();
+    });
+
+    /*
+    FNXC:SharedBranchMemberHold 2026-08-05-23:22:
+    A default-branch group has no intermediate integration boundary. Recovery must
+    leave a false mission policy at the standalone manual hold even when global
+    auto-merge is On, rather than using the live-member exemption by group shape.
+    */
+    it("does not recover a default-branch member with a false mission policy into a merge", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        integrationBranch: "main",
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.getBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue({
+        status: "open",
+        branchName: "main",
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        id: "FN-8811-DEFAULT",
+        column: "in-review",
+        paused: false,
+        status: null,
+        error: null,
+        worktree: "/tmp/test-project/.worktrees/fn-8811-default",
+        steps: [{ name: "Ship it", status: "done" }],
+        workflowStepResults: [{ id: "ws-default", status: "passed", phase: "pre-merge" }],
+        autoMerge: false,
+        autoMergeProvenance: "mission",
+        branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" },
+        log: [],
+      }]);
+
+      await expect(managerWithRecovery.recoverMergeableReviewTasks()).resolves.toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalled();
+      expect(store.mergeTask).not.toHaveBeenCalled();
 
       managerWithRecovery.stop();
     });

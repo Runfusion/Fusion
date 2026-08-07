@@ -205,9 +205,19 @@ the previous direct-child flex contract so the transcript and agent log still fi
   margin-bottom: var(--space-md);
   overflow-wrap: anywhere;
   word-break: break-word;
+  position: relative;
 }
 
-.detail-title--collapsed {
+/*
+FNXC:TaskDetailTitle 2026-08-05-17:54:
+The measured text stays in flow while the interactive overlay changes state, so eligibility has
+one geometry in every task-detail host instead of depending on whether its button is present.
+*/
+.detail-title-measurement {
+  display: block;
+}
+
+.detail-title--collapsed .detail-title-measurement {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -236,10 +246,12 @@ Summarize-as-title is an in-field affordance, not a separate full-width row: it 
 .detail-title-control {
   display: block;
   width: 100%;
+  position: absolute;
+  inset: 0;
   padding: 0;
   border: 0;
   background: transparent;
-  color: inherit;
+  color: transparent;
   font: inherit;
   text-align: inherit;
   cursor: pointer;

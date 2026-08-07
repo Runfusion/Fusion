@@ -429,6 +429,69 @@ describe("TaskDetailModal planner Chat tab", () => {
   });
 });
 
+/*
+FNXC:TaskBaseBranchEditor 2026-08-05-23:22:
+FN-8811 retains one accessible task-detail branch editor rather than adding a Review-tab
+copy. The editor must initialize the task merge target, submit a project-scoped PATCH,
+and preserve its prior task snapshot when that request fails.
+*/
+describe("TaskDetailModal base-branch editor", () => {
+  function renderEditableTask(baseBranch?: string, projectId = "project-8811") {
+    const onTaskUpdated = vi.fn();
+    render(
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ id: "FN-8811", column: "todo" as any, baseBranch })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        onTaskUpdated={onTaskUpdated}
+        addToast={noop}
+        projectId={projectId}
+      />,
+    );
+    return { onTaskUpdated };
+  }
+
+  it("labels, initializes, saves, and clears the existing merge target field", async () => {
+    const user = userEvent.setup();
+    const { updateTask } = await import("../../api");
+    const updated = makeTask({ id: "FN-8811", column: "todo" as any, baseBranch: "mission/M-8811" });
+    vi.mocked(updateTask).mockReset();
+    vi.mocked(updateTask).mockResolvedValue(updated);
+    const { onTaskUpdated } = renderEditableTask("mission/M-8811");
+
+    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    const baseBranch = screen.getByLabelText("Merge target / base branch");
+    expect(baseBranch).toHaveValue("mission/M-8811");
+
+    await user.clear(baseBranch);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith("FN-8811", { baseBranch: null }, "project-8811"));
+    expect(onTaskUpdated).toHaveBeenCalledWith(updated);
+  });
+
+  it("keeps the task snapshot and editable value when a base-branch save fails", async () => {
+    const user = userEvent.setup();
+    const { updateTask } = await import("../../api");
+    vi.mocked(updateTask).mockReset();
+    vi.mocked(updateTask).mockRejectedValueOnce(new Error("network unavailable"));
+    const { onTaskUpdated } = renderEditableTask(undefined);
+
+    await user.click(screen.getByRole("button", { name: "Edit task" }));
+    const baseBranch = screen.getByLabelText("Merge target / base branch");
+    await user.type(baseBranch, "mission/M-8811");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByText("Save failed")).toBeInTheDocument());
+    expect(baseBranch).toHaveValue("mission/M-8811");
+    expect(onTaskUpdated).not.toHaveBeenCalled();
+  });
+});
+
 describe("TaskDetailModal summarize title action", () => {
   it("orders board detail header actions as edit, expand, then Back to board", () => {
     const onBackToBoard = vi.fn();

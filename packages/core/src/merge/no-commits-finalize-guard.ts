@@ -28,6 +28,9 @@ export function evaluateNoCommitsNoOpFinalize(
   const noCommitsExpected = task.noCommitsExpected === true;
 
   const skippedSteps = steps.filter((step) => step.status === "skipped");
+  const hasCompletedVerification = steps.some((step) =>
+    step.status === "done" && VERIFICATION_STEP_NAME.test(step.name ?? ""),
+  );
 
   // FN-8141: skipped step + empty diff. Applies to ALL tasks regardless of `noCommitsExpected`.
   if (skippedSteps.length > 0) {
@@ -65,13 +68,20 @@ export function evaluateNoCommitsNoOpFinalize(
   }
 
   // Legacy FN-6461 rule: no-commits ops tasks whose incomplete work (incl. pending/in-progress)
-  // ties or outweighs completed work must not finalize on step evidence alone.
+  // ties or outweighs completed work must not finalize on step evidence alone. A verified
+  // no-op is the exception: skipped implementation steps are intentional when every other
+  // step is done and a verification/review step positively confirmed there was no work to land.
+  const verifiedIntentionalNoOp =
+    skippedSteps.length > 0 &&
+    skippedSteps.length === incompleteCount &&
+    hasCompletedVerification;
   if (
     noCommitsExpected &&
     steps.length > 0 &&
     incompleteCount > 0 &&
-    // Equal counts still block: requeueing is recoverable, but silently dropping ops work is not.
-    incompleteCount >= doneCount
+    // Equal counts still block unless positive verification proves the skips were intentional.
+    incompleteCount >= doneCount &&
+    !verifiedIntentionalNoOp
   ) {
     return {
       blocked: true,

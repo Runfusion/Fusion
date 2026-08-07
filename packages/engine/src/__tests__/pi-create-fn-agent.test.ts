@@ -1369,6 +1369,189 @@ describe("createFnAgent", () => {
     });
   });
 
+  it("binds a durable chat principal to the host-tool prompt invocation when pi omits agentId", async () => {
+    const { createFnAgent } = await import("../pi.js");
+    const {
+      __clearFusionSessionIdentityRegistryForTests,
+      resolveFusionSessionPrincipal,
+    } = await import("@fusion/core");
+    __clearFusionSessionIdentityRegistryForTests();
+    const observedPrincipals: unknown[] = [];
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        prompt: vi.fn(async () => {
+          // This is the host-extension execution point: its immediate context has only cwd.
+          await Promise.resolve();
+          observedPrincipals.push(resolveFusionSessionPrincipal("/project"));
+        }),
+        subscribe: vi.fn(),
+        dispose: vi.fn(),
+        setThinkingLevel: vi.fn(),
+      },
+    });
+
+    const { session } = await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "chat",
+      tools: "coding",
+      sessionPurpose: "executor",
+      actionGateContext: {
+        agentId: "agent-1a009724",
+        agentName: "Dashboard Chat Agent",
+        isEphemeral: false,
+        permissionPolicy: { presetId: "unrestricted", rules: {} },
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn(),
+      } as any,
+    });
+
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-22:10:
+    The regression boundary is an actual pi prompt invocation, not merely a
+    registered cwd. The host extension receives no agentId here, yet its
+    async execution resolves the durable chat agent through the invocation.
+    */
+    // Dashboard chat uses the fallback-aware public prompt entry point.
+    await (session as any).promptWithFallback("read the prompt-gated secret");
+    expect(observedPrincipals).toEqual([
+      expect.objectContaining({
+        kind: "agent",
+        identity: expect.objectContaining({
+          agentId: "agent-1a009724",
+          agentName: "Dashboard Chat Agent",
+          purpose: "executor",
+        }),
+      }),
+    ]);
+
+    await session.dispose?.();
+    expect(resolveFusionSessionPrincipal("/project")).toEqual({ kind: "operator" });
+    __clearFusionSessionIdentityRegistryForTests();
+  });
+
+  it("reaches the pi host-tool identity wrapper from a durable dashboard chat session", async () => {
+    const { createFnAgent } = await import("../pi.js");
+    const {
+      __clearFusionSessionIdentityRegistryForTests,
+      resolveFusionSessionPrincipal,
+    } = await import("@fusion/core");
+    const { ChatManager, __resetChatState, __setCreateResolvedAgentSession } = await import("../../../dashboard/src/chat.js");
+    __clearFusionSessionIdentityRegistryForTests();
+    const observedPrincipals: unknown[] = [];
+    createAgentSessionMock.mockResolvedValueOnce({
+      session: {
+        prompt: vi.fn(async () => {
+          // This mirrors a host-extension callback: pi supplies cwd but no agentId.
+          observedPrincipals.push(resolveFusionSessionPrincipal("/project"));
+        }),
+        subscribe: vi.fn(),
+        dispose: vi.fn(),
+        setThinkingLevel: vi.fn(),
+      },
+    });
+    const chatStore = {
+      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active" })),
+      addMessage: vi.fn((message) => ({ id: `message-${message.role}`, ...message })),
+      getMessages: vi.fn(() => []),
+      setInFlightGeneration: vi.fn(async () => undefined),
+      updateSession: vi.fn(async () => undefined),
+      recordTokenUsage: vi.fn(async () => undefined),
+    };
+    const agentStore = {
+      init: vi.fn(async () => undefined),
+      getAgent: vi.fn(async () => ({
+        id: "agent-1a009724",
+        name: "Dashboard Chat Agent",
+        role: "executor",
+        runtimeConfig: {},
+      })),
+    };
+
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-23:17:
+    The dashboard must reach the real pi invocation wrapper, not a test-created
+    identity scope. This composes ChatManager's durable-agent lookup with its
+    resolved-session options and pi's host-tool prompt dispatch, where the
+    immediate extension context intentionally omits agentId.
+    */
+    __setCreateResolvedAgentSession(async (options: any) => createFnAgent({
+      ...options,
+      tools: "coding",
+      defaultProvider: "mock",
+      defaultModelId: "scripted",
+    }) as any);
+
+    try {
+      const manager = new ChatManager(
+        chatStore as any,
+        "/project",
+        agentStore as any,
+        undefined,
+        undefined,
+        undefined,
+        {
+          getAsyncLayer: vi.fn(() => ({})),
+          getSettings: vi.fn(async () => ({ defaultAgentPermissionPolicy: { presetId: "unrestricted", rules: {} } })),
+          getFusionDir: () => "/project/.fusion",
+        } as any,
+      );
+      await manager.sendMessage("chat-secret", "Read the prompt-gated secret");
+
+      expect(observedPrincipals).toEqual([
+        expect.objectContaining({
+          kind: "agent",
+          identity: expect.objectContaining({
+            agentId: "agent-1a009724",
+            agentName: "Dashboard Chat Agent",
+            purpose: "executor",
+          }),
+        }),
+      ]);
+    } finally {
+      __resetChatState();
+      __clearFusionSessionIdentityRegistryForTests();
+    }
+  });
+
+  it("assigns distinct fail-closed principals to concurrent anonymous engine sessions", async () => {
+    const { createFnAgent } = await import("../pi.js");
+    const {
+      __clearFusionSessionIdentityRegistryForTests,
+      resolveFusionSessionPrincipal,
+    } = await import("@fusion/core");
+    __clearFusionSessionIdentityRegistryForTests();
+    const observedPrincipals: Array<{ kind?: string; identity?: { agentId?: string } }> = [];
+    const makeSession = () => ({
+      prompt: vi.fn(async () => {
+        const principal = resolveFusionSessionPrincipal("/project");
+        observedPrincipals.push(principal as { kind?: string; identity?: { agentId?: string } });
+      }),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: vi.fn(),
+    });
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: makeSession() })
+      .mockResolvedValueOnce({ session: makeSession() });
+
+    const [first, second] = await Promise.all([
+      createFnAgent({ cwd: "/project", systemPrompt: "anonymous one", tools: "coding" }),
+      createFnAgent({ cwd: "/project", systemPrompt: "anonymous two", tools: "coding" }),
+    ]);
+    await Promise.all([
+      (first.session as any).promptWithFallback("read secret one"),
+      (second.session as any).promptWithFallback("read secret two"),
+    ]);
+
+    expect(observedPrincipals).toHaveLength(2);
+    expect(observedPrincipals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "agent", identity: expect.objectContaining({ agentId: expect.stringMatching(/^engine-session-/) }) }),
+    ]));
+    expect(new Set(observedPrincipals.map((principal) => principal.identity?.agentId))).toHaveLength(2);
+    await Promise.all([first.session.dispose?.(), second.session.dispose?.()]);
+    __clearFusionSessionIdentityRegistryForTests();
+  });
+
   it("skips host extensions for merger sessions so dual-store fn_* tools cannot wedge merge", async () => {
     /*
     FNXC:MergeQueue 2026-07-15-11:08:
@@ -2638,9 +2821,14 @@ describe("createFnAgent", () => {
     debugSpy.mockRestore();
   });
 
-  it("falls back during prompt when the primary model has an auth failure", async () => {
+  it("retains a durable host-tool principal through a fallback session replacement", async () => {
     const primaryPrompt = vi.fn().mockRejectedValue(new Error("401 unauthorized: invalid api key"));
-    const fallbackPrompt = vi.fn().mockResolvedValue(undefined);
+    const observedFallbackPrincipals: unknown[] = [];
+    const fallbackPrompt = vi.fn(async () => {
+      const { resolveFusionSessionPrincipal } = await import("@fusion/core");
+      // Pi's replacement session invokes host tools with only this cwd.
+      observedFallbackPrincipals.push(resolveFusionSessionPrincipal("/tmp"));
+    });
     const primaryDispose = vi.fn();
 
     createAgentSessionMock
@@ -2662,6 +2850,8 @@ describe("createFnAgent", () => {
       });
 
     const { createFnAgent } = await import("../pi.js");
+    const { __clearFusionSessionIdentityRegistryForTests } = await import("@fusion/core");
+    __clearFusionSessionIdentityRegistryForTests();
 
     const { session } = await createFnAgent({
       cwd: "/tmp",
@@ -2671,6 +2861,14 @@ describe("createFnAgent", () => {
       defaultModelId: "glm-5.1",
       fallbackProvider: "openai-codex",
       fallbackModelId: "gpt-5.3-codex",
+      actionGateContext: {
+        agentId: "agent-1a009724",
+        agentName: "Dashboard Chat Agent",
+        isEphemeral: false,
+        permissionPolicy: { presetId: "unrestricted", rules: {} },
+        createApprovalRequest: vi.fn(),
+        findApprovalByDedupeKey: vi.fn(),
+      } as any,
     });
 
     await (session as any).promptWithFallback("make a spec");
@@ -2678,6 +2876,14 @@ describe("createFnAgent", () => {
     expect(primaryPrompt).toHaveBeenCalledWith("make a spec");
     expect(primaryDispose).toHaveBeenCalled();
     expect(fallbackPrompt).toHaveBeenCalledWith("make a spec");
+    expect(observedFallbackPrincipals).toEqual([
+      expect.objectContaining({
+        kind: "agent",
+        identity: expect.objectContaining({ agentId: "agent-1a009724", agentName: "Dashboard Chat Agent" }),
+      }),
+    ]);
+    await session.dispose?.();
+    __clearFusionSessionIdentityRegistryForTests();
     expect(createAgentSessionMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
       model: { provider: "zai", id: "glm-5.1" },
     }));

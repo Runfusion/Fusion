@@ -1715,8 +1715,15 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
         "FN-WSH",
         expect.objectContaining({ mergeRetries: expect.anything(), status: null }),
       );
+      // The isolated child-process seam proves this fail-closed ordering never falls through
+      // to the root-cwd reachability probe (`git remote` was the original guard timeout).
+      const gitRemoteCalls = (mocks.execFile.mock.calls as Array<[string, string[]]>).filter(
+        (call) => Array.isArray(call[1]) && call[1][0] === "remote",
+      );
+      expect(gitRemoteCalls).toHaveLength(0);
 
-      await engine.stop();
+      await expect(engine.stop()).resolves.toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -1801,6 +1808,10 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
         engine as unknown as { internalEnqueueMerge: (id: string) => void },
         "internalEnqueueMerge",
       );
+      const scheduleBusyRetrySpy = vi.spyOn(
+        engine as unknown as { scheduleWorkspaceBusyReenqueue: (id: string, delayMs: number) => void },
+        "scheduleWorkspaceBusyReenqueue",
+      );
       engine.enqueueMerge("FN-WSH");
 
       // The busy catch logs a WorkspaceRepoLandBusy entry then schedules a backoff timer.
@@ -1821,44 +1832,31 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
       expect(burnedRetries).toBe(false);
 
       /*
-      FNXC:Workspace 2026-06-22-09:30 (Phase C review B5b — assert the 60s CAP, not just the first retry):
-      Advancing 60s once only proves the first 5s timer fired; an UNcapped exponential
-      (5s,10s,20s,40s,80s,160s,…) would still pass that. Capture EVERY scheduled busy backoff delay
-      across enough cycles to pass the cap point (busyCount=4 → 5000*2^4 = 80_000ms, clamped to 60_000)
-      and assert no delay exceeds 60_000 AND the cap is actually reached. Each advance fires the pending
-      timer → re-enqueue → landWorkspaceTask rejects busy again → next backoff is scheduled.
+      FNXC:WorkspaceMergeDispatch 2026-08-05-23:56:
+      Attribute delays at the workspace-owned scheduler, never global setTimeout: merge dispatch also
+      schedules body-settle and maintenance timers, which made an unrelated 120s timer look like a
+      workspace backoff. Drive the first six busy attempts through the cap and require its exact ladder.
       */
-      const scheduledBusyDelays: number[] = [];
-      // `globalThis.setTimeout` is already the fake-timer impl here (vi.useFakeTimers above).
-      // Wrap it to record the requested delay, then delegate to the SAME fake timer so the
-      // fake clock still drives the callback — no real-timer leakage.
-      const fakeSetTimeout = globalThis.setTimeout;
-      const setTimeoutSpy = vi
-        .spyOn(globalThis, "setTimeout")
-        .mockImplementation(((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
-          if (typeof ms === "number") scheduledBusyDelays.push(ms);
-          return (fakeSetTimeout as (...a: unknown[]) => unknown)(cb, ms, ...rest);
-        }) as typeof setTimeout);
-
-      try {
-        // Drive enough busy cycles to climb past the cap point (busyCount 0..5 = 6 cycles).
-        for (let i = 0; i < 6; i++) {
-          await vi.advanceTimersByTimeAsync(60_000);
-        }
-      } finally {
-        setTimeoutSpy.mockRestore();
+      const expectedBusyDelays = [5_000, 10_000, 20_000, 40_000, 60_000, 60_000] as const;
+      await vi.waitFor(() => {
+        expect(scheduleBusyRetrySpy).toHaveBeenCalledWith("FN-WSH", expectedBusyDelays[0]);
+      });
+      for (const [index, delayMs] of expectedBusyDelays.slice(0, -1).entries()) {
+        await vi.advanceTimersByTimeAsync(delayMs);
+        await vi.waitFor(() => {
+          expect(scheduleBusyRetrySpy).toHaveBeenCalledTimes(index + 2);
+        });
       }
 
-      // The exponential climbed (more than one distinct delay) AND every delay is capped at 60s.
-      expect(scheduledBusyDelays.length).toBeGreaterThanOrEqual(5);
-      expect(Math.max(...scheduledBusyDelays)).toBe(60_000);
-      expect(scheduledBusyDelays.every((d) => d <= 60_000)).toBe(true);
-      // The cap was actually exercised: at least one delay sits at the 60s ceiling.
-      expect(scheduledBusyDelays).toContain(60_000);
-      // Each fired backoff re-enqueued the merge (the contention retry loop is live).
+      const scheduledBusyDelays = scheduleBusyRetrySpy.mock.calls.map(([, delayMs]) => delayMs);
+      expect(scheduledBusyDelays).toEqual(expectedBusyDelays);
+      expect(scheduledBusyDelays).not.toContain(120_000);
+      // Each fired backoff reaches one fresh merge body; the queue remains single-flight.
+      expect(mocks.landWorkspaceTask).toHaveBeenCalledTimes(expectedBusyDelays.length);
       expect(enqueueSpy).toHaveBeenCalledWith("FN-WSH");
 
-      await engine.stop();
+      await expect(engine.stop()).resolves.toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -3682,7 +3680,7 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     await expect(gate({ autoMerge: false }, { autoMerge: false })).resolves.toBe(false);
   });
 
-  it("keeps everything flowing when the global setting is on — explicit autoMerge:false is parked manual-required downstream", async () => {
+  it("keeps standalone values flowing when the global setting is on", async () => {
     await expect(gate({}, { autoMerge: true })).resolves.toBe(true);
     await expect(gate({ autoMerge: false }, { autoMerge: true })).resolves.toBe(true);
   });
@@ -3693,6 +3691,17 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
       { autoMerge: false, integrationBranch: "main" },
       { status: "open", branchName: "mission/M-3324" },
     )).resolves.toBe(true);
+  });
+
+  it("holds only an operator-authored false override before live member integration", async () => {
+    const shared = { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] };
+    const settings = { autoMerge: false, integrationBranch: "main" };
+    const group = { status: "open" as const, branchName: "mission/M-3324" };
+
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "user" }, settings, group)).resolves.toBe(false);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "mission" }, settings, group)).resolves.toBe(true);
+    await expect(gate({ ...shared, autoMerge: false, autoMergeProvenance: "legacy-stamp" }, settings, group)).resolves.toBe(true);
+    await expect(gate({ ...shared, autoMerge: false }, settings, group)).resolves.toBe(true);
   });
 
   it("keeps live shared-branch-group member integration on the default branch behind the manual gate", async () => {
@@ -3707,12 +3716,50 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     ["missing", null],
     ["finalized", { status: "finalized" as const }],
     ["abandoned", { status: "abandoned" as const }],
-  ])("blocks shared-branch-group member integration for %s groups when global autoMerge is off", async (_label, branchGroup) => {
+    ["default-branch", { status: "open" as const, branchName: "main" }],
+  ])("blocks false shared members for %s groups even when global autoMerge is on", async (_label, branchGroup) => {
     await expect(gate(
-      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
-      { autoMerge: false },
+      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"], autoMerge: false, autoMergeProvenance: "mission" },
+      { autoMerge: true, integrationBranch: "main" },
       branchGroup,
     )).resolves.toBe(false);
+  });
+
+  it("keeps stale false members in the interpreter manual hold until the explicit release path merges once into the group", async () => {
+    const task = {
+      id: "FN-8811",
+      column: "in-review",
+      branch: "fusion/fn-8811",
+      autoMerge: false,
+      autoMergeProvenance: "mission",
+      branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" },
+    } as Task;
+    const settings = { autoMerge: true, globalPause: false, enginePaused: false, integrationBranch: "main" } as Settings;
+    const store = {
+      getTask: vi.fn(async () => task),
+      getSettings: vi.fn(async () => settings),
+      getBranchGroup: vi.fn(async () => ({ status: "open", branchName: "main" })),
+      getTaskWorkflowSelection: () => undefined,
+      getTaskWorkflowSelectionAsync: async () => undefined,
+    } as unknown as TaskStore;
+    const onMerge = vi.fn(async () => ({ task, branch: task.branch ?? "", merged: true, mergeTargetBranch: "mission/M-8811" }));
+    const self: any = {
+      config: { workingDirectory: "/tmp/proj_test" },
+      runtime: { getTaskStore: () => store },
+      onMerge,
+    };
+    self.allowInReviewMergeProcessing = (candidate: Task, candidateSettings: Settings, candidateStore: TaskStore) =>
+      (ProjectEngine.prototype as any).allowInReviewMergeProcessing.call(self, candidate, candidateSettings, candidateStore);
+
+    const held = await (ProjectEngine.prototype as any).requestInterpreterMerge.call(self, task.id);
+
+    expect(held).toMatchObject({ merged: false, noOp: true });
+    expect(onMerge).not.toHaveBeenCalled();
+
+    // The operator's explicit release uses onMerge, not the auto-merge requester.
+    await self.onMerge(task.id, { manual: true });
+    expect(onMerge).toHaveBeenCalledTimes(1);
+    expect(onMerge).toHaveBeenCalledWith(task.id, { manual: true });
   });
 
   it.each([

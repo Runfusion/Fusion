@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 
 const execAsync = promisify(exec);
@@ -51,6 +52,7 @@ import {
   registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
   registerFusionSessionIdentity,
+  runWithFusionSessionIdentity,
   resolvePiExtensionProjectRoot,
   resolveToolOutputBudget,
 } from "@fusion/core";
@@ -2921,9 +2923,16 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   attach and deregisters exactly once on its own dispose.
   */
   const sessionIdentity = (() => {
-    const principalAgentId = options.actionGateContext?.agentId
-      ?? options.permanentAgentGating?.requester?.actorId
-      ?? "engine-session";
+    const namedAgentId = options.actionGateContext?.agentId
+      ?? options.permanentAgentGating?.requester?.actorId;
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-22:44:
+    An engine-created session without a durable agent must still be a distinct
+    agent principal. A fixed synthetic id lets concurrent anonymous sessions
+    share a prompt-secret approval and redeem each other's grant; mint one
+    unguessable id per logical session and retain it across fallback swaps.
+    */
+    const principalAgentId = namedAgentId ?? `engine-session-${randomUUID()}`;
     const principalAgentName = options.actionGateContext?.agentName
       ?? options.permanentAgentGating?.requester?.actorName;
     return {
@@ -2936,6 +2945,23 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   const sessionIdentityKeys = [...new Set([options.cwd, resolvedProjectRoot].filter((key): key is string => Boolean(key)))];
   const attachSessionIdentity = (session: PromptableSession & { dispose?: () => void | Promise<void> }): void => {
     const identityDisposers = sessionIdentityKeys.map((key) => registerFusionSessionIdentity(key, sessionIdentity));
+    const sessionInvocations = session as unknown as Partial<Record<"prompt" | "promptWithFallback", (...args: unknown[]) => unknown>>;
+    const wrapInvocation = (methodName: "prompt" | "promptWithFallback"): void => {
+      const original = sessionInvocations[methodName];
+      if (typeof original !== "function") return;
+      sessionInvocations[methodName] = (...args: unknown[]) =>
+        runWithFusionSessionIdentity(sessionIdentityKeys, sessionIdentity, () => original.apply(session, args));
+    };
+
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-22:10:
+    Host extensions execute inside pi's async prompt chain, but ExtensionContext
+    omits agentId. Bind the exact invocation principal before pi can dispatch a
+    tool: concurrent root-sharing sessions then retain their own requester rather
+    than falling back to an ambiguous cwd registry entry.
+    */
+    wrapInvocation("prompt");
+    wrapInvocation("promptWithFallback");
     const disposeBeforeIdentity = typeof session.dispose === "function"
       ? session.dispose.bind(session)
       : () => undefined;
@@ -3106,7 +3132,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   distinguish agent principals from a human operator CLI. EVERY createFnAgent
   session is an LLM principal, never a human terminal, so registration is
   unconditional; the best-known agent identity comes from the action-gate or
-  permanent-gating contexts, falling back to a synthetic "engine-session" id
+  permanent-gating contexts, falling back to a unique synthetic per-session id
   that the extension must still treat as an agent (fail closed). Registered
   AFTER successful session construction (extension tools only run once the
   caller prompts, i.e. post-return), keyed under both the session cwd and the

@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_AUTO_MERGE_RETRIES } from "../tasks/in-review-stall.js";
+import { CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD, DEFAULT_MAX_AUTO_MERGE_RETRIES } from "../tasks/in-review-stall.js";
 import type { CliAgentSettings, GlobalSettings, McpSecretRef, McpServerDefinition, ProjectSettings, Settings } from "../types.js";
 
 export interface MergeRequestContractShadowSettingsSource {
@@ -585,9 +585,15 @@ export const DEFAULT_PROJECT_SETTINGS = {
    * Project settings own the auto-merge conflict retry cap because existing engine/dashboard consumers already resolve project settings; the default imports core's stall-detection fallback to keep every surface on the historical value of 3.
    */
   maxAutoMergeRetries: DEFAULT_MAX_AUTO_MERGE_RETRIES,
+  /*
+  FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
+  Fresh projects retry the existing bounded same-model continuation after one
+  terminal tool error. Persisted project values are not migrated, so explicit
+  operator thresholds remain authoritative.
+  */
   executorToolFailureRetryCount: 2,
   executorToolFailureRetryBackoffMs: 2000,
-  executorToolFailureThreshold: 3,
+  executorToolFailureThreshold: CONSECUTIVE_TOOL_FAILURE_RETRY_THRESHOLD,
   executorModelEscalationEnabled: false,
   executorEscalationProvider: undefined,
   executorEscalationModelId: undefined,

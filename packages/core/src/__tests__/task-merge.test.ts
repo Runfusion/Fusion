@@ -15,6 +15,7 @@ import {
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,
   isLiveSharedBranchGroupMemberIntegration,
+  hasUserAutoMergeHold,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
   resolveTaskMergeTarget,
@@ -75,6 +76,19 @@ describe("resolveEffectiveAutoMerge", () => {
     expect(resolveEffectiveAutoMerge({ autoMerge: true, autoMergeProvenance: "legacy-stamp" }, { autoMerge: false })).toBe(true);
     expect(resolveEffectiveAutoMerge({ autoMerge: false, autoMergeProvenance: "user" }, { autoMerge: true })).toBe(false);
     expect(resolveEffectiveAutoMerge({ autoMerge: undefined, autoMergeProvenance: undefined }, { autoMerge: true })).toBe(true);
+  });
+});
+
+describe("hasUserAutoMergeHold", () => {
+  it.each([
+    [{ autoMerge: false, autoMergeProvenance: "user" }, true],
+    [{ autoMerge: false, autoMergeProvenance: "mission" }, false],
+    [{ autoMerge: false, autoMergeProvenance: "legacy-stamp" }, false],
+    [{ autoMerge: false }, false],
+    [{ autoMerge: true, autoMergeProvenance: "user" }, false],
+    [{ autoMerge: undefined, autoMergeProvenance: "user" }, false],
+  ] as const)("requires false with user provenance: %o", (task, expected) => {
+    expect(hasUserAutoMergeHold(task)).toBe(expected);
   });
 });
 

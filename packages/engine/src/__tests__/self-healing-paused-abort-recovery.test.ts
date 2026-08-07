@@ -47,6 +47,7 @@ function createMockStore(tasks: Task[]): TaskStore & EventEmitter {
     } as unknown as Settings),
     listTasks: vi.fn().mockResolvedValue(tasks),
     getTask: vi.fn(async (id: string) => byId.get(id) ?? null),
+    getBranchGroup: vi.fn().mockResolvedValue(null),
     updateTask: vi.fn().mockResolvedValue({} as Task),
     logEntry: vi.fn().mockResolvedValue(undefined),
     moveTask: vi.fn().mockResolvedValue(undefined),
@@ -240,6 +241,56 @@ describe("recoverPausedAbortFailures", () => {
     );
   });
 
+  it("preserves an operator-authored shared-member hold while mission policy false stays review progress", async () => {
+    const shared = { assignmentMode: "shared", groupId: "BG-8811", source: "mission" } as Task["branchContext"];
+    const store = createMockStore([
+      parkTask({ id: "FN-USER", column: "in-review", error: MANUAL_HOLD_PARK_ERROR, steps: DONE_STEPS, autoMerge: false, autoMergeProvenance: "user", branchContext: shared }),
+      parkTask({ id: "FN-MISSION", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: false, autoMergeProvenance: "mission", branchContext: shared }),
+    ]);
+    (store.getBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue({ status: "open", branchName: "mission/M-8811" });
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+    });
+
+    expect(await manager.recoverPausedAbortFailures()).toBe(2);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "FN-USER",
+      metadata: expect.objectContaining({ recoveryReason: "pause-abort-manual-merge-hold" }),
+    }));
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "FN-MISSION",
+      metadata: expect.objectContaining({ recoveryReason: "pause-abort-review-progress" }),
+    }));
+  });
+
+  it.each([
+    ["missing", null],
+    ["finalized", { status: "finalized", branchName: "mission/M-8811" }],
+    ["default-branch", { status: "open", branchName: "main" }],
+  ])("restores a false mission member as a standalone manual hold when its group is %s", async (_label, group) => {
+    const store = createMockStore([parkTask({
+      id: "FN-STALE-GROUP",
+      column: "in-review",
+      error: MANUAL_HOLD_PARK_ERROR,
+      steps: DONE_STEPS,
+      autoMerge: false,
+      autoMergeProvenance: "mission",
+      branchContext: { assignmentMode: "shared", groupId: "BG-8811", source: "mission" } as Task["branchContext"],
+    })]);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ autoMerge: false, globalPause: false, enginePaused: false } as Settings);
+    (store.getBranchGroup as ReturnType<typeof vi.fn>).mockResolvedValue(group);
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project", getExecutingTaskIds: () => new Set<string>() });
+
+    expect(await manager.recoverPausedAbortFailures()).toBe(1);
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      target: "FN-STALE-GROUP",
+      metadata: expect.objectContaining({ recoveryReason: "pause-abort-manual-merge-hold" }),
+    }));
+  });
+
   it("skips paused, executing, incomplete in-review, and non-pause-abort failures", async () => {
     const store = createMockStore([
       parkTask({ id: "FN-A", paused: true }),
@@ -285,7 +336,6 @@ describe("recoverPausedAbortFailures", () => {
       parkTask({ id: "FN-X", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: true }),
       parkTask({ id: "FN-M", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: true, mergeDetails: { mergeConfirmed: true } as any }),
       parkTask({ id: "FN-T", column: "in-review", error: `${IN_REVIEW_PARK_ERROR} merge-conflict`, steps: DONE_STEPS, autoMerge: true }),
-      parkTask({ id: "FN-A", column: "in-review", error: MANUAL_HOLD_PARK_ERROR, steps: DONE_STEPS, autoMerge: undefined, branchContext: { groupId: "BG-1", source: "mission", assignmentMode: "shared" } as any }),
     ];
     const store = createMockStore(candidates);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({

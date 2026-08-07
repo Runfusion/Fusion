@@ -230,16 +230,22 @@ export function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
 }
 
 /*
-FNXC:DashboardTests 2026-08-04-15:05:
-Definition refresh always chains `fetchTaskDetail(...).then(...)`; a bare Vitest
-mock returns undefined and is not a valid stand-in for the production Promise contract.
-Use this reset helper after an intentional override so later tests regain a resolved
-TaskDetail default instead of leaking an impossible undefined response.
+FNXC:DashboardTests 2026-08-05-07:32:
+FN-8803 confirms initial slim-task hydration uses `fetchTaskDetail`, while visible
+Definition refresh uses `fetchTaskPrompt`. Both mocks must retain Promise-returning
+defaults after an individual test resets them, so later tests cannot leak an impossible
+undefined response into either production request boundary.
 */
 export async function resetTaskDetailFetchMock(): Promise<void> {
   const { fetchTaskDetail } = await import("../../api");
   vi.mocked(fetchTaskDetail).mockReset();
   vi.mocked(fetchTaskDetail).mockResolvedValue(makeTask());
+}
+
+export async function resetTaskPromptFetchMock(): Promise<void> {
+  const { fetchTaskPrompt } = await import("../../api");
+  vi.mocked(fetchTaskPrompt).mockReset();
+  vi.mocked(fetchTaskPrompt).mockResolvedValue({ id: "FN-099", prompt: "# Task FN-099" });
 }
 
 export const noop = vi.fn();
@@ -274,8 +280,9 @@ export function loadDashboardCss(): string {
 
 export function setupTaskDetailModalHooks(): void {
   beforeEach(async () => {
-    // FNXC:DashboardTests 2026-08-04-15:05: Every TaskDetailModal suite begins with the Promise-returning detail contract; tests layer pending/rejected/custom responses after this reset.
+    // FNXC:DashboardTests 2026-08-05-07:32: Every TaskDetailModal suite begins with Promise-returning full-detail and narrow-prompt contracts; tests layer pending/rejected/custom responses after these resets.
     await resetTaskDetailFetchMock();
+    await resetTaskPromptFetchMock();
     mockConfirm.mockReset();
     mockConfirmWithChoice.mockReset();
     mockConfirmWithCheckbox.mockReset();

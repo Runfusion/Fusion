@@ -68,6 +68,11 @@ describe("planning interview formatter Other answers", () => {
       expect(prompt).toMatch(/inspect the relevant implementation surface|Inspect the relevant codebase/i);
       expect(prompt).toMatch(/materially distinct first-level directions|materially distinct direction options/i);
       expect(prompt).toMatch(/unselected direction/i);
+      expect(prompt).toMatch(/normally 3–5/i);
+      expect(prompt).toMatch(/Two (?:directions|alternatives) are not sufficient/i);
+      expect(prompt).toMatch(/include more when genuinely useful|larger set is welcome/i);
+      expect(prompt).toMatch(/Other|write-your-own/i);
+      expect(prompt).not.toMatch(/exactly four|at least two/i);
     }
   });
   it("formats Other-only single-select answers for the planning agent and Q&A history", () => {

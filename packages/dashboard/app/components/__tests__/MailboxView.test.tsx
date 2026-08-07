@@ -506,6 +506,55 @@ describe("MailboxView", () => {
     });
   });
 
+  it("surfaces the safe server decision error on the desktop approval controls", async () => {
+    const now = new Date().toISOString();
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+    mockFetchApprovals.mockResolvedValue({ requests: [{ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "user", createdAt: now, updatedAt: now }], total: 1, pendingCount: 1 });
+    mockFetchApprovalDetail.mockResolvedValue({ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "user", createdAt: now, updatedAt: now, requester: { actorId: "user", actorType: "user", actorName: "User" }, requestedAt: now, targetAction: { category: "secrets_access", action: "read", summary: "Read secret", resourceType: "secret", resourceId: "secret" }, history: [] });
+    mockDecideApproval.mockRejectedValue(new Error("An approval request cannot be decided by its own requester"));
+    const addToast = vi.fn();
+
+    render(<MailboxView {...defaultProps} addToast={addToast} />);
+    await act(async () => { fireEvent.click(screen.getByTestId("mailbox-tab-approvals")); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("mailbox-approval-item-apr-1")); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("mailbox-approval-approve")); });
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("An approval request cannot be decided by its own requester", "error"));
+  });
+
+  it("surfaces the safe server denial error on the mobile approval controls", async () => {
+    const now = new Date().toISOString();
+    mockUseViewportMode.mockReturnValue("mobile");
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+    mockFetchApprovals.mockResolvedValue({ requests: [{ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "user", createdAt: now, updatedAt: now }], total: 1, pendingCount: 1 });
+    mockFetchApprovalDetail.mockResolvedValue({ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "user", createdAt: now, updatedAt: now, requester: { actorId: "user", actorType: "user", actorName: "User" }, requestedAt: now, targetAction: { category: "secrets_access", action: "read", summary: "Read secret", resourceType: "secret", resourceId: "secret" }, history: [] });
+    mockDecideApproval.mockRejectedValue(new Error("An approval request cannot be decided by its own requester"));
+    const addToast = vi.fn();
+
+    render(<MailboxView {...defaultProps} addToast={addToast} />);
+    await act(async () => { fireEvent.click(screen.getByTestId("mailbox-tab-approvals")); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("mailbox-approval-item-apr-1")); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("mailbox-approval-deny")); });
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("An approval request cannot be decided by its own requester", "error"));
+  });
+
+  it("uses the generic decision error only for unknown rejections", async () => {
+    const now = new Date().toISOString();
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+    mockFetchApprovals.mockResolvedValue({ requests: [{ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "agent-1", createdAt: now, updatedAt: now }], total: 1, pendingCount: 1 });
+    mockFetchApprovalDetail.mockResolvedValue({ id: "apr-1", status: "pending", actionCategory: "secrets_access", actionSummary: "Read secret", agentId: "agent-1", createdAt: now, updatedAt: now, requester: { actorId: "agent-1", actorType: "agent", actorName: "Agent" }, requestedAt: now, targetAction: { category: "secrets_access", action: "read", summary: "Read secret", resourceType: "secret", resourceId: "secret" }, history: [] });
+    mockDecideApproval.mockRejectedValue("unknown failure");
+    const addToast = vi.fn();
+
+    render(<MailboxView {...defaultProps} addToast={addToast} />);
+    await act(async () => { fireEvent.click(screen.getByTestId("mailbox-tab-approvals")); });
+    await act(async () => { fireEvent.click(await screen.findByTestId("mailbox-approval-item-apr-1")); });
+    await act(async () => { fireEvent.click(await screen.getByTestId("mailbox-approval-deny")); });
+
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to submit decision", "error"));
+  });
+
   it("disables decision buttons while submission is pending", async () => {
     const now = new Date().toISOString();
     let resolveDecision: (() => void) | undefined;

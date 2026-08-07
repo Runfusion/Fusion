@@ -192,13 +192,25 @@ Returns undefined when nothing is running, leaving the status mapping as the fal
 statuses themselves are unchanged — `needs-replan` remains the graph's durable replan signal; this
 only decides what the operator READS.
 */
+function getRunningWorkflowProgressItem(
+  task: Pick<Task, "steps" | "enabledWorkflowSteps" | "workflowStepResults">,
+): UnifiedTaskProgressItem | undefined {
+  /*
+  FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+  A malformed snapshot can transiently contain multiple started workflow results. Progress is already
+  arranged in lifecycle order (Plan Review before implementation and review gates after it), so choose
+  the latest running workflow item rather than its transport-array position. This makes an active Code
+  Review authoritative over stale Planning while preserving Plan Review as the nested planning gate.
+  */
+  return getUnifiedTaskProgress(task).items
+    .filter((item) => item.source === "workflow" && item.status === "running")
+    .at(-1);
+}
+
 export function getRunningWorkflowStepLabel(
   task: Pick<Task, "steps" | "enabledWorkflowSteps" | "workflowStepResults">,
 ): string | undefined {
-  const running = getUnifiedTaskProgress(task).items.find(
-    (item) => item.source === "workflow" && item.status === "running",
-  );
-  return running?.name;
+  return getRunningWorkflowProgressItem(task)?.name;
 }
 
 /*
@@ -242,9 +254,7 @@ export function getRunningOptionalGateBadge(
   /** Resolved trait flags for the card's column; omitted keeps the legacy id. */
   columnFlags?: ColumnRoleFlags,
 ): RunningOptionalGateBadge | undefined {
-  const running = getUnifiedTaskProgress(task).items.find(
-    (item) => item.source === "workflow" && item.status === "running",
-  );
+  const running = getRunningWorkflowProgressItem(task);
   if (!running) return undefined;
 
   const workflowStepId = workflowStepIdFromProgressItemId(running.id);
@@ -290,6 +300,16 @@ export function getRunningOptionalGateBadge(
     label: running.name,
     testId: workflowStepId,
   };
+}
+
+/**
+ * Whether a rendered optional-gate badge displaces the general Planning status badge.
+ * Plan Review and its replan loop are deliberately excluded because they describe nested planning.
+ */
+export function isNonPlanningOptionalGateBadge(
+  badge: RunningOptionalGateBadge | undefined,
+): boolean {
+  return Boolean(badge && badge.workflowStepId !== "plan-review" && badge.workflowStepId !== "plan-replan");
 }
 
 /*

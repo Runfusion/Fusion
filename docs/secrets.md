@@ -113,6 +113,12 @@ Approval integration is active through `fn_secret_get` policy handling (`package
 
 Dashboard secrets CRUD is shipped via `SecretsView` (`packages/dashboard/app/components/SecretsView.tsx`), backed by the existing secrets API/store surfaces.
 
+Dashboard requests carry the currently selected `projectId`. Secrets routes require that explicit request identity **before** resolving project context, so a missing, empty, or whitespace-only id is rejected with HTTP 400 instead of selecting the daemon launch directory's fallback store. The selected id intentionally binds the project store: project-scoped rows use that project's RLS-protected `project.secrets` partition, while global-scoped rows still use shared `central.secrets_global` and remain visible from every selected project.
+
+### Recovering pre-fix fallback rows
+
+Older dashboard writes made without an explicit project id may be stranded in a `local-*` project partition associated with the daemon launch directory. Fusion does not move these rows automatically: their intended registered-project destination cannot be inferred safely. An operator who has independently identified the destination may reassign only the affected `project.secrets` rows using an audited database recovery procedure. Do not apply this procedure to `central.secrets_global`, and do not treat direct SQL reassignment as runtime architecture.
+
 ## Agent Access (`fn_secret_get`)
 
 `fn_secret_get` is shipped in `packages/cli/src/extension.ts:1542-1629`.

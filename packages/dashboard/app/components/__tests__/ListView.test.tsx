@@ -2746,6 +2746,62 @@ describe("ListView", () => {
     expect(screen.queryByText("Plan Review")).not.toBeInTheDocument();
   });
 
+  /*
+  FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+  Grouped/mobile cards and ungrouped/desktop rows consume the same stale Planning snapshot as the
+  board card. Code Review must be the only lifecycle badge in both DOM branches, with no empty
+  status shell or Planning accessibility label left behind.
+  */
+  it("renders Code Review without Planning in desktop rows and mobile grouped cards", () => {
+    showAllColumnsByDefault();
+    const task = createMockTask({
+      id: "FN-8814-list",
+      column: "in-review",
+      status: "planning",
+      enabledWorkflowSteps: ["plan-review", "code-review"],
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "passed",
+          startedAt: "2026-08-06T14:40:00.000Z",
+          completedAt: "2026-08-06T14:41:00.000Z",
+        },
+        {
+          workflowStepId: "code-review",
+          workflowStepName: "Code Review",
+          status: "pending",
+          startedAt: "2026-08-06T14:42:00.000Z",
+        },
+      ],
+    });
+
+    const desktopViewport = mockDesktopViewport();
+    try {
+      const { unmount } = renderListView({ tasks: [task] });
+      const row = screen.getByText(task.id).closest("tr") as HTMLElement;
+      expect(within(row).getByTestId("list-code-review-FN-8814-list")).toHaveTextContent("Code Review");
+      expect(within(row).queryByText("Planning")).not.toBeInTheDocument();
+      expect(within(row).queryByLabelText("Planning")).not.toBeInTheDocument();
+      expect(row.querySelectorAll(".list-status-badge")).toHaveLength(1);
+      unmount();
+    } finally {
+      desktopViewport.mockRestore();
+    }
+
+    const mobileViewport = mockMobileViewport();
+    try {
+      renderListView({ tasks: [task] });
+      const card = screen.getByText(task.id).closest(".list-card") as HTMLElement;
+      expect(within(card).getByTestId("list-code-review-FN-8814-list")).toHaveTextContent("Code Review");
+      expect(within(card).queryByText("Planning")).not.toBeInTheDocument();
+      expect(within(card).queryByLabelText("Planning")).not.toBeInTheDocument();
+      expect(card.querySelectorAll(".list-status-badge")).toHaveLength(1);
+    } finally {
+      mobileViewport.mockRestore();
+    }
+  });
+
   it("FN-8475 renders Todo planning in desktop table rows without a placeholder", () => {
     const matchMediaSpy = mockDesktopViewport();
     try {

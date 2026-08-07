@@ -611,6 +611,18 @@ const NOT_SURFACED_ALLOWLIST: Record<string, string> = {
 };
 
 describe("FN-7505 settings default-value description guard", () => {
+  it("uses the active English catalog's first-error tool retry default", () => {
+    /*
+     * FNXC:ExecutorToolFailureRetry 2026-08-06-14:56:
+     * Import the active runtime English catalog rather than inspecting a
+     * component fallback. A stale translation otherwise overrides the correct
+     * form value and tells desktop and mobile operators the retired default.
+     */
+    expect(resolveDescription(realEnApp.settings as SettingsDict, "scheduling.executorToolFailureThresholdHelp"))
+      .toBe("Terminal tool errors required before retrying. Default: 1.");
+    expect(DEFAULT_PROJECT_SETTINGS.executorToolFailureThreshold).toBe(1);
+  });
+
   it("every surfaced setting's resolved English description states its default", () => {
     const missing: string[] = [];
     const noIndicator: string[] = [];

@@ -24,6 +24,7 @@ import {
 import {
   createMergeAttemptHandler,
   createMergeGateHandler,
+  type MergeGateHandlerDeps,
 } from "../workflow-node-runners/merge-runner.js";
 import { createExitGateHandler } from "../workflow-node-runners/exit-gate-runner.js";
 
@@ -647,6 +648,8 @@ export interface DefaultNodeHandlerDeps {
   notifyDispatch?: WorkflowNotifyDispatch;
   /** PR node deps (U3). When absent, the three pr-* kinds fail cleanly. */
   prNodes?: PrNodeDeps;
+  /** Resolves the live shared-member integration exemption at the merge gate. */
+  isLiveSharedBranchMember?: MergeGateHandlerDeps["isLiveSharedBranchMember"];
 }
 
 export function createDefaultNodeHandlers(
@@ -723,7 +726,7 @@ export function createDefaultNodeHandlers(
     "parse-steps": parseSteps,
     code: createCodeNodeHandler(deps?.runCode),
     notify: createNotifyHandler(deps?.notifyDispatch),
-    "merge-gate": createMergeGateHandler(),
+    "merge-gate": createMergeGateHandler({ isLiveSharedBranchMember: deps?.isLiveSharedBranchMember }),
     "merge-attempt": createMergeAttemptHandler({
       primitives: deps?.primitives,
       seams,

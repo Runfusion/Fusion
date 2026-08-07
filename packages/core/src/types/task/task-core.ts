@@ -709,10 +709,12 @@ export interface Task {
    *  `PrInfo.autoMergeStrategy`), which must not be conflated with this field. */
   autoMerge?: boolean;
   /** Provenance for `autoMerge`.
-   *  `"user"` means a sticky explicit user-set override.
+   *  `"user"` means a sticky explicit operator-authored task override.
+   *  `"mission"` means mission policy authored the value; it must not be
+   *  treated as an operator request to hold a shared-member integration.
    *  `"legacy-stamp"` means an ambiguous value written by the pre-FN-6245
    *  review-entry stamp and is operator-clearable. Absent means unknown/none. */
-  autoMergeProvenance?: "user" | "legacy-stamp";
+  autoMergeProvenance?: "user" | "mission" | "legacy-stamp";
   /** Actual git working branch name used for this task's worktree. May differ from
    *  the conventional `fn/{task-id}` when conflict recovery generated a
    *  unique suffixed name (e.g., `fn/fn-042-2`). */
@@ -1351,6 +1353,12 @@ export interface TaskCreateInput {
   taskPrefix?: string;
   /** Optional per-task auto-merge override. Undefined means no task-level override. */
   autoMerge?: boolean;
+  /**
+   * FNXC:SharedBranchMemberHold 2026-08-05-22:50: trusted system writer marker
+   * for a mission policy value. Dashboard/API request parsing deliberately does
+   * not expose this field to callers, preserving user provenance as consent.
+   */
+  autoMergeProvenance?: "mission";
   /** Durable source provenance for the originating external issue. */
   sourceIssue?: TaskSourceIssue;
   /** Linked GitLab tracking metadata for GitLab.com and self-managed GitLab items. */

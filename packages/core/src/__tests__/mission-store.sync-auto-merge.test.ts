@@ -2,7 +2,7 @@
 FNXC:MissionAutoMerge 2026-07-18-12:00:
 The legacy synchronous MissionStore remains a supported fallback even though PostgreSQL
 is the production backend. Keep its create-only triage contract aligned with AsyncMissionStore:
-only an explicit false mission override is forwarded to TaskStore.createTask.
+only an explicit false mission override is forwarded to TaskStore.createTask with mission policy provenance.
 */
 
 import { readFile } from "node:fs/promises";
@@ -15,9 +15,10 @@ describe("MissionStore synchronous triage auto-merge contract", () => {
     const triageFeature = source.slice(source.indexOf("async triageFeature("), source.indexOf("async triageSlice("));
 
     expect(triageFeature).toContain('if (guard.action === "duplicate" && guard.existing)');
-    expect(triageFeature).toContain("...(mission?.autoMerge === false ? { autoMerge: false } : {}),");
+    const missionPolicyCreate = '...(mission?.autoMerge === false ? { autoMerge: false, autoMergeProvenance: "mission" as const } : {}),';
+    expect(triageFeature).toContain(missionPolicyCreate);
     expect(triageFeature.indexOf('if (guard.action === "duplicate" && guard.existing)'))
-      .toBeLessThan(triageFeature.indexOf("...(mission?.autoMerge === false ? { autoMerge: false } : {}),"));
+      .toBeLessThan(triageFeature.indexOf(missionPolicyCreate));
     expect(triageFeature).toContain('usesProjectDefaultStrategy ? `mission/${missionId}`');
     expect(triageFeature).toContain('ensureBranchGroupForSource("mission", missionId');
   });

@@ -4,7 +4,7 @@ The production InProcessRuntime must compose one owned PostgreSQL backend across
 */
 
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -13,7 +13,12 @@ import {
   pgDescribe,
 } from "../../../core/src/__test-utils__/pg-test-harness.js";
 
-const lifecycle = vi.hoisted(() => ({ shutdownCalls: 0 }));
+const lifecycle = vi.hoisted(() => ({
+  shutdownCalls: 0,
+  secretsStore: { listEnvExportable: vi.fn() },
+  secretsStoreFailure: undefined as Error | undefined,
+  secretsStoreGetter: undefined as ReturnType<typeof vi.spyOn> | undefined,
+}));
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@fusion/core")>();
@@ -24,6 +29,12 @@ vi.mock("@fusion/core", async (importOriginal) => {
     ) => {
       const boot = await actual.createTaskStoreForBackend(options);
       const shutdown = boot.shutdown;
+      lifecycle.secretsStoreGetter = vi.spyOn(boot.taskStore, "getSecretsStore");
+      if (lifecycle.secretsStoreFailure) {
+        lifecycle.secretsStoreGetter.mockRejectedValue(lifecycle.secretsStoreFailure);
+      } else {
+        lifecycle.secretsStoreGetter.mockResolvedValue(lifecycle.secretsStore as any);
+      }
       return {
         ...boot,
         shutdown: async () => {
@@ -45,17 +56,27 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
     Runtime composition coverage must use the controlled PostgreSQL harness so availability gating and database administration share the repository's bounded asynchronous lifecycle. Runtime and central connections must close in a finally block before the harness drops the database, including when an assertion fails early.
     */
     lifecycle.shutdownCalls = 0;
+    lifecycle.secretsStore.listEnvExportable.mockReset();
+    lifecycle.secretsStoreFailure = undefined;
+    lifecycle.secretsStoreGetter = undefined;
     const harness = await createTaskStoreForTest({ prefix: "fusion_runtime" });
     const priorDatabaseUrl = process.env.DATABASE_URL;
     let projectDir = "";
     let globalDir = "";
     let central: CentralCore | undefined;
     let runtime: InProcessRuntime | undefined;
+    let failedRuntime: InProcessRuntime | undefined;
 
     try {
       projectDir = await mkdtemp(join(tmpdir(), "fusion-runtime-pg-project-"));
       globalDir = await mkdtemp(join(tmpdir(), "fusion-runtime-pg-global-"));
       execFileSync("git", ["init", "-q", projectDir], { stdio: "pipe" });
+      await writeFile(join(projectDir, ".gitignore"), ".secrets.env\n");
+      await writeFile(join(projectDir, "README.md"), "runtime composition fixture\n");
+      execFileSync("git", ["config", "user.email", "runtime-test@example.invalid"], { cwd: projectDir, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", "Fusion Runtime Test"], { cwd: projectDir, stdio: "pipe" });
+      execFileSync("git", ["add", "."], { cwd: projectDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-qm", "initialize runtime composition fixture"], { cwd: projectDir, stdio: "pipe" });
       process.env.DATABASE_URL = harness.testUrl;
 
       central = new CentralCore(globalDir);
@@ -83,6 +104,81 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
       expect(runtimeInternals.triageProcessor?.options?.usageLimitPauser)
         .toBe(runtimeInternals.usageLimitPauser);
 
+      /*
+      FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:30:
+      Production composition resolves the project store once and gives the exact instance to
+      both fresh-worktree consumers. Their existing acquisition coverage verifies the writer;
+      this seam test prevents an omitted runtime dependency from silently becoming no-store.
+      */
+      const secretsStore = await lifecycle.secretsStoreGetter?.mock.results[0]?.value;
+      const runtimeConsumers = runtime as unknown as {
+        executor?: { options?: { secretsStore?: unknown } };
+        heartbeatMonitor?: { secretsStore?: unknown };
+      };
+      expect(lifecycle.secretsStoreGetter).toHaveBeenCalled();
+      expect(runtimeConsumers.executor?.options?.secretsStore).toBe(secretsStore);
+      expect(runtimeConsumers.heartbeatMonitor?.secretsStore).toBe(secretsStore);
+
+      /*
+      FNXC:SecretsEnvRuntimeWiring 2026-08-05-21:58:
+      Production coverage must invoke the runtime-created executor and heartbeat monitor, not
+      extract their dependency into a helper call. Each consumer owns a distinct fresh-worktree
+      path; both must materialize the ignored file and record a redacted write audit.
+      */
+      await taskStore.updateSettings({
+        testMode: true,
+        secretsEnv: { enabled: true, filename: ".secrets.env" },
+      });
+      lifecycle.secretsStore.listEnvExportable.mockResolvedValue([
+        {
+          id: "runtime-secret",
+          key: "runtime-key",
+          exportKey: "RUNTIME_SECRET",
+          scope: "project",
+          plaintextValue: "runtime-test-value",
+        },
+      ]);
+      const assertConsumerMaterializedSecretsEnv = async (taskId: string) => {
+        const task = await taskStore.getTask(taskId);
+        expect(task?.worktree).toEqual(expect.any(String));
+        const exportedKeys = (await readFile(join(task!.worktree!, ".secrets.env"), "utf8"))
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => line.split("=", 1)[0]);
+        expect(exportedKeys).toContain("RUNTIME_SECRET");
+        const auditEvents = await taskStore.getRunAuditEventsAsync();
+        const writeEvent = auditEvents.find((event) =>
+          event.target === taskId && event.mutationType === "secret:env-write",
+        );
+        expect(writeEvent?.metadata).toMatchObject({ keyCount: 1, fingerprint: expect.any(String) });
+        expect(auditEvents.some((event) =>
+          event.target === taskId
+            && event.mutationType === "secret:env-write-skipped"
+            && event.metadata?.reason === "no-store",
+        )).toBe(false);
+      };
+
+      const executorTask = await taskStore.createTask({ description: "executor secrets env" });
+      await (runtime.getExecutor() as any).ensureGraphCustomNodeWorktree(
+        executorTask,
+        await taskStore.getSettings(),
+        "test-worktree",
+      );
+      await assertConsumerMaterializedSecretsEnv(executorTask.id);
+
+      const heartbeatTask = await taskStore.createTask({ description: "heartbeat secrets env" });
+      const agentStore = runtime.getAgentStore()!;
+      const heartbeatAgent = await agentStore.createAgent({
+        name: "Runtime secrets-env heartbeat agent",
+        role: "executor",
+      });
+      await agentStore.assignTask(heartbeatAgent.id, heartbeatTask.id);
+      await runtime.getHeartbeatMonitor()!.executeHeartbeat({
+        agentId: heartbeatAgent.id,
+        source: "on_demand",
+      });
+      await assertConsumerMaterializedSecretsEnv(heartbeatTask.id);
+
       const missionStore = taskStore.getMissionStore();
       const mission = await missionStore.createMission({ title: "Runtime composition" });
       expect((await missionStore.getMission(mission.id))?.title).toBe("Runtime composition");
@@ -103,6 +199,25 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
       await runtime.stop();
       expect(runtime.getStatus()).toBe("stopped");
       expect(lifecycle.shutdownCalls).toBe(1);
+
+      /*
+      FNXC:SecretsEnvRuntimeWiring 2026-08-05-22:12:
+      Secrets-store resolution is an essential composition dependency, not a best-effort
+      secretsEnv convenience. A rejection must take the normal fail-closed startup cleanup
+      path so no partial executor or heartbeat runtime remains active.
+      */
+      lifecycle.secretsStoreFailure = new Error("test secrets-store initialization failure");
+      failedRuntime = new InProcessRuntime({
+        projectId: "runtime-composition-secrets-store-failure",
+        workingDirectory: projectDir,
+        isolationMode: "in-process",
+        maxConcurrent: 1,
+        maxWorktrees: 1,
+      }, central);
+      failedRuntime.on("error", () => undefined);
+      await expect(failedRuntime.start()).rejects.toThrow("test secrets-store initialization failure");
+      expect(failedRuntime.getStatus()).toBe("errored");
+      expect(lifecycle.shutdownCalls).toBe(2);
     } finally {
       try {
         await runtime?.stop();
@@ -120,6 +235,8 @@ pgDescribe("InProcessRuntime PostgreSQL composition", () => {
               globalDir ? rm(globalDir, { recursive: true, force: true }) : Promise.resolve(),
             ]);
             lifecycle.shutdownCalls = 0;
+            lifecycle.secretsStoreFailure = undefined;
+            lifecycle.secretsStoreGetter = undefined;
           }
         }
       }

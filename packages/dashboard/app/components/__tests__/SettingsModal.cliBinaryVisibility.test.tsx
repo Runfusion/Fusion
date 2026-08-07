@@ -93,7 +93,8 @@ describe("SettingsModal CLI Binary visibility", () => {
   });
 
   it("keeps CLI Binary reachable from the Basic-mode desktop nav", async () => {
-    const user = userEvent.setup();
+    // FNXC:SettingsModalTests 2026-08-07-00:06: match the harness's fast user-event instance (FN-6612 feedback-loop velocity); the SettingsModal split files are the dashboard's slowest tests when they use default user-event delays and pointer-events tree walks.
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     await renderBasicSettings();
 
     expect(screen.getByRole("checkbox", { name: "Advanced settings" })).not.toBeChecked();
@@ -106,7 +107,7 @@ describe("SettingsModal CLI Binary visibility", () => {
   });
 
   it("returns CLI Binary for a Basic-mode search and lets operators open it", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     await renderBasicSettings();
 
     expect(document.querySelector(".settings-mobile-section-picker")).toBeNull();
@@ -118,7 +119,7 @@ describe("SettingsModal CLI Binary visibility", () => {
   });
 
   it("keeps CLI Binary available after Advanced settings is enabled", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     await renderBasicSettings();
 
     await user.click(screen.getByRole("checkbox", { name: "Advanced settings" }));

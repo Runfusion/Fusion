@@ -1,7 +1,13 @@
 import { pushTrace } from "./dashboardTraceBuffer";
 
+/*
+FNXC:DashboardResume 2026-08-05-18:08:
+Focus-only tab returns are a supported card-resume path distinct from visibility and pageshow. Keep the
+trace vocabulary explicit so operators can distinguish its authoritative revalidation from SSE recovery.
+*/
 export type ResumeTrigger =
   | "visibility"
+  | "focus"
   | "pageshow"
   | "sse-error"
   | "sse-reconnect"

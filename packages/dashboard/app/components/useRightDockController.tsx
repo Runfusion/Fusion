@@ -43,6 +43,8 @@ export interface RightDockControllerInput {
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onPauseTask?: (id: string) => Promise<Task>;
+  onUnpauseTask?: (id: string) => Promise<Task>;
   /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): threaded through so the right-dock host renders the same TaskDetailContent bypass affordance as the full modal/floating hosts. */
   onBypassReview?: (id: string, reason: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
@@ -272,6 +274,8 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onRevertTask={input.onRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
+      onPauseTask={input.onPauseTask}
+      onUnpauseTask={input.onUnpauseTask}
       onBypassReview={input.onBypassReview}
       onResetTask={input.onResetTask}
       onDuplicateTask={input.onDuplicateTask}

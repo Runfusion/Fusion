@@ -1629,6 +1629,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         reviewLevel,
         executionMode,
         autoMerge,
+        autoMergeProvenance,
         priority,
         source,
         branch,
@@ -1689,6 +1690,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       if (autoMerge !== undefined && typeof autoMerge !== "boolean") {
         throw badRequest("autoMerge must be a boolean");
+      }
+      // FNXC:SharedBranchMemberHold 2026-08-05-22:50: only trusted TaskStore
+      // writers may mark mission policy; HTTP callers express operator intent
+      // solely through the autoMerge value.
+      if (autoMergeProvenance !== undefined) {
+        throw badRequest("autoMergeProvenance is server-managed");
       }
 
       // Validate priority if provided.
@@ -5640,6 +5647,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("autoMerge") && autoMerge !== undefined && autoMerge !== null && typeof autoMerge !== "boolean") {
         throw new Error("autoMerge must be a boolean");
       }
+      if (hasBodyField("autoMergeProvenance")) {
+        throw badRequest("autoMergeProvenance is server-managed");
+      }
 
       let validatedSourceIssue: import("@fusion/core").TaskSourceIssue | null | undefined;
       if (hasBodyField("sourceIssue")) {
@@ -5881,7 +5891,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (dependencies !== undefined) updates.dependencies = dependencies;
       if (enabledWorkflowSteps !== undefined) updates.enabledWorkflowSteps = enabledWorkflowSteps;
       if (hasBodyField("noCommitsExpected")) updates.noCommitsExpected = noCommitsExpected;
-      if (hasBodyField("autoMerge")) updates.autoMerge = autoMerge === null ? undefined : autoMerge;
+      // FNXC:SharedBranchMemberHold 2026-08-05-23:55: preserve null through
+      // the trusted TaskStore boundary so an operator can clear a prior user hold
+      // and return a shared member to inherited/mission policy.
+      if (hasBodyField("autoMerge")) updates.autoMerge = autoMerge;
       if (hasBodyField("modelProvider")) updates.modelProvider = validatedModelProvider;
       if (hasBodyField("modelId")) updates.modelId = validatedModelId;
       if (hasBodyField("validatorModelProvider")) updates.validatorModelProvider = validatedValidatorModelProvider;

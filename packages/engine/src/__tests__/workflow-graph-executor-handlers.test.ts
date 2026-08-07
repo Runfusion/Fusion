@@ -3,12 +3,35 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "@fusion/core";
 import type { TaskDetail, WorkflowIr } from "@fusion/core";
 
 import { WorkflowGraphExecutor } from "../workflows/workflow-graph-executor.js";
+import { createMergeGateHandler } from "../workflow-node-runners/merge-runner.js";
 
 const task = { id: "FN-5767" } as TaskDetail;
 
 function settingsOn() {
   return { experimentalFeatures: { workflowGraphExecutor: true } };
 }
+
+describe("merge gate shared-member provenance", () => {
+  const liveMember = vi.fn(async () => true);
+  const invokeGate = (taskOverride: Partial<TaskDetail>, isLiveSharedBranchMember = liveMember) =>
+    createMergeGateHandler({ isLiveSharedBranchMember })(
+      { id: "merge-gate", kind: "merge-gate" } as never,
+      { task: { ...task, ...taskOverride }, settings: { autoMerge: false } } as never,
+    );
+
+  it("routes only an operator-authored false override to the manual hold", async () => {
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "user" })).resolves.toMatchObject({ value: "auto-off" });
+    expect(liveMember).not.toHaveBeenCalled();
+  });
+
+  it.each(["mission", "legacy-stamp", undefined] as const)("keeps a live member flowing for non-user false provenance (%s)", async (autoMergeProvenance) => {
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance })).resolves.toMatchObject({ value: "auto-on" });
+  });
+
+  it("keeps false values on a non-live group in the normal manual policy path", async () => {
+    await expect(invokeGate({ autoMerge: false, autoMergeProvenance: "mission" }, async () => false)).resolves.toMatchObject({ value: "auto-off" });
+  });
+});
 
 describe("WorkflowGraphExecutor traversal", () => {
   it("walks linear graph", async () => {

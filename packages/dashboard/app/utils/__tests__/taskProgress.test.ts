@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Task } from "@fusion/core";
-import { getRunningOptionalGateBadge, getUnifiedTaskProgress, isPlanReviewRunning } from "../taskProgress";
+import {
+  getRunningOptionalGateBadge,
+  getRunningWorkflowStepLabel,
+  getUnifiedTaskProgress,
+  isNonPlanningOptionalGateBadge,
+  isPlanReviewRunning,
+} from "../taskProgress";
 
 /*
 FNXC:WorkflowSteps 2026-06-25-00:00 — graph-native progress model (plan U3).
@@ -125,6 +131,94 @@ describe("getRunningOptionalGateBadge", () => {
       }),
       column: "in-review",
     } as Task)).toBeUndefined();
+  });
+});
+
+/*
+FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+A running non-planning review gate owns the lifecycle badge over stale Planning. Plan Review remains
+an intentional second badge because it is nested planning, not a contradictory review-lane state.
+*/
+describe("review-gate badge precedence", () => {
+  const planReviewPassed = {
+    workflowStepId: "plan-review",
+    workflowStepName: "Plan Review",
+    status: "passed" as const,
+    startedAt: "2026-08-06T14:40:00.000Z",
+    completedAt: "2026-08-06T14:41:00.000Z",
+  };
+  const codeReviewRunning = {
+    workflowStepId: "code-review",
+    workflowStepName: "Code Review",
+    status: "pending" as const,
+    startedAt: "2026-08-06T14:42:00.000Z",
+  };
+
+  it("makes running Code Review authoritative after Plan Review completes", () => {
+    const task = {
+      ...makeTask({
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+        workflowStepResults: [planReviewPassed, codeReviewRunning],
+      }),
+      column: "in-review",
+    } as Task;
+
+    const badge = getRunningOptionalGateBadge(task);
+    expect(badge).toMatchObject({ workflowStepId: "code-review", label: "Code Review" });
+    expect(isNonPlanningOptionalGateBadge(badge)).toBe(true);
+    expect(getRunningWorkflowStepLabel(task)).toBe("Code Review");
+  });
+
+  it("uses lifecycle order, not snapshot array order, when stale Plan Review and Code Review both run", () => {
+    const task = {
+      ...makeTask({
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+        workflowStepResults: [codeReviewRunning, {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "pending",
+          startedAt: "2026-08-06T14:41:00.000Z",
+        }],
+      }),
+      column: "in-review",
+    } as Task;
+
+    expect(getRunningOptionalGateBadge(task)?.workflowStepId).toBe("code-review");
+    expect(getRunningWorkflowStepLabel(task)).toBe("Code Review");
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["empty", []],
+    ["pending", [{ ...codeReviewRunning, startedAt: undefined }]],
+    ["completed", [{ ...codeReviewRunning, status: "passed" as const, completedAt: "2026-08-06T14:43:00.000Z" }]],
+    ["failed", [{ ...codeReviewRunning, status: "failed" as const, completedAt: "2026-08-06T14:43:00.000Z" }]],
+    ["skipped", [{ ...codeReviewRunning, status: "skipped" as const, completedAt: "2026-08-06T14:43:00.000Z" }]],
+  ])("does not treat %s Code Review data as an active override", (_name, workflowStepResults) => {
+    const badge = getRunningOptionalGateBadge({
+      ...makeTask({ enabledWorkflowSteps: ["code-review"], workflowStepResults: workflowStepResults as Task["workflowStepResults"] }),
+      column: "in-review",
+    } as Task);
+    expect(isNonPlanningOptionalGateBadge(badge)).toBe(false);
+  });
+
+  it("retains Planning plus Plan Review as the deliberate nested presentation", () => {
+    const task = {
+      ...makeTask({
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+        workflowStepResults: [{
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          status: "pending",
+          startedAt: "2026-08-06T14:40:00.000Z",
+        }],
+      }),
+      column: "todo",
+    } as Task;
+
+    const badge = getRunningOptionalGateBadge(task);
+    expect(badge?.workflowStepId).toBe("plan-review");
+    expect(isNonPlanningOptionalGateBadge(badge)).toBe(false);
   });
 });
 

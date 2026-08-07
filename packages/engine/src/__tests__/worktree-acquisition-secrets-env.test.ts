@@ -9,7 +9,7 @@ vi.mock("../worktree/secrets-env-writer.js", () => ({
 }));
 
 vi.mock("../worktree/worktree-pool.js", async () => {
-  const actual = await vi.importActual<any>("../worktree-pool.js");
+  const actual = await vi.importActual<any>("../worktree/worktree-pool.js");
   return {
     ...actual,
     classifyTaskWorktree: vi.fn().mockResolvedValue({ ok: true }),
@@ -26,7 +26,7 @@ FNXC:EngineTests 2026-07-21-00:10:
 Pool unit tests use non-git temp paths; identity guard would throw and fall through to fresh.
 */
 vi.mock("../worktree/worktree-hooks.js", async () => {
-  const actual = await vi.importActual<any>("../worktree-hooks.js");
+  const actual = await vi.importActual<any>("../worktree/worktree-hooks.js");
   return {
     ...actual,
     installTaskWorktreeIdentityGuard: vi.fn().mockResolvedValue(undefined),

@@ -203,6 +203,34 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     "merge-manual-hold",
     "retry-backoff",
     "merge-retry",
+  ] as const)("honors a durable merger blocker at node %s after the task rebounded", async (nodeId) => {
+    const blocker = "no-commits task has incomplete work with no net branch changes";
+    const { store, task, executor, mergeRequester } = makeHarness({
+      column: "todo",
+      status: null,
+      error: blocker,
+      paused: false,
+    });
+
+    await invokeGraphFailure(executor, task, nodeId, blocker);
+
+    expect(mergeRequester).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    const messages = logText(store);
+    expect(messages).toContain("honoring park, not retrying or resuming merge");
+    expect(messages).not.toContain("routed to bounded auto-merge retry");
+  });
+
+  it.each([
+    "merge",
+    "requestMerge",
+    "merge-gate",
+    "merge-attempt",
+    "manual-merge-hold",
+    "merge-manual-hold",
+    "retry-backoff",
+    "merge-retry",
   ] as const)("preserves human-gated autoMerge:false in-review manual hold at node %s", async (nodeId) => {
     const { store, task, executor, mergeRequester } = makeHarness({ autoMerge: undefined, paused: false }, { autoMerge: false });
 

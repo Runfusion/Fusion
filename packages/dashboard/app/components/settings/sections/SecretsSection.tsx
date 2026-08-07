@@ -11,14 +11,15 @@ import type { ToastType } from "../../../hooks/useToast";
 
 export interface SecretsSectionProps {
   addToast: (message: string, type?: ToastType) => void;
+  projectId?: string;
 }
 
-export function SecretsSection({ addToast }: SecretsSectionProps) {
+export function SecretsSection({ addToast, projectId }: SecretsSectionProps) {
   const { t } = useTranslation("app");
   return (
     <>
       <h4 className="settings-section-heading">{t("settings.nav.secrets", "Secrets")}</h4>
-      <SecretsView addToast={addToast} />
+      <SecretsView addToast={addToast} projectId={projectId} />
     </>
   );
 }

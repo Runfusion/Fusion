@@ -16,7 +16,7 @@ import { DEFAULT_PROVIDER_INSTANCE_ID, type ProviderInstanceRef, type TaskStore,
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import type { ImplementationExit, ImplementationExitReporter } from "./executor/implementation-exit.js";
 import { emitWorkflowLifecycleEvent } from "@fusion/core";
-import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
+import { resolveTaskLifecycleColumns, resolveProjectColumnsForRoles, resolveWipTargetForTask, resolveTerminalColumns, RetryStormError, serializeRetryStormError, evaluateCompletedPromotionFailureProvenance, evaluateSkipBypassTaint, resolveWorkflowIrForTask, columnsWithFlag, evaluateForeachMergeProof, resolveCompleteColumn, resolveMergeOrchestrationColumn, resolveReboundTarget, resolveLifecycleColumns, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, hasUserAutoMergeHold, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveMaxConsecutiveToolFailureRetries, resolveConsecutiveToolFailureRetryBackoffMs, resolveConsecutiveToolFailureThreshold, resolveExecutorEscalationTarget, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, DEFAULT_MAX_POST_REVIEW_FIXES, COMPLETION_SUMMARY_NODE_ID, PLAN_REVIEW_GROUP_ID, upsertWorkflowStepResult, normalizeWorkflowReviewFindings, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, ACTIVE_WORKFLOW_WORK_ITEM_STATES, AgentStore, resolveExecutorFallbackModel, resolveValidatorFallbackModel, parseExplicitDuplicateMarker, nonExecutableDuplicateRedirectReason } from "@fusion/core";
 import {
   BLOCKED_THRASH_LIMIT,
   buildExternalBlockMetadataPatch,
@@ -5611,6 +5611,14 @@ export class TaskExecutor {
     if (info.status !== "advisory_failure" && info.status !== "failed") return false;
 
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
+    /*
+     * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
+     * An operator-authored task Off is a durable manual checkpoint, not merely
+     * an auto-merge admission preference. Pre-merge remediation must not reopen
+     * implementation and thereby bypass that checkpoint before the operator
+     * releases or revises the held member.
+     */
+    if (hasUserAutoMergeHold(liveTask)) return false;
     const missingArtifactKeys = parseRequiredArtifactMissingValue(info.failureValue);
     if (missingArtifactKeys) {
       await this.recoverMissingRequiredArtifacts(liveTask, missingArtifactKeys, {
@@ -5930,6 +5938,13 @@ export class TaskExecutor {
    */
   async recoverFailedPreMergeWorkflowStep(task: Task): Promise<boolean> {
     try {
+      /*
+       * FNXC:SharedBranchMemberHold 2026-08-06-00:12:
+       * Startup/self-healing recovery is another pre-merge remediation requester.
+       * Do not let it send a user-held member back to execution: only an explicit
+       * operator release or revision may advance that manual checkpoint.
+       */
+      if (hasUserAutoMergeHold(task)) return false;
       /*
       FNXC:WorkflowPostMerge 2026-06-26-14:00:
       U7c: gate-ness is now sourced from the recorded `WorkflowStepResult.status`, NOT a
@@ -6673,6 +6688,8 @@ export class TaskExecutor {
           getTask: (taskId: string) => this.store.getTask(taskId),
         },
         runId: resolvedRunId,
+        isLiveSharedBranchMember: (nodeTask) =>
+          this.isLiveSharedBranchGroupMember(nodeTask),
         primitives: this.createAuthoritativeWorkflowPrimitives(settings),
         seams: this.createAuthoritativeWorkflowSeams(settings),
         prepareNodeExecution: (node, nodeTask, requirement) =>
@@ -10646,7 +10663,7 @@ export class TaskExecutor {
     };
   }
 
-  private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
+  private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext" | "autoMerge" | "autoMergeProvenance">): Promise<boolean> {
     const groupId = live.branchContext?.groupId?.trim();
     // FNXC:PostgresCutover 2026-07-10: getBranchGroup is async on the PG branch.
     const branchGroup = groupId ? await this.store.getBranchGroup(groupId) : null;
@@ -10739,6 +10756,10 @@ export class TaskExecutor {
     } catch {
       return false;
     }
+    // FNXC:SharedBranchMemberHold 2026-08-05-22:50: FN-8811 lets only an
+    // operator-authored Off choice fence the live member fast path; policy and
+    // legacy false values retain member→group flow.
+    if (hasUserAutoMergeHold(live)) return false;
     const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
     if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
@@ -10843,8 +10864,10 @@ export class TaskExecutor {
       return false;
     }
     /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
-    if (await this.isLiveSharedBranchGroupMember(live)) return false;
-    return !allowsAutoMergeProcessing(live, settings) || resolveEffectiveAutoMerge(live, settings) === false;
+    if (await this.isLiveSharedBranchGroupMember(live) && !hasUserAutoMergeHold(live)) return false;
+    return hasUserAutoMergeHold(live)
+      || !allowsAutoMergeProcessing(live, settings)
+      || resolveEffectiveAutoMerge(live, settings) === false;
   }
 
   private async handleStaleInReviewPlanPauseAbortReplay(
@@ -11085,9 +11108,13 @@ export class TaskExecutor {
       if (settings.globalPause === true) return false;
     }
     if (live.column === resumeLanes.review) {
-      if (live.autoMerge === false) return false;
       if (!settings) return false;
       const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
+      // FNXC:SharedBranchMemberHold 2026-08-05-23:55: an interrupted live
+      // member with mission/legacy policy false must resume its local integration;
+      // only the user hold (and every stale/default-group false override) remains
+      // terminal at this recovery boundary.
+      if (hasUserAutoMergeHold(live) || (live.autoMerge === false && !sharedBranchMember)) return false;
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
@@ -11404,6 +11431,28 @@ export class TaskExecutor {
         const blockedParkHonored = `Workflow graph run ended after an honest blocked park (${live.error}) — honoring park, not requeueing, retrying, or clearing state`;
         executorLog.log(`${task.id}: ${blockedParkHonored}`);
         await this.store.logEntry(task.id, blockedParkHonored, undefined, this.getRunContextFor(task.id));
+        await this.persistTokenUsage(task.id);
+        return;
+      }
+      /*
+      FNXC:WorkflowMerge 2026-08-06-14:41:
+      A merge requester can deliberately reject finalization, persist the blocker in `error`, and
+      rebound the task to its workflow hold column. The graph then unwinds as a merge-node failure.
+      Retrying or resuming that stale graph overrides the merger's durable decision and creates an
+      unbounded hold -> merge -> hold loop. Honor the fresh parked row before any retry router; an
+      operator retry can clear the error and start a new graph run explicitly.
+      */
+      const parkedMergeNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
+      if (
+        live.error != null &&
+        live.column === failureLanes.hold &&
+        this.isMergeGraphFailure(parkedMergeNode)
+      ) {
+        this.clearPausedAborted(task.id);
+        this.activeWorktrees.delete(task.id);
+        const mergerParkHonored = `Workflow graph run ended after merger parked task with blocker (${live.error}) — honoring park, not retrying or resuming merge`;
+        executorLog.log(`${task.id}: ${mergerParkHonored}`);
+        await this.store.logEntry(task.id, mergerParkHonored, undefined, this.getRunContextFor(task.id));
         await this.persistTokenUsage(task.id);
         return;
       }

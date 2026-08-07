@@ -22,7 +22,12 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { mergeTaskSnapshot } from "../hooks/useTasks";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
-import { getRunningOptionalGateBadge, getRunningWorkflowStepLabel, getUnifiedTaskProgress } from "../utils/taskProgress";
+import {
+  getRunningOptionalGateBadge,
+  getRunningWorkflowStepLabel,
+  getUnifiedTaskProgress,
+  isNonPlanningOptionalGateBadge,
+} from "../utils/taskProgress";
 import { isTaskAgentActive } from "../utils/taskActivity";
 import { getTaskStatusBadgeLabel, hasTaskStatusBadge, isTaskPlanningActive, type TaskStatusBadgeContext } from "../utils/taskStatusBadgeLabel";
 import { isReviewBudgetExhaustedApproval } from "../utils/reviewBudgetApproval";
@@ -3127,8 +3132,6 @@ export function ListView({
                             && Boolean(task.recentAgentActivityAt)
                             && isAgentActive;
                           const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
-                          const hasStatus = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
-                            || isTransientPlannerActive;
                           const isReviewBudgetExhausted = isReviewBudgetExhaustedApproval(task);
                           /*
                           FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (corrected): pass the resolved flags so the
@@ -3141,6 +3144,19 @@ export function ListView({
                           */
                           const optionalGateBadge = getRunningOptionalGateBadge(task, getTaskColumnFlags(task));
                           const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                          /*
+                          FNXC:TaskCardBadgePrecedence 2026-08-06-14:53:
+                          Keep card and both list render paths on the shared precedence rule: a visible
+                          non-planning review gate displaces only Planning, while Plan Review remains
+                          additive and pause/stuck/approval states keep their existing render branches. The table
+                          path also omits its otherwise-empty dash shell when the gate is the sole badge.
+                          */
+                          const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
+                          const isPlanningStatusBadge = !isReviewBudgetExhausted
+                            && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
+                          const hasStatus = ((hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
+                            || isTransientPlannerActive)
+                            && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
                           /*
                           FNXC:TaskStatusBadge 2026-07-26-14:05:
                           Same rule as TaskCard: the gate badge owns the gate's name ("Plan Review"), so the
@@ -3400,8 +3416,6 @@ export function ListView({
                               && Boolean(task.recentAgentActivityAt)
                               && isAgentActive;
                             const isLivePlanning = isTaskPlanningActive(task, { globalPaused });
-                            const showStatusBadge = (hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
-                              || isTransientPlannerActive;
                             /*
                           FNXC:WorkflowLifecycleColumns 2026-07-30-01:10 (corrected): pass the resolved flags so the
                           badge's review-lane gate is not the literal — but through `getTaskColumnFlags(task)`, NOT
@@ -3413,6 +3427,12 @@ export function ListView({
                           */
                           const optionalGateBadge = getRunningOptionalGateBadge(task, getTaskColumnFlags(task));
                             const showOptionalGateBadge = Boolean(optionalGateBadge) && isAgentActive;
+                            const suppressPlanningStatusBadge = showOptionalGateBadge && isNonPlanningOptionalGateBadge(optionalGateBadge);
+                            const isPlanningStatusBadge = !isReviewBudgetExhausted
+                              && (isLivePlanning || isTransientPlannerActive || visualStatus === "planning");
+                            const showStatusBadge = ((hasTaskStatusBadge(visualStatus) && visualStatus !== "queued")
+                              || isTransientPlannerActive)
+                              && !(suppressPlanningStatusBadge && isPlanningStatusBadge);
                             // FNXC:TaskStatusBadge 2026-07-26-14:05: the step-name override yields to the
                             // gate badge — see the grouped-card render path above.
                             const statusBadgeLabel = isReviewBudgetExhausted
@@ -3494,7 +3514,7 @@ export function ListView({
                                       >
                                         {statusBadgeLabel}
                                       </span>
-                                    ) : (
+                                    ) : showOptionalGateBadge ? null : (
                                       <span className="list-status-badge">-</span>
                                     )}
                                     {showOptionalGateBadge && optionalGateBadge && (
@@ -3641,6 +3661,8 @@ export function ListView({
                       onDeleteTask={onDeleteTask}
                       onMergeTask={onMergeTask}
                       onRetryTask={onRetryTask}
+                      onPauseTask={onPauseTask}
+                      onUnpauseTask={onUnpauseTask}
                       onResetTask={onResetTask}
                       onDuplicateTask={onDuplicateTask}
                       onPopOut={onPopOut ? () => onPopOut(selectedTaskSnapshot) : undefined}

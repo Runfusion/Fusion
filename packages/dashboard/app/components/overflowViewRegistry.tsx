@@ -255,7 +255,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     label: "Secrets",
     icon: Lock,
     testId: "right-dock-tab-secrets",
-    render: (props) => wrapOverflowView(<SecretsView addToast={props.addToast} />),
+    render: (props) => wrapOverflowView(<SecretsView addToast={props.addToast} projectId={props.projectId} />),
   },
   {
     key: "pull-requests",

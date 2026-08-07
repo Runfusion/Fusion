@@ -13,6 +13,13 @@
   position: relative;
   user-select: none;
   touch-action: pan-x pan-y;
+  /*
+  FNXC:TaskCardLayout 2026-08-05-07:31 (FN-8802):
+  Every TaskCard host can become narrower than a card's populated intrinsic content, including pinned desktop docks and mobile columns. Make the shared root a border-box, shrinkable flex item so existing title truncation, badge wrapping, footer-chip wrapping, and visible trailing controls contain themselves without host-specific branches.
+  */
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   container-type: inline-size;
   container-name: task-card;
 }

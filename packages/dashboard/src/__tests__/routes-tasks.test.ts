@@ -1387,6 +1387,20 @@ describe("POST /tasks", () => {
     );
   });
 
+  it("rejects client-supplied autoMerge provenance via POST", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({ description: "Test task", autoMerge: false, autoMergeProvenance: "mission" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoMergeProvenance is server-managed");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for invalid autoMerge value via POST", async () => {
     const res = await REQUEST(
       buildApp(),
@@ -1926,6 +1940,39 @@ describe("PATCH /tasks/:id branch fields", () => {
       branch: null,
       baseBranch: null,
     }));
+  });
+
+  it("rejects client-supplied autoMerge provenance while preserving server-owned task updates", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ autoMerge: false, autoMergeProvenance: "mission" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("autoMergeProvenance is server-managed");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("forwards a null autoMerge patch so TaskStore clears the user override and provenance", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      autoMerge: undefined,
+      autoMergeProvenance: undefined,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-001",
+      JSON.stringify({ autoMerge: null }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ autoMerge: null }));
   });
 
   it("returns 400 for invalid branch payload types", async () => {

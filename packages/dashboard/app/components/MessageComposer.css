@@ -15,7 +15,24 @@
   flex: 1 1 auto;
 }
 
+/*
+FNXC:MessageComposerMobileWidth 2026-08-07-03:22:
+Long native-structure kind and label values must not give the shared Messages picker an intrinsic width that escapes a narrow composer. The shared select remains shrinkable at every breakpoint; mobile explicitly fills its stacked field so both full-page and modal callers inherit containment.
+*/
+.message-composer-structure-controls .message-composer-select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 @media (max-width: 768px) {
+  .message-composer-field--structures,
+  .message-composer-structure-controls {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
   .message-composer-structure-list > li {
     align-items: stretch;
   }

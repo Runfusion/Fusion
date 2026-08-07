@@ -9,8 +9,26 @@ export const STORED_GITHUB_IMPORT_KEY = "kb-dashboard-github-import-state";
 
 // Planning persistence
 
+/*
+FNXC:PlanningStorage 2026-08-06-14:56:
+Planning storage is optional restoration state, never a prerequisite for durable draft creation or streaming. On a write failure, evict only this exact project-scoped key, retry once, then swallow cleanup or retry failures so planning continues from React and server state.
+*/
+function savePlanningItem(baseKey: string, value: string, projectId?: string): void {
+  try {
+    setScopedItem(baseKey, value, projectId);
+  } catch {
+    try {
+      removeScopedItem(baseKey, projectId);
+    } catch {}
+
+    try {
+      setScopedItem(baseKey, value, projectId);
+    } catch {}
+  }
+}
+
 export function savePlanningDescription(description: string, projectId?: string): void {
-  setScopedItem(STORED_PLANNING_KEY, description, projectId);
+  savePlanningItem(STORED_PLANNING_KEY, description, projectId);
 }
 
 export function getPlanningDescription(projectId?: string): string {
@@ -26,7 +44,7 @@ FNXC:PlanningMode 2026-07-20-12:00:
 Embedded Planning unmounts whenever main-content navigation leaves its view. FN-8437 keeps the last active interview id project-scoped, matching Chat's active-session persistence, so a return during generation can rehydrate through the modal's single loadSession path.
 */
 export function savePlanningActiveSession(sessionId: string, projectId?: string): void {
-  setScopedItem(STORED_PLANNING_ACTIVE_SESSION_KEY, sessionId, projectId);
+  savePlanningItem(STORED_PLANNING_ACTIVE_SESSION_KEY, sessionId, projectId);
 }
 
 export function getPlanningActiveSession(projectId?: string): string {

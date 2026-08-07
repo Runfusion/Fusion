@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { resolve } from "node:path";
 import { realpathSync } from "node:fs";
 
@@ -41,8 +42,13 @@ export type FusionSessionPrincipal =
   | { kind: "ambiguous"; identities: FusionSessionIdentity[] };
 
 const REGISTRY_KEY = "__FUSION_SESSION_IDENTITY_REGISTRY_V1__";
+const ACTIVE_INVOCATION_KEY = "__FUSION_SESSION_IDENTITY_ACTIVE_INVOCATION_V1__";
 
 type Registry = Map<string, FusionSessionIdentity[]>;
+type ActiveInvocation = {
+  identity: FusionSessionIdentity;
+  cwdKeys: ReadonlySet<string>;
+};
 
 function getRegistry(): Registry {
   const holder = globalThis as Record<string, unknown>;
@@ -52,6 +58,17 @@ function getRegistry(): Registry {
     holder[REGISTRY_KEY] = registry;
   }
   return registry;
+}
+
+function getActiveInvocationStorage(): AsyncLocalStorage<ActiveInvocation> {
+  const holder = globalThis as Record<string, unknown>;
+  const existing = holder[ACTIVE_INVOCATION_KEY];
+  if (existing instanceof AsyncLocalStorage) {
+    return existing as AsyncLocalStorage<ActiveInvocation>;
+  }
+  const storage = new AsyncLocalStorage<ActiveInvocation>();
+  holder[ACTIVE_INVOCATION_KEY] = storage;
+  return storage;
 }
 
 /**
@@ -107,8 +124,13 @@ export function registerFusionSessionIdentity(
  *   agent, withhold operator-only capabilities).
  */
 export function resolveFusionSessionPrincipal(cwd: string): FusionSessionPrincipal {
+  const canonicalCwd = canonicalizeCwd(cwd);
+  const activeInvocation = getActiveInvocationStorage().getStore();
+  if (activeInvocation?.cwdKeys.has(canonicalCwd)) {
+    return { kind: "agent", identity: activeInvocation.identity };
+  }
   const registry = getRegistry();
-  const list = registry.get(canonicalizeCwd(cwd));
+  const list = registry.get(canonicalCwd);
   if (!list || list.length === 0) {
     return { kind: "operator" };
   }
@@ -118,7 +140,28 @@ export function resolveFusionSessionPrincipal(cwd: string): FusionSessionPrincip
   return { kind: "ambiguous", identities: [...list] };
 }
 
+/*
+FNXC:SecretsAccessApproval 2026-08-05-22:10:
+A cwd registration is a safe fallback for non-invocation extension calls, but it is
+ambiguous when concurrent sessions share a project root. Pi wraps each prompt in
+this async context so a host tool with no immediate agentId receives the exact
+session principal instead of an arbitrary root-level identity or an operator.
+*/
+export function runWithFusionSessionIdentity<T>(
+  cwdKeys: readonly string[],
+  identity: Omit<FusionSessionIdentity, "registeredAt">,
+  callback: () => T,
+): T {
+  const invocation: ActiveInvocation = {
+    identity: { ...identity, registeredAt: Date.now() },
+    cwdKeys: new Set(cwdKeys.map(canonicalizeCwd)),
+  };
+  return getActiveInvocationStorage().run(invocation, callback);
+}
+
 /** Test-only: wipe all registrations (isolated vitest workers share globalThis). */
 export function __clearFusionSessionIdentityRegistryForTests(): void {
-  (globalThis as Record<string, unknown>)[REGISTRY_KEY] = new Map();
+  const holder = globalThis as Record<string, unknown>;
+  holder[REGISTRY_KEY] = new Map();
+  holder[ACTIVE_INVOCATION_KEY] = new AsyncLocalStorage<ActiveInvocation>();
 }

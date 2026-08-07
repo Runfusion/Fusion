@@ -11,13 +11,15 @@
  *    friction-free on policy-gated tools (no approval row minted).
  * Expectations are HARDCODED — never derived from the constants under test.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import express from "express";
 import { join } from "node:path";
 import {
   AgentStore,
   ApprovalRequestStore,
   SecretsStore,
   registerFusionSessionIdentity,
+  runWithFusionSessionIdentity,
   __clearFusionSessionIdentityRegistryForTests,
   type AgentPermissionPolicy,
 } from "@fusion/core";
@@ -29,6 +31,37 @@ import {
   pgDescribe,
   type MockApi,
 } from "./pg-extension-harness.js";
+import { registerApprovalRoutes } from "../../../dashboard/src/routes/register-approval-routes.js";
+import { request as requestRoute } from "../../../dashboard/src/test-request.js";
+import { ChatManager, __resetChatState, __setCreateResolvedAgentSession } from "../../../dashboard/src/chat.js";
+
+const { createPiAgentSessionMock, piFindModelMock } = vi.hoisted(() => ({
+  createPiAgentSessionMock: vi.fn(),
+  piFindModelMock: vi.fn((provider: string, id: string) => ({ provider, id })),
+}));
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  LegacyCredentialStorage: { create: () => ({ setFallbackResolver: vi.fn(), getApiKey: vi.fn(), get: vi.fn(), set: vi.fn(), has: vi.fn(), hasAuth: vi.fn(), getAll: vi.fn(() => ({})), list: vi.fn(), logout: vi.fn(), remove: vi.fn(), reload: vi.fn() }) },
+  createAgentSession: createPiAgentSessionMock,
+  createBashTool: vi.fn(() => ({ name: "bash" })),
+  createCodingTools: vi.fn(() => []),
+  createEditTool: () => ({ name: "edit" }),
+  createExtensionRuntime: vi.fn(),
+  createFindTool: () => ({ name: "find" }),
+  createGrepTool: () => ({ name: "grep" }),
+  createLsTool: () => ({ name: "ls" }),
+  createReadOnlyTools: vi.fn(() => []),
+  createReadTool: () => ({ name: "read" }),
+  createWriteTool: () => ({ name: "write" }),
+  DefaultResourceLoader: class { async reload() {} },
+  DefaultPackageManager: class { async resolve() { return { extensions: [] }; } },
+  discoverAndLoadExtensions: vi.fn(async () => ({ runtime: { pendingProviderRegistrations: [] }, errors: [] })),
+  getAgentDir: () => "/mock-agent-dir",
+  ModelRuntime: { create: async () => ({ getAuth: async () => ({ auth: { headers: {} } }), refresh: async () => {} }) },
+  ModelRegistry: class { static create() { return new this(); } find(provider: string, id: string) { return piFindModelMock(provider, id); } getAll() { return []; } registerProvider() {} async refresh() {} async getApiKeyAndHeaders() { return { ok: true }; } },
+  SessionManager: { inMemory: () => ({ getSessionId: () => undefined }) },
+  SettingsManager: { create: () => ({}), inMemory: () => ({}) },
+}));
 
 const h = createPgExtensionHarness("fn-ext-perm-gates");
 
@@ -104,6 +137,43 @@ function freshApi(): MockApi {
   const api = createMockApi();
   registerExtension(api);
   return api;
+}
+
+/**
+ * Build only the production approval registrar around the same PostgreSQL-backed
+ * store used by the host extension. This keeps the reachability fixture in-process
+ * while exercising the real HTTP decision authorization and persistence path.
+ */
+function createApprovalDecisionApp() {
+  const app = express();
+  const router = express.Router();
+  app.use(express.json());
+  registerApprovalRoutes({
+    router,
+    store: h.store(),
+    runtimeLogger: { info() {}, warn() {}, error() {}, child() { return this; } } as any,
+    planningLogger: {} as any,
+    chatLogger: {} as any,
+    getProjectIdFromRequest: () => undefined,
+    getScopedStore: async () => h.store(),
+    getProjectContext: async () => ({ store: h.store(), engine: undefined, projectId: undefined }),
+    getProjectPluginLoader: async () => undefined,
+    prioritizeProjectsForCurrentDirectory: (projects: any[]) => projects,
+    emitRemoteRouteDiagnostic() {},
+    emitAuthSyncAuditLog() {},
+    parseScopeParam: () => undefined,
+    resolveAutomationStore: () => { throw new Error("not used by approval routes"); },
+    resolveRoutineStore: () => { throw new Error("not used by approval routes"); },
+    resolveRoutineRunner: () => { throw new Error("not used by approval routes"); },
+    registerDispose() {},
+    dispose() {},
+    rethrowAsApiError(error: unknown): never { throw error; },
+  } as any);
+  app.use(router);
+  app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    res.status(typeof error?.status === "number" ? error.status : 500).json({ error: error?.message ?? "Internal server error" });
+  });
+  return app;
 }
 
 pgDescribe("extension tool permission gates", () => {
@@ -432,6 +502,191 @@ pgDescribe("extension tool permission gates", () => {
     expect(second.details?.value).toBeUndefined();
     // No new request was minted for the denied grant.
     expect(await approvals.list()).toHaveLength(1);
+  });
+
+  it("fn_secret_get: a registered durable chat agent is persisted when pi omits immediate agentId", async () => {
+    const cwd = h.rootDir();
+    const tool = requireTool(freshApi(), "fn_secret_get");
+    const secretsStore = injectSecretsStore();
+    await secretsStore.createSecret({ scope: "project", key: "CHAT_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" });
+    const dispose = registerFusionSessionIdentity(cwd, { agentId: "agent-1a009724", agentName: "Dashboard Chat Agent", purpose: "chat" });
+    try {
+      const result = await tool.execute("chat-call", { key: "CHAT_TOKEN" }, undefined, undefined, { cwd });
+      const request = await buildApprovalStore().get(result.details?.approvalRequestId as string);
+      expect(request?.requester).toMatchObject({
+        actorId: "agent-1a009724",
+        actorType: "agent",
+        actorName: "Dashboard Chat Agent",
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("fn_secret_get: dashboard-chat pi invocation reaches real operator approve and deny routes", async () => {
+    const cwd = h.rootDir();
+    const tool = requireTool(freshApi(), "fn_secret_get");
+    const secretsStore = injectSecretsStore();
+    const app = createApprovalDecisionApp();
+
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-22:33:
+    This is the production-reachability regression fixture for dashboard chat.
+    Chat supplies the durable agent to createResolvedAgentSession, pi wraps the
+    prompt with this invocation identity, and the real host extension receives
+    an ExtensionContext with no agentId. That chain must persist the named agent
+    so the server-derived operator can approve or deny rather than self-collide.
+    */
+    const requestFor = async (key: string) => {
+      await secretsStore.createSecret({ scope: "project", key, plaintextValue: "not-in-approval", accessPolicy: "prompt" });
+      const result = await runWithFusionSessionIdentity(
+        [cwd],
+        { agentId: "agent-1a009724", agentName: "Dashboard Chat Agent", purpose: "chat" },
+        () => tool.execute(`chat-${key}`, { key }, undefined, undefined, { cwd }),
+      );
+      const requestId = result.details?.approvalRequestId as string;
+      const approval = await buildApprovalStore().get(requestId);
+      expect(approval?.requester).toMatchObject({
+        actorId: "agent-1a009724",
+        actorType: "agent",
+        actorName: "Dashboard Chat Agent",
+      });
+      return requestId;
+    };
+
+    const approvedId = await requestFor("CHAT_APPROVE_TOKEN");
+    const approved = await requestRoute(app, "POST", `/approvals/${approvedId}/decision`, JSON.stringify({ decision: "approve" }), {
+      "content-type": "application/json",
+    });
+    expect(approved.status).toBe(200);
+    expect((await buildApprovalStore().get(approvedId))?.status).toBe("approved");
+
+    const deniedId = await requestFor("CHAT_DENY_TOKEN");
+    const denied = await requestRoute(app, "POST", `/approvals/${deniedId}/decision`, JSON.stringify({ decision: "deny" }), {
+      "content-type": "application/json",
+    });
+    expect(denied.status).toBe(200);
+    expect((await buildApprovalStore().get(deniedId))?.status).toBe("denied");
+  });
+
+  it("fn_secret_get: production dashboard chat keeps its durable principal through a host secret call", async () => {
+    const cwd = h.rootDir();
+    const tool = requireTool(freshApi(), "fn_secret_get");
+    const secretsStore = injectSecretsStore();
+    const app = createApprovalDecisionApp();
+    const chatStore = {
+      getSession: vi.fn(() => ({ id: "chat-secret", agentId: "agent-1a009724", status: "active" })),
+      addMessage: vi.fn((message) => ({ id: `message-${message.role}`, ...message })),
+      getMessages: vi.fn(() => []),
+      setInFlightGeneration: vi.fn(async () => undefined),
+      updateSession: vi.fn(async () => undefined),
+      recordTokenUsage: vi.fn(async () => undefined),
+    };
+    const agentStore = {
+      init: vi.fn(async () => undefined),
+      getAgent: vi.fn(async () => ({
+        id: "agent-1a009724",
+        name: "Dashboard Chat Agent",
+        role: "executor",
+        runtimeConfig: {},
+      })),
+    };
+    const secretResults: Array<Awaited<ReturnType<typeof tool.execute>>> = [];
+
+    /*
+    FNXC:SecretsAccessApproval 2026-08-05-23:27:
+    This production-shaped fixture begins at ChatManager and invokes the real
+    createFnAgent prompt wrapper rather than manually creating an identity scope.
+    It verifies that dashboard durable-agent lookup reaches pi before fn_secret_get
+    receives an immediate context that deliberately omits agentId, then proves the
+    server-derived operator can both approve and deny separate requests.
+    */
+    createPiAgentSessionMock.mockImplementation(async () => ({
+      session: {
+        state: { messages: [{ role: "assistant", content: "Requesting secret access" }] },
+        subscribe: vi.fn(),
+        dispose: vi.fn(),
+        setThinkingLevel: vi.fn(),
+        prompt: vi.fn(async (message: string) => {
+          const key = message.includes("deny") ? "DASHBOARD_CHAT_DENY_TOKEN" : "DASHBOARD_CHAT_APPROVE_TOKEN";
+          // The host extension receives only cwd; createFnAgent's prompt wrapper
+          // must supply the durable principal for this real tool invocation.
+          secretResults.push(await tool.execute("dashboard-chat-secret", { key }, undefined, undefined, { cwd }));
+        }),
+      },
+    }));
+    __setCreateResolvedAgentSession(async (options: any) => {
+      const { createFnAgent } = await import("../../../engine/src/pi.js");
+      return createFnAgent({ ...options, tools: "coding" }) as any;
+    });
+
+    try {
+      await Promise.all([
+        secretsStore.createSecret({ scope: "project", key: "DASHBOARD_CHAT_APPROVE_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" }),
+        secretsStore.createSecret({ scope: "project", key: "DASHBOARD_CHAT_DENY_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" }),
+      ]);
+      const manager = new ChatManager(chatStore as any, cwd, agentStore as any, undefined, undefined, undefined, h.store());
+      await manager.sendMessage("chat-secret", "Read the prompt-gated secret");
+      await manager.sendMessage("chat-secret", "Read and deny the prompt-gated secret");
+
+      expect(createPiAgentSessionMock).toHaveBeenCalledTimes(2);
+      const [approvedRequestId, deniedRequestId] = secretResults.map((result) => result.details?.approvalRequestId);
+      expect(approvedRequestId).toEqual(expect.any(String));
+      expect(deniedRequestId).toEqual(expect.any(String));
+      for (const requestId of [approvedRequestId, deniedRequestId]) {
+        const approval = await buildApprovalStore().get(requestId as string);
+        expect(approval?.requester).toMatchObject({
+          actorId: "agent-1a009724",
+          actorType: "agent",
+          actorName: "Dashboard Chat Agent",
+        });
+      }
+
+      const approved = await requestRoute(app, "POST", `/approvals/${approvedRequestId}/decision`, JSON.stringify({ decision: "approve" }), {
+        "content-type": "application/json",
+      });
+      expect(approved.status).toBe(200);
+      expect((await buildApprovalStore().get(approvedRequestId as string))?.status).toBe("approved");
+
+      const denied = await requestRoute(app, "POST", `/approvals/${deniedRequestId}/decision`, JSON.stringify({ decision: "deny" }), {
+        "content-type": "application/json",
+      });
+      expect(denied.status).toBe(200);
+      expect((await buildApprovalStore().get(deniedRequestId as string))?.status).toBe("denied");
+    } finally {
+      __resetChatState();
+    }
+  });
+
+  it("fn_secret_get: direct human CLI remains a user requester after a session disposes", async () => {
+    const cwd = h.rootDir();
+    const tool = requireTool(freshApi(), "fn_secret_get");
+    const secretsStore = injectSecretsStore();
+    await secretsStore.createSecret({ scope: "project", key: "CLI_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" });
+    const dispose = registerFusionSessionIdentity(cwd, { agentId: "agent-disposed" });
+    dispose();
+
+    const result = await tool.execute("cli-call", { key: "CLI_TOKEN" }, undefined, undefined, { cwd });
+    const request = await buildApprovalStore().get(result.details?.approvalRequestId as string);
+    expect(request?.requester).toEqual({ actorId: "user", actorType: "user", actorName: "CLI User" });
+  });
+
+  it("fn_secret_get: concurrent same-root registrations fail closed without minting a shared approval", async () => {
+    const cwd = h.rootDir();
+    const tool = requireTool(freshApi(), "fn_secret_get");
+    const secretsStore = injectSecretsStore();
+    await secretsStore.createSecret({ scope: "project", key: "AMBIGUOUS_TOKEN", plaintextValue: "not-in-approval", accessPolicy: "prompt" });
+    const disposeA = registerFusionSessionIdentity(cwd, { agentId: "agent-a" });
+    const disposeB = registerFusionSessionIdentity(cwd, { agentId: "agent-b" });
+    try {
+      const result = await tool.execute("ambiguous-call", { key: "AMBIGUOUS_TOKEN" }, undefined, undefined, { cwd });
+      expect(result.isError).toBe(true);
+      expect(result.details?.error).toBe("ambiguous-caller-identity");
+      expect(await buildApprovalStore().list()).toHaveLength(0);
+    } finally {
+      disposeA();
+      disposeB();
+    }
   });
 
   // ── fn_task_retry move source ────────────────────────────────────

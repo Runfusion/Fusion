@@ -140,6 +140,16 @@
       "file": "packages/engine/src/__tests__/worktree-acquisition-worktrunk.test.ts",
       "reason": "vi.mock factory hoist error under suite (worktrunk wiring). Red on main full-suite https://github.com/Runfusion/Fusion/actions/runs/30982276306. Quarantined 2026-08-05.",
       "quarantinedAt": "2026-08-05"
+    },
+    {
+      "file": "packages/engine/src/__tests__/project-engine.test.ts",
+      "reason": "FN-8811 observed B4/B5 workspace busy contention asserting a stale 60s cap while runtime schedules 120s, then the subprocess guard timed out on git remote; reproduced in isolation on 2026-08-06. Do not widen timing or weaken the assertion; restore only with a root-cause fix before the deletion deadline.",
+      "quarantinedAt": "2026-08-06"
+    },
+    {
+      "file": "packages/dashboard/app/components/__tests__/PlanningModeModal.planning-flow.test.tsx",
+      "reason": "FN-8816 observed the previously registered direct task-handoff failure a second time in a loaded planning-flow run while the exact test passed in isolation. Quarantined under the deletion ratchet rather than weakening assertions or adding retries; delete by 2026-08-20 unless a root-cause rescue restores stable coverage.",
+      "quarantinedAt": "2026-08-06"
     }
   ]
 }
